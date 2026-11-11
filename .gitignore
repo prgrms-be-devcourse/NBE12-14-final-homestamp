@@ -1,0 +1,23 @@
+.idea/
+*.iml
+**/.gradle/
+**/build/
+**/node_modules/
+**/dist/
+**/.env
+**/.env.*
+!**/.env.example
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+
+# Secrets
+*.pem
+*.p12
+*.pfx
+*.key
+**/application-local.yml
+**/application-local.yaml
+**/application-secret.yml
+**/application-secret.yaml
