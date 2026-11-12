@@ -1,7 +1,7 @@
 # ERD 초안
 
-> `3-상태와-규칙.md`의 상태 기계 13개와 불변식 21개를 테이블과 제약으로 옮긴 **첫 초안**이에요. 칸 이름과 세부 타입은 구현하면서 다듬어요.
-> 데이터 모델의 원칙(왜 이렇게 나눴나)은 `4-인프라-아키텍처.md`의 「4-0. 데이터 모델 원칙」에 있어요. 결정의 이유는 `../decisions.md`.
+> `03-상태와-규칙.md`의 상태 기계 12개(A~L)와 불변식 21개를 테이블과 제약으로 옮긴 **첫 초안**이에요. 칸 이름과 세부 타입은 구현하면서 다듬어요.
+> 데이터 모델의 원칙(왜 이렇게 나눴나)은 `04-인프라-아키텍처.md`의 「4-0. 데이터 모델 원칙」에 있어요. 결정의 이유는 `../decisions.md`.
 
 ---
 
@@ -42,7 +42,7 @@ A·B·C 원칙은 **기록**을 지키려는 것이다. 사람의 신원·연락
 repair_case (C)  current_content_id ──▶ repair_content (B) 판 #3 ──previous──▶ #2 ──▶ #1
 ```
 
-수리 건, 지불, 점검 항목, 정산 송금이 이 모양이에요. 머리(C)는 두 곳을 가리켜요: **지금 모습**(가장 최근 판, `current_*_id`)과 **같이 확인한 모습**(상대가 확인한 판, `confirmed_*_id`). 같이 확인하기 전에 고치면 새 판을 만들고 두 가리킴을 함께 옮겨요(아직 확인 전이라 같이 확인한 모습은 비어 있음). 같이 확인한 뒤 고치면(무엇이든) 판을 바로 만들지 않고 **고친 내용(칸 + 새 값 + 기준 판)**과 확인 요청(기록당 하나)을 남겨요. 상대가 확인하면 **지금 도장 찍힌 판에 그 칸만 합쳐** 새 판을 만들고 두 가리킴을 함께 옮겨요(하나를 확인해도 다른 고친 내용이 딸려 가지 않게). 계산은 같이 확인한 모습(없으면 지금 모습)만 읽어요(3-상태 G).
+수리 건, 지불, 점검 항목, 정산 송금이 이 모양이에요. 머리(C)는 두 곳을 가리켜요: **지금 모습**(가장 최근 판, `current_*_id`)과 **같이 확인한 모습**(상대가 확인한 판, `confirmed_*_id`). 같이 확인하기 전에 고치면 새 판을 만들고 두 가리킴을 함께 옮겨요(아직 확인 전이라 같이 확인한 모습은 비어 있음). 같이 확인한 뒤 고치면(무엇이든) 판을 바로 만들지 않고 **고친 내용(칸 + 새 값 + 기준 판)**과 확인 요청(기록당 하나)을 남겨요. 상대가 확인하면 **지금 도장 찍힌 판에 그 칸만 합쳐** 새 판을 만들고 두 가리킴을 함께 옮겨요(하나를 확인해도 다른 고친 내용이 딸려 가지 않게). 계산은 같이 확인한 모습(없으면 지금 모습)만 읽어요(03-상태 G).
 
 **② 무엇에 대한 것인가 = 종류별 외래 키 + "정확히 하나" CHECK**
 
@@ -100,7 +100,6 @@ erDiagram
     member ||--o{ in_app_notification : ""
 ```
 
-![1. 전체 그림](../images/6-ERD-초안-01.svg)
 
 ---
 
@@ -121,7 +120,7 @@ erDiagram
 | 테이블 | 종류 | 칸 | 제약·메모 |
 |---|---|---|---|
 | `part_template` 부위 템플릿 | 고정 | `zone`, `name`, `sort_order`, `optional` | Flyway 기본 데이터, 6구역 28개 |
-| `room_record` 호실 기록 | C | `sido`, `sigungu`, `dong`(읍·면·동), `alias`, `move_in_date`, `status`(LIVING/ENDED/SETTLED), `created_by_side`, `counterpart_first_connected_at`, `ended_at`, `settled_at`, `autoclose_due_at`, `delete_due_at`, `inactivity_notice_due_at`(마지막 당사자 행동 시각은 이 행에 두지 않고 `action`의 `(room_record_id, created_at)` 인덱스로 계산. 모든 행동이 이 행의 version을 올리면 같은 호실의 다른 건끼리 충돌함) | `counterpart_first_connected_at`이 NULL이면 탈퇴 때 통째 삭제. **`joined_into_id`, `joined_at`**: 합류 전 기록이면 합류한 호실 기록을 가리킴(새 행동 없음, 예외는 `ERASE_PHOTO`, 쓴 사람만 읽기, 삭제는 그 기록을 따라감), `CHECK(joined_into_id <> id)`, 합류한 기록은 다시 합류할 수 없음(서비스 검사). 기한 칸은 사건이 생길 때 저장(E6). `move_in_date`는 고치기가 반영될 때만 바뀜(같이 확인한 뒤 고친 값은 확인 후 고친 내용에) |
+| `room_record` 호실 기록 | C | `sido`, `sigungu`, `dong`(읍·면·동), `alias`, `move_in_date`, `status`(LIVING/ENDED/SETTLED), `created_by_side`, `counterpart_first_connected_at`, `ended_at`, `settled_at`, `autoclose_due_at`, `delete_due_at`, `inactivity_notice_due_at`(마지막 당사자 행동 시각은 이 행에 두지 않고 `action`의 `(room_record_id, created_at)` 인덱스로 계산. 모든 행동이 이 행의 version을 올리면 같은 호실의 다른 건끼리 충돌함) | `counterpart_first_connected_at`이 NULL이면 탈퇴 때 통째 삭제. **`joined_into_id`, `joined_at`**: 합류 전 기록이면 합류한 호실 기록을 가리킴(새 행동 없음, 예외는 `ERASE_PHOTO`, 쓴 사람만 읽기, 삭제는 그 기록을 따라감), `CHECK(joined_into_id <> id)`, 합류한 기록은 다시 합류할 수 없음(서비스 검사). 기한 칸은 사건이 생길 때 저장. `move_in_date`는 고치기가 반영될 때만 바뀜(같이 확인한 뒤 고친 값은 내가 고친 내용 `correction_request`에) |
 | `party` 당사자(측 자리) | C | `side`(TENANT/LANDLORD), `member_id`, `invite_phone`, `status`(EMPTY/NUMBER_ONLY/INVITED/CONNECTED/SHARING_STOPPED/REJECTED/WITHDRAWN), `connected_at`, `sharing_stopped_at`(공유 그만두기 시각, 그 사람이 다시 공유하면 NULL) | `UNIQUE(room_record_id, side)`, `UNIQUE(room_record_id, member_id)`(불변식 13). 자기 번호 초대 금지는 서비스 검사. `invite_phone`은 문자를 보내야 해서 평문(RDS 저장소 암호화), 연결·수신 거부·탈퇴 때 NULL |
 | `room_part` 호실 부위 | C | `template_id`, `zone`, `name`, `sort_order`, `enabled`, `hidden_at` | 지우지 않고 숨기기만 |
 | `link` 링크 | C | `kind`(INVITE/SETTLEMENT_INVITE), `party_id`(받는 자리), `repair_case_id` / `inspection_id`(공유한 기록, 없으면 호실 초대 화면), `token_hash`, `issued_by_member_id`, `invalidated_at`, `invalidated_reason`, `failed_view_count` | `UNIQUE(token_hash)`. 무효가 되면 다시 유효해지지 않음(불변식 7) |
@@ -154,7 +153,7 @@ erDiagram
 |---|---|---|---|
 | `proposal` 제안 | B | 대상 칸(`repair_case_id` 부담 / `settlement_item_id` 정산 항목 / `settlement_id` 보증금), `proposed_by_side`, `counter_of_id`(역제안이면 이전 제안), `round`, `no_cost`, `exclude` | `CHECK(num_nonnulls(대상) = 1)`. 공통 칸과 대상 칸만 둔다(기능별 내용은 그 기능의 테이블에, 정산 항목은 금액·방향·사유). **한 안건에 한 측의 기다리는 안은 하나**: 부분 유니크 인덱스 `(대상, proposed_by_side) WHERE 기다리는 중`(답 전에 바꾸면 이전 안을 거두고 같은 응답 요청에 묶음) |
 | `proposal_line` 제안 줄 | B | `proposal_id`, `line_kind`(TENANT/LANDLORD/THIRD_PARTY 부담 · DEDUCT/ADD 정산 · DEPOSIT 보증금), `third_party_label`, `amount` | `amount bigint CHECK (amount >= 0)`. 부담 줄의 합 = 전체 금액은 서비스 검사. 비율 칸 없음 |
-| `response_request` 응답 요청 | C | `kind`(DEFECT_CONFIRM/SITUATION_CHECK/CORRECTION_CONFIRM(기록당 하나, 대상은 기록: 수리 건·지불·점검·송금. 대기 중인 고친 내용이 0개가 되면 ANSWERED)/AMOUNT_CONFIRM/PROPOSAL/CLOSE_CONFIRM/INSPECTION_CONFIRM/RECEIPT_CONFIRM/SETTLE_FINISH/END_REQUEST/PROGRESS_CHECK), 대상 칸(`repair_case_id`, `payment_id`, `proposal_id`, `inspection_id`, `inspection_item_id`, `settlement_transfer_id`, 없으면 호실 기록), `requested_by_side`, `first_notified_at`(첫 통지가 전달된 시각 = min(전달됨, 링크 열람)), `renotify_due_at`, `unconfirmed_due_at`, `status`(WAITING/ANSWERED/UNCONFIRMED/WITHDRAWN/CLOSED), `solo_reason`(UNCONFIRMED/OPTED_OUT/WITHDRAWN/SHARING_STOPPED/SMS_UNDELIVERED/NOT_CONNECTED(초대했지만 연결 전, 화면 "아직 연결하지 않았어요")/NO_COUNTERPART(번호 없음·초대 전)) | `CHECK(num_nonnulls(대상) <= 1)`. 작업자는 이 테이블만 본다: 부분 인덱스 `(renotify_due_at) WHERE status = 'WAITING'`와 `(unconfirmed_due_at) WHERE status = 'WAITING'`, `FOR UPDATE SKIP LOCKED`. "혼자 진행할 수 있나" 함수도 이 행을 본다. 요청 종류마다 "기한이 지나면 혼자 진행이 열리나"를 코드의 성질로 둔다(칸 없음, 확인 카드의 두 칸 나누기에 씀). 같은 기록의 고친 칸이 더해지면 같은 트랜잭션에서 기한을 다시 정한다. `SETTLE_FINISH`는 payload에 본 정산 version을 두고, 정산을 바꾸는 행동이 같은 트랜잭션에서 기다리는 끝내기 요청을 `CLOSED`(정산 변경)로 닫는다(3-상태 1-4) |
+| `response_request` 응답 요청 | C | `kind`(DEFECT_CONFIRM/SITUATION_CHECK/CORRECTION_CONFIRM(기록당 하나, 대상은 기록: 수리 건·지불·점검·송금. 대기 중인 고친 내용이 0개가 되면 ANSWERED)/AMOUNT_CONFIRM/PROPOSAL/CLOSE_CONFIRM/INSPECTION_CONFIRM/RECEIPT_CONFIRM/SETTLE_FINISH/END_REQUEST/PROGRESS_CHECK), 대상 칸(`repair_case_id`, `payment_id`, `proposal_id`, `inspection_id`, `inspection_item_id`, `settlement_transfer_id`, 없으면 호실 기록), `requested_by_side`, `first_notified_at`(첫 통지가 전달된 시각 = min(전달됨, 링크 열람)), `renotify_due_at`, `unconfirmed_due_at`, `status`(WAITING/ANSWERED/UNCONFIRMED/WITHDRAWN/CLOSED), `solo_reason`(UNCONFIRMED/OPTED_OUT/WITHDRAWN/SHARING_STOPPED/SMS_UNDELIVERED/NOT_CONNECTED(초대했지만 연결 전, 화면 "아직 연결하지 않았어요")/NO_COUNTERPART(번호 없음·초대 전)) | `CHECK(num_nonnulls(대상) <= 1)`. 작업자는 이 테이블만 본다: 부분 인덱스 `(renotify_due_at) WHERE status = 'WAITING'`와 `(unconfirmed_due_at) WHERE status = 'WAITING'`, `FOR UPDATE SKIP LOCKED`. "혼자 진행할 수 있나" 함수도 이 행을 본다. 요청 종류마다 "기한이 지나면 혼자 진행이 열리나"를 코드의 성질로 둔다(칸 없음, 확인 카드의 두 칸 나누기에 씀). 같은 기록의 고친 칸이 더해지면 같은 트랜잭션에서 기한을 다시 정한다. `SETTLE_FINISH`는 payload에 본 정산 version을 두고, 정산을 바꾸는 행동이 같은 트랜잭션에서 기다리는 끝내기 요청을 `CLOSED`(정산 변경)로 닫는다(03-상태 1-4) |
 
 ### 2-5. 수리와 돈
 
@@ -200,7 +199,7 @@ erDiagram
 
 | 테이블 | 종류 | 칸 | 제약·메모 |
 |---|---|---|---|
-| `notice` 통지 | C | `response_request_id`(있으면), `link_id`, `recipient_party_id`, `kind`(INVITE/REQUEST/RENOTIFY/SETTLEMENT_INVITE/INFO), `channel`(SMS/IN_APP), `status`(REQUESTED/SENT/DELIVERED/VIEWED/FAILED), `sent_at`, `delivered_at`, `viewed_at`, `failed_at`, `provider_message_id`(솔라피 messageId), `next_poll_at`(전달 결과 조회 시각), `scheduled_for`(보낼 예정 시각: 모으기 2분, 21~08시 보류, 한도 미룸. 화면 "내일 아침에 보낼게요") | 통지 상태 화면은 여기서(한 줄 표시, 3-상태 K). **문자 모으기**: 같은 받는 사람·같은 호실의 회원 문자를 한 통으로 보내면 여러 `notice`가 같은 `provider_message_id`를 갖고 전달 결과·열람이 함께 바뀐다(통지는 요청마다 하나라 불변식 4가 그대로). 하루 한도는 `rate_counter`(보낸 문자 한 통마다)로 센다. 전달 결과는 조회 API로 채움(부분 인덱스 `(next_poll_at) WHERE status = 'SENT'`), 보내고 3일이 지나도 결과가 없으면 FAILED. 미확인은 DELIVERED 두 건일 때만. `channel = IN_APP`(문자를 끈 회원, 인증이 풀린 계정)은 만들 때 바로 DELIVERED(`delivered_at` = 생성 시각). 회원이 문자 링크(`/r/…`)나 서비스 안 알림을 열면 `viewed_at`(= "알림 확인", 전달로 봄). FAILED면 보낸 측이 한 번 다시 보내기(같은 응답 요청의 새 `notice`), 그것도 FAILED면 응답 요청의 `solo_reason = SMS_UNDELIVERED`. 타이머 시작점은 min(`delivered_at`, `viewed_at`)(문자를 끈 회원은 서비스 안 알림 생성 시각). 링크 열람이 있으면 결과가 없어도 전달로 봄 |
+| `notice` 통지 | C | `response_request_id`(있으면), `link_id`, `recipient_party_id`, `kind`(INVITE/REQUEST/RENOTIFY/SETTLEMENT_INVITE/INFO), `channel`(SMS/IN_APP), `status`(REQUESTED/SENT/DELIVERED/VIEWED/FAILED), `sent_at`, `delivered_at`, `viewed_at`, `failed_at`, `provider_message_id`(솔라피 messageId), `next_poll_at`(전달 결과 조회 시각), `scheduled_for`(보낼 예정 시각: 모으기 2분, 21~08시 보류, 한도 미룸. 화면 "내일 아침에 보낼게요") | 통지 상태 화면은 여기서(한 줄 표시, 03-상태 K). **문자 모으기**: 같은 받는 사람·같은 호실의 회원 문자를 한 통으로 보내면 여러 `notice`가 같은 `provider_message_id`를 갖고 전달 결과·열람이 함께 바뀐다(통지는 요청마다 하나라 불변식 4가 그대로). 하루 한도는 `rate_counter`(보낸 문자 한 통마다)로 센다. 전달 결과는 조회 API로 채움(부분 인덱스 `(next_poll_at) WHERE status = 'SENT'`), 보내고 3일이 지나도 결과가 없으면 FAILED. 미확인은 DELIVERED 두 건일 때만. `channel = IN_APP`(문자를 끈 회원, 인증이 풀린 계정)은 만들 때 바로 DELIVERED(`delivered_at` = 생성 시각). 회원이 문자 링크(`/r/…`)나 서비스 안 알림을 열면 `viewed_at`(= "알림 확인", 전달로 봄). FAILED면 보낸 측이 한 번 다시 보내기(같은 응답 요청의 새 `notice`), 그것도 FAILED면 응답 요청의 `solo_reason = SMS_UNDELIVERED`. 타이머 시작점은 min(`delivered_at`, `viewed_at`)(문자를 끈 회원은 서비스 안 알림 생성 시각). 링크 열람이 있으면 결과가 없어도 전달로 봄 |
 | `outbox` 아웃박스 | C | `kind`(SMS/S3_DELETE/AUDIT_WRITE/ORPHAN_CHECK), `dedupe_key`(UNIQUE, NULL 허용. 고아 파일 확인은 `orphan-check:<원본 키>`), `payload`(jsonb: 통지 ID, S3 키 등. **번호를 복사하지 않음**, 보낼 때 읽음), `status`(PENDING/DONE/FAILED), `attempts`, `next_attempt_at` | 부분 인덱스 `(next_attempt_at) WHERE status = 'PENDING'`, `SKIP LOCKED`. 21~08시 보류는 `next_attempt_at`으로 |
 | `in_app_notification` 서비스 안 알림 | C | `member_id`, `kind`(RESPONSE/INFO/SERVICE), `response_request_id`, 이동할 대상, `group_key`(하루 묶음 알림이면, 예: `erase-digest:<호실>:<날짜>`), `group_count`, `read_at`, `expires_at`(30일) | `UNIQUE(member_id, group_key) WHERE group_key IS NOT NULL`(같은 날 같은 묶음은 한 행에 개수만 더함: 사진 지우기 알림 등). 탈퇴하면 바로 삭제 |
 | `rate_counter` 횟수 세기 | C | `counter_key`(예: `upload:<회원>`, `verify:<번호 HMAC>`, `rerequest:<기록 종류>:<ID>`(다시 요청 7일, 8일 보관), `rerequest:invite:<당사자 자리 ID>`(같은 번호로 초대 다시 보내기 7일)), `window_date`, `count` | `UNIQUE(counter_key, window_date)`, `INSERT … ON CONFLICT DO UPDATE`로 하나씩 셈. 저장하지 않는 것(업로드 표)의 하루 한도를 셀 때 씀. **문자 발송 한도도 여기서 센다**: 실제로 문자 한 통을 보낼 때마다(모은 문자도 한 통, 인증 문자 포함) `sms:<번호 HMAC>`·`sms-member:<회원>`·`sms-total` 세 줄. 이틀 지나면 지움(`rerequest:` 키는 8일). 호실 기록 ID 없음(계정·번호 단위) |
@@ -229,7 +228,7 @@ erDiagram
 | 15 | 양 측이 확인한 사실은 혼자 바꾸지 못함 | | `apply`: 확인된 판은 상대 확인 없이 머리를 옮기지 않음 |
 | 16 | 사진은 올린 측만 지우고, 지운 사진은 되돌릴 수 없음 | `photo` 행은 트리거로 보호(남음) | `apply`: `ERASE_PHOTO`는 올린 측만, `erased_at`이 있으면 거절·주소 발급 안 함 |
 | 17 | 카드 없는 정식 사진 파일은 반드시 지워지고, 카드 있는 파일은 지우지 않음 | `outbox.dedupe_key` UNIQUE | 등록: 복사 전 확인 줄 저장, 카드 트랜잭션에서 줄 삭제. 확인 작업: 줄 `FOR UPDATE` → 카드 재확인 → 삭제 |
-| 18 | 상대가 공유를 그만둔 뒤 남긴 기록은 나에게 안 보임(보이는 범위 전체는 3-상태 3-1 표) | `party.sharing_stopped_at` | 권한 검사 함수 한 곳: 두 측 중 **어느 쪽이든** 공유를 그만둔 시각(둘 다면 이른 쪽) 이후의 상대 측 행동은 뺀다. 그만둔 사람에게도, 남은 사람에게도 같은 규칙(양방향). 수리 상태 같은 상태 행이 그 뒤의 변화를 드러내는 문제는 결정 대기(검토 결과) |
+| 18 | 상대가 공유를 그만둔 뒤 남긴 기록은 나에게 안 보임(보이는 범위 전체는 03-상태 3-1 표) | `party.sharing_stopped_at` | 권한 검사 함수 한 곳: 두 측 중 **어느 쪽이든** 공유를 그만둔 시각(둘 다면 이른 쪽) 이후의 상대 측 행동은 뺀다. 그만둔 사람에게도, 남은 사람에게도 같은 규칙(양방향). 수리 상태 같은 상태 행이 그 뒤의 변화를 드러내는 문제는 결정 대기(검토 결과) |
 | 19 | 정산 끝내기는 상대가 본 정산 모습과 지금이 같을 때만 완료 | | `SETTLE_FINISH` payload에 본 정산 version, 정산을 바꾸는 행동이 같은 트랜잭션에서 기다리는 끝내기 요청을 닫음. 확인 때 version이 다르면 `VERSION_CONFLICT` |
 | 20 | 연결 전 상대에게 돈 확인 요청이 생기지 않고 링크에 돈 내용이 없음 | | 요청을 만드는 곳 한 곳(`notification`)에서 "돈 요청이고 `party.status <> CONNECTED`면 만들지 않음", 링크 응답은 `has_money`만 |
 | 21 | 점검은 모든 항목에 쓰지 않은 쪽의 답 또는 미확인이 있을 때만 잠김 | `INSPECTION_CONFIRM` 부분 유니크(점검 × 방향) | `apply`: 두 방향 요청이 모두 끝나고 모든 항목이 네 상태 중 하나일 때만 LOCKED |
@@ -258,7 +257,7 @@ erDiagram
 
 | 항목 | 어디서 |
 |---|---|
-| 문자 하루 한도, 사진 장수·크기 숫자, 계정당 하루 업로드 한도 | 요구사항 명세서 |
-| 칸 이름·타입 다듬기, 인덱스 목록 | 2주차 첫 마이그레이션을 쓰면서 |
+| 칸 이름·타입 다듬기, 인덱스 목록 | 첫 마이그레이션을 쓰면서 |
 | 하루 한 번 어긋남 검사 | 4주차 선택 |
-| 행동 기록 해시 체인(위조 방지) | 기획서 참고 4의 1번과 함께 |
+
+숫자(문자 하루 한도, 사진 장수·크기, 하루 업로드 한도)는 `06-요구사항-명세.md` 설정값 표에 정해져 있고, 해시 체인 칸은 첫 마이그레이션에 넣는다(검증 API·화면은 Should).
