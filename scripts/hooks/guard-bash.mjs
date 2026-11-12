@@ -61,7 +61,9 @@ function checkGit(args) {
   // --force-with-lease는 허용
   if (sub === "push" && rest.some((a) => forced(a) || (a.startsWith("+") && a.length > 1))) return "git push --force";
   if (sub === "reset" && rest.includes("--hard")) return "git reset --hard";
-  if (sub === "clean" && rest.some(forced)) return "git clean -f";
+  // -n / --dry-run은 지울 목록만 보여 주므로 -f와 함께 있어도 허용 (git clean -fdn)
+  const dryRun = rest.some((a) => a === "--dry-run" || /^-[a-zA-Z]*n[a-zA-Z]*$/.test(a));
+  if (sub === "clean" && rest.some(forced) && !dryRun) return "git clean -f";
   return null;
 }
 
