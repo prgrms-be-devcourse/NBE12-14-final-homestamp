@@ -20,6 +20,8 @@
 
 - `decisions.md`: 결정 기록(유일). **왜 그렇게 정했는지**는 여기서 찾아요.
 - `runbooks/`: 운영 절차(유출 대응).
+- `setup.md`: AI 하네스(Claude·Codex) 처음 설정. 이 저장소에서 AI를 쓰기 전에 한 번 따라 해요.
+- `failure-memory.md`: AI가 반복한 실수 기록. AI가 작업 전에 읽고, 기록은 사람이 승인한 것만 더해요.
 - 그림은 문서 안의 Mermaid 코드예요. GitHub에서 바로 그려져요.
 
 ## 문서끼리 다르면

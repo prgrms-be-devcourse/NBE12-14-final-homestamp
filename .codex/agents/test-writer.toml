@@ -1,0 +1,7 @@
+name = "test-writer"
+description = "기능을 만들기 전에 시나리오·상태 규칙만 보고 실패하는 테스트를 먼저 쓴다"
+sandbox_mode = "workspace-write"
+developer_instructions = """
+.agents/skills/test-writer/SKILL.md를 읽고 그대로 따른다.
+src/test/ 아래만 쓴다. src/main은 읽지도 고치지도 않는다. 다른 에이전트를 만들지 않는다. 결과 목록만 돌려준다.
+"""
