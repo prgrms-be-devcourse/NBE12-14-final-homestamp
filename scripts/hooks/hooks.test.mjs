@@ -1,0 +1,125 @@
+// 훅 테스트: node --test scripts/hooks/
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import path from "node:path";
+import { describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
+import { checkBash } from "./guard-bash.mjs";
+import { checkMigration } from "./guard-migration.mjs";
+import { checkSecrets } from "./guard-secrets.mjs";
+import { REPO_ROOT } from "./lib/input.mjs";
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const bash = (command, cwd = REPO_ROOT) => checkBash({ toolName: "Bash", toolInput: { command }, cwd });
+const ps = (command, cwd = REPO_ROOT) => checkBash({ toolName: "PowerShell", toolInput: { command }, cwd });
+const edit = (file_path, toolName = "Edit") => ({ toolName, toolInput: { file_path }, cwd: REPO_ROOT });
+
+describe("guard-bash", () => {
+  const blocked = [
+    "git push --force",
+    "git push -f origin main",
+    "git push origin +main",
+    "git -C back push --force",
+    "git reset --hard HEAD~1",
+    "git clean -fd",
+    "git clean -xdf",
+    "cd back && ./gradlew flywayClean",
+    "flyway clean",
+    "rm -rf /",
+    "rm -rf ~",
+    "rm -rf ..",
+    "rm -rf ../other-project",
+    "rm -rf *",
+    "rm -rf .",
+    "rm -rf .git",
+    "rm -rf $DIR",
+    "find . -name x | xargs rm -rf",
+    "sudo rm -rf /",
+    'bash -c "git reset --hard"',
+    'psql -c "DROP TABLE users"',
+    "echo 'truncate table users;' | psql",
+    'docker exec db psql -U app -c "drop database app"',
+    "echo ok; git push -f",
+  ];
+  for (const cmd of blocked) it(`막음: ${cmd}`, () => assert.ok(bash(cmd)));
+
+  const allowed = [
+    "git push",
+    "git push -u origin feat/back/x",
+    "git push --force-with-lease",
+    "git reset --soft HEAD~1",
+    "git clean -n",
+    "rm -rf back/build",
+    "rm -rf front/node_modules front/dist",
+    "rm -rf build/*",
+    "rm file.txt",
+    'git commit -m "fix: rm -rf 버그와 git push --force 문서 수정"',
+    "grep -rn truncate src",
+    "echo 'DROP TABLE users'",
+    "./gradlew test",
+  ];
+  for (const cmd of allowed) it(`통과: ${cmd}`, () => assert.equal(bash(cmd), null));
+
+  it("하위 폴더에서도 저장소 기준으로 판단", () => {
+    assert.equal(bash("rm -rf build", path.join(REPO_ROOT, "back")), null);
+    assert.ok(bash("rm -rf ../..", path.join(REPO_ROOT, "back")));
+  });
+
+  it("PowerShell", () => {
+    assert.ok(ps("Remove-Item -Recurse -Force C:\\"));
+    assert.ok(ps("Remove-Item -Recurse ..\\other"));
+    assert.ok(ps("git push --force"));
+    assert.equal(ps("Remove-Item -Recurse -Force front\\dist"), null);
+    assert.equal(ps("Remove-Item foo.txt"), null);
+  });
+
+  it("Codex 배열 명령", () => {
+    const r = checkBash({ toolName: "shell", toolInput: { command: ["bash", "-lc", "git reset --hard"] }, cwd: REPO_ROOT });
+    assert.ok(r);
+  });
+});
+
+describe("guard-secrets", () => {
+  for (const f of [".env", "back/.env.local", "certs/server.pem", "a/private.key", "back/src/main/resources/application-prod.yaml", "application-local.yml", "application-secret.properties"]) {
+    it(`막음: ${f}`, () => assert.ok(checkSecrets(edit(f))));
+  }
+  for (const f of [".env.example", "back/src/main/resources/application.yaml", "front/src/env.ts", "keys.ts"]) {
+    it(`통과: ${f}`, () => assert.equal(checkSecrets(edit(f, "Write")), null));
+  }
+  it("Codex apply_patch 본문에서 경로를 찾음", () => {
+    const patch = "*** Begin Patch\n*** Update File: back/.env\n@@\n-A=1\n+A=2\n*** End Patch";
+    assert.ok(checkSecrets({ toolName: "apply_patch", toolInput: { command: ["apply_patch", patch] }, cwd: REPO_ROOT }));
+  });
+});
+
+describe("guard-migration", () => {
+  const dir = "back/src/main/resources/db/migration";
+  const onMain = (rel) => rel.endsWith("V1__init.sql");
+
+  it("main에 있는 V 파일은 막음", () => assert.ok(checkMigration(edit(`${dir}/V1__init.sql`), onMain)));
+  it("새 V 파일은 통과", () => assert.equal(checkMigration(edit(`${dir}/V2__add_user.sql`, "Write"), onMain), null));
+  it("R(반복) 파일과 다른 경로는 통과", () => {
+    assert.equal(checkMigration(edit(`${dir}/R__views.sql`), () => true), null);
+    assert.equal(checkMigration(edit("docs/V1__init.sql"), () => true), null);
+  });
+});
+
+describe("실행 (exit 코드)", () => {
+  const run = (script, payload) =>
+    spawnSync(process.execPath, [path.join(HERE, script)], { input: JSON.stringify(payload), encoding: "utf8" });
+
+  it("막으면 exit 2 + 이유 한 줄", () => {
+    const r = run("guard-bash.mjs", { tool_name: "Bash", tool_input: { command: "git reset --hard" }, cwd: REPO_ROOT });
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /팀 규칙상 막혀/);
+  });
+  it("통과하면 exit 0, 출력 없음", () => {
+    const r = run("guard-secrets.mjs", { tool_name: "Edit", tool_input: { file_path: "AGENTS.md" }, cwd: REPO_ROOT });
+    assert.equal(r.status, 0);
+    assert.equal(r.stdout + r.stderr, "");
+  });
+  it("훅 오류는 막지 않고 exit 1", () => {
+    const r = spawnSync(process.execPath, [path.join(HERE, "guard-bash.mjs")], { input: "{broken", encoding: "utf8" });
+    assert.equal(r.status, 1);
+  });
+});
