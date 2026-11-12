@@ -12,9 +12,9 @@ disable-model-invocation: true
 
 `{타입}/{back|front|common}/{짧은-설명}` — 소문자와 `-`만 쓴다.
 
-- 가운데: `back` 백엔드, `front` 프론트, `common` 어느 쪽에도 속하지 않는 저장소 전체 작업 (하네스, CI, 루트 설정)
+- 가운데: `back` 백엔드, `front` 프론트, `common` 어느 쪽에도 속하지 않는 저장소 전체 작업 (하네스, CI, 루트 설정, 문서)
 - back·front가 함께 바뀌는 작은 작업은 나누지 않고 한 브랜치로 한다. 가운데는 더 많이 바뀐 쪽
-- 설명은 영어 2~4단어. 예) `feat/back/admin-login`, `fix/front/login-redirect`, `chore/common/ci-setup`
+- 설명은 영어 2~4단어. 예) `feat/back/admin-login`, `fix/front/login-redirect`, `chore/common/ci-setup`, `docs/common/planning-update`
 
 ## 커밋 타입
 
