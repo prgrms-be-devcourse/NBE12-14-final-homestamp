@@ -11,7 +11,13 @@ disable-model-invocation: true
 ## 보는 것
 
 - `git diff origin/dev...HEAD`와 `git diff HEAD` — 바뀐 코드
-- 바뀐 코드와 관련된 문서: 루트 `AGENTS.md`, 그 도메인 폴더의 `AGENTS.md`, `docs/rules/`, 하네스가 바뀌었으면 `.agents/skills/`와 `scripts/hooks/`를 설명하는 문서
+- 바뀐 코드와 관련된 문서
+  - 루트 `AGENTS.md`, 그 도메인 폴더에 `AGENTS.md`가 있으면 그것도
+  - `docs/planning/03-상태와-규칙.md` — 상태 전이 표, 역할별 권한 표
+  - `docs/planning/05-ERD-초안.md` — 테이블·칸 (엔티티·마이그레이션이 바뀌었을 때)
+  - `docs/planning/06-요구사항-명세.md` — API 목록, 오류 코드, 설정값 (컨트롤러·예외·설정이 바뀌었을 때)
+  - `docs/planning/09-프로젝트-구조.md` — 패키지, 부르는 방향, 이름 규칙 (패키지가 바뀌었을 때)
+  - 하네스가 바뀌었으면 `.agents/skills/`, `scripts/hooks/`, `docs/setup.md`
 
 ## 찾는 것
 
