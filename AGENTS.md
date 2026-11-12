@@ -13,6 +13,7 @@ Java 25 · Spring Boot 4.1 · PostgreSQL · Flyway | React 19 · Vite · TypeScr
 ## 자주 쓰는 명령
 - 백엔드: `cd back && ./gradlew build` / `./gradlew test` (Windows는 `gradlew.bat`)
 - 프론트: `cd front && npm run dev` / `npm run build` / `npm run lint`
+- 훅 테스트: `node --test scripts/hooks/hooks.test.mjs` (훅을 고치면 꼭 돌린다)
 
 ## 팀 규칙
 - 브랜치: `{타입}/{back|front|common}/{설명}` 소문자와 `-`만

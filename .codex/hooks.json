@@ -1,1 +1,19 @@
-{ "hooks": {} }
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          { "type": "command", "command": "node \"$(git rev-parse --show-toplevel)/scripts/hooks/guard-bash.mjs\"" }
+        ]
+      },
+      {
+        "matcher": "apply_patch|Edit|Write",
+        "hooks": [
+          { "type": "command", "command": "node \"$(git rev-parse --show-toplevel)/scripts/hooks/guard-secrets.mjs\"" },
+          { "type": "command", "command": "node \"$(git rev-parse --show-toplevel)/scripts/hooks/guard-migration.mjs\"" }
+        ]
+      }
+    ]
+  }
+}
