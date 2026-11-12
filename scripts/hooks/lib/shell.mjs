@@ -69,6 +69,34 @@ export function parseSegments(cmd, { posix = true } = {}) {
   return segments;
 }
 
+const HEREDOC_RE = /(?<![<\w])<<(?!<)(-?)\s*(["']?)([A-Za-z_][\w.-]*)\2/g;
+
+/**
+ * heredoc 본문(<<EOF ... EOF)을 명령에서 떼어 낸다. 본문은 보통 데이터(파일 내용, PR 본문)라서
+ * 명령으로 읽으면 오탐이 난다. 끝 표시가 없으면 heredoc으로 보지 않는다 (명령을 숨기지 않게).
+ * @returns {{ script: string, heredocs: { header: string, body: string }[] }}
+ */
+export function splitHeredocs(cmd) {
+  const lines = cmd.split("\n");
+  const script = [];
+  const heredocs = [];
+  for (let i = 0; i < lines.length; i++) {
+    const header = lines[i];
+    script.push(header);
+    let next = i + 1;
+    for (const m of header.matchAll(HEREDOC_RE)) {
+      const end = (l) => (m[1] ? l.replace(/^\t+/, "") : l).replace(/\r$/, "") === m[3];
+      let j = next;
+      while (j < lines.length && !end(lines[j])) j++;
+      if (j >= lines.length) break;
+      heredocs.push({ header, body: lines.slice(next, j).join("\n") });
+      next = j + 1;
+    }
+    i = next - 1;
+  }
+  return { script: script.join("\n"), heredocs };
+}
+
 /** 경로·확장자를 뗀 소문자 프로그램 이름 (C:\x\git.exe → git) */
 export function programName(token) {
   return token

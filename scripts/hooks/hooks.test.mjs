@@ -86,6 +86,25 @@ describe("guard-bash", () => {
     assert.equal(bash("(cd .. && ls) ; rm -rf build"), null);
   });
 
+  it("heredoc 본문은 데이터로 봄", () => {
+    // 전에는 node 스크립트 안의 문자열을 명령으로 읽어 막았다
+    assert.equal(bash("node - <<'EOF'\nconst t = [\"git clean -xdf\", \"rm -rf /\"];\nEOF"), null);
+    assert.equal(bash('gh pr create --base dev --title "chore: x" --body-file - <<\'BODY\'\n- rm -rf 오탐 수정\n- git push --force 금지 문서\nBODY'), null);
+    assert.equal(bash("cat > a.md <<EOF\ngit reset --hard\nEOF\ngit status"), null);
+    // heredoc이 끝난 뒤의 명령은 계속 본다
+    assert.ok(bash("cat > a.md <<EOF\nhello\nEOF\ngit reset --hard"));
+  });
+
+  it("셸이 읽는 heredoc 본문은 명령으로 검사", () => {
+    assert.ok(bash("bash <<'EOF'\ngit reset --hard\nEOF"));
+    assert.ok(bash("cat <<EOF | sh\nrm -rf /\nEOF"));
+    assert.ok(bash("psql <<EOF\nDROP TABLE users;\nEOF"));
+  });
+
+  it("끝 표시가 없는 heredoc은 그대로 명령으로 봄", () => {
+    assert.ok(bash("cat <<EOF\ngit reset --hard"));
+  });
+
   it("cd 위치를 알 수 없으면 상대 경로 삭제를 막음", () => {
     assert.ok(bash("cd $DIR && rm -rf build"));
     assert.ok(bash("cd - && rm -rf build"));

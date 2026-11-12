@@ -2,7 +2,7 @@
 // 사람이 터미널에서 직접 치는 명령은 막지 않는다.
 import path from "node:path";
 import { getCommand, relativeToRepo, resolvePath, runHook, toNativePath } from "./lib/input.mjs";
-import { normalize, parseSegments, programName } from "./lib/shell.mjs";
+import { normalize, parseSegments, programName, splitHeredocs } from "./lib/shell.mjs";
 
 const MESSAGE = "이 명령은 팀 규칙상 막혀 있습니다. 필요하면 직접 실행하세요";
 
@@ -24,7 +24,9 @@ export function checkBash(input) {
 
 function checkCommand(cmd, cwd, posix, depth) {
   if (!cmd || depth > 3) return null;
-  const segments = parseSegments(cmd, { posix });
+  // heredoc 본문은 데이터로 보고 뺀다. 단 셸이 읽는 본문(bash <<EOF, cat <<EOF | sh)은 명령으로 따로 검사
+  const { script, heredocs } = posix ? splitHeredocs(cmd) : { script: cmd, heredocs: [] };
+  const segments = parseSegments(script, { posix });
   // cd를 따라가며 지금 위치를 기억한다 (cd back && rm -rf ../front/dist → back 기준).
   // 괄호(서브셸) 안의 cd는 괄호가 끝나면 되돌린다. 위치를 알 수 없으면 null
   let here = cwd;
@@ -39,6 +41,14 @@ function checkCommand(cmd, cwd, posix, depth) {
       continue;
     }
     const reason = checkSegment(parsed, here, depth);
+    if (reason) return reason;
+  }
+  for (const { header, body } of heredocs) {
+    const fedToShell = parseSegments(header).some((s) => {
+      const p = normalize(s).program;
+      return SHELLS.has(p) || POWERSHELLS.has(p);
+    });
+    const reason = fedToShell ? checkCommand(body, here, true, depth + 1) : null;
     if (reason) return reason;
   }
   // SQL은 DB 클라이언트로 보낼 때만 본다 (grep truncate, 커밋 메시지 등은 통과)
