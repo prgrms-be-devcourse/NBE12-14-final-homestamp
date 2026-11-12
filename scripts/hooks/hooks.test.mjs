@@ -94,10 +94,10 @@ describe("guard-secrets", () => {
 
 describe("guard-migration", () => {
   const dir = "back/src/main/resources/db/migration";
-  const onMain = (rel) => rel.endsWith("V1__init.sql");
+  const onDev = (rel) => rel.endsWith("V1__init.sql");
 
-  it("main에 있는 V 파일은 막음", () => assert.ok(checkMigration(edit(`${dir}/V1__init.sql`), onMain)));
-  it("새 V 파일은 통과", () => assert.equal(checkMigration(edit(`${dir}/V2__add_user.sql`, "Write"), onMain), null));
+  it("dev에 있는 V 파일은 막음", () => assert.ok(checkMigration(edit(`${dir}/V1__init.sql`), onDev)));
+  it("새 V 파일은 통과", () => assert.equal(checkMigration(edit(`${dir}/V2__add_user.sql`, "Write"), onDev), null));
   it("R(반복) 파일과 다른 경로는 통과", () => {
     assert.equal(checkMigration(edit(`${dir}/R__views.sql`), () => true), null);
     assert.equal(checkMigration(edit("docs/V1__init.sql"), () => true), null);
