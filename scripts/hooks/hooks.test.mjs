@@ -132,6 +132,11 @@ describe("guard-bash", () => {
     assert.ok(ps("git push --force"));
     assert.equal(ps("Remove-Item -Recurse -Force front\\dist"), null);
     assert.equal(ps("Remove-Item foo.txt"), null);
+    // macOS·Linux에서도 Windows 경로를 같은 뜻으로 읽는다 (CI는 Linux)
+    assert.ok(ps("Remove-Item -Recurse C:/Users"));
+    assert.ok(ps("Remove-Item -Recurse \\\\server\\share"));
+    assert.ok(ps("cd ..\\.. ; Remove-Item -Recurse build"));
+    assert.equal(ps("cd back ; Remove-Item -Recurse ..\\front\\dist"), null);
   });
 
   it("Codex 배열 명령", () => {

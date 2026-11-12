@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const IS_WIN = process.platform === "win32";
+export const IS_WIN = process.platform === "win32";
 
 /** 저장소 루트 (이 파일 위치 기준: scripts/hooks/lib → 루트) */
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");

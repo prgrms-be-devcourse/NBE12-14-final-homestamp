@@ -1,7 +1,7 @@
 // guard-bash: AI가 위험한 터미널 명령을 실행하기 직전에 막는다 (PreToolUse).
 // 사람이 터미널에서 직접 치는 명령은 막지 않는다.
 import path from "node:path";
-import { getCommand, relativeToRepo, resolvePath, runHook, toNativePath } from "./lib/input.mjs";
+import { getCommand, IS_WIN, relativeToRepo, resolvePath, runHook, toNativePath } from "./lib/input.mjs";
 import { normalize, parseSegments, programName, splitHeredocs } from "./lib/shell.mjs";
 
 const MESSAGE = "이 명령은 팀 규칙상 막혀 있습니다. 필요하면 직접 실행하세요";
@@ -15,6 +15,7 @@ const PS_VALUE_PARAMS = new Set(["-filter", "-include", "-exclude", "-credential
 const SHORT_FORCE_RE = /^-[a-zA-Z]*f[a-zA-Z]*$/;
 const CD_PROGRAMS = new Set(["cd", "pushd", "chdir", "set-location", "sl"]);
 const UNKNOWN_RE = /[$`%]/;
+const WIN_ABS_RE = /^([A-Za-z]:([\\/]|$)|\\\\)/; // C:\ , C:/ , C: , \\server
 const AI_TOOLS = "claude|anthropic|codex|openai|chatgpt|copilot|gemini";
 const SIGNATURE_RE = new RegExp(
   `co-authored-by:[^\\n]*\\b(${AI_TOOLS})\\b|generated\\s+(with|by)\\s*\\[?\\s*(${AI_TOOLS})\\b`,
@@ -142,7 +143,7 @@ function checkRm(program, args, viaXargs, cwd) {
   if (!recursive) return null;
   if (targets.length === 0) return viaXargs ? "xargs로 넘긴 대상 재귀 삭제" : null;
   for (const t of targets) {
-    const reason = dangerousTarget(t, cwd);
+    const reason = dangerousTarget(t, cwd, !posixRm);
     if (reason) return reason;
   }
   return null;
@@ -150,19 +151,32 @@ function checkRm(program, args, viaXargs, cwd) {
 
 /** cd 다음 위치. 변수·`cd -`처럼 알 수 없으면 null */
 function nextCwd(args, here, posix) {
-  const target = args.find((a) => a === "-" || !a.startsWith("-"));
-  if (target === undefined) return posix ? resolvePath("~", here ?? ".") : here; // bash의 cd는 홈으로
-  if (target === "-" || UNKNOWN_RE.test(target)) return null;
+  const raw = args.find((a) => a === "-" || !a.startsWith("-"));
+  if (raw === undefined) return posix ? resolvePath("~", here ?? ".") : here; // bash의 cd는 홈으로
+  if (raw === "-" || UNKNOWN_RE.test(raw)) return null;
+  const target = posix ? raw : windowsStyle(raw);
+  if (!IS_WIN && WIN_ABS_RE.test(target)) return null; // Windows 밖에서 C:\ 로 이동 → 알 수 없음
   if (here === null && !isAbsolute(target)) return null;
   return resolvePath(target, here ?? ".");
 }
 
 function isAbsolute(p) {
-  return p === "~" || p.startsWith("~/") || path.isAbsolute(toNativePath(p));
+  return p === "~" || p.startsWith("~/") || path.isAbsolute(toNativePath(p)) || WIN_ABS_RE.test(p);
 }
 
-function dangerousTarget(target, cwd) {
-  if (UNKNOWN_RE.test(target)) return `삭제 대상이 변수라 확인할 수 없음: ${target}`;
+/**
+ * PowerShell·cmd 경로를 이 OS에서 읽을 수 있게. Windows에서는 그대로 두고,
+ * macOS·Linux에서는 \ 를 / 로 바꾼다 (PowerShell은 둘 다 구분자로 받는다)
+ */
+function windowsStyle(p) {
+  return IS_WIN ? p : p.replace(/\\/g, "/");
+}
+
+function dangerousTarget(rawTarget, cwd, windowsShell = false) {
+  const target = windowsShell ? windowsStyle(rawTarget) : rawTarget;
+  if (UNKNOWN_RE.test(target)) return `삭제 대상이 변수라 확인할 수 없음: ${rawTarget}`;
+  // C:\ 같은 드라이브 경로는 macOS·Linux 저장소 안에 있을 수 없다
+  if (!IS_WIN && WIN_ABS_RE.test(target)) return `저장소 밖 삭제: ${rawTarget}`;
   const glob = target.search(/[*?[]/);
   const base = glob >= 0 ? target.slice(0, glob) : target; // rm -rf * → 현재 폴더로 판단
   if (cwd === null && !isAbsolute(base)) return `cd 위치를 알 수 없어 삭제 대상을 확인할 수 없음: ${target}`;
