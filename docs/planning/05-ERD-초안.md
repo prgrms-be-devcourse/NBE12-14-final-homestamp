@@ -142,10 +142,10 @@ erDiagram
 | 돈·제안 | `RECORD_PAYMENT`, `RESPOND_AMOUNT`, `SUPPLEMENT_PAYMENT`, `PROPOSE`, `AGREE`, `DISPUTE_PROPOSAL`, `COUNTER`, `WITHDRAW` |
 | 점검 | `START_INSPECTION`, `ADD_ITEM`, `ADD_PART_PHOTO`, `REQUEST_INSPECTION_CONFIRM`, `RESPOND_ITEM`, `SUPPLEMENT_ITEM`, `CONFIRM_ALL`, `LOCK`(서버), `FINISH_INSPECTION` |
 | 정산 | `OPEN_SETTLEMENT`, `INCLUDE_CANDIDATE`, `ADD_SETTLEMENT_ITEM`, `PROPOSE_EXCLUDE`, `RECORD_TRANSFER`, `RESPOND_TRANSFER`, `PROPOSE_FINISH`, `CONFIRM_FINISH`, `NOT_YET_FINISH`, `FINISH_ALONE`, `CLOSE_FINISH_REQUEST`(서버, 정산이 바뀌어 닫힘), `AUTOCLOSE`(서버) |
-
-`RESPOND_*` 행동은 값 `ACK` / `NEED_MORE` / `DISPUTE`(보류·이견은 사유 필수)를 가진다. 보류·이견 뒤에는 같은 행동으로 `ACK`를 다시 남길 수 있고(정산 완료 전), `ACK` 뒤의 응답은 거절한다(`ACK_FINAL`).
 | 사진 | `HIDE_PHOTO`, `SHOW_PHOTO`, `MARK_PHOTO_WRONG`, `UNMARK_PHOTO_WRONG`(올린 사람), `ERASE_PHOTO`(올린 사람 또는 `ops:<담당>`) |
 | 계정(호실 밖) | 회원 변경은 행동 기록이 아니라 신원 칸 예외라 값 없이 내부 기록만: 이름 변경, 번호 변경, 탈퇴 |
+
+`RESPOND_*` 행동은 값 `ACK` / `NEED_MORE` / `DISPUTE`(보류·이견은 사유 필수)를 가진다. 보류·이견 뒤에는 같은 행동으로 `ACK`를 다시 남길 수 있고(정산 완료 전), `ACK` 뒤의 응답은 거절한다(`ACK_FINAL`).
 
 ### 2-4. 공통 장치: 돈 안건 장치와 기다림 타이머
 
