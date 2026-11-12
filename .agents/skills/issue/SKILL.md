@@ -39,6 +39,7 @@ BODY
 ```
 
 - 승인 없이 올리지 않는다. 초안을 고쳐 달라고 하면 고친 초안을 다시 보여 주고 다시 승인을 받는다
+- 본문 끝에 `Generated with ...` 같은 AI 도구 서명을 넣지 않는다 (Claude·Codex 공통, `docs/decisions.md`)
 - `gh`가 없거나 로그인이 안 돼 있으면 올리지 말고 `gh auth login`이 필요하다고 알린다
 - 올린 뒤 **이슈 번호와 URL**을 보여 준다. 이 번호는 나중에 `pr-body`가 `closes #번호`로 PR에 연결한다
 - 브랜치를 만들어 달라고 하면 `git switch -c <브랜치>`를 실행한다 (`dev` 최신 기준: 먼저 `git fetch origin` 후 `git switch -c <브랜치> origin/dev`)

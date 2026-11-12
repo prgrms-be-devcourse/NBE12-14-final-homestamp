@@ -72,3 +72,4 @@ base: dev ← feat/back/admin-login   (드래프트면 "Draft PR")
 - 같은 브랜치에 이미 열린 PR이 있으면(`gh pr view`) 새로 만들지 않고 URL을 알려 준다
 - `gh`가 없거나 로그인이 안 돼 있으면 `gh auth login`이 필요하다고 알리고, 초안만 준다
 - `--force` push는 하지 않는다
+- 본문 끝에 `Generated with ...`, `Co-Authored-By` 같은 AI 도구 서명을 넣지 않는다 (Claude·Codex 공통, `docs/decisions.md`)

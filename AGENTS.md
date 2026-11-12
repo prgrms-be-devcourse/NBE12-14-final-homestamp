@@ -30,6 +30,7 @@ Java 25 · Spring Boot 4.1 · PostgreSQL · Flyway | React 19 · Vite · TypeScr
 
 ## AI가 지킬 것
 - `git commit`, `git push`, 이슈·PR 생성은 사람이 확인한 뒤에만 한다. `issue`·`pr-body` 스킬은 초안을 먼저 보여 주고 승인을 받은 뒤에 올린다
+- 커밋 메시지·이슈·PR 본문에 AI 도구 서명(`Co-Authored-By: Claude ...`, `Generated with ...` 등)을 넣지 않는다 (Claude·Codex 공통)
 - 비밀값 파일(`.env*`, `*.pem`, `*.key`, `application-prod*`, `application-local*`)은 읽거나 고치지 않는다
 - 이미 `main`에 들어간 Flyway 마이그레이션(`V*.sql`)은 고치지 않는다. 바꿀 게 있으면 새 V 파일을 만든다
 - 되돌리기 어려운 명령(`git push --force`, `git reset --hard`, `git clean -f`, `DROP`·`TRUNCATE`, `flyway clean`)은 실행하지 않는다
