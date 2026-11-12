@@ -21,3 +21,6 @@
 **/application-local.yaml
 **/application-secret.yml
 **/application-secret.yaml
+
+# 하네스 설정 (개인 메모)
+claude.local.harness.md
