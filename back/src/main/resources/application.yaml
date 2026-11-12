@@ -1,3 +1,18 @@
 spring:
   application:
     name: back
+  mvc:
+    problemdetails:
+      enabled: true
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+
+app:
+  # 한국 시간으로 정해진 규칙(문자 보류 21~08시, 하루 한도의 "하루")만 이 위치로 계산한다
+  zone: Asia/Seoul
