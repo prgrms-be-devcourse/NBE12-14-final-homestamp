@@ -1,6 +1,6 @@
 ---
 name: pr-body
-description: PR 제목과 본문을 템플릿대로 만들고, 사람이 승인하면 push와 PR 생성까지 한다. 사람이 /pr-body 또는 $pr-body로 부를 때만 쓴다
+description: PR 제목과 본문을 템플릿대로 만들고, 사람이 승인하면 push와 PR 생성(이미 열린 PR이면 본문 갱신)까지 한다. 사람이 /pr-body 또는 $pr-body로 부를 때만 쓴다
 disable-model-invocation: true
 ---
 
@@ -67,9 +67,22 @@ base: dev ← feat/back/admin-login   (드래프트면 "Draft PR")
    ```
 4. PR URL을 보여 준다
 
-- 승인 없이 push·PR 생성을 하지 않는다. 초안을 고쳐 달라고 하면 다시 보여 주고 다시 승인을 받는다
+## 이미 열린 PR이 있을 때 (본문 갱신)
+
+같은 브랜치에 열린 PR이 있으면(`gh pr view --json number,body,commits`) 새로 만들지 않고 본문을 갱신한다.
+
+1. 지금 본문과 PR의 커밋 목록을 비교해, 본문에 아직 없는 변경을 찾는다
+2. **사람이 쓴 내용은 그대로 둔다** — 궁금한 점, 체크한 체크박스, 사람이 고친 문장. 빠진 변경만 해당 칸에 줄을 더한다
+3. 바뀌는 줄만 보여 준다 (`+ 추가할 줄`, `- 지울 줄`). 지울 줄은 이유도 적는다
+4. 사람이 "갱신해줘"라고 승인하면: 아직 push하지 않은 커밋이 있으면 `git push` → `gh pr edit <번호> --body-file -` (heredoc으로 본문 전달)
+5. PR URL을 보여 준다
+
+제목은 사람이 바꿔 달라고 할 때만 `gh pr edit <번호> --title`로 바꾼다.
+
+## 지킬 것
+
+- 승인 없이 push·PR 생성·본문 갱신을 하지 않는다. 초안을 고쳐 달라고 하면 다시 보여 주고 다시 승인을 받는다
 - `main`·`dev` 브랜치에서는 올리지 않는다 (작업 브랜치에서만). 릴리스 PR(`dev → main`)은 사람이 직접 만든다
-- 같은 브랜치에 이미 열린 PR이 있으면(`gh pr view`) 새로 만들지 않고 URL을 알려 준다
 - `gh`가 없거나 로그인이 안 돼 있으면 `gh auth login`이 필요하다고 알리고, 초안만 준다
 - `--force` push는 하지 않는다
 - 본문 끝에 `Generated with ...`, `Co-Authored-By` 같은 AI 도구 서명을 넣지 않는다 (Claude·Codex 공통, `docs/decisions.md`)
