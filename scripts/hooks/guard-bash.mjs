@@ -15,6 +15,11 @@ const PS_VALUE_PARAMS = new Set(["-filter", "-include", "-exclude", "-credential
 const SHORT_FORCE_RE = /^-[a-zA-Z]*f[a-zA-Z]*$/;
 const CD_PROGRAMS = new Set(["cd", "pushd", "chdir", "set-location", "sl"]);
 const UNKNOWN_RE = /[$`%]/;
+const AI_TOOLS = "claude|anthropic|codex|openai|chatgpt|copilot|gemini";
+const SIGNATURE_RE = new RegExp(
+  `co-authored-by:[^\\n]*\\b(${AI_TOOLS})\\b|generated\\s+(with|by)\\s*\\[?\\s*(${AI_TOOLS})\\b`,
+  "i",
+);
 
 export function checkBash(input) {
   const posix = !/powershell/i.test(input.toolName);
@@ -51,6 +56,10 @@ function checkCommand(cmd, cwd, posix, depth) {
     const reason = fedToShell ? checkCommand(body, here, true, depth + 1) : null;
     if (reason) return reason;
   }
+  // AI 도구 서명은 커밋·이슈·PR 명령에서만 본다 (heredoc 본문 포함, docs/decisions.md 2026-11-12)
+  if (segments.some((seg) => publishesText(normalize(seg))) && SIGNATURE_RE.test(cmd)) {
+    return "AI 도구 서명(Co-Authored-By, Generated with)은 커밋·이슈·PR에 넣지 않습니다";
+  }
   // SQL은 DB 클라이언트로 보낼 때만 본다 (grep truncate, 커밋 메시지 등은 통과)
   const usesDbClient = segments.some((seg) => seg.some((t) => DB_CLIENTS.has(programName(t))));
   if (usesDbClient && SQL_RE.test(cmd)) return "SQL DROP/TRUNCATE";
@@ -73,14 +82,24 @@ function checkSegment({ program, args, viaXargs }, cwd, depth) {
   return null;
 }
 
-function checkGit(args) {
+/** git 앞쪽 옵션(-C 경로 등)을 건너뛴 하위 명령과 나머지 인자 */
+function gitSubcommand(args) {
   let i = 0;
   while (i < args.length && args[i].startsWith("-")) {
     if (["-C", "-c", "--git-dir", "--work-tree", "--namespace"].includes(args[i])) i++;
     i++;
   }
-  const sub = args[i];
-  const rest = args.slice(i + 1);
+  return { sub: args[i], rest: args.slice(i + 1) };
+}
+
+/** 커밋·이슈·PR을 만들거나 고치는 명령인지 (본문에 AI 도구 서명이 들어가면 안 되는 곳) */
+function publishesText({ program, args }) {
+  if (program === "git") return gitSubcommand(args).sub === "commit";
+  return program === "gh" && ["pr", "issue"].includes(args[0]);
+}
+
+function checkGit(args) {
+  const { sub, rest } = gitSubcommand(args);
   const forced = (a) => a === "--force" || SHORT_FORCE_RE.test(a);
 
   // --force-with-lease는 허용
