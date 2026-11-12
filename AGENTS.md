@@ -8,7 +8,7 @@ Java 25 · Spring Boot 4.1 · PostgreSQL · Flyway | React 19 · Vite · TypeScr
 - `back/` Spring Boot (Gradle). 패키지 루트 `com.chilsuitjo.back`
 - `front/` React (Vite). import alias `@/` = `front/src/`
 - `.agents/skills/` 스킬 원본 · `.claude/`, `.codex/` 도구별 설정 · `scripts/hooks/` 훅 스크립트
-- `docs/` 기획·결정 기록 (`docs/decisions.md`)
+- `docs/` 기획·결정 기록 (`docs/decisions.md`) · AI 실수 기록 (`docs/failure-memory.md`) · 처음 설정 (`docs/setup.md`)
 
 ## 자주 쓰는 명령
 - 백엔드: `cd back && ./gradlew build` / `./gradlew test` (Windows는 `gradlew.bat`)
@@ -29,6 +29,7 @@ Java 25 · Spring Boot 4.1 · PostgreSQL · Flyway | React 19 · Vite · TypeScr
 - 자바는 구글 자바 스타일. 포매터가 맞춘다 (Spotless 설정 후 커밋 전에 `./gradlew spotlessApply`)
 
 ## AI가 지킬 것
+- 작업을 시작하기 전에 `docs/failure-memory.md`를 읽는다. 같은 실수를 반복하면 기록을 제안하고, 사람이 승인한 뒤에만 추가한다
 - `git commit`, `git push`, 이슈·PR 생성은 사람이 확인한 뒤에만 한다. `issue`·`pr-body` 스킬은 초안을 먼저 보여 주고 승인을 받은 뒤에 올린다
 - 커밋 메시지·이슈·PR 본문에 AI 도구 서명(`Co-Authored-By: Claude ...`, `Generated with ...` 등)을 넣지 않는다 (Claude·Codex 공통)
 - 비밀값 파일(`.env*`, `*.pem`, `*.key`, `application-prod*`, `application-local*`)은 읽거나 고치지 않는다
