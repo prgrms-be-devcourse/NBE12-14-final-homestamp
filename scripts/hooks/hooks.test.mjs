@@ -69,6 +69,29 @@ describe("guard-bash", () => {
     assert.ok(bash("rm -rf ../..", path.join(REPO_ROOT, "back")));
   });
 
+  it("명령 안의 cd를 따라가서 판단", () => {
+    // 전에는 루트 기준으로 봐서 저장소 밖 삭제로 잘못 막았다
+    assert.equal(bash("cd .agents/skills && cd .. && rm -rf ../.claude/skills"), null);
+    assert.equal(bash("cd back && rm -rf ../front/dist"), null);
+    assert.equal(bash("cd back; rm -rf build"), null);
+    // 반대로 루트 기준이면 통과했을 명령을 막는다
+    assert.ok(bash("cd back && rm -rf ../.."));
+    assert.ok(bash("cd .. && rm -rf build"));
+    assert.ok(bash("cd back/src && rm -rf ../.."));
+  });
+
+  it("서브셸 안의 cd는 바깥에 영향 없음", () => {
+    assert.ok(bash("(cd back/src) && rm -rf ../front")); // cd가 새면 back/front로 오해해서 통과시킴
+    assert.ok(bash("echo $(cd back/src && pwd) && rm -rf ../front"));
+    assert.equal(bash("(cd .. && ls) ; rm -rf build"), null);
+  });
+
+  it("cd 위치를 알 수 없으면 상대 경로 삭제를 막음", () => {
+    assert.ok(bash("cd $DIR && rm -rf build"));
+    assert.ok(bash("cd - && rm -rf build"));
+    assert.ok(bash("cd && rm -rf build")); // 홈으로 이동 → 저장소 밖
+  });
+
   it("PowerShell", () => {
     assert.ok(ps("Remove-Item -Recurse -Force C:\\"));
     assert.ok(ps("Remove-Item -Recurse ..\\other"));

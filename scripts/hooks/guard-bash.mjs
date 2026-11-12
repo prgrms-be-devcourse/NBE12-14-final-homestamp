@@ -1,6 +1,7 @@
 // guard-bash: AI가 위험한 터미널 명령을 실행하기 직전에 막는다 (PreToolUse).
 // 사람이 터미널에서 직접 치는 명령은 막지 않는다.
-import { getCommand, relativeToRepo, resolvePath, runHook } from "./lib/input.mjs";
+import path from "node:path";
+import { getCommand, relativeToRepo, resolvePath, runHook, toNativePath } from "./lib/input.mjs";
 import { normalize, parseSegments, programName } from "./lib/shell.mjs";
 
 const MESSAGE = "이 명령은 팀 규칙상 막혀 있습니다. 필요하면 직접 실행하세요";
@@ -12,6 +13,8 @@ const SQL_RE = /\bdrop\s+(table|database|schema)\b|\btruncate\s+(table\s+)?["\w]
 const RM_PROGRAMS = new Set(["rm", "remove-item", "ri", "del", "erase", "rmdir", "rd"]);
 const PS_VALUE_PARAMS = new Set(["-filter", "-include", "-exclude", "-credential", "-stream"]);
 const SHORT_FORCE_RE = /^-[a-zA-Z]*f[a-zA-Z]*$/;
+const CD_PROGRAMS = new Set(["cd", "pushd", "chdir", "set-location", "sl"]);
+const UNKNOWN_RE = /[$`%]/;
 
 export function checkBash(input) {
   const posix = !/powershell/i.test(input.toolName);
@@ -22,8 +25,20 @@ export function checkBash(input) {
 function checkCommand(cmd, cwd, posix, depth) {
   if (!cmd || depth > 3) return null;
   const segments = parseSegments(cmd, { posix });
+  // cd를 따라가며 지금 위치를 기억한다 (cd back && rm -rf ../front/dist → back 기준).
+  // 괄호(서브셸) 안의 cd는 괄호가 끝나면 되돌린다. 위치를 알 수 없으면 null
+  let here = cwd;
+  let level = 0;
+  const saved = [];
   for (const seg of segments) {
-    const reason = checkSegment(normalize(seg), cwd, depth);
+    while (level < seg.depth) (saved.push(here), level++);
+    while (level > seg.depth) (here = saved.pop(), level--);
+    const parsed = normalize(seg);
+    if (CD_PROGRAMS.has(parsed.program)) {
+      here = nextCwd(parsed.args, here, posix);
+      continue;
+    }
+    const reason = checkSegment(parsed, here, depth);
     if (reason) return reason;
   }
   // SQL은 DB 클라이언트로 보낼 때만 본다 (grep truncate, 커밋 메시지 등은 통과)
@@ -104,11 +119,25 @@ function checkRm(program, args, viaXargs, cwd) {
   return null;
 }
 
+/** cd 다음 위치. 변수·`cd -`처럼 알 수 없으면 null */
+function nextCwd(args, here, posix) {
+  const target = args.find((a) => a === "-" || !a.startsWith("-"));
+  if (target === undefined) return posix ? resolvePath("~", here ?? ".") : here; // bash의 cd는 홈으로
+  if (target === "-" || UNKNOWN_RE.test(target)) return null;
+  if (here === null && !isAbsolute(target)) return null;
+  return resolvePath(target, here ?? ".");
+}
+
+function isAbsolute(p) {
+  return p === "~" || p.startsWith("~/") || path.isAbsolute(toNativePath(p));
+}
+
 function dangerousTarget(target, cwd) {
-  if (/[$`%]/.test(target)) return `삭제 대상이 변수라 확인할 수 없음: ${target}`;
+  if (UNKNOWN_RE.test(target)) return `삭제 대상이 변수라 확인할 수 없음: ${target}`;
   const glob = target.search(/[*?[]/);
   const base = glob >= 0 ? target.slice(0, glob) : target; // rm -rf * → 현재 폴더로 판단
-  const rel = relativeToRepo(resolvePath(base || ".", cwd));
+  if (cwd === null && !isAbsolute(base)) return `cd 위치를 알 수 없어 삭제 대상을 확인할 수 없음: ${target}`;
+  const rel = relativeToRepo(resolvePath(base || ".", cwd ?? "."));
   if (rel === null) return `저장소 밖 삭제: ${target}`;
   if (rel === "") return `저장소 루트 삭제: ${target}`;
   if (rel === ".git" || rel.startsWith(".git/")) return `.git 삭제: ${target}`;

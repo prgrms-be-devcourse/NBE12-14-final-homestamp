@@ -2,13 +2,17 @@
 // 완전한 셸 파서는 아니다. 따옴표 안의 글자를 명령으로 오해하지 않고,
 // &&, ||, ;, |, 줄바꿈, 괄호, 백틱으로 이어진 명령을 각각 보는 정도만 한다.
 
-/** @returns {string[][]} 명령 단위 토큰 배열 */
+/**
+ * @returns {string[][]} 명령 단위 토큰 배열. 각 배열의 depth = 괄호 깊이
+ * (`(cd x && ...)`, `$(...)` 안의 cd가 바깥 명령의 위치를 바꾸지 않게 하려고)
+ */
 export function parseSegments(cmd, { posix = true } = {}) {
   const segments = [];
   let tokens = [];
   let cur = "";
   let has = false;
   let quote = null;
+  let depth = 0;
   const esc = posix ? "\\" : "`"; // PowerShell은 백틱이 이스케이프
 
   const pushTok = () => {
@@ -18,7 +22,10 @@ export function parseSegments(cmd, { posix = true } = {}) {
   };
   const pushSeg = () => {
     pushTok();
-    if (tokens.length) segments.push(tokens);
+    if (tokens.length) {
+      tokens.depth = depth;
+      segments.push(tokens);
+    }
     tokens = [];
   };
 
@@ -47,6 +54,8 @@ export function parseSegments(cmd, { posix = true } = {}) {
     }
     if (c === "\n" || ";&|()".includes(c) || (posix && c === "`")) {
       pushSeg();
+      if (c === "(") depth++;
+      if (c === ")" && depth > 0) depth--;
       continue;
     }
     if (/\s/.test(c)) {
