@@ -17,6 +17,14 @@ import {
   VERSION_CONFLICT_MESSAGE,
 } from "@/lib/versions"
 import { sideText } from "@/lib/words"
+import {
+  assertCanReask,
+  newEvidence,
+  reaskWaitDays,
+  NEW_EVIDENCE_REQUIRED,
+  REASK_DAYS,
+} from "@/lib/reask"
+export { reaskWaitDays, NEW_EVIDENCE_REQUIRED, REASK_DAYS }
 
 // 고치기(상태와 규칙 G, decisions 2026-11-11): 도장(상대의 맞아요·보류·이견) 전에는 바로 고쳐지고,
 // 도장 뒤에는 무엇을 고치든 '고친 내용'으로 남아 상대가 확인해야 앞모습이 바뀌어요. 상대 미확인은 도장이 아니에요.
@@ -211,32 +219,6 @@ export function respondDefect(
       at: nowText(),
     },
   ]
-}
-// 다시 확인 요청(보충하고 다시 확인 요청·상황이 바뀌었어요)은 한 기록에 7일에 한 번(03 G '다시 확인 요청의 한도').
-export const REASK_DAYS = 7
-export function reaskWaitDays(reaskedAt?: string, now = Date.now()) {
-  if (!reaskedAt) return 0
-  const left = Date.parse(reaskedAt) + REASK_DAYS * 86_400_000 - now
-  return left > 0 ? Math.ceil(left / 86_400_000) : 0
-}
-function assertCanReask(reaskedAt: string | undefined, now: number) {
-  const days = reaskWaitDays(reaskedAt, now)
-  if (days > 0) throw new Error(`${days}일 뒤 다시 요청할 수 있어요.`)
-}
-// 다시 요청에는 새 근거가 하나 이상 있어야 해요(03 G: "같은 요청 반복 방지").
-// 이미 올린 사진, 이미 남긴 설명(원래 설명·이전 보충)과 같은 것은 새 근거로 치지 않아요.
-export const NEW_EVIDENCE_REQUIRED =
-  "새 사진이나 새 설명을 하나 이상 더해 주세요. 이미 남긴 사진이나 설명과 같은 것은 보충이 되지 않아요."
-function newEvidence(
-  data: { text: string; photos: string[] },
-  had: { texts: (string | undefined)[]; photos: string[] },
-) {
-  const norm = (t?: string) => (t ?? "").replace(/\s+/g, " ").trim()
-  const text = norm(data.text)
-  const photos = data.photos.filter((p) => !had.photos.includes(p))
-  const freshText = text && !had.texts.some((t) => norm(t) === text) ? text : ""
-  if (!freshText && !photos.length) throw new Error(NEW_EVIDENCE_REQUIRED)
-  return { text: freshText, photos }
 }
 // [보충하고 다시 확인 요청]: 기록한 쪽이 사진이나 설명을 하나 이상 더해 새 확인 요청을 보내요.
 export function supplementDefect(

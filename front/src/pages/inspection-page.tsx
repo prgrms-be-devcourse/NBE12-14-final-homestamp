@@ -31,6 +31,8 @@ import type {
 } from "@/data/demo"
 import {
   confirmItem,
+  respondItem,
+  supplementItem,
   confirmNoDefects,
   finishSoloInspection,
   inspectionStatus,
@@ -41,6 +43,14 @@ import {
 import { activeSettlementLink, sendSettlementLink } from "@/lib/workflows"
 import type { maskOf } from "@/lib/photo-privacy"
 import { sideName, sideText } from "@/lib/words"
+import { reaskWaitDays } from "@/lib/reask"
+import { hasAction, type InspectionAction } from "@/api/actions"
+import {
+  inspectionAvailableActions,
+  inspectionItemAvailableActions,
+} from "@/api/mock/inspection-actions"
+import { RespondButtons } from "@/components/common/respond-buttons"
+import { SupplementRequest } from "@/components/common/supplement-request"
 
 type Commit = (
   text: string,
@@ -75,7 +85,6 @@ export interface InspectionPageProps {
   setKind: (k: "in" | "out") => void
   detail: (id: string) => void
   copyShareLink: (kind: "inspection", id: string) => void
-  dispute: (type: "inspection", id: string) => void
   requestMoveInCheck: () => void
   inspectionAct: (
     text: string,
@@ -112,7 +121,6 @@ export function InspectionPage({
   setKind,
   detail,
   copyShareLink,
-  dispute,
   requestMoveInCheck,
   inspectionAct,
   itemMasks,
@@ -120,6 +128,13 @@ export function InspectionPage({
 }: InspectionPageProps) {
   const [missingOpen, setMissingOpen] = useState(false)
   const [settlePhone, setSettlePhone] = useState("")
+  // 버튼은 서버가 준 availableActions로만 그려요(08 0장 원칙 6). 서버가 연결되면 GET /api/inspections/{id} 응답 값을 그대로 써요.
+  const actions = inspectionAvailableActions(db, room, sessKind, role, {
+    readOnly,
+  })
+  const has = (a: InspectionAction) => hasAction(actions, a)
+  const itemActions = (i: Inspection) =>
+    inspectionItemAvailableActions(i, role, { readOnly })
   // 점검 하자 항목: 썸네일 + 지금 기록(제목·부위·설명·상태)만. 이견·사진 추가·고친 이력은 항목의 '경과'에서 펼쳐 봐요.
   // 입주 점검 항목 카드 겉모양(흰 카드 · 안쪽 여백). 안쪽 배치는 rec-item 규칙 그대로
   // 문서 9장 [반드시]: 빠뜨린 하자 버튼 바로 아래 ④ 안내 한 줄(살면서 생긴 하자는 점검이 아니라 수리 건). 입주 점검에서만, 수리 건을 만들 수 있을 때(거주 중)만 누를 수 있어요
@@ -179,37 +194,56 @@ export function InspectionPage({
           photos={splitWrong(i.photos, i.wrongPhotos).wrong}
           masks={itemMasks(i, true)}
         />
-        {!readOnly &&
-          i.author !== role &&
-          i.ack === "확인 대기" &&
-          !i.addRequest &&
-          !i.removed && (
-            <div className="actions">
-              <Button
-                size="sm"
-                onClick={() =>
-                  commit(
+        {hasAction(itemActions(i), "respond") && (
+          <RespondButtons
+            size="sm"
+            answered={
+              i.ack === "보충 요청"
+                ? "NEED_MORE"
+                : i.ack === "이견"
+                  ? "DISPUTE"
+                  : undefined
+            }
+            onRespond={(answer, reason) =>
+              answer === "ACK"
+                ? inspectionAct(
                     `${i.title} · 점검 확인 · 본 모습 ${i.version ?? 1}번`,
                     (d) => confirmItem(d, role, i.id, i.version ?? 1),
+                    i.id,
                   )
-                }
-              >
-                확인
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => dispute("inspection", i.id)}
-              >
-                이견
-              </Button>
-            </div>
-          )}
+                : inspectionAct(
+                    `${i.title} · 점검 ${answer === "NEED_MORE" ? "보충 요청" : "이견"} · ${reason}`,
+                    (d) =>
+                      respondItem(
+                        d,
+                        role,
+                        i.id,
+                        answer === "NEED_MORE" ? "보류" : "이견",
+                        reason,
+                      ),
+                    i.id,
+                  )
+            }
+          />
+        )}
+        {hasAction(itemActions(i), "supplement") && (
+          <SupplementRequest
+            waitDays={reaskWaitDays(i.reaskedAt)}
+            onSupplement={(data) =>
+              inspectionAct(
+                `${i.title} · 보충하고 다시 확인 요청${data.text ? ` · ${data.text}` : ""}${data.photos.length ? ` · 사진 ${data.photos.length}장` : ""}`,
+                (d) => supplementItem(d, role, i.id, data),
+                i.id,
+              )
+            }
+          />
+        )}
         <InspectionItemCorrections
           i={i}
           db={db}
           role={role}
           readOnly={readOnly}
+          actions={itemActions(i)}
           onAct={inspectionAct}
           history={
             i.disputes?.length ? (
@@ -329,7 +363,7 @@ export function InspectionPage({
         )
       })()}
       {/* 입주 점검 시작 · 입주일이 비어 있을 때(화면 기본 틀 9-1, INSP-2b): 입주일을 받아 저장과 시작을 한 번에. 받기 전에는 점검을 시작하지 않아요 */}
-      {needMoveInDate && !readOnly && (
+      {has("start") && (
         <Card className="mb-5 min-w-0 gap-3 rounded-[18px] border border-turn-line bg-turn-soft py-4 shadow-none ring-0">
           <CardContent className="px-5 max-md:px-4">
             <form
@@ -388,26 +422,26 @@ export function InspectionPage({
                   ? "점검 완료 · 잠김 · 하자 기록 없음"
                   : "점검 완료 · 잠김"}
               </Status>
-              {!readOnly && (
+              {has("items") && (
                 <Button variant="outline" onClick={() => setMissingOpen(true)}>
-                  빠진 하자 추가
+                  <Plus />
+                  빠뜨린 하자 더하기
                 </Button>
               )}
-              {!readOnly && missingHint}
+              {has("items") && missingHint}
             </div>
           ) : moveIn === "확인 요청" && !moveInMine ? (
-            !readOnly && (
+            has("items") && (
               <div className="flex flex-col items-end gap-1">
                 <Button variant="outline" onClick={() => setMissingOpen(true)}>
-                  빠진 하자 추가 요청
+                  <Plus />
+                  빠뜨린 하자 더하기
                 </Button>
                 {missingHint}
               </div>
             )
           ) : (
-            !readOnly &&
-            moveInMine &&
-            !needMoveInDate && (
+            has("items") && (
               <Button
                 variant="outline"
                 onClick={() => {
@@ -427,27 +461,22 @@ export function InspectionPage({
         {/* 상태 글은 위 점검 머리에 있어요. 여기에는 버튼과 안내만 */}
         {
           <div className="mb-4 flex flex-wrap items-center gap-2 empty:hidden [&>small]:basis-full [&>small]:rounded-[12px] [&>small]:bg-soft [&>small]:px-3.5 [&>small]:py-2.5">
-            {!readOnly &&
-              ((moveIn === "없음" && !needMoveInDate) ||
-                (moveIn === "작성 중" && moveInMine)) && (
-                <Button onClick={requestMoveInCheck}>점검 확인 요청</Button>
-              )}
-            {!readOnly &&
-              room.connection === "연결 전" &&
-              ((moveIn === "없음" && !needMoveInDate) ||
-                (moveIn === "작성 중" && moveInMine)) && (
-                <Button
-                  variant={page === "inspection" ? "link" : "outline"}
-                  onClick={() =>
-                    commit(
-                      `${kindLabel(sessKind)} 점검 혼자 마치기 · 혼자 남긴 기록(상대 없음)`,
-                      (d) => finishSoloInspection(d, roomId, sessKind, role),
-                    )
-                  }
-                >
-                  혼자 마치기
-                </Button>
-              )}
+            {has("request-confirm") && (
+              <Button onClick={requestMoveInCheck}>점검 확인 요청</Button>
+            )}
+            {has("finish-alone") && (
+              <Button
+                variant={page === "inspection" ? "link" : "outline"}
+                onClick={() =>
+                  commit(
+                    `${kindLabel(sessKind)} 점검 혼자 마치기 · 혼자 남긴 기록(상대 없음)`,
+                    (d) => finishSoloInspection(d, roomId, sessKind, role),
+                  )
+                }
+              >
+                혼자 마치기
+              </Button>
+            )}
             {session?.soloLocked && (
               <small className="muted">
                 상대 없이 혼자 마친 기록이에요. 상대가 연결되면 확인 요청이 한
@@ -468,21 +497,18 @@ export function InspectionPage({
                 {moveIn === "없음" ? " 먼저 작성한 쪽이 기준 기록을 써요." : ""}
               </small>
             )}
-            {!readOnly &&
-              moveIn === "확인 요청" &&
-              session?.noDefects &&
-              !moveInMine && (
-                <Button
-                  onClick={() =>
-                    commit(
-                      `${kindLabel(sessKind)} 점검 · 하자 기록 없음 확인`,
-                      (d) => confirmNoDefects(d, roomId, sessKind, role),
-                    )
-                  }
-                >
-                  하자 기록 없음 확인
-                </Button>
-              )}
+            {has("confirm-all") && session?.noDefects && (
+              <Button
+                onClick={() =>
+                  commit(
+                    `${kindLabel(sessKind)} 점검 · 하자 기록 없음 확인`,
+                    (d) => confirmNoDefects(d, roomId, sessKind, role),
+                  )
+                }
+              >
+                하자 기록 없음 확인
+              </Button>
+            )}
             {moveIn === "확인 요청" && session?.noDefects && (
               <small className="muted">
                 {moveInMine
@@ -494,7 +520,7 @@ export function InspectionPage({
               <small className="muted">
                 {moveInMine
                   ? "상대가 항목마다 확인·이견을 남기면 점검이 잠겨요. 하자는 이제 고치기로 덧붙이고, 부위 사진은 계속 올릴 수 있어요."
-                  : "항목마다 확인·이견을 남기거나 ‘남은 항목 모두 확인’을 눌러 주세요. 빠진 하자는 [빠진 하자 추가]로 덧붙여요."}
+                  : "항목마다 확인·이견을 남기거나 ‘남은 항목 모두 확인’을 눌러 주세요. 빠진 하자는 [+ 빠뜨린 하자 더하기]로 더해요."}
               </small>
             )}
           </div>
@@ -599,16 +625,18 @@ export function InspectionPage({
 
         {!readOnly && (
           <div className="actions mt-5">
-            <ConfirmAllItems
-              items={inspectionItems}
-              db={db}
-              role={role}
-              onAct={inspectionAct}
-            />
+            {has("confirm-all") && !session?.noDefects && (
+              <ConfirmAllItems
+                items={inspectionItems}
+                db={db}
+                role={role}
+                onAct={inspectionAct}
+              />
+            )}
             {inspectionLocked && (
               <small className="muted">
-                잠긴 점검에는 고치기만 덧붙여요. 빠진 하자는 ‘빠진 하자 추가’,
-                기존 항목의 고치기와 삭제 요청은 각 항목 카드에서 해요.
+                잠긴 점검의 항목은 고치기로 바꿔요. 빠진 하자는 ‘빠뜨린 하자
+                더하기’, 기존 항목의 고치기와 삭제 요청은 각 항목 카드에서 해요.
               </small>
             )}
           </div>

@@ -32,6 +32,7 @@ import {
   withdraw,
 } from "@/lib/inspection-rules"
 import { sideText } from "@/lib/words"
+import { hasAction, type InspectionItemAction } from "@/api/actions"
 import { Fold } from "@/components/fold"
 import { MaskedPhotoNotes, PhotoManageList } from "@/components/photo-masks"
 import { maskOf, maskPhoto, objectToMask } from "@/lib/photo-privacy"
@@ -126,6 +127,7 @@ export function InspectionItemCorrections({
   onAct,
   history,
   onShare,
+  actions,
 }: {
   i: Inspection
   db: DemoState
@@ -135,6 +137,8 @@ export function InspectionItemCorrections({
   onAct: OnInspectionAct
   history?: ReactNode
   onShare?: () => void
+  // 이 항목에서 서버가 준 지금 누를 수 있는 행동(availableActions)
+  actions: readonly InspectionItemAction[]
 }) {
   const [mode, setMode] = useState<"edit" | "photos" | "reject" | null>(null)
   const [target, setTarget] = useState("")
@@ -151,12 +155,8 @@ export function InspectionItemCorrections({
     setError("")
     onAct(text, update, i.id)
   }
-  const canEdit =
-    !readOnly &&
-    !guest &&
-    i.author === role &&
-    !i.removed &&
-    (!i.addRequest || i.addRequest.status === "반영")
+  const canEdit = hasAction(actions, "corrections")
+  const canAddPhotos = hasAction(actions, "photos")
   const draft = i.publication === "draft"
   // 바로 고쳐지는 때: 작성 중이거나, 상대가 이 항목에 아직 답하지 않았고 점검도 잠기기 전(상태와 규칙 G·H)
   const direct = draft || !isItemStamped(db, i)
@@ -281,6 +281,10 @@ export function InspectionItemCorrections({
                     setMode("edit")
                   },
                 },
+              ]
+            : []),
+          ...(canAddPhotos
+            ? [
                 {
                   key: "photos",
                   label: "사진 추가",

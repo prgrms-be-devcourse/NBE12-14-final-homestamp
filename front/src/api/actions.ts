@@ -22,5 +22,20 @@ export type PaymentAction =
   | "supplement" // 보충하고 다시 확인 요청
   | "corrections" // 금액 고치기
 
+// 점검 하나(S-14, GET /api/inspections/{id}). 입주일이 비어 있으면 시작할 때 입주일을 함께 보내요(POST /api/rooms/{id}/inspections).
+export type InspectionAction =
+  | "start" // 입주일을 받아 점검 시작
+  | "items" // 하자 항목 남기기 · 빠뜨린 하자 더하기(POST /api/inspections/{id}/items)
+  | "request-confirm" // 확인 요청
+  | "confirm-all" // 남은 항목 모두 맞아요(하자 기록 없음 확인 포함)
+  | "finish-alone" // 상대 없이 혼자 마치기(06 4장 API 표에는 아직 없음)
+
+// 점검 항목 하나(POST /api/inspection-items/{id}/respond · /supplement, POST /api/corrections)
+export type InspectionItemAction =
+  | "respond" // 항목 응답(맞아요 / 아니에요 · 더 필요해요)
+  | "supplement" // 보충하고 다시 확인 요청
+  | "corrections" // 고치기
+  | "photos" // 사진 추가
+
 export const hasAction = <A extends string>(list: readonly A[], a: A) =>
   list.includes(a)

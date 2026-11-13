@@ -16,6 +16,7 @@ import {
   VERSION_CONFLICT_MESSAGE,
 } from "@/lib/versions"
 import { sideText } from "@/lib/words"
+import { assertCanReask, newEvidence } from "@/lib/reask"
 
 // 점검(상태와 규칙 H)과 정정(G). 잠긴 점검에는 정정만 덧붙이고, 원래 기록은 지우지 않습니다.
 // 잠금 판단: 처음 점검 항목만 셉니다. 정정으로 추가 요청한 항목과 정정으로 삭제된 항목은 잠금 판단에서 뺍니다.
@@ -25,7 +26,9 @@ export function isInspectionLocked(items: Inspection[]) {
   const base = lockItems(items)
   return (
     base.length > 0 &&
-    base.every((i) => ["확인됨", "이견", "상대 미확인"].includes(i.ack))
+    base.every((i) =>
+      ["확인됨", "보충 요청", "이견", "상대 미확인"].includes(i.ack),
+    )
   )
 }
 const item = (d: DemoState, id: string) => {
@@ -38,7 +41,8 @@ const item = (d: DemoState, id: string) => {
 // 바로 고쳐지고 이력만 남아요. 도장 뒤(그 항목에 상대가 맞아요·보류·이견으로 답했거나 점검이 잠김)에는
 // 칸마다 '고친 내용'으로 남아 상대가 확인해야 바뀌어요. 같은 칸을 다시 고치면 이전 고친 내용은 '대체됨'으로 닫혀 이력에 남아요.
 export function isItemStamped(d: DemoState, i: Inspection) {
-  if (i.ack === "확인됨" || i.ack === "이견") return true
+  if (i.ack === "확인됨" || i.ack === "보충 요청" || i.ack === "이견")
+    return true
   const room = d.rooms.find((r) => r.id === i.roomId)
   if (!room) return false
   const items = d.inspections.filter(
@@ -58,7 +62,10 @@ function apply(
   if (["제목", "설명", "부위"].includes(c.field)) {
     bumpVersion(i)
     // 도장 뒤 이견·미확인이던 항목의 내용이 바뀌면: 이전 이견은 이력(disputes·이 고친 내용)에 남기고, 새 내용은 다시 확인을 받아요.
-    if (mode === "상대 확인" && (i.ack === "이견" || i.ack === "상대 미확인")) {
+    if (
+      mode === "상대 확인" &&
+      ["이견", "보충 요청", "상대 미확인"].includes(i.ack)
+    ) {
       const last = i.disputes?.at(-1)
       c.priorDispute = last
         ? `${sideText(last.by)} 이견 · ${last.reason} · ${last.at}`
@@ -294,20 +301,7 @@ export function answer(
     throw new Error("상대가 고친 확인 대기 내용에만 답할 수 있어요.")
   c.decidedBy = role
   if (accept) {
-    // 잠긴 점검은 잠긴 채로 둬요: 반영으로 항목이 다시 확인 대기가 되어도 점검 잠금은 풀리지 않게 상태를 고정해요.
-    const room = d.rooms.find((r) => r.id === i.roomId)
-    const m = room && sessionOf(room, i.kind)
-    if (
-      room &&
-      m &&
-      m.status !== "잠김" &&
-      inspectionStatus(
-        room,
-        d.inspections.filter((x) => x.roomId === i.roomId && x.kind === i.kind),
-        i.kind,
-      ) === "잠김"
-    )
-      m.status = "잠김"
+    pinLock(d, i)
     apply(i, c)
   } else {
     if (!reason.trim()) throw new Error("거절 사유를 입력해 주세요.")
@@ -347,7 +341,31 @@ export function confirmableItems(items: Inspection[], role: Role) {
       !i.solo,
   )
 }
+// 잠긴 점검은 잠긴 채로 둬요: 항목이 다시 확인 대기가 되어도(고친 내용 반영, 보충하고 다시 요청) 점검 잠금은 풀리지 않게 상태를 고정해요.
+function pinLock(d: DemoState, i: Inspection) {
+  const room = d.rooms.find((r) => r.id === i.roomId)
+  const m = room && sessionOf(room, i.kind)
+  if (
+    room &&
+    m &&
+    m.status !== "잠김" &&
+    inspectionStatus(
+      room,
+      d.inspections.filter((x) => x.roomId === i.roomId && x.kind === i.kind),
+      i.kind,
+    ) === "잠김"
+  )
+    m.status = "잠김"
+}
+// 응답할 수 있는 항목: 그 항목을 쓰지 않은 쪽, 확인 요청으로 보인 뒤, 빠진 하자 추가가 확인 대기가 아님, 지워지지 않음
+const answerable = (i: Inspection, role: Role) =>
+  i.author !== role &&
+  i.publication !== "draft" &&
+  !i.solo &&
+  !i.removed &&
+  (!i.addRequest || i.addRequest.status === "반영")
 // 항목 하나 확인: 본 모습 번호가 지금과 다르면 다시 보게 해요(REP-7d·7j).
+// 보류·이견·확인 없음이던 항목도 정산 완료 전까지 맞아요로 답할 수 있어요(03 G '나중에 답 바꾸기', 03 H '잠긴 뒤').
 export function confirmItem(
   d: DemoState,
   role: Role,
@@ -355,11 +373,61 @@ export function confirmItem(
   seenVersion?: number,
 ) {
   const i = item(d, id)
-  if (i.author === role || i.ack !== "확인 대기")
+  if (!answerable(i, role) || i.ack === "확인됨")
     throw new Error("확인할 수 없는 항목이에요.")
   assertSeenVersion(i, seenVersion)
+  const prev = i.disputes?.filter((x) => !x.closed).at(-1)
+  if (prev) prev.closed = true
   i.ack = "확인됨"
   i.wait = undefined
+}
+// 항목 응답 [아니에요 · 더 필요해요]: 보류(더 필요한 게 있어요) 또는 이견(사실과 달라요), 사유 필수(INSP-1)
+export function respondItem(
+  d: DemoState,
+  role: Role,
+  id: string,
+  type: "보류" | "이견",
+  reason: string,
+) {
+  const i = item(d, id)
+  if (!answerable(i, role)) throw new Error("답할 수 없는 항목이에요.")
+  if (i.ack === "확인됨")
+    throw new Error("맞아요로 답한 기록은 되돌리지 않아요.")
+  if (!reason.trim()) throw new Error("사유를 입력해 주세요.")
+  pinLock(d, i)
+  i.ack = type === "보류" ? "보충 요청" : "이견"
+  i.wait = undefined
+  i.disputes = [
+    ...(i.disputes || []),
+    { by: role, kind: type, reason: reason.trim(), at: nowText() },
+  ]
+}
+// [보충하고 다시 확인 요청]: 그 항목을 쓴 쪽이 새 사진이나 설명을 더해 다시 확인을 요청해요. 잠긴 뒤에도 돼요(08 9장).
+export function supplementItem(
+  d: DemoState,
+  role: Role,
+  id: string,
+  data: { text: string; photos: string[] },
+  now = Date.now(),
+) {
+  const i = item(d, id)
+  if (i.author !== role) throw new Error("보충은 그 항목을 쓴 쪽이 해요.")
+  if (i.ack !== "보충 요청" && i.ack !== "이견")
+    throw new Error("보충 요청이나 이견을 받은 항목에만 다시 요청할 수 있어요.")
+  const { text, photos } = newEvidence(data, {
+    texts: [i.description, ...(i.supplements || []).map((s) => s.text)],
+    photos: i.photos,
+  })
+  assertCanReask(i.reaskedAt, now)
+  pinLock(d, i)
+  i.disputes = i.disputes?.map((x) => ({ ...x, closed: true }))
+  i.supplements = [
+    ...(i.supplements || []),
+    { text, photos: photos.length, at: nowText() },
+  ]
+  i.photos = [...i.photos, ...photos]
+  i.ack = "확인 대기"
+  i.reaskedAt = new Date(now).toISOString()
 }
 export function confirmAll(
   d: DemoState,

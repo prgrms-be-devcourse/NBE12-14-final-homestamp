@@ -101,7 +101,6 @@ import { parseMoney } from "@/lib/money"
 import {
   canAccessRoom,
   canSeeInspection,
-  respondToOffer,
   invitationMatches,
   acceptInvitation,
   declineInvitation,
@@ -159,7 +158,6 @@ type Modal =
   | "settlement"
   | "payment"
   | "note"
-  | "dispute"
   | "account"
   | "after"
   | "connect"
@@ -364,10 +362,6 @@ function HomeStampApp({
     update: (d: DemoState) => void
   } | null>(null)
   const [shareChoice, setShareChoice] = useState<"now" | "later" | null>(null)
-  const [target, setTarget] = useState<{
-    type: "repair" | "money" | "inspection" | "settlement" | "notyet"
-    id: string
-  }>({ type: "repair", id: "leak" })
   // 없는 호실 주소면 첫 호실 화면 대신 '찾을 수 없는 기록'을 보여 줘요(남의 호실도 같은 응답, 명세 4-3).
   const routeRoom = db.rooms.find((r) => r.id === roomId)
   const room = routeRoom ?? NO_ROOM
@@ -754,10 +748,6 @@ function HomeStampApp({
     const [z, p] = prev.zone.split(" · ")
     setZone(partGroups[z] ? z : "기타")
     setPart(p || "기타")
-  }
-  function dispute(type: typeof target.type, id: string) {
-    setTarget({ type, id })
-    open("dispute")
   }
   function patchRepair(text: string, update: (r: Repair) => void) {
     commit(
@@ -1270,40 +1260,6 @@ function HomeStampApp({
           ]
         },
       )
-    } else if (modal === "dispute") {
-      commit(`이견 · ${text("description")}`, (d) => {
-        if (target.type === "inspection") {
-          const it = d.inspections.find((i) => i.id === target.id)!
-          it.ack = "이견"
-          it.disputes = [
-            ...(it.disputes || []),
-            {
-              by: role,
-              reason: text("description"),
-              at: new Date().toLocaleString("ko-KR", {
-                timeZone: "Asia/Seoul",
-              }),
-            },
-          ]
-        } else if (target.type === "settlement")
-          d.settlements.find((s) => s.id === target.id)!.status = "이견"
-        else {
-          const r = d.repairs.find((r) => r.id === target.id)!
-          if (target.type === "money") {
-            respondToOffer(r.proposal!, role, false, text("description"))
-          } else if (target.type === "notyet") r.closeBy = undefined
-          else r.ack = "이견"
-          r.notes = [
-            ...(r.notes || []),
-            {
-              text: text("description"),
-              by: role,
-              kind: target.type === "money" ? "비용 이견" : "하자 이견",
-              at: new Date().toLocaleString("ko-KR"),
-            },
-          ]
-        }
-      })
     }
   }
   // 사진 필수: 입주 부위 사진, 하자 등록(수리 전 사진), 수리 후 기록
@@ -1566,6 +1522,7 @@ function HomeStampApp({
                     role={role}
                     readOnly
                     guest
+                    actions={[]}
                     onAct={inspectionAct}
                   />
                   <p className="muted">
@@ -2249,7 +2206,6 @@ function HomeStampApp({
                       setKind={setKind}
                       detail={detail}
                       copyShareLink={copyShareLink}
-                      dispute={dispute}
                       requestMoveInCheck={requestMoveInCheck}
                       inspectionAct={inspectionAct}
                       itemMasks={itemMasks}
@@ -2481,11 +2437,9 @@ function HomeStampApp({
                                 ? "정산 항목 추가"
                                 : modal === "payment"
                                   ? "지불 사실 남기기"
-                                  : modal === "dispute"
-                                    ? "이견 보내기"
-                                    : modal === "after"
-                                      ? "수리 후 사진 기록"
-                                      : "글 수정"}
+                                  : modal === "after"
+                                    ? "수리 후 사진 기록"
+                                    : "글 수정"}
             </DialogTitle>
             <DialogDescription>
               {basicPhotoMode
@@ -3178,31 +3132,19 @@ function HomeStampApp({
                 />
               </div>
             )}
-            {(modal === "dispute" || modal === "after") && (
+            {modal === "after" && (
               <>
                 <div className="field">
-                  <label htmlFor="description">
-                    {modal === "dispute" ? "이견 사유 · 필수" : "보충 설명"}
-                  </label>
+                  <label htmlFor="description">보충 설명</label>
                   <Textarea
                     id="description"
                     name="description"
-                    placeholder={
-                      modal === "dispute"
-                        ? "다르게 확인한 내용과 이유를 적어 주세요."
-                        : "이전 기록에 덧붙일 내용을 적어 주세요."
-                    }
+                    placeholder="이전 기록에 덧붙일 내용을 적어 주세요."
                     required
                     maxLength={2000}
                   />
                 </div>
-                {modal === "after" && fileField}
-                {modal === "dispute" && target.type === "money" && (
-                  <Notice>
-                    이견을 보낸 뒤 ‘새 부담 제안’으로 다른 안을 제안할 수
-                    있어요.
-                  </Notice>
-                )}
+                {fileField}
               </>
             )}
             {formError && (

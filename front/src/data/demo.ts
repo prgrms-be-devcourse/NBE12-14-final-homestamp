@@ -215,10 +215,14 @@ export interface Repair {
   payments?: Payment[]
 }
 // 점검 하자 항목의 이견 기록(누가·사유·시각). 원본 기록은 그대로 두고 덧붙입니다.
+// kind: 점검 항목 응답의 보류(더 필요한 게 있어요)·이견(사실과 달라요). 없으면 이전 방식의 이견이에요.
+// closed: 기록한 쪽이 보충하고 다시 확인을 요청해 이 응답이 지난 것이 됨(이력으로 남아요)
 export interface InspectionDispute {
   by: Role
   reason: string
   at: string
+  kind?: "보류" | "이견"
+  closed?: boolean
 }
 // 개인정보 이유로 가린 사진(팀 회의 결정): 삭제 기능은 두지 않고, 올린 사람이 가리면 흐리게 보이며 "개인정보 이유로 가림"이 남아요.
 // 되돌릴 수 없고, 상대는 가린 데에 이견을 덧붙일 수 있어요. key: 수리 전 b:<순번>, 수리 후 a:<기록 id>:<순번>, 점검 항목 <순번>
@@ -256,6 +260,9 @@ export interface Inspection {
   addRequest?: FactCorrection<string>
   // 점검 확인 요청의 기다림 타이머(시연)
   wait?: "재통지" | "미확인"
+  // 마지막 [보충하고 다시 확인 요청] 시각(ISO, 한 항목에 7일에 한 번)과 보충 이력
+  reaskedAt?: string
+  supplements?: { text: string; photos: number; at: string }[]
 }
 // ERD photo.inspection_id + room_part_id + MOVE_IN/MOVE_OUT에 대응하는 목업.
 // 하자 항목과 달리 확인 상태를 갖지 않습니다. zone은 기존 화면의 부위 키입니다.
