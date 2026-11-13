@@ -134,7 +134,7 @@ CREATE TABLE room_record (
 
 CREATE TABLE party (
                        id                  uuid PRIMARY KEY,
-                       room_record_id      uuid        NOT NULL REFERENCES room_record (id),
+                       room_record_id      uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
                        side                varchar(10) NOT NULL CHECK (side IN ('TENANT', 'LANDLORD')),
                        member_id           uuid REFERENCES member (id),
                        invite_phone        varchar(20),                         -- 문자를 보내야 해서 평문, 연결·수신 거부·탈퇴 때 NULL
@@ -154,7 +154,7 @@ CREATE TABLE party (
 
 CREATE TABLE room_part (
                            id              uuid PRIMARY KEY,
-                           room_record_id  uuid        NOT NULL REFERENCES room_record (id),
+                           room_record_id  uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
                            template_id     uuid REFERENCES part_template (id),    -- 직접 추가한 부위면 NULL
                            zone            varchar(30) NOT NULL,
                            name            varchar(50) NOT NULL,
@@ -170,7 +170,7 @@ CREATE TABLE room_part (
 -- =========================================================
 CREATE TABLE repair_case (
                              id                    uuid PRIMARY KEY,
-                             room_record_id        uuid        NOT NULL REFERENCES room_record (id),
+                             room_record_id        uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
                              current_content_id    uuid        NOT NULL,             -- FK는 14절(지연 검사)
                              confirmed_content_id  uuid,                             -- 같이 확인한 모습, FK는 14절
                              status                varchar(20) NOT NULL CHECK (status IN ('NOT_STARTED', 'IN_PROGRESS', 'CLOSE_WAIT', 'DONE')),
@@ -193,7 +193,7 @@ CREATE TABLE repair_case (
 
 CREATE TABLE repair_content (
                                 id               uuid PRIMARY KEY,
-                                room_record_id   uuid         NOT NULL REFERENCES room_record (id),
+                                room_record_id   uuid         NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
                                 repair_case_id   uuid         NOT NULL,
                                 no               int          NOT NULL CHECK (no >= 1),
   room_part_id     uuid         NOT NULL,
@@ -210,7 +210,7 @@ CREATE TABLE repair_content (
 -- =========================================================
 CREATE TABLE inspection (
                             id              uuid PRIMARY KEY,
-                            room_record_id  uuid        NOT NULL REFERENCES room_record (id),
+                            room_record_id  uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
                             kind            varchar(10) NOT NULL CHECK (kind IN ('MOVE_IN', 'MOVE_OUT')),
                             author_side     varchar(10) NOT NULL CHECK (author_side IN ('TENANT', 'LANDLORD')),
                             status          varchar(10) NOT NULL CHECK (status IN ('DRAFT', 'REQUESTED', 'LOCKED')),
@@ -227,7 +227,7 @@ CREATE TABLE inspection (
 
 CREATE TABLE inspection_item (
                                  id                    uuid PRIMARY KEY,
-                                 room_record_id        uuid        NOT NULL REFERENCES room_record (id),
+                                 room_record_id        uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
                                  inspection_id         uuid        NOT NULL,
                                  current_version_id    uuid        NOT NULL,             -- FK는 14절(지연 검사)
                                  confirmed_version_id  uuid,                             -- FK는 14절
@@ -241,7 +241,7 @@ CREATE TABLE inspection_item (
 
 CREATE TABLE inspection_item_version (
                                          id                  uuid PRIMARY KEY,
-                                         room_record_id      uuid        NOT NULL REFERENCES room_record (id),
+                                         room_record_id      uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
                                          inspection_item_id  uuid        NOT NULL,
                                          no                  int         NOT NULL CHECK (no >= 1),
   room_part_id        uuid        NOT NULL,
@@ -256,7 +256,7 @@ CREATE TABLE inspection_item_version (
 -- =========================================================
 CREATE TABLE settlement (
                             id                           uuid PRIMARY KEY,
-                            room_record_id               uuid        NOT NULL UNIQUE REFERENCES room_record (id),
+                            room_record_id               uuid        NOT NULL UNIQUE REFERENCES room_record (id) ON DELETE CASCADE,
                             opened_at                    timestamptz NOT NULL,
                             deposit_status               varchar(20) NOT NULL CHECK (deposit_status IN ('NOT_ENTERED', 'PENDING', 'AGREED', 'DISPUTE')),
                             current_deposit_proposal_id  uuid,                      -- FK는 14절
@@ -268,7 +268,7 @@ CREATE TABLE settlement (
 
 CREATE TABLE settlement_item (
                                  id                   uuid PRIMARY KEY,
-                                 room_record_id       uuid        NOT NULL REFERENCES room_record (id),
+                                 room_record_id       uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
                                  settlement_id        uuid        NOT NULL,
                                  source               varchar(10) NOT NULL CHECK (source IN ('REPAIR', 'MANUAL')),
                                  repair_case_id       uuid,
@@ -284,7 +284,7 @@ CREATE TABLE settlement_item (
 
 CREATE TABLE settlement_transfer (
                                      id                    uuid PRIMARY KEY,
-                                     room_record_id        uuid        NOT NULL REFERENCES room_record (id),
+                                     room_record_id        uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
                                      settlement_id         uuid        NOT NULL,
                                      direction             varchar(10) NOT NULL CHECK (direction IN ('REFUND', 'EXTRA')),
                                      current_version_id    uuid        NOT NULL,             -- FK는 14절(지연 검사)
@@ -300,7 +300,7 @@ CREATE TABLE settlement_transfer (
 
 CREATE TABLE settlement_transfer_version (
                                              id                      uuid PRIMARY KEY,
-                                             room_record_id          uuid        NOT NULL REFERENCES room_record (id),
+                                             room_record_id          uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
                                              settlement_transfer_id  uuid        NOT NULL,
                                              no                      int         NOT NULL CHECK (no >= 1),
   amount                  bigint      NOT NULL CHECK (amount >= 0),
@@ -315,7 +315,7 @@ CREATE TABLE settlement_transfer_version (
 -- =========================================================
 CREATE TABLE payment (
                          id                    uuid PRIMARY KEY,
-                         room_record_id        uuid        NOT NULL REFERENCES room_record (id),
+                         room_record_id        uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
                          repair_case_id        uuid        NOT NULL,
                          current_version_id    uuid        NOT NULL,             -- FK는 14절(지연 검사)
                          confirmed_version_id  uuid,                             -- FK는 14절
@@ -328,7 +328,7 @@ CREATE TABLE payment (
 
 CREATE TABLE payment_version (
                                  id                uuid PRIMARY KEY,
-                                 room_record_id    uuid        NOT NULL REFERENCES room_record (id),
+                                 room_record_id    uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
                                  payment_id        uuid        NOT NULL,
                                  no                int         NOT NULL CHECK (no >= 1),
   payer_kind        varchar(20) NOT NULL CHECK (payer_kind IN ('TENANT', 'LANDLORD', 'THIRD_PARTY')),
@@ -346,7 +346,7 @@ CREATE TABLE payment_version (
 
 CREATE TABLE proposal (
                           id                  uuid PRIMARY KEY,
-                          room_record_id      uuid        NOT NULL REFERENCES room_record (id),
+                          room_record_id      uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
                           repair_case_id      uuid,       -- 부담
                           settlement_item_id  uuid,   -- 정산 항목 금액·제외
                           settlement_id       uuid,        -- 보증금
@@ -364,7 +364,7 @@ CREATE TABLE proposal (
 
 CREATE TABLE proposal_line (
                                id                 uuid PRIMARY KEY,
-                               room_record_id     uuid        NOT NULL REFERENCES room_record (id),
+                               room_record_id     uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
                                proposal_id        uuid        NOT NULL,
                                line_kind          varchar(20) NOT NULL CHECK (line_kind IN ('TENANT', 'LANDLORD', 'THIRD_PARTY', 'DEDUCT', 'ADD', 'DEPOSIT')),
                                third_party_label  varchar(30),
@@ -378,7 +378,7 @@ CREATE TABLE proposal_line (
 -- =========================================================
 CREATE TABLE link (
                       id                   uuid PRIMARY KEY,
-                      room_record_id       uuid         NOT NULL REFERENCES room_record (id),
+                      room_record_id       uuid         NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
                       kind                 varchar(20)  NOT NULL CHECK (kind IN ('INVITE', 'SETTLEMENT_INVITE')),
                       party_id             uuid         NOT NULL,
                       repair_case_id       uuid,    -- 공유한 기록(없으면 호실 초대 화면)
@@ -399,7 +399,7 @@ CREATE TABLE link (
 -- =========================================================
 CREATE TABLE response_request (
                                   id                      uuid PRIMARY KEY,
-                                  room_record_id          uuid        NOT NULL REFERENCES room_record (id),
+                                  room_record_id          uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
                                   kind                    varchar(30) NOT NULL CHECK (kind IN (
                                                                                                'DEFECT_CONFIRM', 'SITUATION_CHECK', 'CORRECTION_CONFIRM', 'AMOUNT_CONFIRM',
                                                                                                'PROPOSAL', 'CLOSE_CONFIRM', 'INSPECTION_CONFIRM', 'RECEIPT_CONFIRM',
@@ -438,7 +438,7 @@ CREATE TABLE response_request (
 -- =========================================================
 CREATE TABLE cause_note (
                             id              uuid PRIMARY KEY,
-                            room_record_id  uuid         NOT NULL REFERENCES room_record (id),
+                            room_record_id  uuid         NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
                             repair_case_id  uuid         NOT NULL,
                             side            varchar(10)  NOT NULL CHECK (side IN ('TENANT', 'LANDLORD')),
                             text            text         NOT NULL,
@@ -450,7 +450,7 @@ CREATE TABLE cause_note (
 
 CREATE TABLE progress_note (
                                id                  uuid PRIMARY KEY,
-                               room_record_id      uuid        NOT NULL REFERENCES room_record (id),
+                               room_record_id      uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
                                repair_case_id      uuid        NOT NULL,
                                side                varchar(10) NOT NULL CHECK (side IN ('TENANT', 'LANDLORD')),
                                text                text        NOT NULL,
@@ -461,7 +461,7 @@ CREATE TABLE progress_note (
 
 CREATE TABLE progress_note_response (
                                         id                uuid PRIMARY KEY,
-                                        room_record_id    uuid        NOT NULL REFERENCES room_record (id),
+                                        room_record_id    uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
                                         progress_note_id  uuid        NOT NULL UNIQUE,  -- 지금 답 하나
                                         side              varchar(10) NOT NULL CHECK (side IN ('TENANT', 'LANDLORD')),
                                         answer            varchar(10) NOT NULL CHECK (answer IN ('ACK', 'NEED_MORE', 'DISPUTE')),
@@ -473,7 +473,7 @@ CREATE TABLE progress_note_response (
 
 CREATE TABLE correction_request (
                                     id                      uuid PRIMARY KEY,
-                                    room_record_id          uuid         NOT NULL REFERENCES room_record (id),
+                                    room_record_id          uuid         NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
                                     field                   varchar(40)  NOT NULL,
                                     new_value               jsonb        NOT NULL,
                                     base_version_id         uuid,                           -- 그때 도장 찍힌 판(다형 참조라 FK 없음)
@@ -503,7 +503,7 @@ CREATE TABLE correction_request (
 -- =========================================================
 CREATE TABLE photo (
                        id                      uuid PRIMARY KEY,
-                       room_record_id          uuid         NOT NULL REFERENCES room_record (id),
+                       room_record_id          uuid         NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
                        repair_case_id          uuid,
                        inspection_item_id      uuid,
                        inspection_id           uuid,       -- 부위 사진(하자 아님)
@@ -532,7 +532,7 @@ CREATE TABLE photo (
 
 CREATE TABLE photo_visibility (
                                   photo_id        uuid PRIMARY KEY,
-                                  room_record_id  uuid        NOT NULL REFERENCES room_record (id),
+                                  room_record_id  uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
                                   hidden_on_link  boolean     NOT NULL DEFAULT false,
                                   marked_wrong_at timestamptz,
                                   erased_at       timestamptz,                            -- 한 번 채우면 되돌리지 않음
@@ -547,7 +547,7 @@ CREATE TABLE photo_visibility (
 -- =========================================================
 CREATE TABLE notice (
                         id                   uuid PRIMARY KEY,
-                        room_record_id       uuid         NOT NULL REFERENCES room_record (id),
+                        room_record_id       uuid         NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
                         response_request_id  uuid,
                         link_id              uuid,
                         recipient_party_id   uuid         NOT NULL,
@@ -575,7 +575,7 @@ CREATE TABLE notice (
 -- =========================================================
 CREATE TABLE action (
                         id                      uuid PRIMARY KEY,
-                        room_record_id          uuid         NOT NULL REFERENCES room_record (id),
+                        room_record_id          uuid         NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
                         room_seq                bigint       NOT NULL CHECK (room_seq >= 1),
                         prev_hash               bytea        NOT NULL,
                         hash                    bytea        NOT NULL,
@@ -659,7 +659,7 @@ CREATE TABLE outbox (
 
 CREATE TABLE in_app_notification (
                                      id                   uuid PRIMARY KEY,
-                                     room_record_id       uuid REFERENCES room_record (id),  -- 서비스 안내(번호 인증 해제 등)는 NULL
+                                     room_record_id       uuid REFERENCES room_record (id) ON DELETE CASCADE,  -- 서비스 안내(번호 인증 해제 등)는 NULL
                                      member_id            uuid        NOT NULL REFERENCES member (id),
                                      kind                 varchar(10) NOT NULL CHECK (kind IN ('RESPONSE', 'INFO', 'SERVICE')),
                                      response_request_id  uuid,
