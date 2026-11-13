@@ -12,8 +12,8 @@ import { Textarea } from "@/components/ui/textarea"
 import { Choice, Status } from "@/components/prototype"
 import { ActionDialog, tryOn } from "@/components/action-dialog"
 import type { Repair, Role, Room } from "@/data/demo"
+import { hasAction, type RepairAction } from "@/api/actions"
 import {
-  canRecur,
   confirmClose,
   confirmDefect,
   confirmSoloClosed,
@@ -24,7 +24,6 @@ import {
   requestClose,
   roomSoloReason,
   soloClose,
-  soloReasonFor,
   soloReasonText,
   startRepair,
 } from "@/lib/repair-rules"
@@ -152,6 +151,8 @@ interface ActionsProps {
   r: Repair
   room: Room
   role: Role
+  // 서버가 준 지금 누를 수 있는 행동(GET /api/repair-cases/{id}의 availableActions)
+  actions: readonly RepairAction[]
   onAction: OnAction
   onOpen: (m: "note" | "reconfirm" | "after") => void
   onRecur: (r: Repair) => void
@@ -160,6 +161,7 @@ export function RepairActions({
   r,
   room,
   role,
+  actions,
   onAction,
   onOpen,
   onRecur,
@@ -182,20 +184,17 @@ export function RepairActions({
     onAction(text, update)
   }
   const solo = roomSoloReason(room)
-  const closeSolo = soloReasonFor(room, r, "close")
-  const bothClosed = r.status === "처리 완료" && !r.soloClosed
   const ackPending = ["확인 대기", "상대 미확인"].includes(r.ack)
-  const canAck = r.author !== role && r.ack !== "확인됨" && !bothClosed
-  const counterpartMember =
-    room.connection === "연결됨" && !room.counterpartLeft
   const reasons = [
     solo,
     r.waits?.ack === "미확인" ? "상대 미확인" : undefined,
     r.waits?.close === "미확인" ? "상대 미확인" : undefined,
   ].filter(Boolean)
-  // 지금 누를 수 있는 행동(노출 조건·순서는 그대로). 수리 상세에서는 앞의 두 개만 크게, 나머지는 '더 보기' 메뉴로 보내요.
+  const has = (a: RepairAction) => hasAction(actions, a)
+  // 버튼은 서버가 준 availableActions에 있는 것만 그려요(08 0장 원칙 6). 순서는 그대로이고,
+  // 수리 상세에서는 앞의 두 개만 크게, 나머지는 '더 보기' 메뉴로 보내요.
   const acts: Act[] = []
-  if (canAck)
+  if (has("respond"))
     acts.push({
       key: "ack",
       label: "하자 사실 확인",
@@ -205,14 +204,15 @@ export function RepairActions({
           confirmDefect(x, role, versionOf(r)),
         ),
     })
-  if (canAck && r.ack !== "이견")
+  // 이미 이견이면 맞아요로 답 바꾸기만 보여요(08 2장)
+  if (has("respond") && r.ack !== "이견")
     acts.push({
       key: "dispute",
       label: "사실에 이견",
       outline: true,
       onClick: () => setMode("dispute"),
     })
-  if (["확인 전", "확인 완료"].includes(r.status))
+  if (has("start"))
     acts.push({
       key: "start",
       label: "수리 시작",
@@ -223,44 +223,40 @@ export function RepairActions({
           startRepair,
         ),
     })
-  if (r.status === "처리 중" && !r.closeBy)
-    acts.push(
-      solo
-        ? {
-            key: "solo-close",
-            label: `처리 완료로 남기기 · ${solo}`,
-            onClick: () =>
-              run(`수리 혼자 종료 · 처리 완료(${role} 확인) · ${solo}`, (x) =>
-                soloClose(x, role, solo),
-              ),
-          }
-        : {
-            key: "request-close",
-            label: "종료 확인 요청",
-            onClick: () =>
-              run("수리 종료 확인 요청", (x) => requestClose(x, role)),
-          },
-    )
-  if (r.closeBy && r.closeBy !== role)
-    acts.push(
-      {
-        key: "confirm-close",
-        label: "수리 종료 확인",
-        onClick: () => {
-          if (r.author !== role && ackPending) {
-            setCloseAck("네, 하자도 확인해요")
-            setMode("close-ack")
-          } else run("수리 종료 · 양측 확인", (x) => confirmClose(x, role))
-        },
+  if (has("close-alone") && !r.closeBy && solo)
+    acts.push({
+      key: "solo-close",
+      label: "혼자 종료",
+      onClick: () =>
+        run(`수리 혼자 종료 · 처리 완료(${role} 확인) · ${solo}`, (x) =>
+          soloClose(x, role, solo),
+        ),
+    })
+  if (has("request-close"))
+    acts.push({
+      key: "request-close",
+      label: "종료 확인 요청",
+      onClick: () => run("수리 종료 확인 요청", (x) => requestClose(x, role)),
+    })
+  if (has("confirm-close") && r.closeBy)
+    acts.push({
+      key: "confirm-close",
+      label: "수리 종료 확인",
+      onClick: () => {
+        if (r.author !== role && ackPending) {
+          setCloseAck("네, 하자도 확인해요")
+          setMode("close-ack")
+        } else run("수리 종료 · 양측 확인", (x) => confirmClose(x, role))
       },
-      {
-        key: "notyet",
-        label: "아직 안 됐어요",
-        outline: true,
-        onClick: () => setMode("notyet"),
-      },
-    )
-  if (r.closeBy === role && closeSolo === "상대 미확인")
+    })
+  if (has("not-yet"))
+    acts.push({
+      key: "notyet",
+      label: "아직 안 됐어요",
+      outline: true,
+      onClick: () => setMode("notyet"),
+    })
+  if (has("close-alone") && r.closeBy === role)
     acts.push({
       key: "unconfirmed-close",
       label: "혼자 종료",
@@ -270,37 +266,32 @@ export function RepairActions({
           (x) => soloClose(x, role, "상대 미확인"),
         ),
     })
-  if (
-    r.status === "처리 완료" &&
-    r.soloClosed &&
-    r.soloClosed !== role &&
-    counterpartMember
-  )
-    acts.push(
-      {
-        key: "confirm-solo",
-        label: "종료 확인",
-        onClick: () =>
-          run("혼자 종료한 건 종료 확인 · 양측 확인", (x) =>
-            confirmSoloClosed(x, role),
-          ),
-      },
-      {
-        key: "reopen",
-        label: "다시 열기",
-        icon: RotateCcw,
-        outline: true,
-        onClick: () => setMode("reopen"),
-      },
-    )
-  if (canRecur(r))
+  // 혼자 종료된 건을 늦게 확인(08 8장: "처리 완료(○○ 확인)"에 [종료 확인])
+  if (has("confirm-close") && r.soloClosed)
+    acts.push({
+      key: "confirm-solo",
+      label: "종료 확인",
+      onClick: () =>
+        run("혼자 종료한 건 종료 확인 · 양측 확인", (x) =>
+          confirmSoloClosed(x, role),
+        ),
+    })
+  if (has("reopen"))
+    acts.push({
+      key: "reopen",
+      label: "다시 열기",
+      icon: RotateCcw,
+      outline: true,
+      onClick: () => setMode("reopen"),
+    })
+  if (has("recur"))
     acts.push({
       key: "recur",
       label: "같은 곳 재발 · 새 수리 건 등록",
       outline: true,
       onClick: () => onRecur(r),
     })
-  if (r.status === "처리 중")
+  if (has("photos") && r.status === "처리 중")
     acts.push({
       key: "after",
       label: "수리 후 사진 남기기",
@@ -308,7 +299,7 @@ export function RepairActions({
       outline: true,
       onClick: () => onOpen("after"),
     })
-  if (r.author === role && r.ack === "이견")
+  if (has("supplement"))
     acts.push({
       key: "reconfirm",
       label: "설명·사진 보충 후 다시 확인 요청",

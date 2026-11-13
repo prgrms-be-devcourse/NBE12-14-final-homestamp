@@ -5,10 +5,10 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Choice, Panel, Status } from "@/components/prototype"
 import { ActionDialog, tryOn } from "@/components/action-dialog"
-import { CorrectionRow } from "@/components/repair-records"
+import { CorrectionRow } from "@/features/repair/repair-records"
 import { MoneyInput } from "@/components/money-input"
 import { PhotoGallery } from "@/components/photo-gallery"
-import { MoneyLeftNotice } from "@/components/money-left"
+import { MoneyLeftNotice } from "@/features/repair/money-left"
 import {
   uid,
   won,

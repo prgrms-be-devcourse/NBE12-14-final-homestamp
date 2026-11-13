@@ -6,7 +6,7 @@ import {
   requestClose,
   soloClose,
 } from "../src/lib/repair-rules"
-import { RepairPayments } from "../src/components/repair-payments"
+import { RepairPayments } from "../src/features/repair/repair-payments"
 
 const doing = (afterPhotos?: string[]): Repair => ({
   ...structuredClone(createDemo().repairs[0]),

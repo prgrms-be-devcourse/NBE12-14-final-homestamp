@@ -9,7 +9,7 @@ import {
   CorrectionHistory,
   CorrectionPanel,
   CorrectionRow,
-} from "@/components/repair-records"
+} from "@/features/repair/repair-records"
 import {
   partGroups,
   type DemoState,
