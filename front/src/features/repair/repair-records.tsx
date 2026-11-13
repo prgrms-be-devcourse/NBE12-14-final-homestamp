@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Choice, Status } from "@/components/prototype"
 import { ActionDialog, tryOn } from "@/components/action-dialog"
-import { LongText } from "@/components/inspection-disputes"
+import { LongText } from "@/features/inspection/inspection-disputes"
 import {
   other,
   partGroups,
