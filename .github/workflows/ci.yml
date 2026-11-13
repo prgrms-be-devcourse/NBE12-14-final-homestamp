@@ -20,7 +20,8 @@ env:
   HEAD_SHA: ${{ github.event.pull_request.head.sha }}
 
 jobs:
-  # 바뀐 폴더 찾기 (외부 액션 없이 git diff로)
+  # 바뀐 폴더 찾기 (외부 액션 없이 git diff로).
+  # core.quotepath=off: 끄지 않으면 한글 경로가 "docs/rules/04-\354…"처럼 따옴표로 나와 ^docs/rules/에 걸리지 않는다
   changes:
     runs-on: ubuntu-24.04
     outputs:
@@ -33,7 +34,7 @@ jobs:
           fetch-depth: 0
       - id: diff
         run: |
-          files=$(git diff --name-only "$BASE_SHA"..."$HEAD_SHA")
+          files=$(git -c core.quotepath=off diff --name-only "$BASE_SHA"..."$HEAD_SHA")
           echo "$files"
           # 워크플로가 바뀌면 모든 job을 돌려 CI 자신을 검사한다
           all=$(echo "$files" | grep -q '^\.github/workflows/' && echo true || echo false)
@@ -97,7 +98,7 @@ jobs:
       - env:
           NO_DECISION: ${{ contains(github.event.pull_request.labels.*.name, 'no-decision') }}
         run: |
-          files=$(git diff --name-only "$BASE_SHA"..."$HEAD_SHA")
+          files=$(git -c core.quotepath=off diff --name-only "$BASE_SHA"..."$HEAD_SHA")
           if ! echo "$files" | grep -q '^docs/rules/'; then
             echo "규칙 문서(docs/rules/)가 바뀌지 않아 검사할 것이 없어요"
             exit 0
