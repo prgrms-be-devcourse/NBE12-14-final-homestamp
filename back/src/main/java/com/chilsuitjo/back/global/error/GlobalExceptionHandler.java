@@ -31,10 +31,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
   @ExceptionHandler(Exception.class)
   ResponseEntity<ProblemDetail> handleUnexpected(Exception e) {
     log.error("처리하지 못한 예외", e);
-    ProblemDetail body = ProblemDetail.forStatus(500);
-    body.setProperty("code", "INTERNAL_ERROR");
-    body.setDetail("잠시 뒤에 다시 해 주세요");
-    return ResponseEntity.status(500).body(body);
+    return toResponse(ErrorCode.INTERNAL_ERROR, null);
   }
 
   @Override
