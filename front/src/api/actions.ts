@@ -43,5 +43,29 @@ export type CorrectionAction =
   | "resubmit" // 사진 더해서 다시 요청
   | "withdraw" // 거두기
 
+// 정산(S-15, GET /api/settlements/{id})
+export type SettlementAction =
+  | "deposit-proposals" // 보증금 금액 적기 · [바꾸기]
+  | "deposit-agree" // 상대가 적은 보증금에 [맞아요](돈 안건 장치 /proposals/{id}/agree)
+  | "deposit-dispute" // [아니에요 · 다른 금액](/proposals/{id}/dispute)
+  | "items" // [+ 항목 추가]
+  | "transfers" // 송금 기록
+  | "finish" // 정산 끝내기 제안
+  | "finish-confirm" // 정산 끝내기 확인(/finish/confirm)
+
+// 정산 항목 하나(돈 안건 장치 /proposals/{id}/…, /settlement-items/{id}/…)
+export type SettlementItemAction =
+  | "agree" // [동의]
+  | "dispute" // [아니에요 · 다른 안](사유, 다른 안은 선택)
+  | "withdraw" // 답 전 내 제안 거두기
+  | "proposals" // [바꾸기](직접 넣은 항목만)
+  | "exclude" // 빼기 제안
+  | "exclude-agree" // 빼기 제안에 동의
+  | "exclude-dispute" // 빼기 제안에 동의하지 않음
+  | "exclude-withdraw" // 내 빼기 제안 거두기
+
+// 정산 송금 하나(POST /api/settlement-transfers/{id}/respond)
+export type TransferAction = "respond"
+
 export const hasAction = <A extends string>(list: readonly A[], a: A) =>
   list.includes(a)

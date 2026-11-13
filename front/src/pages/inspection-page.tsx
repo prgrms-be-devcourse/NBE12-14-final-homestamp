@@ -50,6 +50,11 @@ import {
   inspectionItemAvailableActions,
 } from "@/api/mock/inspection-actions"
 import { correctionAvailableActions } from "@/api/mock/correction-actions"
+import {
+  settlementAvailableActions,
+  settlementItemAvailableActions,
+  transferAvailableActions,
+} from "@/api/mock/settlement-actions"
 import { RespondButtons } from "@/components/common/respond-buttons"
 import { SupplementRequest } from "@/components/common/supplement-request"
 
@@ -819,6 +824,13 @@ export function InspectionPage({
           items={settlements}
           onAction={commit}
           onAdd={() => open("settlement")}
+          actions={settlementAvailableActions(room, role, { readOnly })}
+          itemActionsOf={(s) =>
+            settlementItemAvailableActions(s, role, { readOnly })
+          }
+          transferActionsOf={(t) =>
+            transferAvailableActions(t, role, { readOnly })
+          }
           candidates={
             <RepairCandidates
               repairs={repairs}

@@ -34,8 +34,15 @@ import {
   type Settlement,
   type DemoState,
   type AmountOffer,
+  type Transfer,
 } from "@/data/demo"
 import { sideName, sideText } from "@/lib/words"
+import {
+  hasAction,
+  type SettlementAction,
+  type SettlementItemAction,
+  type TransferAction,
+} from "@/api/actions"
 
 interface Props {
   room: Room
@@ -44,12 +51,15 @@ interface Props {
   onAction: (text: string, update: (draft: DemoState) => void) => void
   onAdd: () => void
   candidates?: ReactNode
+  // 서버가 준 지금 누를 수 있는 행동(availableActions): 정산 전체 · 항목마다 · 송금마다
+  actions: readonly SettlementAction[]
+  itemActionsOf: (s: Settlement) => readonly SettlementItemAction[]
+  transferActionsOf: (t: Transfer) => readonly TransferAction[]
 }
 type Mode =
   | "deposit"
   | "deposit-dispute"
   | "item"
-  | "item-dispute"
   | "item-counter"
   | "exclude"
   | "exclude-reject"
@@ -77,7 +87,11 @@ export function RoomFinancials({
   onAction,
   onAdd,
   candidates,
+  actions,
+  itemActionsOf,
+  transferActionsOf,
 }: Props) {
+  const has = (a: SettlementAction) => hasAction(actions, a)
   // 빼기 제안에 상대가 동의한 항목은 정산 계산과 세 칸에서 빠지고, 아래 '뺀 항목'에 보존됩니다.
   const items = allItems.filter((s) => !s.excluded && !s.withdrawn)
   const excludedItems = allItems.filter((s) => s.excluded)
@@ -87,7 +101,6 @@ export function RoomFinancials({
   const [direction, setDirection] = useState("차감")
   const [transferDirection, setTransferDirection] = useState("반환")
   const [error, setError] = useState("")
-  const readOnly = room.status === "정산 완료"
   const offer = room.depositOffer
   const item = allItems.find((s) => s.id === itemId)
   const total = settlementTotal(room.deposit ?? 0, items)
@@ -114,9 +127,13 @@ export function RoomFinancials({
       setError(RESIDENT_ID_MESSAGE)
       return
     }
-    const amount = parseMoney(String(f.get("amount") || ""))
+    const rawAmount = String(f.get("amount") || "").trim()
+    const amount = parseMoney(rawAmount)
+    // [아니에요 · 다른 안]·[아니에요 · 다른 금액]의 금액은 선택이에요(08 7장·10장)
+    const optionalAmount = mode === "item-counter" || mode === "deposit-dispute"
     if (
-      ["deposit", "item", "item-counter", "transfer"].includes(mode || "") &&
+      (["deposit", "item", "transfer"].includes(mode || "") ||
+        (optionalAmount && rawAmount)) &&
       !Number.isFinite(amount)
     ) {
       setError("0 이상의 원화 정수를 입력해 주세요.")
@@ -146,11 +163,27 @@ export function RoomFinancials({
       })
     else if (mode === "deposit-dispute") {
       if (!offer || offer.by === role || offer.status !== "합의 대기") return
-      onAction(`보증금 금액 이견 · ${reason}`, (d) => {
-        const r = d.rooms.find((r) => r.id === room.id)!
-        respondToOffer(r.depositOffer!, role, false, reason)
-        r.depositConfirmed = false
-      })
+      onAction(
+        `보증금 금액 이견 · ${reason}${rawAmount ? ` · 다른 금액 ${won(amount)}` : ""}`,
+        (d) => {
+          const r = d.rooms.find((r) => r.id === room.id)!
+          respondToOffer(r.depositOffer!, role, false, reason)
+          r.depositConfirmed = false
+          // 다른 금액을 적었으면 그 금액이 내가 적은 보증금(새 안)이 돼요
+          if (rawAmount) {
+            r.depositHistory = [
+              ...(r.depositHistory || []),
+              structuredClone(r.depositOffer!),
+            ]
+            r.depositOffer = newAmountOffer(
+              role,
+              amount,
+              reason,
+              r.depositOffer,
+            )
+          }
+        },
+      )
     } else if (mode === "item")
       onAction(
         `${item!.title} · 정산 다른 안 제안 ${won(amount)} · ${reason}`,
@@ -171,7 +204,18 @@ export function RoomFinancials({
         },
       )
     // 이견 + 역제안(1-2 제안 기계): 이전 안은 '이견'으로 이력에 남고, 역제안이 새 현재 제안이 돼요.
-    else if (mode === "item-counter") {
+    else if (mode === "item-counter" && !rawAmount) {
+      // 다른 안 없이 사유만: 이견
+      if (!item || item.by === role || item.status !== "합의 대기") return
+      onAction(`${item.title} · 정산 이견 · ${reason}`, (d) =>
+        respondToOffer(
+          d.settlements.find((s) => s.id === itemId)!,
+          role,
+          false,
+          reason,
+        ),
+      )
+    } else if (mode === "item-counter") {
       if (!item || item.by === role || item.status !== "합의 대기") return
       onAction(
         `${item.title} · 정산 이견 + 다른 안 제안 ${won(amount)} · ${reason}`,
@@ -215,16 +259,6 @@ export function RoomFinancials({
         ]
         s.excludeProposal = undefined
       })
-    } else if (mode === "item-dispute") {
-      if (!item || item.by === role || item.status !== "합의 대기") return
-      onAction(`${item.title} · 정산 이견 · ${reason}`, (d) =>
-        respondToOffer(
-          d.settlements.find((s) => s.id === itemId)!,
-          role,
-          false,
-          reason,
-        ),
-      )
     } else if (mode === "transfer")
       onAction(
         `${transferDirection} 사실 기록 · ${won(amount)} · 한쪽 기록`,
@@ -259,8 +293,9 @@ export function RoomFinancials({
       variant: "default" | "outline" | "ghost"
       onClick: () => void
     }[] = []
-    if (s.by !== role && s.status === "합의 대기") {
-      if (!s.autoChange?.pending)
+    const can = (a: SettlementItemAction) => hasAction(itemActionsOf(s), a)
+    {
+      if (can("agree"))
         acts.push({
           key: "agree",
           label: "동의",
@@ -274,20 +309,15 @@ export function RoomFinancials({
               ),
             ),
         })
-      acts.push({
-        key: "dispute",
-        label: "이견",
-        variant: "outline",
-        onClick: () => open("item-dispute", s),
-      })
-      acts.push({
-        key: "counter",
-        label: "다른 안 제안",
-        variant: "outline",
-        onClick: () => open("item-counter", s),
-      })
+      if (can("dispute"))
+        acts.push({
+          key: "dispute",
+          label: "아니에요 · 다른 안",
+          variant: "outline",
+          onClick: () => open("item-counter", s),
+        })
     }
-    if (s.by === role && s.status === "합의 대기" && !s.autoChange)
+    if (can("withdraw"))
       acts.push({
         key: "withdraw",
         label: "제안 거두기",
@@ -319,14 +349,14 @@ export function RoomFinancials({
             d.settlements[idx] = restored
           }),
       })
-    if (!s.excludeProposal)
+    if (can("exclude"))
       acts.push({
         key: "exclude",
         label: "빼기 제안",
         variant: "ghost",
         onClick: () => open("exclude", s),
       })
-    if (s.excludeProposal && s.excludeProposal.by !== role) {
+    if (can("exclude-agree"))
       acts.push({
         key: "exclude-agree",
         label: "빼기 동의",
@@ -342,14 +372,14 @@ export function RoomFinancials({
             v.excluded = true
           }),
       })
+    if (can("exclude-dispute"))
       acts.push({
         key: "exclude-reject",
-        label: "빼기 거절",
+        label: "빼기에 동의하지 않아요",
         variant: "outline",
         onClick: () => open("exclude-reject", s),
       })
-    }
-    if (s.excludeProposal && s.excludeProposal.by === role)
+    if (can("exclude-withdraw"))
       acts.push({
         key: "exclude-withdraw",
         label: "빼기 제안 거두기",
@@ -364,10 +394,10 @@ export function RoomFinancials({
             v.excludeProposal = undefined
           }),
       })
-    if (s.status !== "합의 대기")
+    if (can("proposals"))
       acts.push({
         key: "new",
-        label: "새 금액 제안",
+        label: "바꾸기",
         variant: "outline",
         onClick: () => open("item", s),
       })
@@ -425,33 +455,38 @@ export function RoomFinancials({
             </div>
           )}
           {offerHistory(room.depositHistory || [])}
-          {!readOnly && (
+          {/* 보증금은 계약 금액을 맞추는 것이라 "제안·합의" 대신 "적기·확인"을 써요(08 10장 [반드시]) */}
+          {(has("deposit-agree") || has("deposit-proposals")) && (
             <div className="actions mt-4">
-              {offer?.status === "합의 대기" && offer.by !== role && (
-                <>
-                  <Button
-                    onClick={() =>
-                      onAction("보증금 같은 금액 동의 · 양측 확인", (d) => {
-                        const r = d.rooms.find((r) => r.id === room.id)!
-                        respondToOffer(r.depositOffer!, role, true)
-                        r.deposit = r.depositOffer!.amount
-                        r.depositConfirmed = true
-                      })
-                    }
-                  >
-                    보증금 금액 동의
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => open("deposit-dispute")}
-                  >
-                    보증금 이견 남기기
-                  </Button>
-                </>
+              {has("deposit-agree") && (
+                <Button
+                  onClick={() =>
+                    onAction("보증금 같은 금액 동의 · 양측 확인", (d) => {
+                      const r = d.rooms.find((r) => r.id === room.id)!
+                      respondToOffer(r.depositOffer!, role, true)
+                      r.deposit = r.depositOffer!.amount
+                      r.depositConfirmed = true
+                    })
+                  }
+                >
+                  맞아요
+                </Button>
               )}
-              <Button variant="outline" onClick={() => open("deposit")}>
-                {offer ? "보증금 새 금액 제안" : "보증금 확인·제안"}
-              </Button>
+              {has("deposit-dispute") && (
+                <Button
+                  variant="outline"
+                  onClick={() => open("deposit-dispute")}
+                >
+                  아니에요 · 다른 금액
+                </Button>
+              )}
+              {has("deposit-proposals") && !has("deposit-agree") && (
+                <Button variant="outline" onClick={() => open("deposit")}>
+                  {offer || room.depositConfirmed
+                    ? "바꾸기"
+                    : "보증금 금액 적기"}
+                </Button>
+              )}
             </div>
           )}
         </Panel>
@@ -460,9 +495,9 @@ export function RoomFinancials({
       <Panel
         title="정산 항목"
         action={
-          !readOnly && (
+          has("items") && (
             <Button variant="outline" onClick={onAdd}>
-              항목 추가
+              + 항목 추가
             </Button>
           )
         }
@@ -485,7 +520,7 @@ export function RoomFinancials({
                 )}
                 <div className="flex flex-col gap-2.5">
                   {list.map((s) => {
-                    const acts = readOnly ? [] : itemActs(s)
+                    const acts = itemActs(s)
                     const big = acts.slice(0, 2)
                     const rest = acts.slice(2)
                     return (
@@ -578,26 +613,25 @@ export function RoomFinancials({
                             {h.disputeReason && <p>이견: {h.disputeReason}</p>}
                           </div>
                         ))}
-                        {!readOnly &&
-                          (big.length > 0 ||
-                            (s.by === role && s.status === "합의 대기")) && (
-                            <div className="actions">
-                              {big.map((a) => (
-                                <Button
-                                  key={a.key}
-                                  variant={a.variant}
-                                  onClick={a.onClick}
-                                >
-                                  {a.label}
-                                </Button>
-                              ))}
-                              {s.by === role && s.status === "합의 대기" && (
-                                <small className="muted">
-                                  상대가 같은 안에 동의해야 합의돼요.
-                                </small>
-                              )}
-                            </div>
-                          )}
+                        {(big.length > 0 ||
+                          hasAction(itemActionsOf(s), "withdraw")) && (
+                          <div className="actions">
+                            {big.map((a) => (
+                              <Button
+                                key={a.key}
+                                variant={a.variant}
+                                onClick={a.onClick}
+                              >
+                                {a.label}
+                              </Button>
+                            ))}
+                            {s.by === role && s.status === "합의 대기" && (
+                              <small className="muted">
+                                상대가 같은 안에 동의해야 합의돼요.
+                              </small>
+                            )}
+                          </div>
+                        )}
                         <MoreMenu
                           className="absolute top-2 right-2"
                           items={rest.map((a) => ({
@@ -715,7 +749,7 @@ export function RoomFinancials({
                   {t.confirmed ? "둘 다 확인" : "받았는지 확인 중"}
                 </Status>
               </div>
-              {!readOnly && t.by !== role && !t.confirmed && (
+              {hasAction(transferActionsOf(t), "respond") && (
                 <Button
                   onClick={() =>
                     onAction(
@@ -736,7 +770,7 @@ export function RoomFinancials({
             </div>
           ))}
         </div>
-        {!readOnly && (
+        {has("transfers") && (
           <Button
             variant="outline"
             className="mt-4"
@@ -751,7 +785,7 @@ export function RoomFinancials({
               이견과 확인 없음 항목은 정산이 끝난 뒤에도 그대로 남아요.
             </p>
             <Button
-              disabled={room.finishBy === role}
+              disabled={!has("finish") && !has("finish-confirm")}
               onClick={() =>
                 onAction(
                   room.finishBy
@@ -790,28 +824,40 @@ export function RoomFinancials({
               {mode === "transfer"
                 ? "반환·수령 사실 기록"
                 : mode === "item-counter"
-                  ? "이견 + 다른 안 제안"
-                  : mode?.includes("dispute")
-                    ? "금액 이견 남기기"
+                  ? "아니에요 · 다른 안"
+                  : mode === "deposit-dispute"
+                    ? "아니에요 · 다른 금액"
                     : mode === "exclude"
                       ? "정산에서 빼기 제안"
                       : mode === "exclude-reject"
-                        ? "빼기 제안 거절"
+                        ? "빼기에 동의하지 않아요"
                         : mode === "deposit"
-                          ? "보증금 금액 제안"
-                          : "새 금액 제안"}
+                          ? offer || room.depositConfirmed
+                            ? "보증금 바꾸기"
+                            : "보증금 금액 적기"
+                          : "바꾸기"}
             </DialogTitle>
             <DialogDescription>
-              한쪽의 제안은 상대가 같은 안에 동의해야 합의됩니다.
+              {mode === "deposit" || mode === "deposit-dispute"
+                ? "보증금은 계약서 금액을 맞추는 거예요. 둘이 같은 금액이면 둘 다 확인으로 남아요."
+                : "한쪽의 제안은 상대가 같은 안에 동의해야 합의됩니다."}
             </DialogDescription>
           </DialogHeader>
           <form className="modal-form" onSubmit={submit}>
-            {["deposit", "item", "item-counter", "transfer"].includes(
-              mode || "",
-            ) && (
+            {[
+              "deposit",
+              "deposit-dispute",
+              "item",
+              "item-counter",
+              "transfer",
+            ].includes(mode || "") && (
               <div className="field">
                 <label htmlFor="financial-amount">
-                  {mode === "item-counter" ? "다른 안 금액 (원)" : "금액 (원)"}
+                  {mode === "item-counter"
+                    ? "다른 안 금액 (원) · 선택"
+                    : mode === "deposit-dispute"
+                      ? "다른 금액 (원) · 선택"
+                      : "금액 (원)"}
                 </label>
                 <MoneyInput
                   id="financial-amount"
@@ -819,11 +865,15 @@ export function RoomFinancials({
                   defaultValue={
                     mode === "deposit"
                       ? (offer?.amount ?? room.deposit)
-                      : mode === "item" || mode === "item-counter"
+                      : mode === "item"
                         ? item?.amount
-                        : Math.abs(total - paid)
+                        : mode === "transfer"
+                          ? Math.abs(total - paid)
+                          : undefined
                   }
-                  required
+                  required={
+                    mode !== "item-counter" && mode !== "deposit-dispute"
+                  }
                 />
               </div>
             )}
@@ -854,7 +904,9 @@ export function RoomFinancials({
             ) : (
               <div className="field">
                 <label htmlFor="financial-reason">
-                  {mode === "item-counter" ? "이견 사유 · 필수" : "사유 · 필수"}
+                  {mode === "item-counter" || mode === "deposit-dispute"
+                    ? "아닌 이유 · 필수"
+                    : "사유 · 필수"}
                 </label>
                 <Textarea id="financial-reason" name="reason" required />
               </div>
