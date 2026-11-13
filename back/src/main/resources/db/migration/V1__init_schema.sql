@@ -692,10 +692,11 @@ CREATE TABLE deletion_log (
                               phone_hmac   varchar(128),                               -- 수신 거부일 때
                               chain_room_id uuid,                                     -- FK 없음: 삭제된 행동의 호실, 호실 삭제 뒤에도 보존
                               room_seq     bigint CHECK (room_seq >= 1),
+                              prev_hash    bytea CHECK (octet_length(prev_hash) = 32),
                               action_hash  bytea CHECK (octet_length(action_hash) = 32),
                               created_at   timestamptz  NOT NULL,
-                              CHECK ((target_kind = 'ACTION' AND num_nonnulls(chain_room_id, room_seq, action_hash) = 3)
-                                  OR (target_kind <> 'ACTION' AND num_nonnulls(chain_room_id, room_seq, action_hash) = 0))
+                              CHECK ((target_kind = 'ACTION' AND num_nonnulls(chain_room_id, room_seq, prev_hash, action_hash) = 4)
+                                  OR (target_kind <> 'ACTION' AND num_nonnulls(chain_room_id, room_seq, prev_hash, action_hash) = 0))
 );
 
 -- =========================================================
@@ -944,7 +945,7 @@ CREATE UNIQUE INDEX ux_in_app_group ON in_app_notification (member_id, group_key
 CREATE INDEX ix_in_app_member ON in_app_notification (member_id, created_at);
 CREATE INDEX ix_in_app_expires ON in_app_notification (expires_at);
 CREATE INDEX ix_rate_counter_window ON rate_counter (window_date);
-CREATE INDEX ix_deletion_log_chain ON deletion_log (chain_room_id, room_seq) WHERE target_kind = 'ACTION';
+CREATE UNIQUE INDEX ux_deletion_log_chain ON deletion_log (chain_room_id, room_seq) WHERE target_kind = 'ACTION';
 
 -- =========================================================
 -- 16. 트리거 연결 ([A] action, [B] 사실 행)
