@@ -14,6 +14,13 @@
           { "type": "command", "command": "node \"$(git rev-parse --show-toplevel)/scripts/hooks/guard-migration.mjs\"" }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "node \"$(git rev-parse --show-toplevel)/scripts/hooks/format-on-stop.mjs\"" }
+        ]
+      }
     ]
   }
 }
