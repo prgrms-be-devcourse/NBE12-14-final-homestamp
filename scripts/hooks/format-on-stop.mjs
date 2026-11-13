@@ -1,5 +1,5 @@
 // Stop 훅: AI가 작업을 끝낼 때 바뀐 파일의 서식을 한 번 맞춘다 (Claude·Codex 공용).
-// - back/ 의 .java가 바뀌었으면 ./gradlew -q spotlessApply (구글 자바 스타일)
+// - back/ 의 .java가 바뀌었으면 그 파일만 spotlessApply (구글 자바 스타일, Spotless IDE 훅으로 파일 하나씩)
 // - front/ 의 파일이 바뀌었으면 그 파일만 prettier --write
 // 작업은 절대 막지 않는다 (언제나 exit 0). 서식을 바꿨거나 실패했을 때만 한 줄 알린다.
 // 끄기: 환경 변수 HOMESTAMP_SKIP_FORMAT=1
@@ -46,19 +46,33 @@ function hashOf(abs) {
   }
 }
 
-function run(cmd, args, cwd, shell = false) {
-  const r = spawnSync(cmd, args, { cwd, shell, encoding: "utf8", timeout: TIMEOUT_MS, windowsHide: true });
+function run(cmd, args, cwd, shell = false, timeout = TIMEOUT_MS) {
+  const r = spawnSync(cmd, args, { cwd, shell, encoding: "utf8", timeout, windowsHide: true });
   return { ok: r.status === 0 && !r.error, out: `${r.stderr ?? ""}${r.stdout ?? ""}`.trim(), error: r.error };
 }
 
-function formatJava() {
+/** 바뀐 .java 파일만 하나씩 서식을 맞춘다. 바꾸지 않은 파일은 건드리지 않는다 (Spotless IDE 훅: -PspotlessIdeHook=<절대 경로>) */
+function formatJava(files, deadline) {
   const back = path.join(REPO_ROOT, "back");
   const build = path.join(back, "build.gradle");
   if (!existsSync(build) || !readFileSync(build, "utf8").includes("spotless")) return { skipped: true };
-  // Windows: cmd가 현재 폴더를 찾지 않을 수 있어(NoDefaultCurrentDirectoryInExePath) 전체 경로로 부른다
-  return IS_WIN
-    ? run(`"${path.join(back, "gradlew.bat")}" -q spotlessApply`, [], back, true)
-    : run("sh", ["gradlew", "-q", "spotlessApply"], back);
+  let failed = 0;
+  let timedOut = 0;
+  for (const rel of files) {
+    const left = deadline - Date.now();
+    if (left < 5_000) {
+      timedOut++;
+      continue;
+    }
+    const abs = path.join(REPO_ROOT, rel);
+    // Windows: cmd가 현재 폴더를 찾지 않을 수 있어(NoDefaultCurrentDirectoryInExePath) 전체 경로로 부른다
+    const r = IS_WIN
+      ? run(`"${path.join(back, "gradlew.bat")}" -q spotlessApply "-PspotlessIdeHook=${abs}"`, [], back, true, left)
+      : run("sh", ["gradlew", "-q", "spotlessApply", `-PspotlessIdeHook=${abs}`], back, false, left);
+    if (r.error?.code === "ETIMEDOUT") timedOut++;
+    else if (!r.ok) failed++;
+  }
+  return { ok: failed === 0 && timedOut === 0, failed, timedOut };
 }
 
 function formatFront(files) {
@@ -85,9 +99,10 @@ export function formatOnStop() {
   const notes = [];
 
   if (java.length) {
-    const r = formatJava();
+    const r = formatJava(java, Date.now() + TIMEOUT_MS);
     if (!r.skipped && !r.ok) {
-      notes.push(`spotlessApply 실패 — 직접 \`cd back && ./gradlew spotlessApply\`로 확인하세요${r.error?.code === "ETIMEDOUT" ? " (시간 초과)" : ""}`);
+      const why = [r.failed && `실패 ${r.failed}개`, r.timedOut && `시간 초과 ${r.timedOut}개`].filter(Boolean).join(", ");
+      notes.push(`spotlessApply ${why} — 직접 \`cd back && ./gradlew spotlessApply\`로 확인하세요`);
     }
   }
   if (front.length) {
