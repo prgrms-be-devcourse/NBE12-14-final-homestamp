@@ -411,6 +411,7 @@ CREATE TABLE response_request (
                                   inspection_id           uuid,
                                   inspection_item_id      uuid,
                                   settlement_transfer_id  uuid,
+                                  progress_note_id        uuid, -- SITUATION_CHECK가 확인하는 진행 상황
                                   requested_by_side       varchar(10) NOT NULL CHECK (requested_by_side IN ('TENANT', 'LANDLORD')),
                                   first_notified_at       timestamptz,                    -- min(전달됨, 링크 열람)
                                   renotify_due_at         timestamptz,
@@ -428,7 +429,8 @@ CREATE TABLE response_request (
                                   CHECK ((status = 'CLOSED') = (closed_reason IS NOT NULL)),
                                   CHECK ((status = 'CLOSED') = (closed_at IS NOT NULL)),
                                   CHECK (num_nonnulls(repair_case_id, payment_id, settlement_item_id, settlement_id, inspection_id,
-                                                      inspection_item_id, settlement_transfer_id) <= 1)
+                                                      inspection_item_id, settlement_transfer_id, progress_note_id) <= 1),
+                                  CHECK ((kind = 'SITUATION_CHECK') = (progress_note_id IS NOT NULL))
 );
 
 -- =========================================================
@@ -751,6 +753,7 @@ ALTER TABLE proposal_line ADD CONSTRAINT fk_proposal_line_proposal_id_room FOREI
 ALTER TABLE link ADD CONSTRAINT fk_link_party_id_room FOREIGN KEY (party_id, room_record_id) REFERENCES party (id, room_record_id);
 ALTER TABLE link ADD CONSTRAINT fk_link_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES repair_case (id, room_record_id);
 ALTER TABLE link ADD CONSTRAINT fk_link_inspection_id_room FOREIGN KEY (inspection_id, room_record_id) REFERENCES inspection (id, room_record_id);
+ALTER TABLE response_request ADD CONSTRAINT fk_response_request_progress_note_id_room FOREIGN KEY (progress_note_id, room_record_id) REFERENCES progress_note (id, room_record_id);
 ALTER TABLE response_request ADD CONSTRAINT fk_response_request_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES repair_case (id, room_record_id);
 ALTER TABLE response_request ADD CONSTRAINT fk_response_request_payment_id_room FOREIGN KEY (payment_id, room_record_id) REFERENCES payment (id, room_record_id);
 ALTER TABLE response_request ADD CONSTRAINT fk_response_request_settlement_item_id_room FOREIGN KEY (settlement_item_id, room_record_id) REFERENCES settlement_item (id, room_record_id);
@@ -885,7 +888,7 @@ CREATE UNIQUE INDEX ux_proposal_waiting
 -- 대상 종류별 NULL도 같은 값으로 비교해 같은 호실·같은 종류·같은 대상 WAITING은 하나만 둔다.
 CREATE UNIQUE INDEX ux_response_request_waiting
     ON response_request (room_record_id, kind, repair_case_id, payment_id, settlement_item_id,
-                         settlement_id, inspection_id, inspection_item_id, settlement_transfer_id)
+                         settlement_id, inspection_id, inspection_item_id, settlement_transfer_id, progress_note_id)
     NULLS NOT DISTINCT
     WHERE status = 'WAITING' AND kind NOT IN ('PROPOSAL', 'INSPECTION_CONFIRM');
 CREATE UNIQUE INDEX ux_inspection_confirm_waiting
