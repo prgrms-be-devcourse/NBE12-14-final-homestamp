@@ -957,3 +957,18 @@ CREATE TRIGGER trg_settlement_transfer_version_append_only BEFORE UPDATE OR DELE
 CREATE TRIGGER trg_photo_append_only                       BEFORE UPDATE OR DELETE ON photo                       FOR EACH ROW EXECUTE FUNCTION forbid_change();
 CREATE TRIGGER trg_deletion_log_append_only                BEFORE UPDATE OR DELETE ON deletion_log                FOR EACH ROW EXECUTE FUNCTION forbid_change();
 CREATE TRIGGER trg_link_invalidated_once                   BEFORE UPDATE ON link                                  FOR EACH ROW EXECUTE FUNCTION forbid_link_revalidate();
+
+-- 행 트리거로 막을 수 없는 TRUNCATE는 보관 삭제 경로에서도 항상 거절한다.
+CREATE TRIGGER trg_action_no_truncate BEFORE TRUNCATE ON action FOR EACH STATEMENT EXECUTE FUNCTION forbid_change();
+CREATE TRIGGER trg_member_acknowledgement_no_truncate BEFORE TRUNCATE ON member_acknowledgement FOR EACH STATEMENT EXECUTE FUNCTION forbid_change();
+CREATE TRIGGER trg_sms_opt_out_no_truncate BEFORE TRUNCATE ON sms_opt_out FOR EACH STATEMENT EXECUTE FUNCTION forbid_change();
+CREATE TRIGGER trg_repair_content_no_truncate BEFORE TRUNCATE ON repair_content FOR EACH STATEMENT EXECUTE FUNCTION forbid_change();
+CREATE TRIGGER trg_cause_note_no_truncate BEFORE TRUNCATE ON cause_note FOR EACH STATEMENT EXECUTE FUNCTION forbid_change();
+CREATE TRIGGER trg_progress_note_no_truncate BEFORE TRUNCATE ON progress_note FOR EACH STATEMENT EXECUTE FUNCTION forbid_change();
+CREATE TRIGGER trg_payment_version_no_truncate BEFORE TRUNCATE ON payment_version FOR EACH STATEMENT EXECUTE FUNCTION forbid_change();
+CREATE TRIGGER trg_proposal_no_truncate BEFORE TRUNCATE ON proposal FOR EACH STATEMENT EXECUTE FUNCTION forbid_change();
+CREATE TRIGGER trg_proposal_line_no_truncate BEFORE TRUNCATE ON proposal_line FOR EACH STATEMENT EXECUTE FUNCTION forbid_change();
+CREATE TRIGGER trg_inspection_item_version_no_truncate BEFORE TRUNCATE ON inspection_item_version FOR EACH STATEMENT EXECUTE FUNCTION forbid_change();
+CREATE TRIGGER trg_settlement_transfer_version_no_truncate BEFORE TRUNCATE ON settlement_transfer_version FOR EACH STATEMENT EXECUTE FUNCTION forbid_change();
+CREATE TRIGGER trg_photo_no_truncate BEFORE TRUNCATE ON photo FOR EACH STATEMENT EXECUTE FUNCTION forbid_change();
+CREATE TRIGGER trg_deletion_log_no_truncate BEFORE TRUNCATE ON deletion_log FOR EACH STATEMENT EXECUTE FUNCTION forbid_change();
