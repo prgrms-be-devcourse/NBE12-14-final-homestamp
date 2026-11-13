@@ -31,6 +31,7 @@ import { sideName, withSubject } from "@/lib/words"
 const ackBadge: Record<Repair["ack"], { text: string; tone: string }> = {
   확인됨: { text: "하자가 있었다고 확인됨", tone: "green" },
   "확인 대기": { text: "하자 확인 대기", tone: "amber" },
+  "보충 요청": { text: "하자 · 보충 요청됨", tone: "amber" },
   이견: { text: "하자에 이견 있음", tone: "rose" },
   "상대 미확인": {
     text: "확인 없음 · 72시간 동안 답이 오지 않았어요",

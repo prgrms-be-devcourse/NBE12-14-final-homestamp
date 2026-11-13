@@ -178,7 +178,6 @@ type Modal =
   | "account"
   | "after"
   | "connect"
-  | "reconfirm"
   | "phone"
   | null
 const nav = [
@@ -1260,26 +1259,6 @@ function HomeStampApp({
               at: new Date().toISOString(),
             },
           ]
-        },
-      )
-    } else if (modal === "reconfirm") {
-      if (repair!.author !== role) return
-      patchRepair(
-        `설명·사진 보충 후 다시 확인 요청 · ${text("description")}`,
-        (r) => {
-          r.notes = [
-            ...(r.notes || []),
-            {
-              text: text("description"),
-              by: role,
-              kind: "보충·재확인 요청",
-              at: new Date().toLocaleString("ko-KR"),
-            },
-          ]
-          r.photos.push(...photos)
-          r.ack = "확인 대기"
-          r.ackDispute = undefined
-          if (r.waits) delete r.waits.ack
         },
       )
     } else if (modal === "after") {
@@ -3257,9 +3236,7 @@ function HomeStampApp({
                                     ? "이견 보내기"
                                     : modal === "after"
                                       ? "수리 후 사진 기록"
-                                      : modal === "reconfirm"
-                                        ? "설명·사진 보충 후 다시 확인 요청"
-                                        : "글 수정"}
+                                      : "글 수정"}
             </DialogTitle>
             <DialogDescription>
               {basicPhotoMode
@@ -3952,9 +3929,7 @@ function HomeStampApp({
                 />
               </div>
             )}
-            {(modal === "dispute" ||
-              modal === "after" ||
-              modal === "reconfirm") && (
+            {(modal === "dispute" || modal === "after") && (
               <>
                 <div className="field">
                   <label htmlFor="description">
@@ -3972,7 +3947,7 @@ function HomeStampApp({
                     maxLength={2000}
                   />
                 </div>
-                {(modal === "after" || modal === "reconfirm") && fileField}
+                {modal === "after" && fileField}
                 {modal === "dispute" && target.type === "money" && (
                   <Notice>
                     이견을 보낸 뒤 ‘새 부담 제안’으로 다른 안을 제안할 수

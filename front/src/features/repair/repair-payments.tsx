@@ -7,6 +7,8 @@ import { Choice, Panel, Status } from "@/components/prototype"
 import { ActionDialog, tryOn } from "@/components/action-dialog"
 import { CorrectionRow } from "@/features/repair/repair-records"
 import { MoneyInput } from "@/components/money-input"
+import { RespondButtons } from "@/components/common/respond-buttons"
+import { SupplementRequest } from "@/components/common/supplement-request"
 import { PhotoGallery } from "@/components/photo-gallery"
 import { MoneyLeftNotice } from "@/features/repair/money-left"
 import {
@@ -24,8 +26,11 @@ import {
   answerCorrection,
   clearWait,
   duplicateCheck,
-  nowText,
+  openPaymentDispute,
   paymentStamped,
+  reaskWaitDays,
+  respondPayment,
+  supplementPayment,
   recheckAgreement,
   recordDateText,
   requestCorrection,
@@ -76,9 +81,7 @@ export function RepairPayments({
   prefill?: { from: Role; to: Role; amount: number }
   onPrefillUsed?: () => void
 }) {
-  const [mode, setMode] = useState<"add" | "dispute" | "fix" | "reject" | null>(
-    null,
-  )
+  const [mode, setMode] = useState<"add" | "fix" | "reject" | null>(null)
   const [target, setTarget] = useState("")
   const [payer, setPayer] = useState<Payer>(role)
   const [payee, setPayee] = useState<Payee>("업체")
@@ -221,6 +224,8 @@ export function RepairPayments({
                 (c) => c.status === "확인 대기",
               )
               const theirs = p.by !== role && !p.confirmed
+              // 지금 열려 있는 보류·이견(보충하고 다시 요청하면 지난 것이 돼요, MONEY-2)
+              const open = openPaymentDispute(p)
               // 지불 카드 한 장. 상대가 남겨서 내가 확인할 기록이면 주황 테두리와 왼쪽 띠로 강조해요.
               return (
                 <div
@@ -257,15 +262,17 @@ export function RepairPayments({
                       ? ` · 증빙: ${p.evidence}`
                       : ""}
                   </small>
-                  {stage || p.disputes?.length ? (
+                  {stage || open ? (
                     <div className="badges">
                       {stage && (
                         <Status>
                           {stage === "미확인" ? "확인 없음" : "다시 알렸어요"}
                         </Status>
                       )}
-                      {p.disputes?.length ? (
-                        <Status>금액이 달라요</Status>
+                      {open ? (
+                        <Status>
+                          {open.kind === "보류" ? "보충 요청됨" : "이견"}
+                        </Status>
                       ) : null}
                     </div>
                   ) : null}
@@ -277,8 +284,16 @@ export function RepairPayments({
                     />
                   ) : null}
                   {p.disputes?.map((d, i) => (
-                    <div className="dispute-callout" key={i}>
-                      {sideText(d.by)} · 금액이 달라요 · {d.at}
+                    <div
+                      className={`dispute-callout${d.closed ? " opacity-60" : ""}`}
+                      key={i}
+                    >
+                      {sideText(d.by)} ·{" "}
+                      {d.kind === "보류"
+                        ? "보충 요청됨 · 더 필요한 게 있어요"
+                        : "이견 · 금액이 달라요"}{" "}
+                      · {d.at}
+                      {d.closed ? " · 보충하고 다시 요청함" : ""}
                       <p>{d.reason}</p>
                     </div>
                   ))}
@@ -295,25 +310,46 @@ export function RepairPayments({
                       상대가 남긴 기록이에요 · <strong>확인 전</strong>
                     </p>
                   )}
+                  {!readOnly && theirs && (
+                    <RespondButtons
+                      size="sm"
+                      answered={
+                        open?.kind === "보류"
+                          ? "NEED_MORE"
+                          : open
+                            ? "DISPUTE"
+                            : undefined
+                      }
+                      note="확인해야 수리비 나누기에 들어가요."
+                      onRespond={(answer, reason) =>
+                        answer === "ACK"
+                          ? confirmAmount(p)
+                          : run(
+                              `지불 금액 ${answer === "NEED_MORE" ? "보충 요청" : "이견"} · ${reason}`,
+                              (x) =>
+                                respondPayment(
+                                  pay(x, p.id),
+                                  role,
+                                  answer === "NEED_MORE" ? "보류" : "이견",
+                                  reason,
+                                ),
+                            )
+                      }
+                    />
+                  )}
+                  {!readOnly && p.by === role && open && !p.confirmed && (
+                    <SupplementRequest
+                      waitDays={reaskWaitDays(p.reaskedAt)}
+                      onSupplement={(data) =>
+                        run(
+                          `지불 보충하고 다시 확인 요청${data.text ? ` · ${data.text}` : ""}${data.photos.length ? ` · 사진 ${data.photos.length}장` : ""}`,
+                          (x) => supplementPayment(pay(x, p.id), role, data),
+                        )
+                      }
+                    />
+                  )}
                   {!readOnly && (
                     <div className="actions">
-                      {theirs && (
-                        <>
-                          <Button size="sm" onClick={() => confirmAmount(p)}>
-                            금액 확인
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                              setTarget(p.id)
-                              setMode("dispute")
-                            }}
-                          >
-                            금액이 달라요
-                          </Button>
-                        </>
-                      )}
                       {p.by === role && !pending && (
                         <Button
                           size="sm"
@@ -542,36 +578,6 @@ export function RepairPayments({
             </Button>
           </div>
         )}
-      </ActionDialog>
-      <ActionDialog
-        open={mode === "dispute"}
-        title="금액이 달라요"
-        description="원래 기록은 그대로 두고, 내가 남긴 사유가 옆에 나란히 보여요."
-        submitLabel="사유 남기기"
-        onClose={() => setMode(null)}
-        onSubmit={(f) => {
-          const reason = String(f.get("reason") || "").trim()
-          if (!reason) return "사유를 입력해 주세요."
-          return run(`지불 금액이 달라요 · ${reason}`, (x) => {
-            const p = pay(x, target)
-            if (p.by === role) throw new Error("내 기록에는 남길 수 없어요.")
-            p.disputes = [
-              ...(p.disputes || []),
-              { by: role, reason, at: nowText() },
-            ]
-            clearWait(x, `pay:${target}`)
-          })
-        }}
-      >
-        <div className="field">
-          <label htmlFor="pay-dispute">어떻게 다른가요 · 필수</label>
-          <Textarea
-            id="pay-dispute"
-            name="reason"
-            required
-            placeholder="예: 실제로는 60,000원을 냈어요"
-          />
-        </div>
       </ActionDialog>
       <ActionDialog
         open={mode === "fix"}

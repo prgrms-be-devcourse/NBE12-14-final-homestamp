@@ -42,7 +42,13 @@ export function repairAvailableActions(
   add("reopen", living && lateSoloConfirm)
   add("recur", living && canRecur(r))
   add("photos", mine || (living && r.status === "처리 중"))
-  add("supplement", living && mine && r.ack === "이견")
+  add(
+    "supplement",
+    living &&
+      mine &&
+      (r.ack === "보충 요청" || r.ack === "이견") &&
+      !bothClosed,
+  )
   add("corrections", mine && !bothClosed)
   return out
 }

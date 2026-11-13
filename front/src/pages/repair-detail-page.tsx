@@ -50,7 +50,7 @@ export interface RepairDetailPageProps {
   readOnly: boolean
   onBack: () => void
   onAction: OnAction
-  onOpenModal: (m: "note" | "reconfirm" | "after" | "repair") => void
+  onOpenModal: (m: "note" | "after" | "repair") => void
   onRecur: (r: Repair) => void
   onOpenRepair: (id: string) => void
   onCopyShareLink: (kind: "repair" | "inspection", id: string) => void

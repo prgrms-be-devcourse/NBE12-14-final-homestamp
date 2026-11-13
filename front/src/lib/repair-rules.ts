@@ -170,13 +170,14 @@ export function confirmDefect(r: Repair, role: Role, seenVersion?: number) {
   assertSeenVersion(r, seenVersion)
   if (r.status === "처리 완료" && !r.soloClosed)
     throw new Error(CLOSED_BY_BOTH_MESSAGE)
+  // 보류·이견은 정산 완료 전까지 언제든 맞아요로 바꿀 수 있고, 이전 응답은 이력에 남아요(03 G '나중에 답 바꾸기').
   if (r.ackDispute)
     r.notes = [
       ...(r.notes || []),
       {
-        kind: "이견 거둠",
+        kind: "맞아요로 답 바꿈",
         by: role,
-        text: `이전 이견(${r.ackDispute.type}): ${r.ackDispute.reason}`,
+        text: `이전 답(${r.ackDispute.type}): ${r.ackDispute.reason}`,
         at: nowText(),
       },
     ]
@@ -185,28 +186,78 @@ export function confirmDefect(r: Repair, role: Role, seenVersion?: number) {
   clearWait(r, "ack")
   if (r.status === "확인 전") r.status = "확인 완료"
 }
-export function disputeDefect(
+// 하자 응답 [아니에요 · 더 필요해요]: 보류(더 필요한 게 있어요) 또는 이견(사실과 달라요). 둘 다 도장이고 기다림을 닫아요.
+export function respondDefect(
   r: Repair,
   role: Role,
-  type: "하자 없음" | "설명과 다름",
+  type: "보류" | "이견",
   reason: string,
 ) {
-  if (r.author === role) throw new Error("하자 이견은 상대 쪽이 남겨요.")
+  if (r.author === role) throw new Error("하자 응답은 상대 쪽이 해요.")
   if (r.status === "처리 완료" && !r.soloClosed)
     throw new Error(CLOSED_BY_BOTH_MESSAGE)
-  if (!reason.trim()) throw new Error("이견 사유를 입력해 주세요.")
-  r.ack = "이견"
+  if (r.ack === "확인됨")
+    throw new Error("맞아요로 답한 기록은 되돌리지 않아요.")
+  if (!reason.trim()) throw new Error("사유를 입력해 주세요.")
+  r.ack = type === "보류" ? "보충 요청" : "이견"
   r.ackDispute = { by: role, type, reason: reason.trim(), at: nowText() }
   clearWait(r, "ack")
   r.notes = [
     ...(r.notes || []),
     {
-      kind: "하자 이견",
+      kind: type === "보류" ? "하자 보충 요청" : "하자 이견",
       by: role,
-      text: `[${type}] ${reason.trim()}`,
+      text: reason.trim(),
       at: nowText(),
     },
   ]
+}
+// 다시 확인 요청(보충하고 다시 확인 요청·상황이 바뀌었어요)은 한 기록에 7일에 한 번(03 G '다시 확인 요청의 한도').
+export const REASK_DAYS = 7
+export function reaskWaitDays(reaskedAt?: string, now = Date.now()) {
+  if (!reaskedAt) return 0
+  const left = Date.parse(reaskedAt) + REASK_DAYS * 86_400_000 - now
+  return left > 0 ? Math.ceil(left / 86_400_000) : 0
+}
+function assertCanReask(reaskedAt: string | undefined, now: number) {
+  const days = reaskWaitDays(reaskedAt, now)
+  if (days > 0) throw new Error(`${days}일 뒤 다시 요청할 수 있어요.`)
+}
+// [보충하고 다시 확인 요청]: 기록한 쪽이 사진이나 설명을 하나 이상 더해 새 확인 요청을 보내요.
+export function supplementDefect(
+  r: Repair,
+  role: Role,
+  data: { text: string; photos: string[] },
+  now = Date.now(),
+) {
+  if (r.author !== role) throw new Error("보충은 처음 기록한 쪽이 해요.")
+  if (r.ack !== "보충 요청" && r.ack !== "이견")
+    throw new Error("보충 요청이나 이견을 받은 기록에만 다시 요청할 수 있어요.")
+  const text = data.text.trim()
+  if (!text && !data.photos.length)
+    throw new Error("사진이나 설명을 하나 이상 더해 주세요.")
+  assertCanReask(r.reaskedAt, now)
+  const prev = r.ackDispute
+  r.notes = [
+    ...(r.notes || []),
+    {
+      kind: "보충하고 다시 확인 요청",
+      by: role,
+      text: [
+        text,
+        data.photos.length ? `사진 ${data.photos.length}장 추가` : "",
+        prev ? `(이전 답: ${prev.type} · ${prev.reason})` : "",
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      at: nowText(),
+    },
+  ]
+  r.photos = [...r.photos, ...data.photos]
+  r.ack = "확인 대기"
+  r.ackDispute = undefined
+  r.reaskedAt = new Date(now).toISOString()
+  clearWait(r, "ack")
 }
 export function startRepair(r: Repair) {
   if (!["확인 전", "확인 완료"].includes(r.status))
@@ -214,10 +265,48 @@ export function startRepair(r: Repair) {
   r.startFlag =
     r.ack === "이견"
       ? "이견 유지 중 수리 시작"
-      : r.ack !== "확인됨"
-        ? "상대 확인 전 수리 시작"
-        : undefined
+      : r.ack === "보충 요청"
+        ? "보충 요청 중 수리 시작"
+        : r.ack !== "확인됨"
+          ? "상대 확인 전 수리 시작"
+          : undefined
   r.status = "처리 중"
+}
+
+/* ── F 지불 응답 (MONEY-2): 맞아요 / 보류 / 금액 이견, 보충하고 다시 요청 ── */
+// 지금 열려 있는 보류·이견(보충하고 다시 요청하면 지난 것이 돼요)
+export const openPaymentDispute = (p: Payment) =>
+  p.disputes?.filter((d) => !d.closed).at(-1)
+export function respondPayment(
+  p: Payment,
+  role: Role,
+  type: "보류" | "이견",
+  reason: string,
+) {
+  if (p.by === role) throw new Error("내가 남긴 지불에는 답할 수 없어요.")
+  if (p.confirmed) throw new Error("맞아요로 답한 기록은 되돌리지 않아요.")
+  if (!reason.trim()) throw new Error("사유를 입력해 주세요.")
+  p.disputes = [
+    ...(p.disputes || []),
+    { by: role, kind: type, reason: reason.trim(), at: nowText() },
+  ]
+}
+export function supplementPayment(
+  p: Payment,
+  role: Role,
+  data: { text: string; photos: string[] },
+  now = Date.now(),
+) {
+  if (p.by !== role) throw new Error("보충은 지불을 기록한 쪽이 해요.")
+  if (p.confirmed || !openPaymentDispute(p))
+    throw new Error("보충 요청이나 이견을 받은 지불에만 다시 요청할 수 있어요.")
+  if (!data.text.trim() && !data.photos.length)
+    throw new Error("사진이나 설명을 하나 이상 더해 주세요.")
+  assertCanReask(p.reaskedAt, now)
+  p.disputes = p.disputes?.map((d) => ({ ...d, closed: true }))
+  // 보충 설명은 행동 기록(경과)에 남고, 사진은 증빙에 더해져요.
+  p.photos = [...(p.photos || []), ...data.photos]
+  p.reaskedAt = new Date(now).toISOString()
 }
 // 수리 후 사진은 종료(요청·혼자 종료) 전에 1장 이상 있어야 해요.
 export const hasAfterPhoto = (r: Repair) => (r.afterPhotos?.length ?? 0) > 0
@@ -618,7 +707,7 @@ export function moneyGap(r: Repair) {
 // 도장 뒤(상대가 맞아요·보류·이견으로 답함): 칸마다 '고친 내용'으로 남고 상대가 확인해야 앞모습이 바뀌어요(REP-7b·7c).
 // 거절·거둠·미응답이면 지금 기록 그대로. 같은 칸을 다시 고치면 이전 고친 내용은 '대체됨'으로 닫히고 이력에 남아요.
 export const repairStamped = (r: Repair) =>
-  r.ack === "확인됨" || r.ack === "이견"
+  r.ack === "확인됨" || r.ack === "보충 요청" || r.ack === "이견"
 export const paymentStamped = (p: Payment) =>
   p.confirmed || Boolean(p.disputes?.length)
 export const CLOSED_BY_BOTH_MESSAGE =
@@ -653,7 +742,11 @@ function applyCorrection(
 ) {
   bumpVersion(pay ?? r)
   // 이견이던 내용이 바뀌면: 이전 이견은 이 고친 내용의 이력으로 보존하고, 새 내용은 다시 하자 확인을 받아요.
-  if (!pay && ["제목", "설명", "부위"].includes(c.field) && r.ack === "이견") {
+  if (
+    !pay &&
+    ["제목", "설명", "부위"].includes(c.field) &&
+    (r.ack === "이견" || r.ack === "보충 요청")
+  ) {
     c.priorDispute = r.ackDispute
       ? `${sideText(r.ackDispute.by)} ${r.ackDispute.type} · ${r.ackDispute.reason} · ${r.ackDispute.at}`
       : "이견"

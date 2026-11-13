@@ -5,7 +5,7 @@ import {
   CLOSED_BY_BOTH_MESSAGE,
   confirmClose,
   confirmDefect,
-  disputeDefect,
+  respondDefect,
   requestCorrection,
   requestRepairEdits,
 } from "../src/lib/repair-rules"
@@ -123,7 +123,7 @@ test("지불 금액: 상대가 확인하기 전이면 바로 바뀌고, REP-7b �
 
 test("이견이 있는 기록의 고치기: 승인 전에는 원본·이견 유지, 승인 뒤 새 내용은 다시 확인 대기이고 이전 이견은 이력에 남는다", () => {
   const r = repair("확인 대기")
-  disputeDefect(r, "임대인", "설명과 다름", "천장이 아니라 벽이에요")
+  respondDefect(r, "임대인", "이견", "천장이 아니라 벽이에요")
   requestRepairEdits(
     r,
     "임차인",

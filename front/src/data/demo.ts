@@ -1,6 +1,7 @@
 import { formatWon } from "@/lib/money"
 export type Role = "임차인" | "임대인"
-export type Ack = "상대 미확인" | "확인 대기" | "확인됨" | "이견"
+// 하자 인정(GLOSSARY): 확인 기다림 / 맞아요 / 보충 요청됨(보류) / 이견 / 확인 없음
+export type Ack = "상대 미확인" | "확인 대기" | "확인됨" | "보충 요청" | "이견"
 export type Money = "미정" | "합의 대기" | "합의됨" | "이견" | "비용 없음"
 export type RepairStatus = "확인 전" | "확인 완료" | "처리 중" | "처리 완료"
 export interface RecordTarget {
@@ -85,10 +86,14 @@ export interface Proposal {
   disputeReason?: string
   disputeBy?: Role
 }
+// 지불 금액 응답의 보류·이견(MONEY-2). kind가 없으면 이전 방식의 금액 이견이에요.
+// closed: 기록한 쪽이 보충하고 다시 확인을 요청해 이 응답이 지난 것이 됨(이력으로 남아요)
 export interface PaymentDispute {
   by: Role
   reason: string
   at: string
+  kind?: "보류" | "이견"
+  closed?: boolean
 }
 // 사실 정정 요청(상태와 규칙 G). 원래 값(from)은 지우지 않고 나란히 남깁니다.
 export interface FactCorrection<T = string | number> {
@@ -131,6 +136,8 @@ export interface Payment {
   at?: string
   disputes?: PaymentDispute[]
   corrections?: FactCorrection<number>[]
+  // 마지막 [보충하고 다시 확인 요청] 시각(ISO). 한 기록에 7일에 한 번이에요.
+  reaskedAt?: string
 }
 // inspectionRefs는 과거 시연 연결 메타데이터의 이력 호환성용입니다. 현 MVP에서는 읽거나 새로 기록하지 않습니다.
 export type WaitStage = "재통지" | "미확인"
@@ -155,15 +162,21 @@ export interface Repair {
   wrongPhotos?: number[]
   // 기다림 타이머(시연): 응답이 필요한 요청별 단계. 키: ack, close, proposal, pay:<지불 id>, fix:<정정 id>
   waits?: Record<string, WaitStage>
+  // 하자 응답의 보류(더 필요한 게 있어요)·이견(사실과 달라요)과 사유(08 2장)
   ackDispute?: {
     by: Role
-    type: "하자 없음" | "설명과 다름"
+    type: "보류" | "이견"
     reason: string
     at: string
   }
+  // 마지막 [보충하고 다시 확인 요청] 시각(ISO). 한 기록에 7일에 한 번이에요.
+  reaskedAt?: string
   // 앞모습 번호(고친 내용이 반영될 때마다 +1). 확인할 때 본 번호와 비교해요.
   version?: number
-  startFlag?: "상대 확인 전 수리 시작" | "이견 유지 중 수리 시작"
+  startFlag?:
+    | "상대 확인 전 수리 시작"
+    | "보충 요청 중 수리 시작"
+    | "이견 유지 중 수리 시작"
   soloReason?: SoloReason
   recurrenceOf?: string
   corrections?: FactCorrection<string>[]

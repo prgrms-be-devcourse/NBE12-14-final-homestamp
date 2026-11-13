@@ -6,7 +6,7 @@ import {
   type ComponentType,
 } from "react"
 import { DetailMoreContext } from "@/components/detail-more"
-import { Camera, Check, Clock, RotateCcw, Wrench } from "lucide-react"
+import { Camera, Clock, RotateCcw, Wrench } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Choice, Status } from "@/components/prototype"
@@ -14,10 +14,17 @@ import { ActionDialog, tryOn } from "@/components/action-dialog"
 import type { Repair, Role, Room } from "@/data/demo"
 import { hasAction, type RepairAction } from "@/api/actions"
 import {
+  RespondButtons,
+  type RespondAnswer,
+} from "@/components/common/respond-buttons"
+import { SupplementRequest } from "@/components/common/supplement-request"
+import {
   confirmClose,
   confirmDefect,
   confirmSoloClosed,
-  disputeDefect,
+  reaskWaitDays,
+  respondDefect,
+  supplementDefect,
   hasAfterPhoto,
   notYet,
   reopen,
@@ -28,9 +35,17 @@ import {
   startRepair,
 } from "@/lib/repair-rules"
 import { versionOf } from "@/lib/versions"
-import { sideName, sideText } from "@/lib/words"
+import { sideName } from "@/lib/words"
 
 type OnAction = (text: string, update: (r: Repair) => void) => void
+// 하자 줄에 보이는 값(08-화면-기본-틀 1장)
+const defectText: Record<Repair["ack"], string> = {
+  "확인 대기": "확인 기다림",
+  확인됨: "확인 ✓",
+  "보충 요청": "보충 요청됨",
+  이견: "이견",
+  "상대 미확인": "확인 없음",
+}
 const waitText = (stage?: string) =>
   stage === "재통지" ? "다시 알렸어요" : stage === "미확인" ? "확인 없음" : ""
 
@@ -65,10 +80,7 @@ export function RepairBadges({
           </Status>
         )}
         {(!compact || r.ackDispute) && (
-          <Status>
-            하자 인정 · {r.ack}
-            {r.ackDispute ? ` · ${r.ackDispute.type}` : ""}
-          </Status>
+          <Status>{`하자 · ${defectText[r.ack]}`}</Status>
         )}
         {r.waits?.ack === "재통지" && <Status>하자 확인 재통지됨</Status>}
         {!compact && r.startFlag && <Status>{r.startFlag}</Status>}
@@ -95,7 +107,10 @@ export function RepairBadges({
       {r.ackDispute && (
         <div className="dispute-callout">
           <strong>
-            {sideText(r.ackDispute.by)} 하자 이견 · {r.ackDispute.type}
+            {sideName(r.ackDispute.by)} ·{" "}
+            {r.ackDispute.type === "보류"
+              ? "보충 요청됨 · 더 필요한 게 있어요"
+              : "이견 · 사실과 달라요"}
           </strong>
           <small className="block">{r.ackDispute.at}</small>
           <p>{r.ackDispute.reason}</p>
@@ -154,7 +169,7 @@ interface ActionsProps {
   // 서버가 준 지금 누를 수 있는 행동(GET /api/repair-cases/{id}의 availableActions)
   actions: readonly RepairAction[]
   onAction: OnAction
-  onOpen: (m: "note" | "reconfirm" | "after") => void
+  onOpen: (m: "note" | "after") => void
   onRecur: (r: Repair) => void
 }
 export function RepairActions({
@@ -166,12 +181,10 @@ export function RepairActions({
   onOpen,
   onRecur,
 }: ActionsProps) {
-  const [mode, setMode] = useState<
-    "dispute" | "notyet" | "reopen" | "close-ack" | null
-  >(null)
-  const [disputeType, setDisputeType] = useState<"하자 없음" | "설명과 다름">(
-    "하자 없음",
+  const [mode, setMode] = useState<"notyet" | "reopen" | "close-ack" | null>(
+    null,
   )
+  const [disputeType, setDisputeType] = useState<"보류" | "이견">("보류")
   const [closeAck, setCloseAck] = useState("네, 하자도 확인해요")
   const [error, setError] = useState("")
   const run = (text: string, update: (x: Repair) => void) => {
@@ -193,25 +206,23 @@ export function RepairActions({
   const has = (a: RepairAction) => hasAction(actions, a)
   // 버튼은 서버가 준 availableActions에 있는 것만 그려요(08 0장 원칙 6). 순서는 그대로이고,
   // 수리 상세에서는 앞의 두 개만 크게, 나머지는 '더 보기' 메뉴로 보내요.
-  const acts: Act[] = []
-  if (has("respond"))
-    acts.push({
-      key: "ack",
-      label: "하자 사실 확인",
-      icon: Check,
-      onClick: () =>
-        run(`하자 사실 확인 · 본 모습 ${versionOf(r)}번`, (x) =>
+  // 하자 응답은 공통 부품(RespondButtons)으로 따로 그려요. 여기에는 그 밖의 행동만 모아요.
+  const respond = (answer: RespondAnswer, reason: string) =>
+    answer === "ACK"
+      ? run(`하자 사실 확인 · 본 모습 ${versionOf(r)}번`, (x) =>
           confirmDefect(x, role, versionOf(r)),
-        ),
-    })
-  // 이미 이견이면 맞아요로 답 바꾸기만 보여요(08 2장)
-  if (has("respond") && r.ack !== "이견")
-    acts.push({
-      key: "dispute",
-      label: "사실에 이견",
-      outline: true,
-      onClick: () => setMode("dispute"),
-    })
+        )
+      : run(
+          `하자 ${answer === "NEED_MORE" ? "보충 요청" : "이견"} · ${reason}`,
+          (x) =>
+            respondDefect(
+              x,
+              role,
+              answer === "NEED_MORE" ? "보류" : "이견",
+              reason,
+            ),
+        )
+  const acts: Act[] = []
   if (has("start"))
     acts.push({
       key: "start",
@@ -219,7 +230,7 @@ export function RepairActions({
       icon: Wrench,
       onClick: () =>
         run(
-          `수리 시작${r.ack === "이견" ? " · 이견 유지 중 수리 시작" : r.ack !== "확인됨" ? " · 상대 확인 전 수리 시작" : ""}`,
+          `수리 시작${r.ack === "이견" ? " · 이견 유지 중 수리 시작" : r.ack === "보충 요청" ? " · 보충 요청 중 수리 시작" : r.ack !== "확인됨" ? " · 상대 확인 전 수리 시작" : ""}`,
           startRepair,
         ),
     })
@@ -299,13 +310,6 @@ export function RepairActions({
       outline: true,
       onClick: () => onOpen("after"),
     })
-  if (has("supplement"))
-    acts.push({
-      key: "reconfirm",
-      label: "설명·사진 보충 후 다시 확인 요청",
-      outline: true,
-      onClick: () => onOpen("reconfirm"),
-    })
   const register = useContext(DetailMoreContext)
   const big = register ? acts.slice(0, 2) : acts
   const rest = register ? acts.slice(2) : []
@@ -344,6 +348,30 @@ export function RepairActions({
           </div>
         </div>
       )}
+      {has("respond") && (
+        <RespondButtons
+          onRespond={respond}
+          answered={
+            r.ack === "보충 요청"
+              ? "NEED_MORE"
+              : r.ack === "이견"
+                ? "DISPUTE"
+                : undefined
+          }
+          note="하자가 있다는 확인이에요. 수리비는 따로 정해요."
+        />
+      )}
+      {has("supplement") && (
+        <SupplementRequest
+          waitDays={reaskWaitDays(r.reaskedAt)}
+          onSupplement={(data) =>
+            run(
+              `보충하고 다시 확인 요청${data.text ? ` · ${data.text}` : ""}${data.photos.length ? ` · 사진 ${data.photos.length}장` : ""}`,
+              (x) => supplementDefect(x, role, data),
+            )
+          }
+        />
+      )}
       {big.length > 0 && (
         <div className="actions">
           {big.map((a) => (
@@ -378,36 +406,6 @@ export function RepairActions({
         </p>
       )}
 
-      <ActionDialog
-        open={mode === "dispute"}
-        title="하자 사실에 이견"
-        onClose={() => setMode(null)}
-        onSubmit={(f) =>
-          run(`하자 이견 · ${disputeType}`, (x) =>
-            disputeDefect(x, role, disputeType, String(f.get("reason") || "")),
-          )
-        }
-      >
-        <div className="field">
-          <label>이견 종류</label>
-          <Choice
-            label="이견 종류"
-            value={disputeType}
-            values={["하자 없음", "설명과 다름"]}
-            onChange={(v) => setDisputeType(v as typeof disputeType)}
-          />
-        </div>
-        <div className="field">
-          <label htmlFor="ack-reason">사유 · 필수</label>
-          <Textarea
-            id="ack-reason"
-            name="reason"
-            required
-            placeholder="예: 방문해 보니 물 자국이 없어요"
-          />
-        </div>
-        <p className="muted">이견이 있어도 누구든 수리를 시작할 수 있어요.</p>
-      </ActionDialog>
       <ActionDialog
         open={mode === "notyet"}
         title="아직 안 됐어요"
@@ -449,10 +447,10 @@ export function RepairActions({
           const agree = closeAck.startsWith("네")
           const reason = String(f.get("reason") || "")
           return run(
-            `수리 종료 · 양측 확인 · 하자 ${agree ? "확인" : `이견(${disputeType})`}`,
+            `수리 종료 · 양측 확인 · 하자 ${agree ? "확인" : disputeType === "보류" ? "보충 요청" : "이견"}`,
             (x) => {
               if (agree) confirmDefect(x, role, versionOf(r))
-              else disputeDefect(x, role, disputeType, reason)
+              else respondDefect(x, role, disputeType, reason)
               confirmClose(x, role)
             },
           )
@@ -463,19 +461,25 @@ export function RepairActions({
           <Choice
             label="하자 인정"
             value={closeAck}
-            values={["네, 하자도 확인해요", "아니요, 이견 있어요"]}
+            values={["네, 하자도 확인해요", "아니요, 더 필요하거나 달라요"]}
             onChange={setCloseAck}
           />
         </div>
         {closeAck.startsWith("아니요") && (
           <>
             <div className="field">
-              <label>이견 종류</label>
+              <label>어떤 건가요?</label>
               <Choice
-                label="이견 종류"
-                value={disputeType}
-                values={["하자 없음", "설명과 다름"]}
-                onChange={(v) => setDisputeType(v as typeof disputeType)}
+                label="어떤 건가요"
+                value={
+                  disputeType === "보류"
+                    ? "더 필요한 게 있어요"
+                    : "사실과 달라요"
+                }
+                values={["더 필요한 게 있어요", "사실과 달라요"]}
+                onChange={(v) =>
+                  setDisputeType(v === "사실과 달라요" ? "이견" : "보류")
+                }
               />
             </div>
             <div className="field">
