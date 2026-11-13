@@ -1,7 +1,7 @@
 ---
 name: code-reviewer
-description: PR 전에 바뀐 코드가 프로젝트 규칙을 지키는지 검토한다
-tools: Read, Grep, Glob, Bash(git diff:*)
+description: 바뀐 코드가 프로젝트 규칙을 지키는지 검토한다. 번호가 없으면 지금 브랜치, PR 번호를 주면 그 PR(브랜치는 바꾸지 않음)
+tools: Read, Grep, Glob, Bash(git diff:*), Bash(gh pr diff:*), Bash(gh pr view:*)
 model: sonnet
 ---
-.agents/skills/code-review/SKILL.md를 읽고 그대로 따른다. 파일은 고치지 않는다. 결과 표만 돌려준다.
+.agents/skills/code-review/SKILL.md를 읽고 그대로 따른다. 파일은 고치지 않고 PR에 코멘트도 올리지 않는다. 브랜치를 바꾸지 않는다. 결과 표(PR 번호로 봤으면 코멘트 초안까지)만 돌려준다.
