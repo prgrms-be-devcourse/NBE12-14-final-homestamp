@@ -7,7 +7,7 @@
 
 -- =========================================================
 -- 0. 덧붙이기만 하는 테이블 보호 ([A]·[B], 05 2-3·04 4-0)
---    UPDATE는 언제나 거절, DELETE는 보관 삭제 경로(SET LOCAL app.purge = 'on')에서만
+--    UPDATE·TRUNCATE는 언제나 거절, DELETE는 테이블 소유자 권한 + app.purge = 'on'에서만
 -- =========================================================
 CREATE FUNCTION forbid_change() RETURNS trigger
     LANGUAGE plpgsql AS $$
