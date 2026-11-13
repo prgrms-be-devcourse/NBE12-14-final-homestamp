@@ -1,6 +1,6 @@
-# AI 하네스 처음 설정
+# 처음 설정
 
-이 저장소에서 Claude Code나 Codex를 쓰기 전에 **한 번만** 하면 된다.
+이 저장소에서 작업하기 전에 **한 번만** 하면 된다. 1~5장은 AI 하네스(Claude Code·Codex), 6장은 IDE 서식, 7장은 로컬 실행이다.
 
 ## 1. 모두 (필수)
 
@@ -65,6 +65,39 @@ AI에게 `git clean -fd 실행해줘`라고 해 본다. 실행되지 않고 "팀
 
 확인: 커밋 전에 `cd back && ./gradlew spotlessApply`, `cd front && npm run format`을 돌려도 바뀌는 파일이 없으면 IDE 설정이 맞다.
 
+## 7. 로컬 실행 (모두 필수)
+
+### 준비물
+
+| 준비물 | 확인 | 왜 |
+|---|---|---|
+| JDK 25 (Temurin 권장) | `java -version` | 백엔드 빌드 기준 |
+| Docker Desktop (켜 둔 상태) | `docker info` | 로컬 DB와 테스트(Testcontainers)가 모두 Docker로 뜬다 |
+| Node 22 | `node -v` | 프론트(Vite)와 AI 훅 |
+
+### 실행 순서
+
+```
+# 1. 백엔드 (첫 실행은 DB 이미지를 받느라 1~2분)
+cd back
+./gradlew bootRun          # back/compose.yaml의 PostgreSQL 18이 같이 뜨고 연결 정보가 자동으로 들어간다
+
+# 2. 프론트 (다른 터미널)
+cd front
+npm ci                     # 처음 한 번, package-lock.json이 바뀌었을 때
+npm run dev                # http://localhost:5173, /api는 백엔드(8080)로 넘어간다
+```
+
+- **설정 파일을 만들 필요가 없다.** DB 주소·계정은 Spring Boot가 `compose.yaml`에서 읽어 넣는다(`spring-boot-docker-compose`). `application-local.yml`은 만들지 않는다(`.gitignore`·비밀값 훅이 막는 파일이라 팀이 같은 설정을 나눌 수 없다).
+- **데이터는 남는다.** 앱을 꺼도 DB 데이터는 Docker 볼륨(`homestamp_homestamp-db`)에 남는다. 처음부터 다시 하려면 `cd back && docker compose down -v`(볼륨까지 지움, 되돌릴 수 없음).
+- **포트는 실행할 때마다 바뀐다.** 각자 PC의 5432와 부딪히지 않게 고정하지 않았다. IntelliJ Database 창이나 DBeaver로 열 때는 `cd back && docker compose port postgres 5432`로 확인한다(DB·계정·비밀번호 모두 `homestamp`, 로컬 전용).
+- **테스트는 이 DB를 쓰지 않는다.** `./gradlew test`·`build`는 Testcontainers가 따로 DB를 띄운다(CI와 같음).
+
+### 지금 알아 둘 것
+
+- **API는 401이 정상이다.** 보안 뼈대(A 담당, 1주차 2일차) 전에는 Spring Security 기본값이라 `/api/**`가 모두 401이고, 로그에 `Using generated security password`가 찍힌다. `/actuator/health`는 열려 있어 앱이 떴는지 확인할 수 있다.
+- **테이블은 아직 없다.** V1 마이그레이션(1일차) 전에는 Flyway 기록 테이블만 생긴다.
+
 ## 문제가 생기면
 
 | 증상 | 해결 |
@@ -74,3 +107,6 @@ AI에게 `git clean -fd 실행해줘`라고 해 본다. 실행되지 않고 "팀
 | 막으면 안 되는 명령이 막힌다 | 직접 터미널에서 실행하고, 훅 오탐으로 이슈를 올린다 |
 | IDE에서 맞췄는데 `spotlessCheck`가 떨어진다 | google-java-format 플러그인 버전이 2.0.0.x인지 확인. 그래도 다르면 `./gradlew spotlessApply`로 맞추고, `docs/rules/04` 17장 "서식 기준"의 cleanup 시험 결과를 확인 |
 | google-java-format 플러그인이 시작할 때 오류를 낸다 | 플러그인 안내에 있는 `--add-exports` 줄을 Help → Edit Custom VM Options에 넣고 IntelliJ를 다시 켠다 |
+| `bootRun`이 `Failed to configure a DataSource`로 떨어진다 | Docker Desktop이 켜져 있는지(`docker info`) 확인. IntelliJ에서 실행했다면 작업 폴더가 `back/`인지 확인(`compose.yaml`을 그 폴더에서 찾는다) |
+| `bootRun`이 Docker Compose 오류로 떨어진다 | `cd back && docker compose up postgres`로 직접 띄워 오류 메시지를 본다. 이미지 받기 실패면 네트워크, 볼륨 오류면 `docker compose down -v`로 지우고 다시 |
+| 화면에서 `/api` 요청이 404·연결 거부 | 백엔드(`bootRun`)가 떠 있는지, 프론트를 `npm run dev`로 띄웠는지 확인(프록시는 개발 서버에서만) |
