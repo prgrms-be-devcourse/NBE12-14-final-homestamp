@@ -78,7 +78,7 @@ function apply(
   if (c.field === "부위") i.zone = c.to
   else if (c.field === "제목") i.title = c.to
   else if (c.field === "설명") i.description = c.to
-  else if (c.field === "항목 삭제") i.removed = true
+  // 항목 삭제는 두지 않아요(decisions 늘 지키는 원칙 1). removed는 예전 기록 표시용이에요.
   else if (c.field === "빠진 하자 추가") {
     i.ack = "확인됨"
     i.solo = false
@@ -183,24 +183,6 @@ export function requestItemEdits(
   return changes.map(([field, from, to]) =>
     newRequest(i, role, field, from, to, reason),
   )
-}
-// 항목 삭제 요청(기존 기능 유지): 원래 기록한 쪽, 상대 확인이 있어야 '정정으로 삭제됨'
-export function requestFact(
-  d: DemoState,
-  role: Role,
-  id: string,
-  field: "항목 삭제",
-  to: string,
-  reason: string,
-) {
-  const i = item(d, id)
-  if (i.author !== role)
-    throw new Error("항목 삭제는 원래 기록한 쪽이 요청해요.")
-  if (!editable(i)) throw new Error("고칠 수 없는 항목이에요.")
-  if (i.corrections?.some((c) => c.status === "확인 대기" && c.field === field))
-    throw new Error("응답을 기다리는 삭제 요청이 있어요.")
-  if (!reason.trim()) throw new Error("사유를 입력해 주세요.")
-  return newRequest(i, role, field, "항목 있음", to, reason)
 }
 // 빠진 하자 추가: 누구든(상대 쪽도) 요청, 상대 쪽 확인이 있어야 항목이 돼요(미응답이어도 혼자 반영하지 않음)
 export function requestAdd(
@@ -508,7 +490,7 @@ export function inspectionWaits(items: Inspection[]): InspectionWait[] {
         list.push({
           itemId: i.id,
           cid: c.id,
-          label: `${i.title} · ${c.field === "항목 삭제" || c.field === "빠진 하자 추가" ? `${c.field} 확인 요청` : factRequestName(c.field)}`,
+          label: `${i.title} · ${c.field === "빠진 하자 추가" ? `${c.field} 확인 요청` : factRequestName(c.field)}`,
           stage: c.wait,
         })
     })

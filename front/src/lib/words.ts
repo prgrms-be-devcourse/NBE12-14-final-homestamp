@@ -17,3 +17,14 @@ export const withSubject = (word: string) => {
   const final = code >= 0 && code <= 11171 && code % 28 !== 0
   return `${word}${final ? "이" : "가"}`
 }
+// 하자·점검 항목 응답 상태의 화면 말(08-화면-기본-틀 1장·9장)
+export const ackText = (ack: string) =>
+  (
+    ({
+      "확인 대기": "확인 기다림",
+      확인됨: "확인 ✓",
+      "보충 요청": "보충 요청됨",
+      이견: "이견",
+      "상대 미확인": "확인 없음",
+    }) as Record<string, string>
+  )[ack] ?? ack

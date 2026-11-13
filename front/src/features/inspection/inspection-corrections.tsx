@@ -566,7 +566,7 @@ export function MissingDefectDialog({
     <ActionDialog
       open={open}
       title="빠진 하자 추가"
-      description="점검을 고치는 일이라 기준 기록을 쓴 쪽이 확인해야 반영돼요. 빠진 하자 추가도 상대 쪽이 확인해야 항목이 돼요(응답이 없어도 혼자 반영되지 않아요). 기존 항목의 고치기·사진 추가·삭제 요청은 각 항목 카드에서 할 수 있어요."
+      description="점검을 고치는 일이라 기준 기록을 쓴 쪽이 확인해야 반영돼요. 빠진 하자 추가도 상대 쪽이 확인해야 항목이 돼요(응답이 없어도 혼자 반영되지 않아요). 기존 항목의 고치기·사진 추가는 각 항목 카드에서 할 수 있어요."
       submitLabel="추가 요청"
       onClose={() => {
         setPhotos([])

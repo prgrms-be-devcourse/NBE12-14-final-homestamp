@@ -39,7 +39,7 @@ import { RepairPayments } from "@/features/repair/repair-payments"
 import { afterMasks, beforeMasks, type maskOf } from "@/lib/photo-privacy"
 import { safeSharedText } from "@/lib/service-rules"
 import { plainText } from "@/lib/plain-words"
-import { sideName } from "@/lib/words"
+import { ackText, sideName } from "@/lib/words"
 
 type OnAction = (text: string, update: (r: Repair) => void) => void
 const afterConfirmPhotos = (r: Repair) =>
@@ -364,7 +364,7 @@ export function RepairDetailPage({
                         : "작성 중"
                       : i.solo
                         ? "혼자 남긴 기록(상대 확인 없음)"
-                        : i.ack}
+                        : ackText(i.ack)}
                   </Status>
                   {i.author === role && i.publication !== "draft" && (
                     <Button

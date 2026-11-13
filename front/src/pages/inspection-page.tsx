@@ -45,7 +45,7 @@ import {
 } from "@/lib/inspection-rules"
 import { activeSettlementLink, sendSettlementLink } from "@/lib/workflows"
 import type { maskOf } from "@/lib/photo-privacy"
-import { sideName, sideText } from "@/lib/words"
+import { ackText, sideName, sideText } from "@/lib/words"
 import { reaskWaitDays } from "@/lib/reask"
 import {
   hasAction,
@@ -199,7 +199,7 @@ export function InspectionPage({
                 : "작성 중"
               : i.solo
                 ? "혼자 남긴 기록(상대 확인 없음)"
-                : i.ack}
+                : ackText(i.ack)}
           </StatusTag>
         </div>
         <small className="rec-meta">
@@ -657,7 +657,7 @@ export function InspectionPage({
             {inspectionLocked && (
               <small className="muted">
                 잠긴 점검의 항목은 고치기로 바꿔요. 빠진 하자는 ‘빠뜨린 하자
-                더하기’, 기존 항목의 고치기와 삭제 요청은 각 항목 카드에서 해요.
+                더하기’, 기존 항목의 고치기는 각 항목 카드에서 해요.
               </small>
             )}
           </div>
