@@ -179,8 +179,8 @@ CREATE TABLE repair_case (
                              money_status          varchar(20) NOT NULL CHECK (money_status IN ('UNDECIDED', 'PENDING', 'AGREED', 'DISPUTE', 'NO_COST')),
                              current_proposal_id   uuid,                             -- FK는 14절
                              agreed_proposal_id    uuid,                             -- FK는 14절
-                             previous_case_id      uuid REFERENCES repair_case (id), -- 재발
-                             related_case_id       uuid REFERENCES repair_case (id), -- 수리 중 새로 찾은 별개 하자면 원래 건
+                             previous_case_id      uuid, -- 재발
+                             related_case_id       uuid, -- 수리 중 새로 찾은 별개 하자면 원래 건
                              created_by_side       varchar(10) NOT NULL CHECK (created_by_side IN ('TENANT', 'LANDLORD')),
                              solo                  boolean     NOT NULL DEFAULT false,
                              first_shown_at        timestamptz,                      -- NULL이면 탈퇴 때 삭제 대상
@@ -194,12 +194,12 @@ CREATE TABLE repair_case (
 CREATE TABLE repair_content (
                                 id               uuid PRIMARY KEY,
                                 room_record_id   uuid         NOT NULL REFERENCES room_record (id),
-                                repair_case_id   uuid         NOT NULL REFERENCES repair_case (id),
+                                repair_case_id   uuid         NOT NULL,
                                 no               int          NOT NULL CHECK (no >= 1),
-  room_part_id     uuid         NOT NULL REFERENCES room_part (id),
+  room_part_id     uuid         NOT NULL,
   title            varchar(100) NOT NULL,
   description      text,
-  previous_id      uuid REFERENCES repair_content (id),
+  previous_id      uuid,
   created_by_side  varchar(10)  NOT NULL CHECK (created_by_side IN ('TENANT', 'LANDLORD')),
   created_at       timestamptz  NOT NULL,
   CONSTRAINT uq_repair_content_no UNIQUE (repair_case_id, no)
@@ -228,7 +228,7 @@ CREATE TABLE inspection (
 CREATE TABLE inspection_item (
                                  id                    uuid PRIMARY KEY,
                                  room_record_id        uuid        NOT NULL REFERENCES room_record (id),
-                                 inspection_id         uuid        NOT NULL REFERENCES inspection (id),
+                                 inspection_id         uuid        NOT NULL,
                                  current_version_id    uuid        NOT NULL,             -- FK는 14절(지연 검사)
                                  confirmed_version_id  uuid,                             -- FK는 14절
                                  status                varchar(20) NOT NULL CHECK (status IN ('PENDING', 'ACK', 'NEED_MORE', 'DISPUTE', 'UNCONFIRMED')),
@@ -242,11 +242,11 @@ CREATE TABLE inspection_item (
 CREATE TABLE inspection_item_version (
                                          id                  uuid PRIMARY KEY,
                                          room_record_id      uuid        NOT NULL REFERENCES room_record (id),
-                                         inspection_item_id  uuid        NOT NULL REFERENCES inspection_item (id),
+                                         inspection_item_id  uuid        NOT NULL,
                                          no                  int         NOT NULL CHECK (no >= 1),
-  room_part_id        uuid        NOT NULL REFERENCES room_part (id),
+  room_part_id        uuid        NOT NULL,
   description         text        NOT NULL,
-  previous_id         uuid REFERENCES inspection_item_version (id),
+  previous_id         uuid,
   created_at          timestamptz NOT NULL,
   CONSTRAINT uq_inspection_item_version_no UNIQUE (inspection_item_id, no)
 );
@@ -269,10 +269,10 @@ CREATE TABLE settlement (
 CREATE TABLE settlement_item (
                                  id                   uuid PRIMARY KEY,
                                  room_record_id       uuid        NOT NULL REFERENCES room_record (id),
-                                 settlement_id        uuid        NOT NULL REFERENCES settlement (id),
+                                 settlement_id        uuid        NOT NULL,
                                  source               varchar(10) NOT NULL CHECK (source IN ('REPAIR', 'MANUAL')),
-                                 repair_case_id       uuid REFERENCES repair_case (id),
-                                 room_part_id         uuid REFERENCES room_part (id),
+                                 repair_case_id       uuid,
+                                 room_part_id         uuid,
                                  category             varchar(30) NOT NULL,
                                  status               varchar(10) NOT NULL CHECK (status IN ('PENDING', 'AGREED', 'DISPUTE', 'EXCLUDED')),
                                  current_proposal_id  uuid,                              -- FK는 14절
@@ -285,13 +285,13 @@ CREATE TABLE settlement_item (
 CREATE TABLE settlement_transfer (
                                      id                    uuid PRIMARY KEY,
                                      room_record_id        uuid        NOT NULL REFERENCES room_record (id),
-                                     settlement_id         uuid        NOT NULL REFERENCES settlement (id),
+                                     settlement_id         uuid        NOT NULL,
                                      direction             varchar(10) NOT NULL CHECK (direction IN ('REFUND', 'EXTRA')),
                                      current_version_id    uuid        NOT NULL,             -- FK는 14절(지연 검사)
                                      confirmed_version_id  uuid,                             -- FK는 14절
                                      recorded_by_side      varchar(10) NOT NULL CHECK (recorded_by_side IN ('TENANT', 'LANDLORD')),
                                      response              varchar(10) NOT NULL DEFAULT 'NONE' CHECK (response IN ('NONE', 'ACK', 'NEED_MORE', 'DISPUTE')),
-                                     same_as_transfer_id   uuid REFERENCES settlement_transfer (id),
+                                     same_as_transfer_id   uuid,
                                      receipt_confirmed_at  timestamptz,
                                      created_at            timestamptz NOT NULL,
                                      version               bigint      NOT NULL,
@@ -301,11 +301,11 @@ CREATE TABLE settlement_transfer (
 CREATE TABLE settlement_transfer_version (
                                              id                      uuid PRIMARY KEY,
                                              room_record_id          uuid        NOT NULL REFERENCES room_record (id),
-                                             settlement_transfer_id  uuid        NOT NULL REFERENCES settlement_transfer (id),
+                                             settlement_transfer_id  uuid        NOT NULL,
                                              no                      int         NOT NULL CHECK (no >= 1),
   amount                  bigint      NOT NULL CHECK (amount >= 0),
   paid_on                 date        NOT NULL,
-  previous_id             uuid REFERENCES settlement_transfer_version (id),
+  previous_id             uuid,
   created_at              timestamptz NOT NULL,
   CONSTRAINT uq_settlement_transfer_version_no UNIQUE (settlement_transfer_id, no)
 );
@@ -316,7 +316,7 @@ CREATE TABLE settlement_transfer_version (
 CREATE TABLE payment (
                          id                    uuid PRIMARY KEY,
                          room_record_id        uuid        NOT NULL REFERENCES room_record (id),
-                         repair_case_id        uuid        NOT NULL REFERENCES repair_case (id),
+                         repair_case_id        uuid        NOT NULL,
                          current_version_id    uuid        NOT NULL,             -- FK는 14절(지연 검사)
                          confirmed_version_id  uuid,                             -- FK는 14절
                          confirm_strength      varchar(10) NOT NULL CHECK (confirm_strength IN ('ONE_SIDE', 'EVIDENCE', 'BOTH')),
@@ -329,7 +329,7 @@ CREATE TABLE payment (
 CREATE TABLE payment_version (
                                  id                uuid PRIMARY KEY,
                                  room_record_id    uuid        NOT NULL REFERENCES room_record (id),
-                                 payment_id        uuid        NOT NULL REFERENCES payment (id),
+                                 payment_id        uuid        NOT NULL,
                                  no                int         NOT NULL CHECK (no >= 1),
   payer_kind        varchar(20) NOT NULL CHECK (payer_kind IN ('TENANT', 'LANDLORD', 'THIRD_PARTY')),
   payer_label       varchar(30),                          -- 제3자면 이름 대신 관계(가족·윗집·보험사)
@@ -339,7 +339,7 @@ CREATE TABLE payment_version (
   paid_on           date        NOT NULL,
   recorded_by_side  varchar(10) NOT NULL CHECK (recorded_by_side IN ('TENANT', 'LANDLORD')),
   evidence_kind     varchar(30),
-  previous_id       uuid REFERENCES payment_version (id),
+  previous_id       uuid,
   created_at        timestamptz NOT NULL,
   CONSTRAINT uq_payment_version_no UNIQUE (payment_id, no)
 );
@@ -347,12 +347,12 @@ CREATE TABLE payment_version (
 CREATE TABLE proposal (
                           id                  uuid PRIMARY KEY,
                           room_record_id      uuid        NOT NULL REFERENCES room_record (id),
-                          repair_case_id      uuid REFERENCES repair_case (id),       -- 부담
-                          settlement_item_id  uuid REFERENCES settlement_item (id),   -- 정산 항목 금액·제외
-                          settlement_id       uuid REFERENCES settlement (id),        -- 보증금
+                          repair_case_id      uuid,       -- 부담
+                          settlement_item_id  uuid,   -- 정산 항목 금액·제외
+                          settlement_id       uuid,        -- 보증금
                           proposed_by_side    varchar(10) NOT NULL CHECK (proposed_by_side IN ('TENANT', 'LANDLORD')),
-                          counter_of_id       uuid REFERENCES proposal (id),
-                          replaces_id         uuid REFERENCES proposal (id),       -- 답 전에 바꾼 내 이전 제안
+                          counter_of_id       uuid,
+                          replaces_id         uuid,       -- 답 전에 바꾼 내 이전 제안
                           round               int         NOT NULL CHECK (round >= 1),
                           no_cost             boolean     NOT NULL DEFAULT false,
                           exclude             boolean     NOT NULL DEFAULT false,
@@ -365,7 +365,7 @@ CREATE TABLE proposal (
 CREATE TABLE proposal_line (
                                id                 uuid PRIMARY KEY,
                                room_record_id     uuid        NOT NULL REFERENCES room_record (id),
-                               proposal_id        uuid        NOT NULL REFERENCES proposal (id),
+                               proposal_id        uuid        NOT NULL,
                                line_kind          varchar(20) NOT NULL CHECK (line_kind IN ('TENANT', 'LANDLORD', 'THIRD_PARTY', 'DEDUCT', 'ADD', 'DEPOSIT')),
                                third_party_label  varchar(30),
                                amount             bigint      NOT NULL CHECK (amount >= 0),
@@ -380,9 +380,9 @@ CREATE TABLE link (
                       id                   uuid PRIMARY KEY,
                       room_record_id       uuid         NOT NULL REFERENCES room_record (id),
                       kind                 varchar(20)  NOT NULL CHECK (kind IN ('INVITE', 'SETTLEMENT_INVITE')),
-                      party_id             uuid         NOT NULL REFERENCES party (id),
-                      repair_case_id       uuid REFERENCES repair_case (id),    -- 공유한 기록(없으면 호실 초대 화면)
-                      inspection_id        uuid REFERENCES inspection (id),
+                      party_id             uuid         NOT NULL,
+                      repair_case_id       uuid,    -- 공유한 기록(없으면 호실 초대 화면)
+                      inspection_id        uuid,
                       token_hash           varchar(128) NOT NULL UNIQUE,
                       issued_by_member_id  uuid         NOT NULL REFERENCES member (id),
                       invalidated_at       timestamptz,
@@ -404,13 +404,13 @@ CREATE TABLE response_request (
                                                                                                'DEFECT_CONFIRM', 'SITUATION_CHECK', 'CORRECTION_CONFIRM', 'AMOUNT_CONFIRM',
                                                                                                'PROPOSAL', 'CLOSE_CONFIRM', 'INSPECTION_CONFIRM', 'RECEIPT_CONFIRM',
                                                                                                'SETTLE_FINISH', 'END_REQUEST', 'PROGRESS_CHECK')),
-                                  repair_case_id          uuid REFERENCES repair_case (id),
-                                  payment_id              uuid REFERENCES payment (id),
-                                  settlement_item_id      uuid REFERENCES settlement_item (id), -- 제안이 아니라 안건을 가리킴
-                                  settlement_id           uuid REFERENCES settlement (id),
-                                  inspection_id           uuid REFERENCES inspection (id),
-                                  inspection_item_id      uuid REFERENCES inspection_item (id),
-                                  settlement_transfer_id  uuid REFERENCES settlement_transfer (id),
+                                  repair_case_id          uuid,
+                                  payment_id              uuid,
+                                  settlement_item_id      uuid, -- 제안이 아니라 안건을 가리킴
+                                  settlement_id           uuid,
+                                  inspection_id           uuid,
+                                  inspection_item_id      uuid,
+                                  settlement_transfer_id  uuid,
                                   requested_by_side       varchar(10) NOT NULL CHECK (requested_by_side IN ('TENANT', 'LANDLORD')),
                                   first_notified_at       timestamptz,                    -- min(전달됨, 링크 열람)
                                   renotify_due_at         timestamptz,
@@ -437,22 +437,22 @@ CREATE TABLE response_request (
 CREATE TABLE cause_note (
                             id              uuid PRIMARY KEY,
                             room_record_id  uuid         NOT NULL REFERENCES room_record (id),
-                            repair_case_id  uuid         NOT NULL REFERENCES repair_case (id),
+                            repair_case_id  uuid         NOT NULL,
                             side            varchar(10)  NOT NULL CHECK (side IN ('TENANT', 'LANDLORD')),
                             text            text         NOT NULL,
                             basis           varchar(10)  NOT NULL CHECK (basis IN ('GUESS', 'SEEN', 'EXPERT', 'HEARD')),
                             expert_name     varchar(50),
-                            previous_id     uuid REFERENCES cause_note (id),         -- 고치면 언제나 새 행(06 REP-8c)
+                            previous_id     uuid,         -- 고치면 언제나 새 행(06 REP-8c)
                             created_at      timestamptz  NOT NULL
 );
 
 CREATE TABLE progress_note (
                                id                  uuid PRIMARY KEY,
                                room_record_id      uuid        NOT NULL REFERENCES room_record (id),
-                               repair_case_id      uuid        NOT NULL REFERENCES repair_case (id),
+                               repair_case_id      uuid        NOT NULL,
                                side                varchar(10) NOT NULL CHECK (side IN ('TENANT', 'LANDLORD')),
                                text                text        NOT NULL,
-                               answers_request_id  uuid REFERENCES response_request (id),  -- 진행 상황 묻기에 대한 답이면
+                               answers_request_id  uuid,  -- 진행 상황 묻기에 대한 답이면
                                asks_check          boolean     NOT NULL DEFAULT false,      -- "상황이 바뀌었어요" 확인 요청
                                created_at          timestamptz NOT NULL
 );
@@ -460,7 +460,7 @@ CREATE TABLE progress_note (
 CREATE TABLE progress_note_response (
                                         id                uuid PRIMARY KEY,
                                         room_record_id    uuid        NOT NULL REFERENCES room_record (id),
-                                        progress_note_id  uuid        NOT NULL UNIQUE REFERENCES progress_note (id),  -- 지금 답 하나
+                                        progress_note_id  uuid        NOT NULL UNIQUE,  -- 지금 답 하나
                                         side              varchar(10) NOT NULL CHECK (side IN ('TENANT', 'LANDLORD')),
                                         answer            varchar(10) NOT NULL CHECK (answer IN ('ACK', 'NEED_MORE', 'DISPUTE')),
                                         reason            text,
@@ -475,12 +475,12 @@ CREATE TABLE correction_request (
                                     field                   varchar(40)  NOT NULL,
                                     new_value               jsonb        NOT NULL,
                                     base_version_id         uuid,                           -- 그때 도장 찍힌 판(다형 참조라 FK 없음)
-                                    repair_case_id          uuid REFERENCES repair_case (id),
-                                    payment_id              uuid REFERENCES payment (id),
-                                    inspection_item_id      uuid REFERENCES inspection_item (id),
-                                    settlement_transfer_id  uuid REFERENCES settlement_transfer (id),  -- 넷 다 NULL이면 호실 기록의 입주일
+                                    repair_case_id          uuid,
+                                    payment_id              uuid,
+                                    inspection_item_id      uuid,
+                                    settlement_transfer_id  uuid,  -- 넷 다 NULL이면 호실 기록의 입주일
                                     target_key              varchar(80)  NOT NULL,           -- 대상 종류 + ID
-                                    retry_of_id             uuid REFERENCES correction_request (id),
+                                    retry_of_id             uuid,
                                     requested_by_side       varchar(10)  NOT NULL CHECK (requested_by_side IN ('TENANT', 'LANDLORD')),
                                     reason                  text,
                                     status                  varchar(20)  NOT NULL CHECK (status IN (
@@ -502,16 +502,16 @@ CREATE TABLE correction_request (
 CREATE TABLE photo (
                        id                      uuid PRIMARY KEY,
                        room_record_id          uuid         NOT NULL REFERENCES room_record (id),
-                       repair_case_id          uuid REFERENCES repair_case (id),
-                       inspection_item_id      uuid REFERENCES inspection_item (id),
-                       inspection_id           uuid REFERENCES inspection (id),       -- 부위 사진(하자 아님)
-                       payment_id              uuid REFERENCES payment (id),
-                       cause_note_id           uuid REFERENCES cause_note (id),
-                       settlement_item_id      uuid REFERENCES settlement_item (id),
-                       progress_note_id        uuid REFERENCES progress_note (id),
-                       correction_request_id   uuid REFERENCES correction_request (id),  -- 다시 요청에 더한 근거
-                       redacted_from_photo_id  uuid REFERENCES photo (id),            -- 가린 사본이면 지운 원본
-                       room_part_id            uuid REFERENCES room_part (id),
+                       repair_case_id          uuid,
+                       inspection_item_id      uuid,
+                       inspection_id           uuid,       -- 부위 사진(하자 아님)
+                       payment_id              uuid,
+                       cause_note_id           uuid,
+                       settlement_item_id      uuid,
+                       progress_note_id        uuid,
+                       correction_request_id   uuid,  -- 다시 요청에 더한 근거
+                       redacted_from_photo_id  uuid,            -- 가린 사본이면 지운 원본
+                       room_part_id            uuid,
                        stage                   varchar(10)  NOT NULL CHECK (stage IN ('MOVE_IN', 'BEFORE', 'AFTER', 'MOVE_OUT', 'EVIDENCE', 'BASIS', 'PROGRESS')),
                        uploaded_by_side        varchar(10)  NOT NULL CHECK (uploaded_by_side IN ('TENANT', 'LANDLORD')),
                        device_taken_at         timestamptz,                           -- 참고값(06 PHO-1f)
@@ -529,7 +529,7 @@ CREATE TABLE photo (
 );
 
 CREATE TABLE photo_visibility (
-                                  photo_id        uuid PRIMARY KEY REFERENCES photo (id),
+                                  photo_id        uuid PRIMARY KEY,
                                   room_record_id  uuid        NOT NULL REFERENCES room_record (id),
                                   hidden_on_link  boolean     NOT NULL DEFAULT false,
                                   marked_wrong_at timestamptz,
@@ -546,9 +546,9 @@ CREATE TABLE photo_visibility (
 CREATE TABLE notice (
                         id                   uuid PRIMARY KEY,
                         room_record_id       uuid         NOT NULL REFERENCES room_record (id),
-                        response_request_id  uuid REFERENCES response_request (id),
-                        link_id              uuid REFERENCES link (id),
-                        recipient_party_id   uuid         NOT NULL REFERENCES party (id),
+                        response_request_id  uuid,
+                        link_id              uuid,
+                        recipient_party_id   uuid         NOT NULL,
                         kind                 varchar(20)  NOT NULL CHECK (kind IN ('INVITE', 'REQUEST', 'RENOTIFY', 'SETTLEMENT_INVITE', 'INFO')),
                         channel              varchar(10)  NOT NULL CHECK (channel IN ('SMS', 'IN_APP')),
                         status               varchar(10)  NOT NULL CHECK (status IN ('REQUESTED', 'SENT', 'DELIVERED', 'VIEWED', 'FAILED')),
@@ -557,7 +557,7 @@ CREATE TABLE notice (
                         viewed_at            timestamptz,
                         failed_at            timestamptz,
                         provider_message_id  varchar(100),                      -- 모은 문자는 여러 통지가 같은 값
-                        batch_lead_id        uuid REFERENCES notice (id),       -- 발송 시 대표 통지, 단독 발송이면 자기 자신
+                        batch_lead_id        uuid,       -- 발송 시 대표 통지, 단독 발송이면 자기 자신
                         next_poll_at         timestamptz,
                         scheduled_for        timestamptz,                       -- 모으기 2분, 21~08시 보류, 한도 미룸
                         created_at           timestamptz  NOT NULL,
@@ -586,23 +586,23 @@ CREATE TABLE action (
                         seen_version_no         int,                              -- 판의 no, CONFIRM_FINISH는 settlement.snapshot_no
                         reason                  text,
                         payload                 jsonb,                            -- 작은 부가 값만(while_open_objection 등, 이름·번호 금지)
-                        party_id                uuid REFERENCES party (id),
-                        link_id                 uuid REFERENCES link (id),
-                        room_part_id            uuid REFERENCES room_part (id),
-                        notice_id               uuid REFERENCES notice (id),
-                        repair_case_id          uuid REFERENCES repair_case (id),
-                        payment_id              uuid REFERENCES payment (id),
-                        inspection_id           uuid REFERENCES inspection (id),
-                        inspection_item_id      uuid REFERENCES inspection_item (id),
-                        settlement_id           uuid REFERENCES settlement (id),
-                        settlement_item_id      uuid REFERENCES settlement_item (id),
-                        settlement_transfer_id  uuid REFERENCES settlement_transfer (id),
-                        proposal_id             uuid REFERENCES proposal (id),
-                        response_request_id     uuid REFERENCES response_request (id),
-                        correction_request_id   uuid REFERENCES correction_request (id),
-                        cause_note_id           uuid REFERENCES cause_note (id),
-                        progress_note_id        uuid REFERENCES progress_note (id),
-                        photo_id                uuid REFERENCES photo (id),
+                        party_id                uuid,
+                        link_id                 uuid,
+                        room_part_id            uuid,
+                        notice_id               uuid,
+                        repair_case_id          uuid,
+                        payment_id              uuid,
+                        inspection_id           uuid,
+                        inspection_item_id      uuid,
+                        settlement_id           uuid,
+                        settlement_item_id      uuid,
+                        settlement_transfer_id  uuid,
+                        proposal_id             uuid,
+                        response_request_id     uuid,
+                        correction_request_id   uuid,
+                        cause_note_id           uuid,
+                        progress_note_id        uuid,
+                        photo_id                uuid,
                         created_at              timestamptz  NOT NULL,
                         CONSTRAINT uq_action_idempotency UNIQUE (actor_key, idempotency_key),
                         CONSTRAINT uq_action_room_seq    UNIQUE (room_record_id, room_seq),
@@ -660,7 +660,7 @@ CREATE TABLE in_app_notification (
                                      room_record_id       uuid REFERENCES room_record (id),  -- 서비스 안내(번호 인증 해제 등)는 NULL
                                      member_id            uuid        NOT NULL REFERENCES member (id),
                                      kind                 varchar(10) NOT NULL CHECK (kind IN ('RESPONSE', 'INFO', 'SERVICE')),
-                                     response_request_id  uuid REFERENCES response_request (id),
+                                     response_request_id  uuid,
                                      target_kind          varchar(30),                        -- 이동할 대상(05 "이동할 대상")
                                      target_id            uuid,
                                      group_key            varchar(120),                       -- 하루 묶음, 예: erase-digest:<호실>:<날짜>
@@ -671,6 +671,9 @@ CREATE TABLE in_app_notification (
                                      version              bigint      NOT NULL,
                                      CHECK ((target_kind IS NULL) = (target_id IS NULL))
 );
+
+ALTER TABLE in_app_notification ADD CONSTRAINT ck_in_app_request_room
+    CHECK (response_request_id IS NULL OR room_record_id IS NOT NULL);
 
 CREATE TABLE rate_counter (
                               counter_key  varchar(200) NOT NULL,   -- upload:<회원>, verify:<번호 HMAC>, sms:<번호 HMAC>, sms-member:<회원>, sms-total, rerequest:…
@@ -697,45 +700,147 @@ CREATE TABLE deletion_log (
 -- 14. 뒤에서 만든 테이블을 가리키는 FK
 --     머리 → 지금 판은 지연 검사(같은 트랜잭션에서 머리와 첫 판을 어느 순서로 넣어도 됨)
 -- =========================================================
+-- 호실이 다른 부모를 연결할 수 없도록 모든 호실 소속 참조에 복합 FK를 둔다.
+ALTER TABLE cause_note ADD CONSTRAINT uq_cause_note_id_room UNIQUE (id, room_record_id);
+ALTER TABLE correction_request ADD CONSTRAINT uq_correction_request_id_room UNIQUE (id, room_record_id);
+ALTER TABLE inspection ADD CONSTRAINT uq_inspection_id_room UNIQUE (id, room_record_id);
+ALTER TABLE inspection_item ADD CONSTRAINT uq_inspection_item_id_room UNIQUE (id, room_record_id);
+ALTER TABLE inspection_item_version ADD CONSTRAINT uq_inspection_item_version_id_room UNIQUE (id, room_record_id);
+ALTER TABLE link ADD CONSTRAINT uq_link_id_room UNIQUE (id, room_record_id);
+ALTER TABLE notice ADD CONSTRAINT uq_notice_id_room UNIQUE (id, room_record_id);
+ALTER TABLE party ADD CONSTRAINT uq_party_id_room UNIQUE (id, room_record_id);
+ALTER TABLE payment ADD CONSTRAINT uq_payment_id_room UNIQUE (id, room_record_id);
+ALTER TABLE payment_version ADD CONSTRAINT uq_payment_version_id_room UNIQUE (id, room_record_id);
+ALTER TABLE photo ADD CONSTRAINT uq_photo_id_room UNIQUE (id, room_record_id);
+ALTER TABLE progress_note ADD CONSTRAINT uq_progress_note_id_room UNIQUE (id, room_record_id);
+ALTER TABLE proposal ADD CONSTRAINT uq_proposal_id_room UNIQUE (id, room_record_id);
+ALTER TABLE repair_case ADD CONSTRAINT uq_repair_case_id_room UNIQUE (id, room_record_id);
+ALTER TABLE repair_content ADD CONSTRAINT uq_repair_content_id_room UNIQUE (id, room_record_id);
+ALTER TABLE response_request ADD CONSTRAINT uq_response_request_id_room UNIQUE (id, room_record_id);
+ALTER TABLE room_part ADD CONSTRAINT uq_room_part_id_room UNIQUE (id, room_record_id);
+ALTER TABLE settlement ADD CONSTRAINT uq_settlement_id_room UNIQUE (id, room_record_id);
+ALTER TABLE settlement_item ADD CONSTRAINT uq_settlement_item_id_room UNIQUE (id, room_record_id);
+ALTER TABLE settlement_transfer ADD CONSTRAINT uq_settlement_transfer_id_room UNIQUE (id, room_record_id);
+ALTER TABLE settlement_transfer_version ADD CONSTRAINT uq_settlement_transfer_version_id_room UNIQUE (id, room_record_id);
+
+ALTER TABLE repair_case ADD CONSTRAINT fk_repair_case_previous_case_id_room FOREIGN KEY (previous_case_id, room_record_id) REFERENCES repair_case (id, room_record_id);
+ALTER TABLE repair_case ADD CONSTRAINT fk_repair_case_related_case_id_room FOREIGN KEY (related_case_id, room_record_id) REFERENCES repair_case (id, room_record_id);
+ALTER TABLE repair_content ADD CONSTRAINT fk_repair_content_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES repair_case (id, room_record_id);
+ALTER TABLE repair_content ADD CONSTRAINT fk_repair_content_room_part_id_room FOREIGN KEY (room_part_id, room_record_id) REFERENCES room_part (id, room_record_id);
+ALTER TABLE repair_content ADD CONSTRAINT fk_repair_content_previous_id_room FOREIGN KEY (previous_id, room_record_id) REFERENCES repair_content (id, room_record_id);
+ALTER TABLE inspection_item ADD CONSTRAINT fk_inspection_item_inspection_id_room FOREIGN KEY (inspection_id, room_record_id) REFERENCES inspection (id, room_record_id);
+ALTER TABLE inspection_item_version ADD CONSTRAINT fk_inspection_item_version_inspection_item_id_room FOREIGN KEY (inspection_item_id, room_record_id) REFERENCES inspection_item (id, room_record_id);
+ALTER TABLE inspection_item_version ADD CONSTRAINT fk_inspection_item_version_room_part_id_room FOREIGN KEY (room_part_id, room_record_id) REFERENCES room_part (id, room_record_id);
+ALTER TABLE inspection_item_version ADD CONSTRAINT fk_inspection_item_version_previous_id_room FOREIGN KEY (previous_id, room_record_id) REFERENCES inspection_item_version (id, room_record_id);
+ALTER TABLE settlement_item ADD CONSTRAINT fk_settlement_item_settlement_id_room FOREIGN KEY (settlement_id, room_record_id) REFERENCES settlement (id, room_record_id);
+ALTER TABLE settlement_item ADD CONSTRAINT fk_settlement_item_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES repair_case (id, room_record_id);
+ALTER TABLE settlement_item ADD CONSTRAINT fk_settlement_item_room_part_id_room FOREIGN KEY (room_part_id, room_record_id) REFERENCES room_part (id, room_record_id);
+ALTER TABLE settlement_transfer ADD CONSTRAINT fk_settlement_transfer_settlement_id_room FOREIGN KEY (settlement_id, room_record_id) REFERENCES settlement (id, room_record_id);
+ALTER TABLE settlement_transfer ADD CONSTRAINT fk_settlement_transfer_same_as_transfer_id_room FOREIGN KEY (same_as_transfer_id, room_record_id) REFERENCES settlement_transfer (id, room_record_id);
+ALTER TABLE settlement_transfer_version ADD CONSTRAINT fk_settlement_transfer_version_settlement_transfer_id_room FOREIGN KEY (settlement_transfer_id, room_record_id) REFERENCES settlement_transfer (id, room_record_id);
+ALTER TABLE settlement_transfer_version ADD CONSTRAINT fk_settlement_transfer_version_previous_id_room FOREIGN KEY (previous_id, room_record_id) REFERENCES settlement_transfer_version (id, room_record_id);
+ALTER TABLE payment ADD CONSTRAINT fk_payment_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES repair_case (id, room_record_id);
+ALTER TABLE payment_version ADD CONSTRAINT fk_payment_version_payment_id_room FOREIGN KEY (payment_id, room_record_id) REFERENCES payment (id, room_record_id);
+ALTER TABLE payment_version ADD CONSTRAINT fk_payment_version_previous_id_room FOREIGN KEY (previous_id, room_record_id) REFERENCES payment_version (id, room_record_id);
+ALTER TABLE proposal ADD CONSTRAINT fk_proposal_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES repair_case (id, room_record_id);
+ALTER TABLE proposal ADD CONSTRAINT fk_proposal_settlement_item_id_room FOREIGN KEY (settlement_item_id, room_record_id) REFERENCES settlement_item (id, room_record_id);
+ALTER TABLE proposal ADD CONSTRAINT fk_proposal_settlement_id_room FOREIGN KEY (settlement_id, room_record_id) REFERENCES settlement (id, room_record_id);
+ALTER TABLE proposal ADD CONSTRAINT fk_proposal_counter_of_id_room FOREIGN KEY (counter_of_id, room_record_id) REFERENCES proposal (id, room_record_id);
+ALTER TABLE proposal ADD CONSTRAINT fk_proposal_replaces_id_room FOREIGN KEY (replaces_id, room_record_id) REFERENCES proposal (id, room_record_id);
+ALTER TABLE proposal_line ADD CONSTRAINT fk_proposal_line_proposal_id_room FOREIGN KEY (proposal_id, room_record_id) REFERENCES proposal (id, room_record_id);
+ALTER TABLE link ADD CONSTRAINT fk_link_party_id_room FOREIGN KEY (party_id, room_record_id) REFERENCES party (id, room_record_id);
+ALTER TABLE link ADD CONSTRAINT fk_link_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES repair_case (id, room_record_id);
+ALTER TABLE link ADD CONSTRAINT fk_link_inspection_id_room FOREIGN KEY (inspection_id, room_record_id) REFERENCES inspection (id, room_record_id);
+ALTER TABLE response_request ADD CONSTRAINT fk_response_request_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES repair_case (id, room_record_id);
+ALTER TABLE response_request ADD CONSTRAINT fk_response_request_payment_id_room FOREIGN KEY (payment_id, room_record_id) REFERENCES payment (id, room_record_id);
+ALTER TABLE response_request ADD CONSTRAINT fk_response_request_settlement_item_id_room FOREIGN KEY (settlement_item_id, room_record_id) REFERENCES settlement_item (id, room_record_id);
+ALTER TABLE response_request ADD CONSTRAINT fk_response_request_settlement_id_room FOREIGN KEY (settlement_id, room_record_id) REFERENCES settlement (id, room_record_id);
+ALTER TABLE response_request ADD CONSTRAINT fk_response_request_inspection_id_room FOREIGN KEY (inspection_id, room_record_id) REFERENCES inspection (id, room_record_id);
+ALTER TABLE response_request ADD CONSTRAINT fk_response_request_inspection_item_id_room FOREIGN KEY (inspection_item_id, room_record_id) REFERENCES inspection_item (id, room_record_id);
+ALTER TABLE response_request ADD CONSTRAINT fk_response_request_settlement_transfer_id_room FOREIGN KEY (settlement_transfer_id, room_record_id) REFERENCES settlement_transfer (id, room_record_id);
+ALTER TABLE cause_note ADD CONSTRAINT fk_cause_note_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES repair_case (id, room_record_id);
+ALTER TABLE cause_note ADD CONSTRAINT fk_cause_note_previous_id_room FOREIGN KEY (previous_id, room_record_id) REFERENCES cause_note (id, room_record_id);
+ALTER TABLE progress_note ADD CONSTRAINT fk_progress_note_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES repair_case (id, room_record_id);
+ALTER TABLE progress_note ADD CONSTRAINT fk_progress_note_answers_request_id_room FOREIGN KEY (answers_request_id, room_record_id) REFERENCES response_request (id, room_record_id);
+ALTER TABLE progress_note_response ADD CONSTRAINT fk_progress_note_response_progress_note_id_room FOREIGN KEY (progress_note_id, room_record_id) REFERENCES progress_note (id, room_record_id);
+ALTER TABLE correction_request ADD CONSTRAINT fk_correction_request_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES repair_case (id, room_record_id);
+ALTER TABLE correction_request ADD CONSTRAINT fk_correction_request_payment_id_room FOREIGN KEY (payment_id, room_record_id) REFERENCES payment (id, room_record_id);
+ALTER TABLE correction_request ADD CONSTRAINT fk_correction_request_inspection_item_id_room FOREIGN KEY (inspection_item_id, room_record_id) REFERENCES inspection_item (id, room_record_id);
+ALTER TABLE correction_request ADD CONSTRAINT fk_correction_request_settlement_transfer_id_room FOREIGN KEY (settlement_transfer_id, room_record_id) REFERENCES settlement_transfer (id, room_record_id);
+ALTER TABLE correction_request ADD CONSTRAINT fk_correction_request_retry_of_id_room FOREIGN KEY (retry_of_id, room_record_id) REFERENCES correction_request (id, room_record_id);
+ALTER TABLE photo ADD CONSTRAINT fk_photo_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES repair_case (id, room_record_id);
+ALTER TABLE photo ADD CONSTRAINT fk_photo_inspection_item_id_room FOREIGN KEY (inspection_item_id, room_record_id) REFERENCES inspection_item (id, room_record_id);
+ALTER TABLE photo ADD CONSTRAINT fk_photo_inspection_id_room FOREIGN KEY (inspection_id, room_record_id) REFERENCES inspection (id, room_record_id);
+ALTER TABLE photo ADD CONSTRAINT fk_photo_payment_id_room FOREIGN KEY (payment_id, room_record_id) REFERENCES payment (id, room_record_id);
+ALTER TABLE photo ADD CONSTRAINT fk_photo_cause_note_id_room FOREIGN KEY (cause_note_id, room_record_id) REFERENCES cause_note (id, room_record_id);
+ALTER TABLE photo ADD CONSTRAINT fk_photo_settlement_item_id_room FOREIGN KEY (settlement_item_id, room_record_id) REFERENCES settlement_item (id, room_record_id);
+ALTER TABLE photo ADD CONSTRAINT fk_photo_progress_note_id_room FOREIGN KEY (progress_note_id, room_record_id) REFERENCES progress_note (id, room_record_id);
+ALTER TABLE photo ADD CONSTRAINT fk_photo_correction_request_id_room FOREIGN KEY (correction_request_id, room_record_id) REFERENCES correction_request (id, room_record_id);
+ALTER TABLE photo ADD CONSTRAINT fk_photo_redacted_from_photo_id_room FOREIGN KEY (redacted_from_photo_id, room_record_id) REFERENCES photo (id, room_record_id);
+ALTER TABLE photo ADD CONSTRAINT fk_photo_room_part_id_room FOREIGN KEY (room_part_id, room_record_id) REFERENCES room_part (id, room_record_id);
+ALTER TABLE photo_visibility ADD CONSTRAINT fk_photo_visibility_photo_id_room FOREIGN KEY (photo_id, room_record_id) REFERENCES photo (id, room_record_id);
+ALTER TABLE notice ADD CONSTRAINT fk_notice_response_request_id_room FOREIGN KEY (response_request_id, room_record_id) REFERENCES response_request (id, room_record_id);
+ALTER TABLE notice ADD CONSTRAINT fk_notice_link_id_room FOREIGN KEY (link_id, room_record_id) REFERENCES link (id, room_record_id);
+ALTER TABLE notice ADD CONSTRAINT fk_notice_recipient_party_id_room FOREIGN KEY (recipient_party_id, room_record_id) REFERENCES party (id, room_record_id);
+ALTER TABLE notice ADD CONSTRAINT fk_notice_batch_lead_id_room FOREIGN KEY (batch_lead_id, room_record_id) REFERENCES notice (id, room_record_id);
+ALTER TABLE action ADD CONSTRAINT fk_action_party_id_room FOREIGN KEY (party_id, room_record_id) REFERENCES party (id, room_record_id);
+ALTER TABLE action ADD CONSTRAINT fk_action_link_id_room FOREIGN KEY (link_id, room_record_id) REFERENCES link (id, room_record_id);
+ALTER TABLE action ADD CONSTRAINT fk_action_room_part_id_room FOREIGN KEY (room_part_id, room_record_id) REFERENCES room_part (id, room_record_id);
+ALTER TABLE action ADD CONSTRAINT fk_action_notice_id_room FOREIGN KEY (notice_id, room_record_id) REFERENCES notice (id, room_record_id);
+ALTER TABLE action ADD CONSTRAINT fk_action_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES repair_case (id, room_record_id);
+ALTER TABLE action ADD CONSTRAINT fk_action_payment_id_room FOREIGN KEY (payment_id, room_record_id) REFERENCES payment (id, room_record_id);
+ALTER TABLE action ADD CONSTRAINT fk_action_inspection_id_room FOREIGN KEY (inspection_id, room_record_id) REFERENCES inspection (id, room_record_id);
+ALTER TABLE action ADD CONSTRAINT fk_action_inspection_item_id_room FOREIGN KEY (inspection_item_id, room_record_id) REFERENCES inspection_item (id, room_record_id);
+ALTER TABLE action ADD CONSTRAINT fk_action_settlement_id_room FOREIGN KEY (settlement_id, room_record_id) REFERENCES settlement (id, room_record_id);
+ALTER TABLE action ADD CONSTRAINT fk_action_settlement_item_id_room FOREIGN KEY (settlement_item_id, room_record_id) REFERENCES settlement_item (id, room_record_id);
+ALTER TABLE action ADD CONSTRAINT fk_action_settlement_transfer_id_room FOREIGN KEY (settlement_transfer_id, room_record_id) REFERENCES settlement_transfer (id, room_record_id);
+ALTER TABLE action ADD CONSTRAINT fk_action_proposal_id_room FOREIGN KEY (proposal_id, room_record_id) REFERENCES proposal (id, room_record_id);
+ALTER TABLE action ADD CONSTRAINT fk_action_response_request_id_room FOREIGN KEY (response_request_id, room_record_id) REFERENCES response_request (id, room_record_id);
+ALTER TABLE action ADD CONSTRAINT fk_action_correction_request_id_room FOREIGN KEY (correction_request_id, room_record_id) REFERENCES correction_request (id, room_record_id);
+ALTER TABLE action ADD CONSTRAINT fk_action_cause_note_id_room FOREIGN KEY (cause_note_id, room_record_id) REFERENCES cause_note (id, room_record_id);
+ALTER TABLE action ADD CONSTRAINT fk_action_progress_note_id_room FOREIGN KEY (progress_note_id, room_record_id) REFERENCES progress_note (id, room_record_id);
+ALTER TABLE action ADD CONSTRAINT fk_action_photo_id_room FOREIGN KEY (photo_id, room_record_id) REFERENCES photo (id, room_record_id);
+ALTER TABLE in_app_notification ADD CONSTRAINT fk_in_app_notification_response_request_id_room FOREIGN KEY (response_request_id, room_record_id) REFERENCES response_request (id, room_record_id);
+
 ALTER TABLE repair_case
     ADD CONSTRAINT fk_repair_case_current_content
-        FOREIGN KEY (current_content_id) REFERENCES repair_content (id) DEFERRABLE INITIALLY DEFERRED,
+        FOREIGN KEY (current_content_id, room_record_id) REFERENCES repair_content (id, room_record_id) DEFERRABLE INITIALLY DEFERRED,
   ADD CONSTRAINT fk_repair_case_confirmed_content
-    FOREIGN KEY (confirmed_content_id) REFERENCES repair_content (id) DEFERRABLE INITIALLY DEFERRED,
+    FOREIGN KEY (confirmed_content_id, room_record_id) REFERENCES repair_content (id, room_record_id) DEFERRABLE INITIALLY DEFERRED,
   ADD CONSTRAINT fk_repair_case_current_proposal
-    FOREIGN KEY (current_proposal_id) REFERENCES proposal (id),
+    FOREIGN KEY (current_proposal_id, room_record_id) REFERENCES proposal (id, room_record_id),
   ADD CONSTRAINT fk_repair_case_agreed_proposal
-    FOREIGN KEY (agreed_proposal_id) REFERENCES proposal (id);
+    FOREIGN KEY (agreed_proposal_id, room_record_id) REFERENCES proposal (id, room_record_id);
 
 ALTER TABLE inspection_item
     ADD CONSTRAINT fk_inspection_item_current_version
-        FOREIGN KEY (current_version_id) REFERENCES inspection_item_version (id) DEFERRABLE INITIALLY DEFERRED,
+        FOREIGN KEY (current_version_id, room_record_id) REFERENCES inspection_item_version (id, room_record_id) DEFERRABLE INITIALLY DEFERRED,
   ADD CONSTRAINT fk_inspection_item_confirmed_version
-    FOREIGN KEY (confirmed_version_id) REFERENCES inspection_item_version (id) DEFERRABLE INITIALLY DEFERRED;
+    FOREIGN KEY (confirmed_version_id, room_record_id) REFERENCES inspection_item_version (id, room_record_id) DEFERRABLE INITIALLY DEFERRED;
 
 ALTER TABLE settlement
     ADD CONSTRAINT fk_settlement_current_deposit_proposal
-        FOREIGN KEY (current_deposit_proposal_id) REFERENCES proposal (id),
+        FOREIGN KEY (current_deposit_proposal_id, room_record_id) REFERENCES proposal (id, room_record_id),
   ADD CONSTRAINT fk_settlement_agreed_deposit_proposal
-    FOREIGN KEY (agreed_deposit_proposal_id) REFERENCES proposal (id);
+    FOREIGN KEY (agreed_deposit_proposal_id, room_record_id) REFERENCES proposal (id, room_record_id);
 
 ALTER TABLE settlement_item
     ADD CONSTRAINT fk_settlement_item_current_proposal
-        FOREIGN KEY (current_proposal_id) REFERENCES proposal (id),
+        FOREIGN KEY (current_proposal_id, room_record_id) REFERENCES proposal (id, room_record_id),
   ADD CONSTRAINT fk_settlement_item_agreed_proposal
-    FOREIGN KEY (agreed_proposal_id) REFERENCES proposal (id);
+    FOREIGN KEY (agreed_proposal_id, room_record_id) REFERENCES proposal (id, room_record_id);
 
 ALTER TABLE settlement_transfer
     ADD CONSTRAINT fk_settlement_transfer_current_version
-        FOREIGN KEY (current_version_id) REFERENCES settlement_transfer_version (id) DEFERRABLE INITIALLY DEFERRED,
+        FOREIGN KEY (current_version_id, room_record_id) REFERENCES settlement_transfer_version (id, room_record_id) DEFERRABLE INITIALLY DEFERRED,
   ADD CONSTRAINT fk_settlement_transfer_confirmed_version
-    FOREIGN KEY (confirmed_version_id) REFERENCES settlement_transfer_version (id) DEFERRABLE INITIALLY DEFERRED;
+    FOREIGN KEY (confirmed_version_id, room_record_id) REFERENCES settlement_transfer_version (id, room_record_id) DEFERRABLE INITIALLY DEFERRED;
 
 ALTER TABLE payment
     ADD CONSTRAINT fk_payment_current_version
-        FOREIGN KEY (current_version_id) REFERENCES payment_version (id) DEFERRABLE INITIALLY DEFERRED,
+        FOREIGN KEY (current_version_id, room_record_id) REFERENCES payment_version (id, room_record_id) DEFERRABLE INITIALLY DEFERRED,
   ADD CONSTRAINT fk_payment_confirmed_version
-    FOREIGN KEY (confirmed_version_id) REFERENCES payment_version (id) DEFERRABLE INITIALLY DEFERRED;
+    FOREIGN KEY (confirmed_version_id, room_record_id) REFERENCES payment_version (id, room_record_id) DEFERRABLE INITIALLY DEFERRED;
 
 -- =========================================================
 -- 15. 인덱스 (05에 적힌 것 + 작업자·조회용)
