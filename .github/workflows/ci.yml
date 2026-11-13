@@ -72,6 +72,8 @@ jobs:
           sys.exit(1 if errors else 0)
           PY
       - name: AI 도구 서명 (PR 본문·커밋 메시지)
+        # 제목 검사가 떨어져도 이 검사는 돌아서, 고칠 것을 한 번에 보여 준다
+        if: always()
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
