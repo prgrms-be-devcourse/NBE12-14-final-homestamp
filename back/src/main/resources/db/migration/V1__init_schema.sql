@@ -567,6 +567,8 @@ CREATE TABLE notice (
 -- =========================================================
 -- 12. 행동 기록 (05 2-3, 원본, 덧붙이기만)
 --     해시는 SHA-256(32바이트). 호실의 첫 행동은 prev_hash = 32바이트 0
+--     content_digest는 당시 본 판의 내용·사진 지문을 묶은 SHA-256. 내용 대상이 없는 행동은 NULL
+--     앱이 내용 지문을 행동 hash 입력에 포함한다. 체인 검증과 실제 내용 지문 검증은 둘 다 필요
 --     대상 칸 0개 = 호실 기록 자체(이사함, 정산 끝내기)
 -- =========================================================
 CREATE TABLE action (
@@ -575,6 +577,7 @@ CREATE TABLE action (
                         room_seq                bigint       NOT NULL CHECK (room_seq >= 1),
                         prev_hash               bytea        NOT NULL,
                         hash                    bytea        NOT NULL,
+                        content_digest          bytea,                            -- 내용 원문을 복사하지 않고 당시 판에 연결
                         actor_member_id         uuid REFERENCES member (id),     -- 서버·링크·운영 행동은 NULL
                         actor_side              varchar(10) CHECK (actor_side IN ('TENANT', 'LANDLORD')),
                         actor_key               varchar(80)  NOT NULL,           -- 회원 ID / server / link:<ID> / ops:<담당>
@@ -604,6 +607,7 @@ CREATE TABLE action (
                         CONSTRAINT uq_action_idempotency UNIQUE (actor_key, idempotency_key),
                         CONSTRAINT uq_action_room_seq    UNIQUE (room_record_id, room_seq),
                         CONSTRAINT ck_action_hash_size   CHECK (octet_length(prev_hash) = 32 AND octet_length(hash) = 32),
+                        CONSTRAINT ck_action_content_digest_size CHECK (content_digest IS NULL OR octet_length(content_digest) = 32),
                         CONSTRAINT ck_action_one_target  CHECK (num_nonnulls(
                                                                         party_id, link_id, room_part_id, notice_id, repair_case_id, payment_id, inspection_id,
                                                                         inspection_item_id, settlement_id, settlement_item_id, settlement_transfer_id, proposal_id,
