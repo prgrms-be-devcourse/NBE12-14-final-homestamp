@@ -12,7 +12,9 @@
 CREATE FUNCTION forbid_change() RETURNS trigger
     LANGUAGE plpgsql AS $$
 BEGIN
-  IF TG_OP = 'DELETE' AND current_setting('app.purge', true) = 'on' THEN
+  IF TG_OP = 'DELETE' AND current_setting('app.purge', true) = 'on'
+      AND current_user = (SELECT pg_catalog.pg_get_userbyid(relowner)
+                          FROM pg_catalog.pg_class WHERE oid = TG_RELID) THEN
     RETURN OLD;
 END IF;
   RAISE EXCEPTION '% on % is not allowed (append-only)', TG_OP, TG_TABLE_NAME;
@@ -979,3 +981,36 @@ CREATE TRIGGER trg_inspection_item_version_no_truncate BEFORE TRUNCATE ON inspec
 CREATE TRIGGER trg_settlement_transfer_version_no_truncate BEFORE TRUNCATE ON settlement_transfer_version FOR EACH STATEMENT EXECUTE FUNCTION forbid_change();
 CREATE TRIGGER trg_photo_no_truncate BEFORE TRUNCATE ON photo FOR EACH STATEMENT EXECUTE FUNCTION forbid_change();
 CREATE TRIGGER trg_deletion_log_no_truncate BEFORE TRUNCATE ON deletion_log FOR EACH STATEMENT EXECUTE FUNCTION forbid_change();
+
+-- 보관 삭제의 DB 진입점. 앱 역할은 소유자가 아니어야 하며 EXECUTE를 부여하지 않는다.
+-- 배포 시 별도 삭제 작업 역할에만 EXECUTE를 부여한다. A·B 직접 DELETE 권한은 부여하지 않는다.
+-- 호출자는 같은 트랜잭션에서 삭제 감사 기록·AUDIT_WRITE·S3_DELETE 아웃박스를 먼저 보존한다.
+CREATE FUNCTION purge_room_record(p_room_id uuid) RETURNS boolean
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+    previous_purge text := current_setting('app.purge', true);
+BEGIN
+    -- 행동을 추가하는 앱과 동일하게 호실부터 잠근다.
+    PERFORM 1 FROM public.room_record WHERE id = p_room_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RETURN false;
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM public.action a
+        WHERE a.room_record_id = p_room_id AND NOT EXISTS (
+            SELECT 1 FROM public.deletion_log d
+            WHERE d.target_kind = 'ACTION' AND d.target_id = a.id
+              AND d.chain_room_id = a.room_record_id AND d.room_seq = a.room_seq
+              AND d.prev_hash = a.prev_hash AND d.action_hash = a.hash
+        )
+    ) THEN
+        RAISE EXCEPTION 'action deletion audit is missing or mismatched for room %', p_room_id;
+    END IF;
+    PERFORM set_config('app.purge', 'on', true);
+    DELETE FROM public.room_record WHERE id = p_room_id;
+    PERFORM set_config('app.purge', COALESCE(previous_purge, 'off'), true);
+    RETURN true;
+END;
+$$;
+REVOKE ALL ON FUNCTION purge_room_record(uuid) FROM PUBLIC;
