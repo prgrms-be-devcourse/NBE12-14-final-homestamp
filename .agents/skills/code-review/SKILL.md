@@ -67,5 +67,12 @@ back/src/main/resources/db/migration/V1__init.sql:10 — dev에 들어간 마이
 
 ### PR 번호로 봤을 때 덧붙일 것
 
+**주인 확인**: `gh pr view <번호> --json author,reviewRequests,reviews`로 작성자와 리뷰어를 보고, PR이 **작성자가 주인이 아닌** 도메인 코드나 공통 계약(05 ERD 테이블, 06 API, `V*.sql`, 공개 인터페이스·공통 DTO)을 바꿨는데 그 주인이 리뷰어에 없으면 결과 맨 위에 한 줄 적는다. 주인은 `.github/CODEOWNERS`와 `pr-body` 스킬 "리뷰어 정하기" 표 기준.
+
+```
+주인 확인 필요: 05 2-3 action 칸 변경 — B(@yoo-sihun) 리뷰어 없음
+```
+
+
 결과 아래에 **PR 코멘트 초안**을 한 덩어리로 붙인다 (위 목록을 PR 작성자가 읽기 쉬운 문장으로, AI 도구 서명 없이).
 이 스킬은 코멘트를 올리지 않는다. 사람이 초안을 보고 승인하면, 메인 에이전트나 사람이 `gh pr review <번호> --comment --body-file -`로 올린다.

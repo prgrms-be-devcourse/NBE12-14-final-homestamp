@@ -46,11 +46,28 @@ PR 제목과 본문 초안을 만든다. **사람이 승인해야만** push하�
 - `closes #번호`가 있으면 PR이 `dev`(기본 브랜치)에 머지될 때 이슈가 자동으로 닫히고, 이슈 화면에도 PR이 연결돼 보인다
 - 훅 등록 파일(`.claude/settings.json`, `.codex/hooks.json`)이 바뀌었으면 PR 포인트에 `Codex 사용자: /hooks에서 다시 신뢰 필요` 한 줄을 넣는다
 
+## 리뷰어 정하기
+
+바뀐 파일에서 **누구의 것을 건드렸는지** 찾아 리뷰어를 제안한다 (`docs/rules/07-WBS.md` 0장: 주인은 그 도메인 PR을 리뷰한다).
+
+| 바뀐 것 | 주인 찾는 법 |
+|---|---|
+| 도메인 코드 (`back/src/*/java/com/chilsuitjo/back/<패키지>/`), 하네스, CI | `.github/CODEOWNERS`. PR을 열면 GitHub가 **자동으로** 요청하니 따로 넣지 않는다 |
+| `docs/rules/05-ERD-초안.md` | 바뀐 테이블의 절 → 주인: 2-1 계정·2-2 호실·2-6 점검 = A, 2-3 행동 기록·2-5 수리 건·원인 설명·진행 상황·고친 내용 = B, 2-4 제안·2-5 지불·2-7 정산·2-8 사진 = C, 2-4 응답 요청·2-9 통지·링크 = D |
+| `back/src/main/resources/db/migration/V*.sql` | 바뀐 테이블 → 위 05 기준과 같은 주인 |
+| `docs/rules/06-요구사항-명세.md` | 바뀐 기능 ID·API의 앞글자 → ACC·ROOM·CONS·KEEP·INSP = A, REP = B, MONEY·SET·PHO = C, NOTI·LINK = D |
+| 여러 도메인이 쓰는 것 (`global/`, 응답 공통 처리·`ActionWriter`·`Correctable` 같은 공개 인터페이스, 공통 DTO) | 그것을 만든 주인 + 쓰는 쪽 주인 |
+
+- 주인의 GitHub 아이디는 `.github/CODEOWNERS` 머리 주석에서 읽는다. **PR을 올리는 사람 자신은 빼고**, 이미 CODEOWNERS로 자동 요청되는 사람도 뺀다
+- 결과 모양에 `리뷰어: @아이디 (이유)`로 보여 주고, PR 포인트에도 "○○ 테이블이 바뀌어 @아이디 확인 부탁드려요" 한 줄을 넣는다
+- 확실하지 않으면 넣지 않고 "리뷰어 확인 필요: ○○"로 사람에게 묻는다
+
 ## 결과 모양
 
 ```
 제목: feat: 관리자 로그인 추가
 base: dev ← feat/back/admin-login   (드래프트면 "Draft PR")
+리뷰어: @jinni1 (05 2-5 payment 칸 변경)   (없으면 줄 생략)
 
 (본문 마크다운)
 ```
@@ -61,7 +78,7 @@ base: dev ← feat/back/admin-login   (드래프트면 "Draft PR")
 2. `git push -u origin <현재 브랜치>`
 3. PR 생성 (드래프트로 해 달라고 했으면 `--draft`를 붙인다)
    ```
-   gh pr create --base dev --head <현재 브랜치> --title "<제목>" --body-file - <<'BODY'
+   gh pr create --base dev --head <현재 브랜치> --title "<제목>" [--reviewer <아이디>,<아이디>] --body-file - <<'BODY'
    <본문>
    BODY
    ```
