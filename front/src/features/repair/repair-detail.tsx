@@ -16,18 +16,16 @@ import { StatusTag, TurnBadge } from "@/components/home-dashboard"
 import { repairSummary } from "@/features/repair/repair-summary"
 import { cn } from "cn"
 import { myTurn } from "@/lib/turn"
-import { sideName } from "@/lib/words"
+import { ackText, sideName } from "@/lib/words"
 import { plainText } from "@/lib/plain-words"
 
-const ackBadge: Record<Repair["ack"], { text: string; tone: string }> = {
-  확인됨: { text: "하자가 있었다고 확인됨", tone: "green" },
-  "확인 대기": { text: "하자 확인 대기", tone: "amber" },
-  "보충 요청": { text: "하자 · 보충 요청됨", tone: "amber" },
-  이견: { text: "하자에 이견 있음", tone: "rose" },
-  "상대 미확인": {
-    text: "확인 없음 · 72시간 동안 답이 오지 않았어요",
-    tone: "rose",
-  },
+// 하자 줄의 색(문구는 공통 ackText, 08-화면-기본-틀 1장)
+const ackTone: Record<Repair["ack"], string> = {
+  확인됨: "green",
+  "확인 대기": "amber",
+  "보충 요청": "amber",
+  이견: "rose",
+  "상대 미확인": "rose",
 }
 const REPAIR_STEPS: Repair["status"][] = [
   "확인 전",
@@ -127,7 +125,6 @@ export function RepairDetail(p: RepairDetailProps) {
       document.removeEventListener("keydown", esc)
     }
   }, [more])
-  const ack = ackBadge[r.ack]
   const s = repairSummary(r, role, room, events)
   const turn = p.isGuest ? undefined : myTurn(r, role)
   const lift = turnCard(turn)
@@ -289,8 +286,10 @@ export function RepairDetail(p: RepairDetailProps) {
         <div className={row}>
           <span className={rowLabel}>하자</span>
           <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
-            <StatusTag raw className={ackTag[ack.tone]}>
-              {ack.text}
+            <StatusTag raw className={ackTag[ackTone[r.ack]]}>
+              {r.ack === "상대 미확인"
+                ? `${ackText(r.ack)} · 72시간 동안 답이 오지 않았어요`
+                : ackText(r.ack)}
             </StatusTag>
           </div>
         </div>

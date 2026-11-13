@@ -36,17 +36,9 @@ import {
   startRepair,
 } from "@/lib/repair-rules"
 import { versionOf } from "@/lib/versions"
-import { sideName } from "@/lib/words"
+import { ackText, sideName } from "@/lib/words"
 
 type OnAction = (text: string, update: (r: Repair) => void) => void
-// 하자 줄에 보이는 값(08-화면-기본-틀 1장)
-const defectText: Record<Repair["ack"], string> = {
-  "확인 대기": "확인 기다림",
-  확인됨: "확인 ✓",
-  "보충 요청": "보충 요청됨",
-  이견: "이견",
-  "상대 미확인": "확인 없음",
-}
 const waitText = (stage?: string) =>
   stage === "재통지" ? "다시 알렸어요" : stage === "미확인" ? "확인 없음" : ""
 
@@ -81,7 +73,7 @@ export function RepairBadges({
           </Status>
         )}
         {(!compact || r.ackDispute) && (
-          <Status>{`하자 · ${defectText[r.ack]}`}</Status>
+          <Status>{`하자 · ${ackText(r.ack)}`}</Status>
         )}
         {r.waits?.ack === "재통지" && <Status>하자 확인 재통지됨</Status>}
         {!compact && r.startFlag && <Status>{r.startFlag}</Status>}
