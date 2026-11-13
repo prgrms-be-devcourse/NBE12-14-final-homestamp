@@ -28,7 +28,7 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter-webmvc'
     implementation 'org.flywaydb:flyway-database-postgresql'
-    // 로컬 개발: bootRun이 compose.yaml의 DB를 띄우고 연결 정보를 넣는다(운영 이미지·테스트에는 들어가지 않음)
+    // 로컬 개발: bootRun이 compose.yml의 DB를 띄우고 연결 정보를 넣는다(운영 이미지·테스트에는 들어가지 않음)
     developmentOnly 'org.springframework.boot:spring-boot-docker-compose'
     runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
     runtimeOnly 'org.postgresql:postgresql'
