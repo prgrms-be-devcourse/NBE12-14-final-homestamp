@@ -58,11 +58,12 @@ import {
 import { useRouter, type Page } from "@/lib/router"
 import { EmptyState, LoadingState, NotFoundState } from "@/components/states"
 import { NotificationsPage } from "@/pages/notifications-page"
-import { HomeDashboard, RepairListItem } from "@/components/home-dashboard"
+import { RepairListItem } from "@/components/home-dashboard"
 import { RepairDetailPage } from "@/pages/repair-detail-page"
 import { InspectionPage } from "@/pages/inspection-page"
 import { ConnectionPage } from "@/pages/connection-page"
 import { TimelinePage } from "@/pages/timeline-page"
+import { HomePage } from "@/pages/home-page"
 import { roomAvailableActions } from "@/api/mock/room-actions"
 import { hasAction, type RoomAction } from "@/api/actions"
 import { ApiProvider, createApi } from "@/api"
@@ -1831,41 +1832,18 @@ function HomeStampApp({
                       합류해서 이 기록은 읽기만 할 수 있어요.
                     </Notice>
                   )}
-                  {page === "home" &&
-                    roomHas("repair-cases") &&
-                    !sessionOf(room, "in") &&
-                    !repairs.length &&
-                    !partPhotos.length && (
-                      <div className="first-steps">
-                        <div>
-                          <strong>첫 할 일을 골라 주세요</strong>
-                          <p className="muted">
-                            입주 당시 모습을 남기거나, 지금 있는 하자를 바로
-                            등록할 수 있어요.
-                          </p>
-                        </div>
-                        <div className="first-steps-actions">
-                          <Button
-                            onClick={() => {
-                              setKind("in")
-                              go("inspection")
-                            }}
-                          >
-                            <ClipboardCheck />
-                            입주 점검 시작
-                          </Button>
-                          <Button
-                            variant="outline"
-                            onClick={() => open("repair")}
-                          >
-                            <Wrench />
-                            하자 등록
-                          </Button>
-                        </div>
-                      </div>
-                    )}
                   {page === "home" && (
-                    <HomeDashboard
+                    <HomePage
+                      showFirstSteps={
+                        roomHas("repair-cases") &&
+                        !sessionOf(room, "in") &&
+                        !repairs.length &&
+                        !partPhotos.length
+                      }
+                      onStartInspection={() => {
+                        setKind("in")
+                        go("inspection")
+                      }}
                       role={role}
                       room={room}
                       rooms={accessibleRooms}
