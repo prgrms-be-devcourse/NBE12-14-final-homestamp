@@ -1,5 +1,6 @@
 package com.chilsuitjo.back;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -8,6 +9,23 @@ import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
 
 class RoomBoundarySchemaTest extends SchemaTestSupport {
+  @Test
+  void everyForeignKeyBetweenRoomOwnedTablesIncludesRoomBoundary() {
+    var missing =
+        jdbc.queryForList(
+            """
+            SELECT c.conrelid::regclass::text AS child, c.conname
+            FROM pg_constraint c
+            JOIN pg_attribute child_room ON child_room.attrelid = c.conrelid
+              AND child_room.attname = 'room_record_id' AND NOT child_room.attisdropped
+            JOIN pg_attribute parent_room ON parent_room.attrelid = c.confrelid
+              AND parent_room.attname = 'room_record_id' AND NOT parent_room.attisdropped
+            WHERE c.contype = 'f'
+              AND NOT (child_room.attnum = ANY(c.conkey) AND parent_room.attnum = ANY(c.confkey))
+            """);
+    assertEquals(0, missing.size(), missing::toString);
+  }
+
   @Test
   void rejectsContentWhoseRepairBelongsToAnotherRoom() {
     UUID room = room();

@@ -10,6 +10,51 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.dao.DataIntegrityViolationException;
 
 class ResponseRequestSchemaTest extends SchemaTestSupport {
+  @Test
+  void proposalStillTreatsUnconfirmedRequestAsWaiting() {
+    UUID room = room();
+    UUID repair = repair(room);
+    request(room, "PROPOSAL", repair, "UNCONFIRMED", "TENANT");
+    var error =
+        assertThrows(
+            DataIntegrityViolationException.class,
+            () -> request(room, "PROPOSAL", repair, "WAITING", "LANDLORD"));
+    assertTrue(error.getMessage().contains("ux_proposal_waiting"));
+  }
+
+  @Test
+  void inspectionAllowsBothDirectionsButNotDuplicateDirection() {
+    UUID room = room();
+    UUID inspection = UUID.randomUUID();
+    jdbc.update(
+        """
+        INSERT INTO inspection (id, room_record_id, kind, author_side, status, created_at, version)
+        VALUES (?, ?, 'MOVE_IN', 'TENANT', 'DRAFT', CURRENT_TIMESTAMP, 0)
+        """,
+        inspection,
+        room);
+    inspectionRequest(room, inspection, "TENANT");
+    inspectionRequest(room, inspection, "LANDLORD");
+    var error =
+        assertThrows(
+            DataIntegrityViolationException.class,
+            () -> inspectionRequest(room, inspection, "TENANT"));
+    assertTrue(error.getMessage().contains("ux_inspection_confirm_waiting"));
+  }
+
+  private void inspectionRequest(UUID room, UUID inspection, String side) {
+    jdbc.update(
+        """
+        INSERT INTO response_request (id, room_record_id, kind, inspection_id,
+          requested_by_side, status, created_at, version)
+        VALUES (?, ?, 'INSPECTION_CONFIRM', ?, ?, 'WAITING', CURRENT_TIMESTAMP, 0)
+        """,
+        UUID.randomUUID(),
+        room,
+        inspection,
+        side);
+  }
+
   @ParameterizedTest
   @ValueSource(
       strings = {"DEFECT_CONFIRM", "CORRECTION_CONFIRM", "CLOSE_CONFIRM", "PROGRESS_CHECK"})
