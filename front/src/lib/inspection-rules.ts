@@ -34,18 +34,31 @@ const item = (d: DemoState, id: string) => {
   return i
 }
 
-// 고치기(팀 확정 정책): 작성 중(확인 요청 전 초안)에는 바로 고쳐지고 이력만 남아요.
-// 확인 요청으로 등록된 뒤에는 도장 여부와 관계없이 칸마다 '고친 내용'으로 남아 상대 쪽이 승인해야 반영돼요.
-// 확인 전·거절·거둠·미응답이면 지금 기록 그대로. 같은 칸을 다시 고치면 이전 고친 내용은 '대체됨'으로 닫혀 이력에 남아요.
-function apply(i: Inspection, c: FactCorrection<string>) {
+// 고치기(상태와 규칙 G·H): 도장 전(작성 중, 또는 확인 요청 뒤 상대가 그 항목에 아직 답하지 않았고 점검도 잠기기 전)에는
+// 바로 고쳐지고 이력만 남아요. 도장 뒤(그 항목에 상대가 맞아요·보류·이견으로 답했거나 점검이 잠김)에는
+// 칸마다 '고친 내용'으로 남아 상대가 확인해야 바뀌어요. 같은 칸을 다시 고치면 이전 고친 내용은 '대체됨'으로 닫혀 이력에 남아요.
+export function isItemStamped(d: DemoState, i: Inspection) {
+  if (i.ack === "확인됨" || i.ack === "이견") return true
+  const room = d.rooms.find((r) => r.id === i.roomId)
+  if (!room) return false
+  const items = d.inspections.filter(
+    (x) => x.roomId === i.roomId && x.kind === i.kind,
+  )
+  return inspectionStatus(room, items, i.kind) === "잠김"
+}
+function apply(
+  i: Inspection,
+  c: FactCorrection<string>,
+  mode: "상대 확인" | "확인 전" = "상대 확인",
+) {
   c.status = "반영"
-  c.mode = "상대 확인"
+  c.mode = mode
   c.decidedAt = nowText()
   c.wait = undefined
   if (["제목", "설명", "부위"].includes(c.field)) {
     bumpVersion(i)
-    // 이견·미확인이던 항목의 내용이 바뀌면: 이전 이견은 이력(disputes·이 고친 내용)에 남기고, 새 내용은 다시 확인을 받아요.
-    if (i.ack === "이견" || i.ack === "상대 미확인") {
+    // 도장 뒤 이견·미확인이던 항목의 내용이 바뀌면: 이전 이견은 이력(disputes·이 고친 내용)에 남기고, 새 내용은 다시 확인을 받아요.
+    if (mode === "상대 확인" && (i.ack === "이견" || i.ack === "상대 미확인")) {
       const last = i.disputes?.at(-1)
       c.priorDispute = last
         ? `${sideText(last.by)} 이견 · ${last.reason} · ${last.at}`
@@ -150,6 +163,14 @@ export function requestItemEdits(
     bumpVersion(i)
     return []
   }
+  if (!isItemStamped(d, i)) {
+    // 확인 요청은 보냈지만 상대가 이 항목에 아직 답하지 않았고 점검도 잠기기 전: 바로 고쳐지고 이력에 '확인 전에 고침'으로 남아요.
+    return changes.map(([field, from, to]) => {
+      const c = newRequest(i, role, field, from, to, reason)
+      apply(i, c, "확인 전")
+      return c
+    })
+  }
   if (!reason.trim()) throw new Error("왜 바꾸는지 적어 주세요.")
   return changes.map(([field, from, to]) =>
     newRequest(i, role, field, from, to, reason),
@@ -167,10 +188,10 @@ export function requestFact(
   const i = item(d, id)
   if (i.author !== role)
     throw new Error("항목 삭제는 원래 기록한 쪽이 요청해요.")
-  if (!editable(i)) throw new Error("정정할 수 없는 항목이에요.")
+  if (!editable(i)) throw new Error("고칠 수 없는 항목이에요.")
   if (i.corrections?.some((c) => c.status === "확인 대기" && c.field === field))
     throw new Error("응답을 기다리는 삭제 요청이 있어요.")
-  if (!reason.trim()) throw new Error("정정 사유를 입력해 주세요.")
+  if (!reason.trim()) throw new Error("사유를 입력해 주세요.")
   return newRequest(i, role, field, "항목 있음", to, reason)
 }
 // 빠진 하자 추가: 누구든(상대 쪽도) 요청, 상대 쪽 확인이 있어야 항목이 돼요(미응답이어도 혼자 반영하지 않음)
@@ -184,7 +205,7 @@ export function requestAdd(
 ) {
   if (!data.title.trim() || !data.description.trim())
     throw new Error("하자 제목과 설명을 입력해 주세요.")
-  if (!reason.trim()) throw new Error("정정 사유를 입력해 주세요.")
+  if (!reason.trim()) throw new Error("사유를 입력해 주세요.")
   const c: FactCorrection<string> = {
     id: uid(),
     by: role,
@@ -224,7 +245,7 @@ export function addItemPhotos(
   const i = item(d, id)
   if (i.author !== role)
     throw new Error("처음 기록한 쪽만 이 항목에 사진을 더할 수 있어요.")
-  if (i.removed) throw new Error("정정으로 삭제된 항목이에요.")
+  if (i.removed) throw new Error("고치기로 빠진 항목이에요.")
   if (!photos.length) throw new Error("더할 사진을 골라 주세요.")
   i.photos = [...i.photos, ...photos]
   i.photoAdds = [
@@ -255,7 +276,7 @@ function findCorrection(i: Inspection, cid: string) {
     i.addRequest?.id === cid
       ? i.addRequest
       : i.corrections?.find((v) => v.id === cid)
-  if (!c) throw new Error("정정 요청을 찾을 수 없어요.")
+  if (!c) throw new Error("고친 내용을 찾을 수 없어요.")
   return c
 }
 export function answer(
@@ -270,7 +291,7 @@ export function answer(
   const c = findCorrection(i, cid)
   if (c.status === "대체됨") throw new Error(VERSION_CONFLICT_MESSAGE)
   if (c.status !== "확인 대기" || c.by === role)
-    throw new Error("상대의 확인 대기 정정에만 답할 수 있어요.")
+    throw new Error("상대가 고친 확인 대기 내용에만 답할 수 있어요.")
   c.decidedBy = role
   if (accept) {
     // 잠긴 점검은 잠긴 채로 둬요: 반영으로 항목이 다시 확인 대기가 되어도 점검 잠금은 풀리지 않게 상태를 고정해요.
@@ -309,7 +330,7 @@ export function withdraw(d: DemoState, role: Role, id: string, cid: string) {
   const i = item(d, id)
   const c = findCorrection(i, cid)
   if (c.status !== "확인 대기" || c.by !== role)
-    throw new Error("응답 전인 내 정정 요청만 철회할 수 있어요.")
+    throw new Error("상대가 답하기 전인 내 고친 내용만 거둘 수 있어요.")
   c.status = "철회"
   c.decidedAt = nowText()
   c.wait = undefined
@@ -394,7 +415,7 @@ export function inspectionWaits(items: Inspection[]): InspectionWait[] {
         list.push({
           itemId: i.id,
           cid: c.id,
-          label: `${i.title} · ${c.field === "항목 삭제" || c.field === "빠진 하자 추가" ? `${c.field} 정정 요청` : factRequestName(c.field)}`,
+          label: `${i.title} · ${c.field === "항목 삭제" || c.field === "빠진 하자 추가" ? `${c.field} 확인 요청` : factRequestName(c.field)}`,
           stage: c.wait,
         })
     })
@@ -489,12 +510,10 @@ export function ensureAuthor(
   }
   if (m.author !== role)
     throw new Error(
-      `${kindLabel(kind)} 점검은 호실에 하나예요. ${sideText(m.author)}이 기준 기록을 쓰고 있어요. 빠진 하자는 확인 요청 뒤 정정으로 추가해 주세요.`,
+      `${kindLabel(kind)} 점검은 호실에 하나예요. ${sideText(m.author)}이 기준 기록을 쓰고 있어요. 빠진 하자는 확인 요청 뒤 [+ 빠뜨린 하자 더하기]로 더해 주세요.`,
     )
   if (!photoOnly && m.status !== "작성 중")
-    throw new Error(
-      "확인 요청을 보낸 뒤에는 하자를 정정(빠진 하자 추가)으로 덧붙여요.",
-    )
+    throw new Error("확인 요청을 보낸 뒤에는 [+ 빠뜨린 하자 더하기]로 더해요.")
 }
 // 점검 확인 요청: 작성자가 명시적으로 누를 때만. 작성 중 하자 전체가 한 번에 상대에게 보이고, 하자가 없으면 '하자 기록 없음'으로 잠깁니다.
 export function requestInspectionAll(

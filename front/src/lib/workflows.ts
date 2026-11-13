@@ -315,7 +315,7 @@ export function logRepairNotice(
   repair: Repair,
   at = new Date().toLocaleString("ko-KR", { timeZone: "Asia/Seoul" }),
 ) {
-  repair.notifyLog = [...(repair.notifyLog || []), { label: "발송 요청됨", at }]
+  repair.notifyLog = [...(repair.notifyLog || []), { label: "곧 보낼게요", at }]
 }
 // 링크 열람: 유효한 초대 링크의 열람 횟수를 늘리고, 그 링크로 공유한 수리 건에 '링크 열람'을 남깁니다(시나리오 1-5, 1-G).
 export function recordLinkView(d: DemoState, roomId: string) {
@@ -384,7 +384,7 @@ export function requestSoloRecordsOnConnect(d: DemoState, roomId: string) {
         r.confirmRequested = true
         r.notifyLog = [
           ...(r.notifyLog || []),
-          { label: "종료 확인 요청(연결 뒤 일괄)", at },
+          { label: "종료 확인 요청(연결 뒤 함께 보냄)", at },
         ]
         notice(
           `${r.title} · 혼자 종료한 수리 건 종료 확인 요청`,

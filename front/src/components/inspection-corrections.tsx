@@ -25,6 +25,7 @@ import {
   answer,
   confirmAll,
   confirmableItems,
+  isItemStamped,
   requestAdd,
   requestItemEdits,
   toggleItemWrongPhoto,
@@ -115,7 +116,7 @@ const pickedZone = (f: FormData, zone: string, part: string) => {
   return z && p ? `${z} · ${p}` : ""
 }
 
-// 점검 항목 카드 안의 고치기(작성 중이면 바로, 확인 요청 뒤에는 모두 상대 승인)와 사진 추가, 빠진 하자 추가 응답
+// 점검 항목 카드 안의 고치기(도장 전이면 바로, 도장 뒤에는 상대 확인)와 사진 추가, 빠진 하자 추가 응답
 export function InspectionItemCorrections({
   i,
   db,
@@ -157,6 +158,8 @@ export function InspectionItemCorrections({
     !i.removed &&
     (!i.addRequest || i.addRequest.status === "반영")
   const draft = i.publication === "draft"
+  // 바로 고쳐지는 때: 작성 중이거나, 상대가 이 항목에 아직 답하지 않았고 점검도 잠기기 전(상태와 규칙 G·H)
+  const direct = draft || !isItemStamped(db, i)
   const add = i.addRequest
   // 경과(최신순): 사진 추가 내역 · 끝난 고치기 · 이견. 본문에는 지금 기록과 확인 대기 요약만 남겨요.
   const photoAdds = [...(i.photoAdds || [])].reverse()
@@ -180,7 +183,9 @@ export function InspectionItemCorrections({
           )}
           {i.wait && (
             <Status>
-              {i.wait === "미확인" ? "상대 미확인" : "확인 요청 재통지됨"}
+              {i.wait === "미확인"
+                ? "확인 없음 · 72시간 동안 답이 오지 않았어요"
+                : "확인 요청 · 다시 알렸어요"}
             </Status>
           )}
         </div>
@@ -389,7 +394,7 @@ export function InspectionItemCorrections({
         open={mode === "edit"}
         title="고치기"
         description="바꿀 칸만 고쳐 주세요. 사진은 [사진 추가]로 더해요."
-        submitLabel={draft ? "고치기" : "확인 요청"}
+        submitLabel={direct ? "고치기" : "확인 요청"}
         onClose={() => setMode(null)}
         onSubmit={(f) => {
           const to = pickedZone(f, zone, part)
@@ -402,7 +407,9 @@ export function InspectionItemCorrections({
           return run(
             draft
               ? `${i.title} · 작성 중 고치기`
-              : `${i.title} · 고친 내용 남김 · 상대 확인 전`,
+              : direct
+                ? `${i.title} · 고쳤어요`
+                : `${i.title} · 고친 내용 남김 · 상대 확인 전`,
             (d) => {
               requestItemEdits(
                 d,
@@ -446,16 +453,18 @@ export function InspectionItemCorrections({
         />
         {!draft && (
           <div className="field">
-            <label htmlFor="ie-reason">왜 바꾸나요 · 필수</label>
+            <label htmlFor="ie-reason">
+              왜 바꾸나요{direct ? " · 선택" : " · 필수"}
+            </label>
             <Textarea
               id="ie-reason"
               name="reason"
-              required
+              required={!direct}
               placeholder="예: 다시 보니 부위가 달랐어요"
             />
           </div>
         )}
-        {!draft && i.corrections?.some((c) => c.status === "확인 대기") && (
+        {!direct && i.corrections?.some((c) => c.status === "확인 대기") && (
           <p className="fix-note">
             확인을 기다리는 고친 내용이 채워져 있어요. 다시 고친 칸은 이전 고친
             내용이 ‘새로 고쳐서 바뀜’으로 닫히고, 확인 요청은 하나로 묶여요.
@@ -463,8 +472,10 @@ export function InspectionItemCorrections({
         )}
         <p className="fix-notice">
           {draft
-            ? "작성 중(확인 요청 전)이라 바로 반영돼요."
-            : "등록 후 변경 사항은 상대 확인 후 반영됩니다."}
+            ? "작성 중(확인 요청 전)이라 바로 고쳐져요."
+            : direct
+              ? "상대가 이 항목을 아직 확인하기 전이라 바로 고쳐져요. 고친 이력은 남아요."
+              : "고친 내용을 남겨요. 상대가 확인하면 바뀌어요."}
         </p>
       </ActionDialog>
       <ActionDialog
@@ -576,7 +587,7 @@ export function MissingDefectDialog({
         const e = check(db, update)
         if (e) return e
         onAct(
-          `${kind === "in" ? "입주" : "퇴거"} 점검 · 빠진 하자 추가 정정 요청 · ${data.title}`,
+          `${kind === "in" ? "입주" : "퇴거"} 점검 · 빠뜨린 하자 더하기 · ${data.title}`,
           update,
           "",
         )

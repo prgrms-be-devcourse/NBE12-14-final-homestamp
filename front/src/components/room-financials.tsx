@@ -35,7 +35,7 @@ import {
   type DemoState,
   type AmountOffer,
 } from "@/data/demo"
-import { sideText } from "@/lib/words"
+import { sideName, sideText } from "@/lib/words"
 
 interface Props {
   room: Room
@@ -59,7 +59,7 @@ function offerHistory(offers: AmountOffer[]) {
   return offers.map((o) => (
     <div className="note" key={o.id}>
       <strong>
-        이전 제안 {o.round}회 · {o.by} · {won(o.amount)} · {o.status}
+        이전 제안 {o.round}회 · {sideName(o.by)} · {won(o.amount)} · {o.status}
       </strong>
       <p>{o.reason}</p>
       {o.disputeReason && (
@@ -290,7 +290,7 @@ export function RoomFinancials({
     if (s.by === role && s.status === "합의 대기" && !s.autoChange)
       acts.push({
         key: "withdraw",
-        label: "제안 철회",
+        label: "제안 거두기",
         variant: "ghost",
         onClick: () =>
           onAction(`${s.title} · 정산 제안 철회`, (d) => {
@@ -352,7 +352,7 @@ export function RoomFinancials({
     if (s.excludeProposal && s.excludeProposal.by === role)
       acts.push({
         key: "exclude-withdraw",
-        label: "빼기 제안 철회",
+        label: "빼기 제안 거두기",
         variant: "ghost",
         onClick: () =>
           onAction(`${s.title} · 빼기 제안 철회`, (d) => {
@@ -397,13 +397,11 @@ export function RoomFinancials({
               )}
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
-              <Status>내 확인 · {myConfirmed ? "확인" : "미확인"}</Status>
-              <Status>
-                상대방 확인 · {otherConfirmed ? "확인" : "미확인"}
-              </Status>
+              <Status>내 확인 · {myConfirmed ? "확인" : "확인 전"}</Status>
+              <Status>상대 확인 · {otherConfirmed ? "확인" : "확인 전"}</Status>
               <Status>
                 {room.depositConfirmed || offer?.status === "합의됨"
-                  ? "양측 확인"
+                  ? "보증금 · 둘 다 확인 ✓"
                   : offer?.status === "이견"
                     ? "이견"
                     : myConfirmed || otherConfirmed
@@ -568,13 +566,14 @@ export function RoomFinancials({
                         )}
                         {s.excludeHistory?.map((h, n) => (
                           <p className="muted" key={"x" + n}>
-                            빼기 제안({h.by}) · {h.reason} · {h.result}
+                            빼기 제안({sideName(h.by)}) · {h.reason} ·{" "}
+                            {h.result}
                           </p>
                         ))}
                         {s.history?.map((h, n) => (
                           <div className="note" key={n}>
-                            이전 제안 {h.round || 1}회 · {h.by} ·{" "}
-                            {won(h.amount)} · {h.withdrawn ? "철회" : h.status}
+                            이전 제안 {h.round || 1}회 · {sideName(h.by)} ·{" "}
+                            {won(h.amount)} · {h.withdrawn ? "거둠" : h.status}
                             <p>{h.proposalReason || h.reason}</p>
                             {h.disputeReason && <p>이견: {h.disputeReason}</p>}
                           </div>
@@ -617,18 +616,18 @@ export function RoomFinancials({
         </div>
         {withdrawnItems.length > 0 && (
           <div className="mt-4">
-            <h3 className={subHead}>철회된 제안</h3>
+            <h3 className={subHead}>거둔 제안</h3>
             {withdrawnItems.map((s) => (
               <p className="muted" key={s.id}>
                 {s.title} · {s.direction === "가산" ? "+" : "−"}
-                {won(s.amount)} · {sideText(s.by)} 제안 철회
+                {won(s.amount)} · {sideText(s.by)} 제안 거둠
               </p>
             ))}
           </div>
         )}
         {excludedItems.length > 0 && (
           <div className="mt-4">
-            <h3 className={subHead}>양측 동의로 정산에서 뺀 항목</h3>
+            <h3 className={subHead}>둘 다 동의해 정산에서 뺀 항목</h3>
             {excludedItems.map((s) => (
               <p className="muted" key={s.id}>
                 {s.title} · {s.direction === "가산" ? "+" : "−"}
@@ -710,10 +709,10 @@ export function RoomFinancials({
                   {t.direction} {won(t.amount)}
                 </strong>
                 <p className="text-sm leading-[1.7] text-[#8fa3be]">
-                  {t.at} · 기록자 {t.by}
+                  {t.at} · 기록한 쪽 {sideName(t.by)}
                 </p>
                 <Status>
-                  {t.confirmed ? "양측 확인" : "상대 확인 대기 · 한쪽 기록"}
+                  {t.confirmed ? "둘 다 확인" : "받았는지 확인 중"}
                 </Status>
               </div>
               {!readOnly && t.by !== role && !t.confirmed && (
@@ -749,7 +748,7 @@ export function RoomFinancials({
         {room.status === "거주 종료" && (
           <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t pt-5 max-md:flex-col max-md:items-stretch">
             <p className="text-sm text-[#8c9fb9]">
-              이견과 미확인 항목은 완료 후에도 그대로 보존됩니다.
+              이견과 확인 없음 항목은 정산이 끝난 뒤에도 그대로 남아요.
             </p>
             <Button
               disabled={room.finishBy === role}

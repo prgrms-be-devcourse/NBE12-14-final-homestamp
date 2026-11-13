@@ -26,12 +26,16 @@ import {
 import { daysSince, StatusTag, TurnBadge } from "@/components/home-dashboard"
 import { cn } from "cn"
 import { myTurn } from "@/lib/turn"
+import { sideName, withSubject } from "@/lib/words"
 
 const ackBadge: Record<Repair["ack"], { text: string; tone: string }> = {
   확인됨: { text: "하자가 있었다고 확인됨", tone: "green" },
   "확인 대기": { text: "하자 확인 대기", tone: "amber" },
   이견: { text: "하자에 이견 있음", tone: "rose" },
-  "상대 미확인": { text: "상대 미확인", tone: "rose" },
+  "상대 미확인": {
+    text: "확인 없음 · 72시간 동안 답이 오지 않았어요",
+    tone: "rose",
+  },
 }
 const REPAIR_STEPS: Repair["status"][] = [
   "확인 전",
@@ -70,35 +74,36 @@ export function repairSummary(
       .map((e) => recordTimeMs(e.at))
       .find((t) => t !== undefined) ?? recordTimeMs(r.date)
   const days = daysSince(started)
-  const them = other(role)
+  const them = sideName(other(role))
+  const themSubject = withSubject(them)
   const solo = roomSoloReason(room)
   if (r.status === "처리 완료")
     return r.soloClosed
       ? {
-          title: `${r.soloClosed} 확인으로 끝났어요`,
+          title: `처리 완료(${sideName(r.soloClosed)} 확인)`,
           body:
             r.soloClosed === role
-              ? `${them}이 확인하면 양측 확인으로 바뀌어요.${r.soloReason ? ` (${r.soloReason})` : ""}`
+              ? `${themSubject} 종료를 확인하면 처리 완료(둘 다 확인)가 돼요.${r.soloReason ? ` ${soloReasonText[r.soloReason]}` : ""}`
               : "확인하거나, 아직 안 끝났다면 사유와 함께 다시 열 수 있어요.",
         }
       : {
-          title: "양측 확인으로 끝났어요",
+          title: "처리 완료(둘 다 확인)",
           body: "같은 곳에 다시 문제가 생기면 이 건을 이어서 새 수리 건으로 남겨요.",
         }
   if (r.closeBy)
     return r.closeBy === role
       ? {
           title: "종료 확인을 기다려요",
-          body: `${them}이 확인하면 끝나요. 아직이라면 ${them}이 사유를 남겨요.`,
+          body: `${themSubject} 확인하면 끝나요. 아직이라면 ${themSubject} 사유를 남겨요.`,
         }
       : {
-          title: `${them}이 종료를 요청했어요`,
+          title: `${themSubject} 종료를 요청했어요`,
           body: "다 고쳐졌으면 종료를 확인하고, 아직이면 사유를 남겨 주세요.",
         }
   if (r.status === "처리 중")
     return {
-      title: `수리 중이에요${days ? ` · ${days}일째` : ""}`,
-      body: `다 고쳐지면 종료를 요청해 주세요. ${solo ? "상대가 없어 혼자 끝낼 수 있어요." : `${them}이 확인하면 끝나요.`}`,
+      title: `처리 중 · ${days ? `${days}일째` : "오늘 시작"}`,
+      body: `다 고쳐지면 종료를 요청해 주세요. ${solo ? "기다리지 않고 끝낼 수 있어요." : `${themSubject} 확인하면 끝나요.`}`,
     }
   if (r.status === "확인 완료")
     return {
@@ -107,7 +112,7 @@ export function repairSummary(
     }
   return r.author === role
     ? {
-        title: `${them}의 확인을 기다려요${days ? ` · ${days}일째` : ""}`,
+        title: `${them} 확인 기다림${days ? ` · ${days}일째` : ""}`,
         body: solo
           ? soloReasonText[solo]
           : "확인 전에도 수리를 시작할 수 있어요. 시작하면 “상대 확인 전 수리 시작”으로 남아요.",
@@ -246,7 +251,8 @@ export function RepairDetail(p: RepairDetailProps) {
               {r.title}
             </h1>
             <p className="text-[15px] text-sub">
-              {r.zone.replace(" · ", " › ")} · {r.date} {r.author} 등록
+              {r.zone.replace(" · ", " › ")} · {r.date} {sideName(r.author)}{" "}
+              등록
               {r.recurrenceOf ? " · 이전 수리 건 이후 재발" : ""}
             </p>
           </div>

@@ -160,7 +160,7 @@ import {
 import "./App.css"
 import "./readability.css"
 import "./service.css"
-import { sideText } from "@/lib/words"
+import { sideName, sideText } from "@/lib/words"
 import { plainText } from "@/lib/plain-words"
 import { Notice } from "@/components/notice"
 import {
@@ -1164,7 +1164,7 @@ function HomeStampApp({
       toast(
         API_MODE === "mock"
           ? "초대를 만들었어요. 서버가 연결되지 않아 문자는 보내지 않았어요. 상대가 이 번호로 가입하면 받은 초대에 보여요."
-          : "초대 문자 발송을 요청했어요. 상대가 이 번호로 가입하고 연결을 수락하면 함께 볼 수 있어요.",
+          : "초대 문자를 곧 보낼게요. 상대가 이 번호로 가입하고 연결하면 함께 볼 수 있어요.",
       )
     } else if (modal === "phone") {
       // 초대 전 번호 수정: 번호만 바꾸고 초대·링크 발급은 하지 않습니다.
@@ -1527,7 +1527,7 @@ function HomeStampApp({
         </div>
         <small className="rec-meta">
           {i.zone} · {i.kind === "in" ? "입주 기존 하자" : "퇴거 점검 하자"} ·{" "}
-          {i.author} 등록{i.late ? " · 입주 후 등록" : ""}
+          {sideName(i.author)} 등록{i.late ? " · 입주 후 등록" : ""}
           {i.afterEnd ? " · 거주 종료 뒤 추가" : ""}
         </small>
         <RecordDescription text={i.description} />
@@ -1657,7 +1657,7 @@ function HomeStampApp({
                       <div key={record.id} className="after-record">
                         <h4>{record.title}</h4>
                         <p className="muted">
-                          등록일 {record.at} · 등록자 {record.by}
+                          등록일 {record.at} · 등록자 {sideName(record.by)}
                         </p>
                         <PhotoGallery
                           title={record.title}
@@ -1759,12 +1759,12 @@ function HomeStampApp({
                 <strong>보낸 알림 상태</strong>
                 {r.notifyLog?.map((n, k) => (
                   <p key={k}>
-                    ● {n.label} · {n.at}
+                    ● {plainText(n.label)} · {n.at}
                   </p>
                 ))}
                 <p>{r.ack === "확인됨" ? "● 확인" : "○ 확인 · 대기 중"}</p>
                 <small className="muted block">
-                  링크 열람 {r.linkViews || 0}회 · ‘보냈다’는 문자 업체가
+                  링크로 본 횟수 {r.linkViews || 0}회 · ‘보냈어요’는 문자 업체가
                   받았다는 뜻이고 상대가 읽었다는 보장은 아니에요.
                 </small>
               </div>
@@ -3233,10 +3233,9 @@ function HomeStampApp({
                             )}
                             {room.endRequested && role === "임대인" && (
                               <small className="muted">
-                                세입자의 답을 기다려요
-                                {room.endWait
-                                  ? ` · ${room.endWait === "미확인" ? "답하지 않았어요" : "다시 알렸어요"}`
-                                  : ""}
+                                {room.endWait === "미확인"
+                                  ? "세입자 확인 없음 · 72시간 동안 답이 오지 않았어요"
+                                  : `세입자의 답을 기다려요${room.endWait ? " · 다시 알렸어요" : ""}`}
                               </small>
                             )}
                             {room.endRequested &&
@@ -3256,7 +3255,7 @@ function HomeStampApp({
                                     )
                                   }
                                 >
-                                  미확인 뒤 거주 종료 적용
+                                  혼자 거주 종료
                                 </Button>
                               )}
                             <small className="muted">
@@ -3344,8 +3343,8 @@ function HomeStampApp({
                         )}
                       {page === "checkout" && room.endUnconfirmed && (
                         <Notice className="mb-5">
-                          거주 종료 · 세입자 미확인으로 적용됐어요(집주인 쪽
-                          요청에 응답이 없어 요청한 쪽이 적용).
+                          거주 종료 · 세입자 확인 없음 · 72시간 동안 답이 오지
+                          않아 집주인 쪽이 혼자 남겼어요.
                         </Notice>
                       )}
                       {page === "checkout" && (

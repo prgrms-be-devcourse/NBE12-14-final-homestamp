@@ -154,13 +154,13 @@ test("주민등록번호 형태(000000-0000000)만 막고, 긴 숫자·숫자 �
   ])
     assert.equal(hasResidentId(allowed), false, allowed)
 })
-test("경과 문구는 화면에서만 쉬운 말로 바뀌고 원문은 그대로다(부록 A)", () => {
+test("경과 문구는 화면에서만 쉬운 말로 바뀌고 원문은 그대로다(08 13장 · 부록 A)", () => {
   const original =
     "창틀 · 부담 역제안 · 합의 대기 · 링크 열람 · 상대 미확인 · 하자 사실 확인 · 본 모습 2번"
   const shown = plainText(original)
   assert.equal(
     shown,
-    "창틀 · 다른 안 제안 · 답을 기다려요 · 링크로 봤어요 · 답하지 않았어요 · 하자 사실 확인 · 2번째 내용을 보고 확인",
+    "창틀 · 다른 안 제안 · 답을 기다려요 · 링크로 봤어요 · 확인 없음 · 하자 사실 확인 · 2번째 내용을 보고 확인",
   )
   assert.equal(
     original,

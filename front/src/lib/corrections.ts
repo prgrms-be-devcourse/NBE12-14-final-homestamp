@@ -27,16 +27,19 @@ export function groupStatus(g: CorrectionGroup) {
     return s.every((x) => x === "확인 대기")
       ? "상대 확인 전"
       : "일부 응답 · 상대 확인 전"
-  if (s.every((x) => x === "반영")) return "반영됨"
-  if (s.every((x) => x === "거절")) return "거절 · 지금 기록 유지"
-  if (s.every((x) => x === "철회")) return "거둠 · 지금 기록 유지"
+  if (g.items.every((c) => c.mode === "확인 전")) return "확인 전에 고침"
+  if (s.every((x) => x === "반영")) return "고쳐짐"
+  if (s.every((x) => x === "거절")) return "동의하지 않음 · 지금 기록 그대로"
+  if (s.every((x) => x === "철회")) return "거둠 · 지금 기록 그대로"
   if (s.every((x) => x === "대체됨")) return "새로 고쳐서 바뀜"
+  if (s.every((x) => x === "처리 완료로 닫힘")) return "처리 완료로 닫힘"
   const n = (v: C["status"]) => s.filter((x) => x === v).length
   return [
-    n("반영") && `반영 ${n("반영")}`,
-    n("거절") && `거절 ${n("거절")}`,
+    n("반영") && `고쳐짐 ${n("반영")}`,
+    n("거절") && `동의하지 않음 ${n("거절")}`,
     n("철회") && `거둠 ${n("철회")}`,
-    n("대체됨") && `대체 ${n("대체됨")}`,
+    n("대체됨") && `새로 고침 ${n("대체됨")}`,
+    n("처리 완료로 닫힘") && `처리 완료로 닫힘 ${n("처리 완료로 닫힘")}`,
   ]
     .filter(Boolean)
     .join(" · ")

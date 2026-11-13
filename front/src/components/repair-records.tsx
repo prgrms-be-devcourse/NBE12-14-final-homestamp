@@ -20,6 +20,7 @@ import {
   addRepairPhotos,
   answerCorrection,
   isHidden,
+  repairStamped,
   requestRepairEdits,
   togglePhoto,
   toggleWrongPhoto,
@@ -33,7 +34,7 @@ import {
   pendingValue,
 } from "@/lib/corrections"
 import { versionOf } from "@/lib/versions"
-import { sideText } from "@/lib/words"
+import { sideName, sideText } from "@/lib/words"
 import { Fold } from "@/components/fold"
 import { MaskedPhotoNotes, PhotoManageList } from "@/components/photo-masks"
 import {
@@ -46,26 +47,29 @@ import { Image as ImageIcon, PencilLine } from "lucide-react"
 
 type OnAction = (text: string, update: (r: Repair) => void) => void
 
-// 고친 내용의 상태 문구(11/11 확정 정책: 상대 확인이 있어야 반영, 그 밖에는 지금 기록 유지)
+// 고친 내용의 상태 문구(상태와 규칙 G: 도장 전이면 바로 바뀜, 도장 뒤면 상대 확인이 있어야 바뀜)
 export function correctionLabel(
   c: FactCorrection<string | number>,
   stage?: string,
 ) {
   if (c.status === "확인 대기")
     return stage === "미확인"
-      ? "상대 미확인 · 지금 기록 유지"
+      ? "확인 없음 · 72시간 동안 답이 오지 않았어요 · 지금 기록 그대로"
       : stage === "재통지"
-        ? "확인 전 · 재통지됨"
+        ? "확인 전 · 다시 알렸어요"
         : "상대 확인 전"
   if (c.status === "반영")
-    return c.mode === "상대 없음"
-      ? "반영됨 · 이전 규칙(혼자 남긴 기록)"
-      : c.mode === "상대 미확인"
-        ? "반영됨 · 이전 규칙(상대 미확인)"
-        : "상대 확인 · 반영됨"
-  if (c.status === "거절") return "거절 · 지금 기록 유지"
+    return c.mode === "확인 전"
+      ? "확인 전에 고침"
+      : c.mode === "상대 없음"
+        ? "고쳐짐 · 혼자 기록할 때 고침"
+        : c.mode === "상대 미확인"
+          ? "고쳐짐 · 확인 없음일 때 고침"
+          : "고쳐짐 · 상대 확인"
+  if (c.status === "거절") return "동의하지 않음 · 지금 기록 그대로"
   if (c.status === "대체됨") return "새로 고쳐서 바뀜"
-  return "거둠 · 지금 기록 유지"
+  if (c.status === "처리 완료로 닫힘") return "처리 완료로 닫힘"
+  return "거둠 · 지금 기록 그대로"
 }
 // 바뀐 글자만 표시: 앞뒤 같은 부분은 그대로, 가운데 바뀐 부분만 지운 글자(취소선)·새 글자(강조)로 보여 줘요.
 export function DiffText({ from, to }: { from: string; to: string }) {
@@ -131,7 +135,7 @@ export function CorrectionRow({
       ) : (
         <>
           <strong>
-            {c.field} 고친 내용 · {c.by} · {c.at}
+            {c.field} 고친 내용 · {sideName(c.by)} · {c.at}
           </strong>
           <div className="badges my-2">
             <Status>{correctionLabel(c, stage)}</Status>
@@ -187,7 +191,7 @@ export function TextEditRow({
   return (
     <div className="note">
       <strong>
-        고친 이력 · {e.by} · {e.at}
+        고친 이력 · {sideName(e.by)} · {e.at}
       </strong>
       {titleChanged && (
         <p>
@@ -352,7 +356,7 @@ export function CorrectionHistory({
             <Status>{groupStatus(g)}</Status>
           </div>
           <small className="muted">
-            {g.by} · {g.at}
+            {sideName(g.by)} · {g.at}
           </small>
           {g.reason && <p className="text-sm">고친 이유: {safe(g.reason)}</p>}
           {g.items.map((c) => (
@@ -435,6 +439,8 @@ export function RepairCorrections({
   }
   useImperativeHandle(ref, () => ({ openEdit, openPhotos }))
   const them = other(role)
+  // 도장 전이면 바로 고쳐지고, 도장 뒤면 상대 확인을 받아요(상태와 규칙 G).
+  const stamped = repairStamped(r)
   const afterConfirm =
     r.ack === "확인됨" || (r.status === "처리 완료" && !r.soloClosed)
   const summary = (
@@ -475,7 +481,7 @@ export function RepairCorrections({
         open={mode === "edit"}
         title="고치기"
         description="바꿀 칸만 고쳐 주세요. 사진은 [사진 추가]로 더하고, 수리비 부담은 수리비 카드의 새 제안으로 바꿔요."
-        submitLabel={`${them}에게 확인 요청`}
+        submitLabel={stamped ? "확인 요청" : "고치기"}
         onClose={() => setMode(null)}
         onSubmit={(f) => {
           const z =
@@ -488,9 +494,12 @@ export function RepairCorrections({
             description: String(f.get("description") || ""),
             zone: `${z} · ${p}`,
           }
-          return run("고친 내용 남김 · 상대 확인 전", (x) => {
-            requestRepairEdits(x, role, next, String(f.get("reason") || ""))
-          })
+          return run(
+            stamped ? "고친 내용 남김 · 상대 확인 전" : "고쳤어요",
+            (x) => {
+              requestRepairEdits(x, role, next, String(f.get("reason") || ""))
+            },
+          )
         }}
       >
         <div className="field">
@@ -550,11 +559,13 @@ export function RepairCorrections({
           </div>
         )}
         <div className="field">
-          <label htmlFor="fix-reason">왜 바꾸나요 · 필수</label>
+          <label htmlFor="fix-reason">
+            왜 바꾸나요{stamped ? " · 필수" : " · 선택"}
+          </label>
           <Textarea
             id="fix-reason"
             name="reason"
-            required
+            required={stamped}
             placeholder="예: 다시 보니 천장이 아니라 벽 위쪽에서 새고 있었어요."
           />
         </div>
@@ -565,7 +576,9 @@ export function RepairCorrections({
           </p>
         )}
         <p className="fix-notice">
-          등록 후 변경 사항은 상대 확인 후 반영됩니다.
+          {stamped
+            ? `고친 내용을 남겨요. ${sideText(them)}이 확인하면 바뀌어요.`
+            : `${sideText(them)}이 아직 확인하기 전이라 바로 고쳐져요.`}
         </p>
       </ActionDialog>
       <ActionDialog

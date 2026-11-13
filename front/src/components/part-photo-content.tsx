@@ -1,5 +1,6 @@
 import type { PartPhoto } from "@/data/demo"
 import { safeSharedText } from "@/lib/service-rules"
+import { sideName } from "@/lib/words"
 import { PhotoGallery } from "@/components/photo-gallery"
 import { RecordDescription } from "@/components/record-description"
 import { Badge } from "@/components/ui/badge"
@@ -35,7 +36,7 @@ export function PartPhotoContent({
           <Badge variant="secondary">부위 사진</Badge>
         </div>
         <small className="rec-meta">
-          {record.zone} · {record.recordedAt} · {record.author} 등록
+          {record.zone} · {record.recordedAt} · {sideName(record.author)} 등록
           {record.late ? " · 입주 후 등록" : ""}
           {record.afterEnd ? " · 거주 종료 뒤 추가" : ""}
         </small>

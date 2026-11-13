@@ -25,6 +25,7 @@ import {
   clearWait,
   duplicateCheck,
   nowText,
+  paymentStamped,
   recheckAgreement,
   recordDateText,
   requestCorrection,
@@ -41,7 +42,7 @@ type Payee = NonNullable<Payment["payee"]>
 // 확인 강도(상태와 규칙 F): 한쪽 기록 → 증빙 있음 → 양측 확인
 const strength = (p: Payment) =>
   p.confirmed
-    ? "양측 확인"
+    ? "둘 다 확인"
     : p.photos?.length || (p.evidence && p.evidence !== "없음")
       ? "증빙 있음"
       : "한쪽 기록"
@@ -99,6 +100,9 @@ export function RepairPayments({
   }
   const pay = (x: Repair, id: string) => x.payments!.find((v) => v.id === id)!
   const list = r.payments || []
+  // 고치려는 지불이 이미 상대 도장(확인·이견)을 받았는지(상태와 규칙 G)
+  const fixTarget = list.find((p) => p.id === target)
+  const fixStamped = fixTarget ? paymentStamped(fixTarget) : true
   const confirmAmount = (p: Payment) =>
     run(
       `지불 금액 확인 · ${won(p.amount)} · 본 모습 ${versionOf(p)}번`,
@@ -257,7 +261,7 @@ export function RepairPayments({
                     <div className="badges">
                       {stage && (
                         <Status>
-                          {stage === "미확인" ? "상대 미확인" : "재통지됨"}
+                          {stage === "미확인" ? "확인 없음" : "다시 알렸어요"}
                         </Status>
                       )}
                       {p.disputes?.length ? (
@@ -510,7 +514,7 @@ export function RepairPayments({
           <ArrowRight size={16} className="flex-none" aria-hidden />
           <span>{who(payee)}</span>
           <small className="basis-full font-normal text-sub">
-            상대가 확인하면 ‘양측 확인’이 돼요
+            상대가 확인하면 ‘둘 다 확인’이 돼요
           </small>
         </div>
         {dup && (
@@ -572,8 +576,12 @@ export function RepairPayments({
       <ActionDialog
         open={mode === "fix"}
         title="금액 고치기"
-        description="고친 금액은 상대가 확인해야 바뀌어요. 그전까지는 지금 금액이 그대로 쓰여요."
-        submitLabel="확인 요청"
+        description={
+          fixStamped
+            ? "고친 금액은 상대가 확인해야 바뀌어요. 그전까지는 지금 금액이 그대로 쓰여요."
+            : "상대가 아직 확인하기 전이라 바로 고쳐져요. 고친 이력은 남아요."
+        }
+        submitLabel={fixStamped ? "확인 요청" : "고치기"}
         onClose={() => setMode(null)}
         onSubmit={(f) => {
           const to = parseMoney(String(f.get("amount") || ""))
@@ -581,7 +589,9 @@ export function RepairPayments({
             return "고친 금액을 입력해 주세요."
           const from = list.find((p) => p.id === target)?.amount ?? 0
           return run(
-            `지불 금액 고친 내용 남김 · ${won(from)} → ${won(to)}`,
+            fixStamped
+              ? `지불 금액 고친 내용 남김 · ${won(from)} → ${won(to)}`
+              : `지불 금액 고쳤어요 · ${won(from)} → ${won(to)}`,
             (x) => {
               requestCorrection(
                 x,
@@ -602,8 +612,10 @@ export function RepairPayments({
           <MoneyInput id="fix-amount" name="amount" required />
         </div>
         <div className="field">
-          <label htmlFor="fix-pay-reason">왜 바꾸나요 · 필수</label>
-          <Textarea id="fix-pay-reason" name="reason" required />
+          <label htmlFor="fix-pay-reason">
+            왜 바꾸나요{fixStamped ? " · 필수" : " · 선택"}
+          </label>
+          <Textarea id="fix-pay-reason" name="reason" required={fixStamped} />
         </div>
       </ActionDialog>
       <ActionDialog

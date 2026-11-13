@@ -26,6 +26,7 @@ import type { Page } from "@/lib/router"
 import { myTurn } from "@/lib/turn"
 import { cn } from "cn"
 import { plainText } from "@/lib/plain-words"
+import { sideName } from "@/lib/words"
 
 const DAY = 864e5
 // 수리 건의 마지막 당사자 행동 시각(경과 기록 기준). 오래 멈춘 건(REP-6a, 14일) 판단에 써요.
@@ -127,7 +128,7 @@ export function RepairListItem({
         {turn && <TurnBadge>내 차례 · {turn}</TurnBadge>}
         <strong>{r.title}</strong>
         <small>
-          {r.zone} · {r.date} · {r.author} 등록
+          {r.zone} · {r.date} · {sideName(r.author)} 등록
         </small>
         <span className="mt-1 flex flex-wrap gap-1">
           <StatusTag>{`수리 · ${r.status}`}</StatusTag>

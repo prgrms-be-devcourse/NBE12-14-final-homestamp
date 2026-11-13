@@ -29,11 +29,11 @@ import {
   startRepair,
 } from "@/lib/repair-rules"
 import { versionOf } from "@/lib/versions"
-import { sideText } from "@/lib/words"
+import { sideName, sideText } from "@/lib/words"
 
 type OnAction = (text: string, update: (r: Repair) => void) => void
 const waitText = (stage?: string) =>
-  stage === "재통지" ? "재통지됨" : stage === "미확인" ? "상대 미확인" : ""
+  stage === "재통지" ? "다시 알렸어요" : stage === "미확인" ? "확인 없음" : ""
 
 // 수리 상태·하자 인정 표시(상태와 규칙 D). 비회원 링크 화면에서도 같은 표시를 씁니다.
 // compact: 상세 화면 제목 옆에 수리 상태·하자 인정·수리 시작 표시가 이미 있어 겹치는 배지를 뺍니다.
@@ -61,8 +61,8 @@ export function RepairBadges({
         {r.status === "처리 완료" && (
           <Status>
             {r.soloClosed
-              ? `처리 완료(${r.soloClosed} 확인)`
-              : "처리 완료(양측 확인)"}
+              ? `처리 완료(${sideName(r.soloClosed)} 확인)`
+              : "처리 완료(둘 다 확인)"}
           </Status>
         )}
         {(!compact || r.ackDispute) && (
@@ -87,11 +87,11 @@ export function RepairBadges({
         {r.confirmRequested && (
           <Status>{`종료 확인 요청됨 · 상대 연결 뒤${r.waits?.soloclose ? ` · ${waitText(r.waits.soloclose)}` : ""}`}</Status>
         )}
-        {!r.soloReason && solo && r.status !== "처리 완료" && (
-          <Status>
-            {solo === "상대 없음" ? "혼자 남긴 기록(상대 확인 없음)" : solo}
-          </Status>
-        )}
+        {/* 상대가 아직 없으면 줄마다 붙이지 않고 호실 맨 위에 한 번만 보여요(08-화면-기본-틀 8장). */}
+        {!r.soloReason &&
+          solo &&
+          solo !== "상대 없음" &&
+          r.status !== "처리 완료" && <Status>{soloReasonText[solo]}</Status>}
       </div>
       {r.ackDispute && (
         <div className="dispute-callout">
@@ -263,7 +263,7 @@ export function RepairActions({
   if (r.closeBy === role && closeSolo === "상대 미확인")
     acts.push({
       key: "unconfirmed-close",
-      label: "미확인 뒤 혼자 종료",
+      label: "혼자 종료",
       onClick: () =>
         run(
           `미확인 뒤 혼자 종료 · 처리 완료(${role} 확인) · 상대 미확인`,
@@ -279,7 +279,7 @@ export function RepairActions({
     acts.push(
       {
         key: "confirm-solo",
-        label: "종료 확인 · 양측 확인",
+        label: "종료 확인",
         onClick: () =>
           run("혼자 종료한 건 종료 확인 · 양측 확인", (x) =>
             confirmSoloClosed(x, role),

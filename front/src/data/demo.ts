@@ -46,7 +46,7 @@ export interface CauseClaim {
   company?: string
   source?: string
   photos?: string[]
-  // 표현 정정(같은 근거로 문장만 고침)의 이전 문장들. 근거 종류가 바뀌면 새 설명을 만들고 이전 설명에 supersededBy를 남깁니다.
+  // 이전 방식(문장만 바로 고침)으로 남은 기록 표시용. 새로 고치면 언제나 새 설명을 만들고 이전 설명에 supersededBy를 남깁니다(decisions 2026-11-13).
   edits?: { text: string; at: string }[]
   supersededBy?: string
   supersedes?: string
@@ -99,10 +99,11 @@ export interface FactCorrection<T = string | number> {
   to: T
   reason: string
   at: string
-  // 고치기(11/11 확정): 확인 대기 → 반영(상대 확인) / 거절 / 철회(화면: 거둠) / 대체됨(같은 칸을 다시 고쳐 닫힘). 미응답이어도 반영하지 않습니다.
+  // 고치기(상태와 규칙 G): 도장 전이면 바로 반영(mode '확인 전'), 도장 뒤면 확인 대기 → 반영(상대 확인) / 거절 / 철회(화면: 거둠)
+  // / 대체됨(같은 칸을 다시 고쳐 닫힘) / 처리 완료로 닫힘(REP-7l). 미응답이어도 반영하지 않습니다.
   // mode의 '상대 미확인'·'상대 없음'은 이전 규칙으로 남은 기록 표시용입니다. decidedBy = 확인·거절한 쪽
-  status: "확인 대기" | "반영" | "거절" | "철회" | "대체됨"
-  mode?: "상대 확인" | "상대 미확인" | "상대 없음"
+  status: "확인 대기" | "반영" | "거절" | "철회" | "대체됨" | "처리 완료로 닫힘"
+  mode?: "확인 전" | "상대 확인" | "상대 미확인" | "상대 없음"
   rejectReason?: string
   decidedAt?: string
   // 요청할 때의 기록 모습 번호, 반영될 때 이전 내용에 달려 있던 이견(이력 보존)

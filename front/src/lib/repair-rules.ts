@@ -18,7 +18,8 @@ import {
 } from "@/lib/versions"
 import { sideText } from "@/lib/words"
 
-// 고치기(팀 확정 정책): 최초 등록 뒤의 고치기는 도장 여부와 관계없이 모두 상대 승인이 있어야 반영돼요. 요청 중·거절·거둠·미응답이면 지금 기록을 그대로 둡니다.
+// 고치기(상태와 규칙 G, decisions 2026-11-11): 도장(상대의 맞아요·보류·이견) 전에는 바로 고쳐지고,
+// 도장 뒤에는 무엇을 고치든 '고친 내용'으로 남아 상대가 확인해야 앞모습이 바뀌어요. 상대 미확인은 도장이 아니에요.
 export const factRequestName = (field: string) =>
   `고친 내용 확인 요청(${field})`
 
@@ -51,11 +52,12 @@ export function soloReasonFor(
     (repair.waits?.[key] === "미확인" ? "상대 미확인" : undefined)
   )
 }
+// 혼자 진행할 수 있는 이유의 화면 문장(08-화면-기본-틀 8장: "○○ 님 확인 없음 · 이유", 판정하지 않는 말)
 export const soloReasonText: Record<SoloReason, string> = {
-  "상대 미확인": "재통지 뒤에도 응답이 없어 상대 미확인으로 표시됐어요",
-  "상대 수신 거부": "상대가 문자 수신을 거부했어요",
-  "상대 탈퇴": "상대가 탈퇴했어요",
-  "상대 없음": "아직 상대가 없어요(번호가 없거나 초대 전) · 혼자 남긴 기록",
+  "상대 미확인": "확인 없음 · 72시간 동안 답이 오지 않았어요",
+  "상대 수신 거부": "확인 없음 · 문자를 그만 받기로 했어요",
+  "상대 탈퇴": "확인 없음 · 탈퇴했어요",
+  "상대 없음": "혼자 기록하고 있어요 · 아직 상대를 초대하기 전이에요",
 }
 export function clearWait(r: Repair, key: string) {
   if (r.waits) delete r.waits[key]
@@ -134,7 +136,7 @@ export function pendingRequests(r: Repair): PendingRequest[] {
       if (c.status === "확인 대기")
         list.push({
           key: `fix:${c.id}`,
-          label: `지불 금액 정정 요청`,
+          label: `지불 금액 고친 내용 확인 요청`,
           by: c.by,
         })
     }),
@@ -167,7 +169,7 @@ export function confirmDefect(r: Repair, role: Role, seenVersion?: number) {
   if (r.author === role) throw new Error("하자 확인은 상대 쪽이 해요.")
   assertSeenVersion(r, seenVersion)
   if (r.status === "처리 완료" && !r.soloClosed)
-    throw new Error("양측 확인으로 끝난 건은 잠겨 있어요.")
+    throw new Error(CLOSED_BY_BOTH_MESSAGE)
   if (r.ackDispute)
     r.notes = [
       ...(r.notes || []),
@@ -191,7 +193,7 @@ export function disputeDefect(
 ) {
   if (r.author === role) throw new Error("하자 이견은 상대 쪽이 남겨요.")
   if (r.status === "처리 완료" && !r.soloClosed)
-    throw new Error("양측 확인으로 끝난 건은 잠겨 있어요.")
+    throw new Error(CLOSED_BY_BOTH_MESSAGE)
   if (!reason.trim()) throw new Error("이견 사유를 입력해 주세요.")
   r.ack = "이견"
   r.ackDispute = { by: role, type, reason: reason.trim(), at: nowText() }
@@ -236,6 +238,7 @@ export function confirmClose(r: Repair, role: Role) {
   r.soloClosed = undefined
   r.soloReason = undefined
   clearWait(r, "close")
+  closeContentCorrections(r)
 }
 export function notYet(r: Repair, role: Role, reason: string) {
   if (!r.closeBy || r.closeBy === role)
@@ -253,7 +256,7 @@ export function soloClose(r: Repair, role: Role, reason: SoloReason) {
   if (r.status !== "처리 중")
     throw new Error("처리 중인 건만 종료할 수 있어요.")
   if (reason === "상대 미확인" && r.closeBy !== role)
-    throw new Error("종료를 요청한 쪽만 미확인 뒤 혼자 종료할 수 있어요.")
+    throw new Error("종료를 요청한 쪽만 확인 없음 뒤에 혼자 종료할 수 있어요.")
   if (!hasAfterPhoto(r)) throw new Error(AFTER_PHOTO_REQUIRED)
   r.status = "처리 완료"
   r.soloClosed = role
@@ -269,6 +272,7 @@ export function confirmSoloClosed(r: Repair, role: Role) {
   r.soloReason = undefined
   r.confirmRequested = false
   clearWait(r, "soloclose")
+  closeContentCorrections(r)
 }
 export function reopen(r: Repair, role: Role, reason: string) {
   if (r.status !== "처리 완료" || !r.soloClosed || r.soloClosed === role)
@@ -350,7 +354,7 @@ export function makeProposal(
       throw new Error("이견 사유를 입력해 주세요.")
   } else if (prev?.status === "합의 대기" && !prev.totalChanged)
     throw new Error(
-      "응답을 기다리는 제안이 있어요. 동의·이견하거나, 내 제안이면 철회해 주세요.",
+      "응답을 기다리는 제안이 있어요. 동의·이견하거나, 내 제안이면 거둬 주세요.",
     )
   // 합의 뒤 새 제안(최신 E): 지금 합의는 그대로 두고 '바꾸자는 안'으로만 남겨요. 상대가 동의해야 새 합의가 돼요.
   if (
@@ -446,7 +450,7 @@ export function disputeProposal(r: Repair, role: Role, reason: string) {
 export function withdrawProposal(r: Repair, role: Role) {
   const p = r.proposal
   if (!p || p.status !== "합의 대기" || p.by !== role || p.totalChanged)
-    throw new Error("응답 전인 내 제안만 철회할 수 있어요.")
+    throw new Error("상대가 답하기 전인 내 제안만 거둘 수 있어요.")
   const kept = (r.proposalHistory || []).slice(
     0,
     p.restoreHistoryLength ?? (r.proposalHistory || []).length,
@@ -610,9 +614,27 @@ export function moneyGap(r: Repair) {
 }
 
 /* ── G 고치기 (상태와 규칙 G, 요구사항명세 REP-7) ── */
-// 팀 확정 정책: 최초 등록 뒤에는 도장(상대 확인) 여부와 관계없이 모든 고치기가 칸(제목·설명·부위·금액)마다 '고친 내용'으로 남고,
-// 상대 쪽이 승인해야 반영돼요. (수리 건·지불은 작성 중 단계가 없어 등록 즉시 이 규칙이 적용돼요.)
-// 확인 전·거절·거둠·미응답이면 지금 기록 그대로. 같은 칸을 다시 고치면 이전 고친 내용은 '대체됨'으로 닫히고 이력에 남아요.
+// 도장 전(상대가 아직 답하지 않았거나 상대 미확인): 바로 고쳐지고 고친 이력에 '확인 전에 고침'으로 남아요(REP-7a).
+// 도장 뒤(상대가 맞아요·보류·이견으로 답함): 칸마다 '고친 내용'으로 남고 상대가 확인해야 앞모습이 바뀌어요(REP-7b·7c).
+// 거절·거둠·미응답이면 지금 기록 그대로. 같은 칸을 다시 고치면 이전 고친 내용은 '대체됨'으로 닫히고 이력에 남아요.
+export const repairStamped = (r: Repair) =>
+  r.ack === "확인됨" || r.ack === "이견"
+export const paymentStamped = (p: Payment) =>
+  p.confirmed || Boolean(p.disputes?.length)
+export const CLOSED_BY_BOTH_MESSAGE =
+  "둘 다 확인해 끝난 건이에요. 다시 생기면 새 수리 건으로 남겨 주세요."
+const closedByBoth = (r: Repair) => r.status === "처리 완료" && !r.soloClosed
+// REP-7l: 둘 다 종료를 확인하면 내용(부위·제목·설명)의 확인 전 고친 내용은 닫혀요. 지불을 고친 내용은 그대로예요.
+function closeContentCorrections(r: Repair) {
+  const at = nowText()
+  r.corrections
+    ?.filter((c) => c.status === "확인 대기")
+    .forEach((c) => {
+      c.status = "처리 완료로 닫힘"
+      c.decidedAt = at
+      clearWait(r, `fix:${c.id}`)
+    })
+}
 function findCorrection(
   r: Repair,
   id: string,
@@ -630,15 +652,11 @@ function applyCorrection(
   pay?: Payment,
 ) {
   bumpVersion(pay ?? r)
-  // 이견·미확인이던 내용이 바뀌면: 이전 이견은 이 고친 내용의 이력으로 보존하고, 새 내용은 다시 하자 확인을 받아요.
-  if (
-    !pay &&
-    ["제목", "설명", "부위"].includes(c.field) &&
-    (r.ack === "이견" || r.ack === "상대 미확인")
-  ) {
+  // 이견이던 내용이 바뀌면: 이전 이견은 이 고친 내용의 이력으로 보존하고, 새 내용은 다시 하자 확인을 받아요.
+  if (!pay && ["제목", "설명", "부위"].includes(c.field) && r.ack === "이견") {
     c.priorDispute = r.ackDispute
       ? `${sideText(r.ackDispute.by)} ${r.ackDispute.type} · ${r.ackDispute.reason} · ${r.ackDispute.at}`
-      : "상대 미확인"
+      : "이견"
     r.notes = [
       ...(r.notes || []),
       {
@@ -673,8 +691,10 @@ export function requestCorrection(
 ) {
   if ((pay ? pay.by : r.author) !== role)
     throw new Error("고치기는 처음 기록한 쪽만 할 수 있어요.")
+  if (!pay && closedByBoth(r)) throw new Error(CLOSED_BY_BOTH_MESSAGE)
   if (from === to) throw new Error("지금 기록과 같아요.")
-  if (!reason.trim()) throw new Error("왜 바꾸는지 적어 주세요.")
+  const stamped = pay ? paymentStamped(pay) : repairStamped(r)
+  if (stamped && !reason.trim()) throw new Error("왜 바꾸는지 적어 주세요.")
   const list = (pay ? pay.corrections : r.corrections) || []
   if (
     list.some(
@@ -704,6 +724,11 @@ export function requestCorrection(
   if (pay)
     pay.corrections = [...(pay.corrections || []), c as FactCorrection<number>]
   else r.corrections = [...(r.corrections || []), c as FactCorrection<string>]
+  if (!stamped) {
+    // 도장 전: 바로 바뀌고 확인 요청은 생기지 않아요(REP-7a).
+    c.mode = "확인 전"
+    applyCorrection(r, c, pay)
+  }
   return c
 }
 // [고치기] 한 번에 여러 칸: 바뀐 칸마다 고친 내용 하나(확인 요청은 기록 하나로 묶어 보여 줘요)
@@ -713,6 +738,7 @@ export function requestRepairEdits(
   next: { title: string; description: string; zone: string },
   reason: string,
 ) {
+  if (closedByBoth(r)) throw new Error(CLOSED_BY_BOTH_MESSAGE)
   const title = next.title.trim(),
     description = next.description.trim()
   if (!title) throw new Error("제목을 입력해 주세요.")
@@ -743,6 +769,8 @@ export function answerCorrection(
   const found = findCorrection(r, id)
   // 같은 칸을 다시 고쳐 이 요청이 닫혔으면, 보던 내용과 달라졌으니 다시 보고 확인해요(REP-7j).
   if (found?.c.status === "대체됨") throw new Error(VERSION_CONFLICT_MESSAGE)
+  if (found?.c.status === "처리 완료로 닫힘")
+    throw new Error(CLOSED_BY_BOTH_MESSAGE)
   if (!found || found.c.status !== "확인 대기" || found.c.by === role)
     throw new Error("상대가 고친 확인 대기 내용에만 답할 수 있어요.")
   if (!accept && !reason.trim()) throw new Error("거절 사유를 입력해 주세요.")

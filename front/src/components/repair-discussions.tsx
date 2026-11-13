@@ -34,7 +34,7 @@ import {
   withdrawProposal,
   workTotal,
 } from "@/lib/repair-rules"
-import { sideText } from "@/lib/words"
+import { sideName, sideText } from "@/lib/words"
 import { Fold } from "@/components/fold"
 import { History } from "lucide-react"
 import { Notice } from "@/components/notice"
@@ -53,7 +53,7 @@ function ProposalCard({ p, title }: { p: Proposal; title: string }) {
     <div className="note">
       <strong>
         {title} {p.round || 1}회 · {sideText(p.by)}
-        {p.at ? ` · ${p.at}` : ""} · {p.withdrawn ? "철회" : p.status}
+        {p.at ? ` · ${p.at}` : ""} · {p.withdrawn ? "거둠" : p.status}
       </strong>
       <p>
         전체 {won(p.amount)} · {proposalText(p)}
@@ -158,13 +158,13 @@ export function CostAgreement({
       <div className="badges">
         <Status>{p?.status || "미정"}</Status>
         {stage && (
-          <Status>{stage === "미확인" ? "상대 미확인" : "재통지됨"}</Status>
+          <Status>{stage === "미확인" ? "확인 없음" : "다시 알렸어요"}</Status>
         )}
       </div>
       {p ? (
         <div className="proposal">
           <small>
-            현재 제안 {p.round || 1}회 · 제안자 {p.by}
+            현재 제안 {p.round || 1}회 · 제안한 쪽 {sideName(p.by)}
             {p.at ? ` · ${p.at}` : ""}
           </small>
           <strong>{won(p.amount)}</strong>
@@ -317,11 +317,11 @@ export function CostAgreement({
                   run("부담 제안 철회", (x) => withdrawProposal(x, role))
                 }
               >
-                제안 철회
+                제안 거두기
               </Button>
               <p className="muted">
                 내 제안입니다. 상대가 같은 안에 동의해야 합의돼요. 응답 전에는
-                철회할 수 있어요.
+                거둘 수 있어요.
               </p>
             </>
           )}
@@ -440,7 +440,9 @@ export function CostAgreement({
       <ActionDialog
         open={mode === "disagree"}
         title="동의 안 해요"
-        description={p ? `${p.by} 제안: ${proposalText(p)}` : undefined}
+        description={
+          p ? `${sideName(p.by)} 제안: ${proposalText(p)}` : undefined
+        }
         submitLabel="보내기"
         onClose={() => setMode(null)}
         onSubmit={(f) => {
@@ -583,7 +585,7 @@ function ClaimView({ c, children }: { c: CauseClaim; children?: ReactNode }) {
   return (
     <div className="cause-card">
       <div className="history-head">
-        <strong>{c.by}의 설명</strong>
+        <strong>{sideName(c.by)}의 설명</strong>
         <span className="badges">
           <Status>{`근거 · ${basisText(c)}`}</Status>
           {answers.map((x) => (
@@ -600,7 +602,7 @@ function ClaimView({ c, children }: { c: CauseClaim; children?: ReactNode }) {
       <RecordDescription text={c.text} />
       {c.photos?.length ? (
         <PhotoGallery
-          title={`${c.by} 원인 설명 근거`}
+          title={`${sideName(c.by)} 원인 설명 근거`}
           photos={c.photos}
           layout="compact"
         />
@@ -609,7 +611,7 @@ function ClaimView({ c, children }: { c: CauseClaim; children?: ReactNode }) {
         .filter((x) => !x.agree)
         .map((x) => (
           <p key={x.by} className="fix-note">
-            {x.by} 이견 사유: {x.reason}
+            {sideName(x.by)} 이견 사유: {x.reason}
           </p>
         ))}
       {c.edits?.length || c.responses.length > answers.length ? (
@@ -621,7 +623,8 @@ function ClaimView({ c, children }: { c: CauseClaim; children?: ReactNode }) {
           <div className="space-y-1">
             {[...c.responses].reverse().map((x, i) => (
               <p key={"r" + i} className="muted text-sm">
-                {x.by} · {x.agree ? "동의" : `이견 · ${x.reason}`} · {x.at}
+                {sideName(x.by)} · {x.agree ? "동의" : `이견 · ${x.reason}`} ·{" "}
+                {x.at}
               </p>
             ))}
             {[...(c.edits || [])].reverse().map((e, i) => (
@@ -696,38 +699,27 @@ export function CauseNotes({
       basis === "다른 사람에게 들었어요"
         ? String(f.get("source") || "").trim() || undefined
         : undefined
-    if (mine && mine.basis === basis)
-      return run(`원인 설명 표현 정정 · 근거 ${basis}`, (x) => {
-        const c = x.causes!.find((v) => v.id === mine.id)!
-        c.edits = [...(c.edits || []), { text: c.text, at: c.at }]
-        c.text = text
-        c.company = company
-        c.source = source
-        c.photos = [...(c.photos || []), ...photos]
-        c.at = nowText()
-      })
+    // 원인 설명은 덧붙이기예요(decisions 2026-11-13): 문장만 바꾸든 근거를 바꾸든 언제나 새 설명으로 남고,
+    // 상대의 이전 응답은 새 설명에 붙지 않아요. 이전 설명은 '이전 설명'에 그대로 남아요.
     const id = uid()
-    return run(
-      `원인 설명${mine ? ` · 근거 변경(${mine.basis} → ${basis}) · 새 설명` : ""} · 근거 ${basis}`,
-      (x) => {
-        if (mine) x.causes!.find((v) => v.id === mine.id)!.supersededBy = id
-        x.causes = [
-          ...(x.causes || []),
-          {
-            id,
-            by: role,
-            basis,
-            company,
-            source,
-            photos: [...photos],
-            text,
-            at: nowText(),
-            responses: [],
-            supersedes: mine?.id,
-          },
-        ]
-      },
-    )
+    return run(`원인 설명${mine ? " · 새 설명" : ""} · 근거 ${basis}`, (x) => {
+      if (mine) x.causes!.find((v) => v.id === mine.id)!.supersededBy = id
+      x.causes = [
+        ...(x.causes || []),
+        {
+          id,
+          by: role,
+          basis,
+          company,
+          source,
+          photos: [...photos],
+          text,
+          at: nowText(),
+          responses: [],
+          supersedes: mine?.id,
+        },
+      ]
+    })
   }
   return (
     <Panel title="각 쪽의 원인 설명">
@@ -795,8 +787,8 @@ export function CauseNotes({
         title={mine ? "내 원인 설명 고치기" : "원인 설명 남기기"}
         description={
           mine
-            ? "같은 근거로 문장만 고치면 표현 정정이에요. 근거 종류를 바꾸면 새 설명으로 남고, 상대 동의는 새 설명에 다시 받아요."
-            : "측마다 하나씩 남겨요. 근거 종류는 필수예요."
+            ? "고친 설명은 새 설명으로 남고, 지금 설명은 ‘이전 설명’에 그대로 남아요. 상대의 동의·이견은 새 설명에 다시 받아요."
+            : "쪽마다 하나씩 남겨요. 근거 종류는 필수예요."
         }
         submitLabel="원인 설명 남기기"
         onClose={() => setMode(null)}
