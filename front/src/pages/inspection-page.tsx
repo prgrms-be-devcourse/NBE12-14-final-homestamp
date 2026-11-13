@@ -3,6 +3,8 @@ import { Camera, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
+import { ActionDialog } from "@/components/action-dialog"
 import { Panel, Status } from "@/components/prototype"
 import { EmptyState } from "@/components/states"
 import { Notice } from "@/components/notice"
@@ -44,7 +46,11 @@ import { activeSettlementLink, sendSettlementLink } from "@/lib/workflows"
 import type { maskOf } from "@/lib/photo-privacy"
 import { sideName, sideText } from "@/lib/words"
 import { reaskWaitDays } from "@/lib/reask"
-import { hasAction, type InspectionAction } from "@/api/actions"
+import {
+  hasAction,
+  type InspectionAction,
+  type RoomAction,
+} from "@/api/actions"
 import {
   inspectionAvailableActions,
   inspectionItemAvailableActions,
@@ -99,6 +105,8 @@ export interface InspectionPageProps {
   ) => void
   itemMasks: (i: Inspection, wrong?: boolean) => ReturnType<typeof maskOf>[]
   photoContent: (p: PartPhoto) => ReactNode
+  // 호실 기록에서 서버가 준 지금 누를 수 있는 행동(거주 종료 등)
+  roomActions: readonly RoomAction[]
 }
 
 // S-14 점검(입주·퇴거, 나란히 보기). 퇴거 화면에는 거주 종료와 정산(S-15)이 함께 있어요.
@@ -131,9 +139,12 @@ export function InspectionPage({
   inspectionAct,
   itemMasks,
   photoContent,
+  roomActions,
 }: InspectionPageProps) {
   const [missingOpen, setMissingOpen] = useState(false)
   const [settlePhone, setSettlePhone] = useState("")
+  const [stillLiving, setStillLiving] = useState(false)
+  const roomHas = (a: RoomAction) => hasAction(roomActions, a)
   // 버튼은 서버가 준 availableActions로만 그려요(08 0장 원칙 6). 서버가 연결되면 GET /api/inspections/{id} 응답 값을 그대로 써요.
   const actions = inspectionAvailableActions(db, room, sessKind, role, {
     readOnly,
@@ -662,29 +673,28 @@ export function InspectionPage({
 
         {page === "checkout" && room.status === "거주 중" && (
           <div className="actions mt-5">
-            <Button
-              disabled={role === "임대인" && room.endRequested}
-              onClick={() =>
-                commit(
-                  role === "임차인"
-                    ? "퇴거 점검 마침 · 거주 종료"
-                    : "거주 종료 확인 요청",
-                  (d) => {
-                    const r = d.rooms.find((r) => r.id === roomId)!
-                    if (role === "임차인" || r.connection === "연결 전")
-                      r.status = "거주 종료"
-                    else r.endRequested = true
-                  },
-                )
-              }
-            >
-              {role === "임차인"
-                ? "점검 마침 · 이사했어요"
-                : room.endRequested
-                  ? "세입자의 답을 기다려요"
+            {roomHas("move-out") && (
+              <Button
+                onClick={() =>
+                  commit(
+                    role === "임차인"
+                      ? "퇴거 점검 마침 · 거주 종료"
+                      : "거주 종료 확인 요청",
+                    (d) => {
+                      const r = d.rooms.find((r) => r.id === roomId)!
+                      if (role === "임차인" || r.connection === "연결 전")
+                        r.status = "거주 종료"
+                      else r.endRequested = true
+                    },
+                  )
+                }
+              >
+                {role === "임차인"
+                  ? "점검 마침 · 이사했어요"
                   : "점검 마침 · 거주 종료 요청"}
-            </Button>
-            {room.endRequested && role === "임차인" && (
+              </Button>
+            )}
+            {roomHas("move-out-confirm") && (
               <>
                 <Notice>
                   집주인이 이사했다고 남겼어요. 맞으면 거주 종료가 돼요.
@@ -700,19 +710,12 @@ export function InspectionPage({
                 >
                   맞아요
                 </Button>
-                <Button
-                  variant="outline"
-                  onClick={() =>
-                    commit("거주 종료 요청 · 아직 살고 있어요", (d) => {
-                      const r = d.rooms.find((r) => r.id === roomId)!
-                      r.endRequested = false
-                      r.endWait = undefined
-                    })
-                  }
-                >
-                  아직 살고 있어요
-                </Button>
               </>
+            )}
+            {roomHas("move-out-reject") && (
+              <Button variant="outline" onClick={() => setStillLiving(true)}>
+                아직 살고 있어요
+              </Button>
             )}
             {room.endRequested && role === "임대인" && (
               <small className="muted">
@@ -721,24 +724,49 @@ export function InspectionPage({
                   : `세입자의 답을 기다려요${room.endWait ? " · 다시 알렸어요" : ""}`}
               </small>
             )}
-            {room.endRequested &&
-              role === "임대인" &&
-              room.endWait === "미확인" && (
-                <Button
-                  onClick={() =>
-                    commit("거주 종료 요청 적용 · 세입자 미확인", (d) => {
-                      const r = d.rooms.find((r) => r.id === roomId)!
-                      r.status = "거주 종료"
-                      r.endUnconfirmed = true
-                    })
-                  }
-                >
-                  혼자 거주 종료
-                </Button>
-              )}
+            {roomHas("move-out-alone") && (
+              <Button
+                onClick={() =>
+                  commit("거주 종료 요청 적용 · 세입자 미확인", (d) => {
+                    const r = d.rooms.find((r) => r.id === roomId)!
+                    r.status = "거주 종료"
+                    r.endUnconfirmed = true
+                  })
+                }
+              >
+                혼자 거주 종료
+              </Button>
+            )}
             <small className="muted">
               거주 종료와 점검 항목 확인·정산 완료는 별개예요.
             </small>
+            {/* [아직 살고 있어요]는 사유와 함께 답해요(06 S-06, move-out/reject REASON_REQUIRED) */}
+            <ActionDialog
+              open={stillLiving}
+              title="아직 살고 있어요"
+              description="집주인의 거주 종료 요청에 답해요. 사유가 함께 남아요."
+              submitLabel="보내기"
+              onClose={() => setStillLiving(false)}
+              onSubmit={(f) => {
+                const reason = String(f.get("reason") || "").trim()
+                if (!reason) return "사유를 입력해 주세요."
+                commit(`거주 종료 요청 · 아직 살고 있어요 · ${reason}`, (d) => {
+                  const r = d.rooms.find((r) => r.id === roomId)!
+                  r.endRequested = false
+                  r.endWait = undefined
+                })
+              }}
+            >
+              <div className="field">
+                <label htmlFor="still-living-reason">사유 · 필수</label>
+                <Textarea
+                  id="still-living-reason"
+                  name="reason"
+                  required
+                  placeholder="예: 이사는 다음 달 15일이에요"
+                />
+              </div>
+            </ActionDialog>
           </div>
         )}
       </Panel>

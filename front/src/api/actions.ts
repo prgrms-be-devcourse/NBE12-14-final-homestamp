@@ -67,5 +67,15 @@ export type SettlementItemAction =
 // 정산 송금 하나(POST /api/settlement-transfers/{id}/respond)
 export type TransferAction = "respond"
 
+// 호실 기록(S-06, GET /api/rooms/{id})
+export type RoomAction =
+  | "invite" // 상대 초대(호실을 만든 측)
+  | "counterpart-phone" // 초대 전 상대 번호 고치기
+  | "repair-cases" // 하자 등록(거주 중)
+  | "move-out" // 세입자: 거주 종료 / 집주인: 거주 종료 요청
+  | "move-out-confirm" // 집주인의 요청에 [맞아요]
+  | "move-out-reject" // [아직 살고 있어요]
+  | "move-out-alone" // 답이 없을 때 혼자 거주 종료(06 4장 API 표에는 아직 없음)
+
 export const hasAction = <A extends string>(list: readonly A[], a: A) =>
   list.includes(a)

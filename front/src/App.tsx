@@ -68,6 +68,8 @@ import { NotificationsPage } from "@/components/notifications-page"
 import { HomeDashboard, RepairListItem } from "@/components/home-dashboard"
 import { RepairDetailPage } from "@/pages/repair-detail-page"
 import { InspectionPage } from "@/pages/inspection-page"
+import { roomAvailableActions } from "@/api/mock/room-actions"
+import { hasAction, type RoomAction } from "@/api/actions"
 import { ApiProvider, createApi } from "@/api"
 import { createMockApi } from "@/api/mock/mock-api"
 import { createMockStore, recordAction, type MockStore } from "@/api/mock/store"
@@ -114,7 +116,6 @@ import {
   logRepairNotice,
   recordLinkView,
   requestSoloRecordsOnConnect,
-  canEditNumberOnlyPhone,
   updateNumberOnlyPhone,
   sideOf,
   inviteeSide,
@@ -469,6 +470,10 @@ function HomeStampApp({
   )
   // 정산 완료 또는 상대 기록에 합류한 '합류 전 기록'은 읽기만
   const readOnly = room.status === "정산 완료" || Boolean(room.preJoinOf)
+  // 호실 단위 버튼(초대·하자 등록·거주 종료)은 서버가 준 availableActions로만 그려요(GET /api/rooms/{id}).
+  // 서버가 연결되면 응답 값을 그대로 쓰고, 그 전에는 Mock이 서버 대신 계산해요.
+  const roomActions = roomAvailableActions(room, role, { guest, readOnly })
+  const roomHas = (a: RoomAction) => hasAction(roomActions, a)
   const basicPhotoMode =
     modal === "inspection" && kind === "in" && !hasInspectionDefect
   // 입주 점검 작성 중에는 상대에게 내용 대신 '작성 중'만 보입니다(부위 사진 포함).
@@ -1392,18 +1397,18 @@ function HomeStampApp({
       onOpenRepair={detail}
       onCopyShareLink={copyShareLink}
       onInvite={
+        // 처음 알리기: 아직 초대 전인 호실에서 이 기록을 보여 주며 초대해요
         !isGuest &&
-        !readOnly &&
+        roomHas("invite") &&
         room.status === "거주 중" &&
-        room.connection === "연결 전" &&
-        room.creator === role
+        room.connection === "연결 전"
           ? () => {
               setInviteTarget({ kind: "repair", id: r.id })
               open("invite")
             }
           : undefined
       }
-      canAddRepair={!isGuest && !readOnly && room.status === "거주 중"}
+      canAddRepair={!isGuest && roomHas("repair-cases")}
       partPhotos={partPhotos}
       inspections={visibleInspections}
       renderPartPhoto={photoContent}
@@ -1810,14 +1815,12 @@ function HomeStampApp({
                             }}
                           />
                         </div>
-                        {room.status === "거주 중" &&
-                          !readOnly &&
-                          page === "repairs" && (
-                            <Button onClick={() => open("repair")}>
-                              <Plus />
-                              하자 등록
-                            </Button>
-                          )}
+                        {roomHas("repair-cases") && page === "repairs" && (
+                          <Button onClick={() => open("repair")}>
+                            <Plus />
+                            하자 등록
+                          </Button>
+                        )}
                       </div>
                     </div>
                   )}
@@ -1835,8 +1838,7 @@ function HomeStampApp({
                     </Notice>
                   )}
                   {page === "home" &&
-                    !readOnly &&
-                    room.status === "거주 중" &&
+                    roomHas("repair-cases") &&
                     !sessionOf(room, "in") &&
                     !repairs.length &&
                     !partPhotos.length && (
@@ -2211,6 +2213,7 @@ function HomeStampApp({
                       inspectionAct={inspectionAct}
                       itemMasks={itemMasks}
                       photoContent={photoContent}
+                      roomActions={roomActions}
                     />
                   )}
                   {page === "connection" && (
@@ -2243,7 +2246,7 @@ function HomeStampApp({
                       </p>
                       {!readOnly && (
                         <div className="actions">
-                          {room.connection !== "연결됨" && (
+                          {roomHas("invite") && (
                             <Button onClick={() => open("invite")}>
                               <Link2 />
                               {room.connection === "거절됨"
@@ -2253,7 +2256,7 @@ function HomeStampApp({
                                   : "상대 초대하기"}
                             </Button>
                           )}
-                          {canEditNumberOnlyPhone(room, role) && (
+                          {roomHas("counterpart-phone") && (
                             <Button
                               variant="outline"
                               onClick={() => open("phone")}
