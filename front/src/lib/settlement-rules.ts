@@ -18,20 +18,24 @@ export const pendingTransferTotal = (room: Room) =>
     .reduce((s, t) => s + signed(t), 0)
 
 /* ── 정산 모습: 끝내기를 요청한 뒤 이 값이 바뀌면 요청이 닫혀요(5b·5e, 불변식 19). ── */
-// 보증금, 정산 항목(금액·방향·상태·빼기), 송금(금액·확인)을 담아요. 서버에서는 정산 버전 번호가 같은 일을 해요.
+// 같은 금액으로 제안이 바뀌어도 이전 끝내기 요청을 닫아요. 서버에서는 정산 버전 번호가 같은 일을 해요.
 export function settlementSnapshot(room: Room, items: Settlement[]) {
   return JSON.stringify({
-    deposit: [room.deposit, room.depositConfirmed, room.depositOffer?.amount],
-    depositStatus: room.depositOffer?.status,
+    deposit: [room.deposit, room.depositConfirmed, room.depositOffer],
     items: items
       .map((s) => [
         s.id,
         s.amount,
         s.direction,
         s.status,
+        s.by,
+        s.round,
+        s.proposalReason,
+        s.disputeBy,
+        s.disputeReason,
         Boolean(s.excluded),
         Boolean(s.withdrawn),
-        Boolean(s.excludeProposal),
+        s.excludeProposal,
       ])
       .sort(),
     transfers: roomTransfers(room).map((t) => [t.id, t.amount, t.confirmed]),

@@ -82,6 +82,26 @@ test("SET-5b·5e 끝내기를 기다리는 동안 정산이 바뀌면 요청이 
   expect(room.finishBy).toBe("임차인")
 })
 
+test("SET-5b 같은 금액으로 다른 안을 제안해도 이전 끝내기 요청이 닫힌다", () => {
+  const { room, items } = setup()
+  const item = items[0]
+  item.status = "합의 대기"
+  item.by = "임차인"
+  item.round = 1
+  item.proposalReason = "처음 사유"
+  requestFinish(room, items, "임차인", NOW)
+
+  item.by = "임대인"
+  item.round = 2
+  item.proposalReason = "같은 금액을 다른 근거로 제안해요"
+
+  expect(finishState(room, items, NOW).kind).toBe("changed")
+  expect(() => confirmFinish(room, items, "임대인", NOW)).toThrow(
+    VERSION_CONFLICT_MESSAGE,
+  )
+  expect(room.status).toBe("거주 종료")
+})
+
 test("SET-5c 아직 안 끝났어요로 답하면 혼자 끝낼 수 없고 다시 요청은 7일 뒤", () => {
   const { room, items } = setup()
   requestFinish(room, items, "임차인", NOW)
