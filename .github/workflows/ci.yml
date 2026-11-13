@@ -1,0 +1,232 @@
+# PR 검사. 기준은 docs/rules/04-인프라-아키텍처.md 9-1·10-3.
+# 규칙 세트에는 맨 아래 ci-result 하나만 "통과 필수"로 건다.
+# (바뀐 폴더만 도는 job은 건너뛰면 결과가 없어서, 그 job을 필수로 걸면 병합이 막힌다)
+name: CI
+
+on:
+  pull_request:
+    branches: [dev, main]
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  BASE_SHA: ${{ github.event.pull_request.base.sha }}
+  HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+
+jobs:
+  # 바뀐 폴더 찾기 (외부 액션 없이 git diff로).
+  # core.quotepath=off: 끄지 않으면 한글 경로가 "docs/rules/04-\354…"처럼 따옴표로 나와 ^docs/rules/에 걸리지 않는다
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      back: ${{ steps.diff.outputs.back }}
+      front: ${{ steps.diff.outputs.front }}
+      hooks: ${{ steps.diff.outputs.hooks }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: diff
+        run: |
+          files=$(git -c core.quotepath=off diff --name-only "$BASE_SHA"..."$HEAD_SHA")
+          echo "$files"
+          # 워크플로가 바뀌면 모든 job을 돌려 CI 자신을 검사한다
+          all=$(echo "$files" | grep -q '^\.github/workflows/' && echo true || echo false)
+          has() { [ "$all" = true ] || echo "$files" | grep -qE "$1"; }
+          echo "back=$(has '^back/' && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "front=$(has '^front/' && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "hooks=$(has '^(scripts/hooks/|\.claude/|\.codex/)' && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+  # 모든 PR: 브랜치·제목·릴리스·AI 서명 (값은 env로만 받아 스크립트 주입을 막는다)
+  conventions:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: 브랜치 이름·PR 제목·릴리스 PR
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          python3 - <<'PY'
+          import os, re, sys
+          head, base, title = os.environ["HEAD_REF"], os.environ["BASE_REF"], os.environ["PR_TITLE"]
+          errors = []
+          if base == "main":
+              if head != "dev":
+                  errors.append(f"main으로 가는 PR은 dev에서만 올 수 있어요 (지금: {head})")
+          elif not re.fullmatch(r"(feat|fix|test|docs|refactor|chore)/(back|front|common)/[a-z0-9-]+", head):
+              errors.append(f"브랜치 이름이 규칙과 달라요: {head} (예: feat/back/repair-register)")
+          if not re.fullmatch(r"(feat|fix|test|docs|refactor|chore): .{1,50}", title):
+              errors.append(f"PR 제목이 규칙과 달라요: {title} (타입: 내용, 50자 이내)")
+          for e in errors:
+              print(f"::error::{e}")
+          sys.exit(1 if errors else 0)
+          PY
+      - name: AI 도구 서명 (PR 본문·커밋 메시지)
+        # 제목 검사가 떨어져도 이 검사는 돌아서, 고칠 것을 한 번에 보여 준다
+        if: always()
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          python3 - <<'PY'
+          import os, re, subprocess, sys
+          # scripts/hooks/guard-bash.mjs의 SIGNATURE_RE와 같은 규칙. 바꿀 때 두 곳을 함께 고친다.
+          # AI 도구 이름이 붙은 서명만 막는다(사람끼리 남긴 Co-authored-by는 막지 않음)
+          tools = "claude|anthropic|codex|openai|chatgpt|copilot|gemini"
+          signature = re.compile(
+              rf"co-authored-by:[^\n]*\b({tools})\b|generated\s+(with|by)\s*\[?\s*({tools})\b", re.I
+          )
+          found = False
+          if signature.search(os.environ.get("PR_BODY") or ""):
+              print("::error::PR 본문에 AI 도구 서명이 있어요. 지워 주세요")
+              found = True
+          # 스쿼시 병합 때 커밋 메시지가 본문으로 합쳐지므로 커밋도 본다
+          log = subprocess.run(
+              ["git", "log", "--format=%B", f"{os.environ['BASE_SHA']}..{os.environ['HEAD_SHA']}"],
+              capture_output=True, text=True, check=True,
+          ).stdout
+          if signature.search(log):
+              print("::error::커밋 메시지에 AI 도구 서명이 있어요. 커밋을 고쳐 주세요")
+              found = True
+          sys.exit(1 if found else 0)
+          PY
+
+  # 모든 PR: 규칙 문서가 바뀌면 결정 기록도 (라벨 no-decision이면 건너뜀)
+  decision-record:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - env:
+          NO_DECISION: ${{ contains(github.event.pull_request.labels.*.name, 'no-decision') }}
+        run: |
+          files=$(git -c core.quotepath=off diff --name-only "$BASE_SHA"..."$HEAD_SHA")
+          if ! echo "$files" | grep -q '^docs/rules/'; then
+            echo "규칙 문서(docs/rules/)가 바뀌지 않아 검사할 것이 없어요"
+            exit 0
+          fi
+          if echo "$files" | grep -qx 'docs/decisions.md'; then
+            echo "규칙 문서와 결정 기록이 함께 바뀌었어요"
+            exit 0
+          fi
+          if [ "$NO_DECISION" = true ]; then
+            echo "라벨 no-decision: 뜻이 바뀌지 않는 수정이라 결정 기록 검사를 건너뛰어요"
+            exit 0
+          fi
+          echo "::error::docs/rules/가 바뀌었는데 docs/decisions.md에 줄이 없어요. /decide로 남기거나, 오타·문장 다듬기면 라벨 no-decision을 붙여 주세요"
+          exit 1
+
+  # 모든 PR: 비밀값 (PR 범위의 커밋만)
+  gitleaks:
+    runs-on: ubuntu-24.04
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: gitleaks 받기 (체크섬 확인)
+        run: |
+          file="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL -o "$RUNNER_TEMP/$file" "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/$file"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/$file" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$file" -C "$RUNNER_TEMP" gitleaks
+      - name: 비밀값 검사
+        run: |
+          "$RUNNER_TEMP/gitleaks" git --log-opts="$BASE_SHA..$HEAD_SHA" --redact --no-banner --exit-code 1 .
+
+  back:
+    needs: changes
+    if: needs.changes.outputs.back == 'true'
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: back
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: gradle
+      - name: 서식 (Spotless)
+        run: ./gradlew spotlessCheck --no-daemon
+      - name: 테스트·커버리지 (Testcontainers postgres:18.6, JaCoCo)
+        run: ./gradlew build --no-daemon
+      - name: 커버리지 보고서
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: jacoco-report
+          path: back/build/reports/jacoco/test/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  front:
+    needs: changes
+    if: needs.changes.outputs.front == 'true'
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: front
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: front/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm run build
+
+  # 훅에는 Windows 전용 분기(PowerShell 경로, gradlew.bat)가 있고 팀의 절반이 Windows라 두 운영체제에서 돌린다
+  hooks:
+    needs: changes
+    if: needs.changes.outputs.hooks == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - run: node --test scripts/hooks/hooks.test.mjs
+
+  # 규칙 세트의 "통과 필수"는 이것 하나. 건너뛴 job(skipped)은 통과로 본다
+  ci-result:
+    if: always()
+    needs: [changes, conventions, decision-record, gitleaks, back, front, hooks]
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          needs = json.loads(os.environ["RESULTS"])
+          bad = []
+          for name, need in needs.items():
+              result = need["result"]
+              print(f"{name}: {result}")
+              if result not in ("success", "skipped"):
+                  bad.append(name)
+          if bad:
+              print("::error::실패한 검사: " + ", ".join(bad))
+              sys.exit(1)
+          PY

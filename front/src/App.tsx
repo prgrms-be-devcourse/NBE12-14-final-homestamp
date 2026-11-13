@@ -157,7 +157,7 @@ import {
 } from "@/components/ui/sheet"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 
-// 브라우저가 주소 변경을 막는 환경(file:// 등)에서도 화면 동작은 계속되게 합니다.
+// 브라우저가 주소 변경을 막는 환경에서도 화면 동작은 계속되게 합니다.
 function replaceUrl(_state: null, _title: string, url: string) {
   try {
     window.history.replaceState(null, "", url)

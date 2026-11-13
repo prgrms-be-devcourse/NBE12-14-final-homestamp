@@ -73,9 +73,8 @@ export function toPath(r: Route): string {
   return `/rooms/${enc(r.roomId)}/${r.page}`
 }
 
-// file://로 연 단일 파일 시연본에서는 주소를 읽거나 바꾸지 않고 화면 상태로만 움직입니다.
-const canUseHistory = () =>
-  typeof window !== "undefined" && window.location.protocol !== "file:"
+// 브라우저 밖(window 없음)에서는 주소를 읽거나 바꾸지 않고 화면 상태로만 움직입니다.
+const canUseHistory = () => typeof window !== "undefined"
 
 export function useRouter(initial: Route) {
   const [route, setRoute] = useState<Route>(() =>

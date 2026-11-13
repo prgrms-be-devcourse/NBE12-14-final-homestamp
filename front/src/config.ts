@@ -8,7 +8,7 @@ export const API_MODE: "mock" | "http" =
     ? "http"
     : mode === "mock"
       ? "mock"
-      : import.meta.env.PROD && import.meta.env.MODE !== "single"
+      : import.meta.env.PROD
         ? "http"
         : "mock"
 export const API_BASE_URL: string = import.meta.env.VITE_API_BASE_URL ?? ""
