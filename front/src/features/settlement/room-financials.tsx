@@ -177,7 +177,7 @@ export function RoomFinancials({
         const r = d.rooms.find((r) => r.id === room.id)!
         if (!r.depositOffer && r.depositConfirmed)
           r.depositOffer = {
-            ...newAmountOffer(role, r.deposit ?? 0, "기존 양측 확인 기준"),
+            ...newAmountOffer(role, r.deposit ?? 0, "기존에 둘 다 확인한 금액"),
             status: "합의됨",
           }
         if (r.depositOffer)
@@ -422,7 +422,7 @@ export function RoomFinancials({
             const v = d.settlements.find((x) => x.id === s.id)!
             v.excludeHistory = [
               ...(v.excludeHistory || []),
-              { ...v.excludeProposal!, result: "철회" },
+              { ...v.excludeProposal!, result: "거둠" },
             ]
             v.excludeProposal = undefined
           }),
@@ -994,8 +994,8 @@ export function RoomFinancials({
                 />
                 <p className="muted">
                   {transferDirection === "반환"
-                    ? "임대인 → 임차인"
-                    : "임차인 → 임대인"}{" "}
+                    ? "집주인 → 세입자"
+                    : "세입자 → 집주인"}{" "}
                   · {sideText(role)}의 한쪽 기록으로 남겨 상대에게 확인을
                   요청해요.
                 </p>

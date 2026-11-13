@@ -90,7 +90,7 @@ export function AuthScreen({
           <CardDescription>
             {mode === "login"
               ? "이메일과 비밀번호로 로그인해 주세요."
-              : "휴대폰 인증 한 번으로 가입해요. 임차인·임대인은 호실을 만들거나 연결할 때 정해져요."}
+              : "휴대폰 인증 한 번으로 가입해요. 세입자 쪽·집주인 쪽은 호실을 만들거나 연결할 때 정해져요."}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">

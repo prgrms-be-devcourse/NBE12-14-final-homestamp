@@ -60,6 +60,7 @@ import { InspectionPage } from "@/pages/inspection-page"
 import { ConnectionPage } from "@/pages/connection-page"
 import { TimelinePage } from "@/pages/timeline-page"
 import { HomePage } from "@/pages/home-page"
+import { CounterpartNotice } from "@/components/common/counterpart-notice"
 import { RoomsPage } from "@/pages/rooms-page"
 import { RepairsPage } from "@/pages/repairs-page"
 import { roomAvailableActions } from "@/api/mock/room-actions"
@@ -1829,6 +1830,18 @@ function HomeStampApp({
                       합류해서 이 기록은 읽기만 할 수 있어요.
                     </Notice>
                   )}
+                  {page !== "rooms" &&
+                    page !== "notifications" &&
+                    page !== "connection" && (
+                      <CounterpartNotice
+                        room={room}
+                        role={role}
+                        moneyPage={page === "money" || page === "checkout"}
+                        onInvite={
+                          roomHas("invite") ? () => open("invite") : undefined
+                        }
+                      />
+                    )}
                   {page === "home" && (
                     <HomePage
                       showFirstSteps={

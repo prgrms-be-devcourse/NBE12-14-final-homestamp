@@ -42,8 +42,8 @@ import { Notice } from "@/components/notice"
 
 type OnAction = (text: string, update: (r: Repair) => void) => void
 const PLANS = [
-  "임대인 전부",
-  "임차인 전부",
+  "집주인 전부",
+  "세입자 전부",
   "나눠서",
   "제3자 포함",
   "비용 없음",
@@ -90,7 +90,7 @@ export function CostAgreement({
     "propose" | "counter" | "dispute" | "change-dispute" | "disagree" | null
   >(null)
   const [withCounter, setWithCounter] = useState(false)
-  const [plan, setPlan] = useState("임대인 전부")
+  const [plan, setPlan] = useState("집주인 전부")
   const [error, setError] = useState("")
   const p = r.proposal
   const prevAgreement = lastAgreement(r)
@@ -109,8 +109,8 @@ export function CostAgreement({
     const total = parseMoney(String(f.get("total") || ""))
     if (!Number.isSafeInteger(total) || total <= 0)
       return "전체 금액을 1원 이상으로 입력해 주세요. 돈이 들지 않으면 ‘비용 없음’을 고르세요."
-    if (plan === "임대인 전부") return [{ side: "임대인", amount: total }]
-    if (plan === "임차인 전부") return [{ side: "임차인", amount: total }]
+    if (plan === "집주인 전부") return [{ side: "임대인", amount: total }]
+    if (plan === "세입자 전부") return [{ side: "임차인", amount: total }]
     const tenant = parseMoney(String(f.get("tenantAmount") || "0"))
     const third =
       plan === "제3자 포함" ? parseMoney(String(f.get("thirdAmount") || "")) : 0
@@ -121,7 +121,7 @@ export function CostAgreement({
     )
       return "제3자 설명(예: 윗집)과 제3자 금액을 입력해 주세요. 연락처는 받지 않아요."
     if (!Number.isSafeInteger(tenant) || tenant + third > total)
-      return "나눈 금액의 합이 전체 금액을 넘지 않게 입력해 주세요. 나머지는 임대인 부담이에요."
+      return "나눈 금액의 합이 전체 금액을 넘지 않게 입력해 주세요. 나머지는 집주인 부담이에요."
     return [
       ...(plan === "제3자 포함"
         ? [{ side: "제3자" as const, label, amount: third }]
@@ -334,7 +334,7 @@ export function CostAgreement({
               <Button
                 variant="outline"
                 onClick={() => {
-                  setPlan("임대인 전부")
+                  setPlan("집주인 전부")
                   setMode("propose")
                 }}
               >
