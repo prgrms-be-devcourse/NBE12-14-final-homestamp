@@ -64,6 +64,7 @@ import { InspectionPage } from "@/pages/inspection-page"
 import { ConnectionPage } from "@/pages/connection-page"
 import { TimelinePage } from "@/pages/timeline-page"
 import { HomePage } from "@/pages/home-page"
+import { RoomsPage } from "@/pages/rooms-page"
 import { roomAvailableActions } from "@/api/mock/room-actions"
 import { hasAction, type RoomAction } from "@/api/actions"
 import { ApiProvider, createApi } from "@/api"
@@ -78,7 +79,6 @@ import { createAuth, maskPhone, type Account } from "@/api/auth"
 import { AuthScreen } from "@/components/auth-screen"
 import { API_MODE } from "@/config"
 import { PhotoGallery } from "@/components/photo-gallery"
-import { CountChip } from "@/components/fold"
 import { AddressSearch } from "@/components/address-search"
 import { MoneyInput } from "@/components/money-input"
 import { ReceivedInvitations } from "@/components/received-invitations"
@@ -1891,120 +1891,19 @@ function HomeStampApp({
                       )}
                     />
                   )}
-                  {page === "rooms" &&
-                    (() => {
-                      const roomCard = (r: Room) => {
-                        const openRepairs = db.repairs.filter(
-                          (x) => x.roomId === r.id && x.status !== "처리 완료",
-                        ).length
-                        return (
-                          <Card
-                            className={`svc-card svc-room-card ${r.id === roomId ? "is-current" : ""}`}
-                            key={r.id}
-                          >
-                            <CardContent className="svc-card-body space-y-3">
-                              <div className="svc-room-card-head">
-                                <span className="svc-room-icon" aria-hidden>
-                                  <Building2 size={20} />
-                                </span>
-                                <div className="min-w-0">
-                                  <h2>{r.name}</h2>
-                                  <p className="muted">{r.address}</p>
-                                </div>
-                              </div>
-                              <div className="badges">
-                                <Status>{r.status}</Status>
-                                <Status>{r.connection}</Status>
-                                {r.creator && (
-                                  <Badge variant="outline">
-                                    {r.creator === role
-                                      ? `${sideText(role)} · 내가 만듦`
-                                      : `${sideText(role)}`}
-                                  </Badge>
-                                )}
-                              </div>
-                              <dl className="svc-facts">
-                                <div>
-                                  <dt>입주일</dt>
-                                  <dd>{r.since || "미입력"}</dd>
-                                </div>
-                                <div>
-                                  <dt>진행 중 수리</dt>
-                                  <dd>{openRepairs}건</dd>
-                                </div>
-                                <div>
-                                  <dt>보증금</dt>
-                                  <dd>
-                                    {r.deposit === undefined
-                                      ? "미입력"
-                                      : won(r.deposit)}
-                                  </dd>
-                                </div>
-                              </dl>
-                              <p className="svc-next">
-                                <ArrowRight size={14} aria-hidden />
-                                {nextStep(r)}
-                              </p>
-                              <Button
-                                className="w-full"
-                                variant={
-                                  r.id === roomId ? "default" : "outline"
-                                }
-                                onClick={() => {
-                                  setRoomId(r.id)
-                                  go("home")
-                                }}
-                              >
-                                {r.id === roomId
-                                  ? "선택한 호실 보기"
-                                  : "호실 선택"}
-                                <ArrowRight />
-                              </Button>
-                            </CardContent>
-                          </Card>
-                        )
-                      }
-                      const live = accessibleRooms.filter(
-                          (r) => sideOf(r, accountId) === "임차인",
-                        ),
-                        own = accessibleRooms.filter(
-                          (r) => sideOf(r, accountId) === "임대인",
-                        )
-                      // 새 호실 기록 만들기는 두 묶음(사는 집 · 관리하는 호실) 어느 쪽에도 속하지 않아서 목록 맨 위에 하나만 둬요.
-                      return (
-                        <div className="space-y-6">
-                          <div className="rooms-bar">
-                            <p className="muted">
-                              내 호실 {accessibleRooms.length}곳
-                            </p>
-                            <Button onClick={() => open("room")}>
-                              <Plus />새 호실 기록 만들기
-                            </Button>
-                          </div>
-                          {live.length > 0 && (
-                            <section>
-                              <h2 className="room-group-title">
-                                사는 집 <CountChip>{live.length}</CountChip>
-                              </h2>
-                              <div className="svc-room-grid">
-                                {live.map(roomCard)}
-                              </div>
-                            </section>
-                          )}
-                          {own.length > 0 && (
-                            <section>
-                              <h2 className="room-group-title">
-                                관리하는 호실{" "}
-                                <CountChip>{own.length}</CountChip>
-                              </h2>
-                              <div className="svc-room-grid">
-                                {own.map(roomCard)}
-                              </div>
-                            </section>
-                          )}
-                        </div>
-                      )
-                    })()}
+                  {page === "rooms" && (
+                    <RoomsPage
+                      db={db}
+                      role={role}
+                      roomId={roomId}
+                      accountId={accountId}
+                      accessibleRooms={accessibleRooms}
+                      nextStep={nextStep}
+                      setRoomId={setRoomId}
+                      go={go}
+                      open={open}
+                    />
+                  )}
                   {(page === "repairs" || page === "money") && (
                     <>
                       {/* 상태 탭 + 검색. 휴대폰: 탭은 화면 폭 안에서만 옆으로 밀어 보고(오른쪽 끝 흐림), 검색은 아래 전체 폭 */}
