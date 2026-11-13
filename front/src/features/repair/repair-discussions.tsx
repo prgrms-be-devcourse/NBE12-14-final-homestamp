@@ -306,7 +306,7 @@ export function CostAgreement({
                   setMode("disagree")
                 }}
               >
-                동의 안 해요
+                아니에요 · 다른 안
               </Button>
             </>
           )}
@@ -440,7 +440,7 @@ export function CostAgreement({
       </ActionDialog>
       <ActionDialog
         open={mode === "disagree"}
-        title="동의 안 해요"
+        title="아니에요 · 다른 안"
         description={
           p ? `${sideName(p.by)} 제안: ${proposalText(p)}` : undefined
         }

@@ -16,7 +16,7 @@ import {
   versionOf,
   VERSION_CONFLICT_MESSAGE,
 } from "@/lib/versions"
-import { sideText } from "@/lib/words"
+import { sideName, sideText } from "@/lib/words"
 import {
   assertCanReask,
   newEvidence,
@@ -427,7 +427,7 @@ export function proposalText(p: Proposal) {
     .filter((l) => l.amount > 0)
     .map(
       (l) =>
-        `${sideLabel(l.side, l.label)} ${l.amount.toLocaleString("ko-KR")}원`,
+        `${l.side === "제3자" ? sideLabel(l.side, l.label) : sideName(l.side)} ${l.amount.toLocaleString("ko-KR")}원`,
     )
     .join(" · ")
 }

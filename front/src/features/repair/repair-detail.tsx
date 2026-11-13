@@ -17,6 +17,7 @@ import { repairSummary } from "@/features/repair/repair-summary"
 import { cn } from "cn"
 import { myTurn } from "@/lib/turn"
 import { sideName } from "@/lib/words"
+import { plainText } from "@/lib/plain-words"
 
 const ackBadge: Record<Repair["ack"], { text: string; tone: string }> = {
   확인됨: { text: "하자가 있었다고 확인됨", tone: "green" },
@@ -341,7 +342,7 @@ export function RepairDetail(p: RepairDetailProps) {
             <span className={rowLabel}>돈</span>
             <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
               <StatusTag raw className={ackTag[moneyTone(r)]}>
-                {r.proposal?.status || "미정"}
+                {plainText(r.proposal?.status || "미정")}
               </StatusTag>
               <small className="text-[13px] text-sub">
                 수리 진행과 따로 정해져요
