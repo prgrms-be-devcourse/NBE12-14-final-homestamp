@@ -25,13 +25,15 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
   @ExceptionHandler(BusinessException.class)
   ResponseEntity<ProblemDetail> handleBusiness(BusinessException e) {
-    return toResponse(e.errorCode(), null);
+    ErrorCode code = e.errorCode();
+    return ResponseEntity.status(code.status()).body(problem(code, code.status(), null));
   }
 
   @ExceptionHandler(Exception.class)
   ResponseEntity<ProblemDetail> handleUnexpected(Exception e) {
     log.error("처리하지 못한 예외", e);
-    return toResponse(ErrorCode.INTERNAL_ERROR, null);
+    ErrorCode code = ErrorCode.INTERNAL_ERROR;
+    return ResponseEntity.status(code.status()).body(problem(code, code.status(), null));
   }
 
   @Override
@@ -50,18 +52,43 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
                         "message",
                         f.getDefaultMessage() == null ? "" : f.getDefaultMessage()))
             .toList();
-    return ResponseEntity.status(ErrorCode.VALIDATION_FAILED.status())
-        .body(toResponse(ErrorCode.VALIDATION_FAILED, errors).getBody());
+    ProblemDetail body = problem(ErrorCode.VALIDATION_FAILED, status, errors);
+    return super.handleExceptionInternal(e, body, headers, status, request);
   }
 
-  private static ResponseEntity<ProblemDetail> toResponse(
-      ErrorCode code, List<Map<String, String>> errors) {
-    ProblemDetail body = ProblemDetail.forStatus(code.status());
+  /**
+   * Spring이 직접 처리하는 예외(깨진 JSON, 없는 주소, 허용 안 된 메서드 등)도 {@code code}를 넣는다. 상태는 Spring이 정한 값을 그대로 두고,
+   * 코드는 상태로 정한다(명세 4-10).
+   */
+  @Override
+  protected ResponseEntity<Object> handleExceptionInternal(
+      Exception e, Object body, HttpHeaders headers, HttpStatusCode status, WebRequest request) {
+    if (status.is5xxServerError()) {
+      log.error("처리하지 못한 예외", e);
+    }
+    ProblemDetail problem = problem(codeFor(status), status, null);
+    return super.handleExceptionInternal(e, problem, headers, status, request);
+  }
+
+  static ErrorCode codeFor(HttpStatusCode status) {
+    if (status.is5xxServerError()) {
+      return ErrorCode.INTERNAL_ERROR;
+    }
+    return switch (status.value()) {
+      case 400 -> ErrorCode.VALIDATION_FAILED;
+      case 404 -> ErrorCode.NOT_FOUND;
+      default -> ErrorCode.UNSUPPORTED_REQUEST;
+    };
+  }
+
+  private static ProblemDetail problem(
+      ErrorCode code, HttpStatusCode status, List<Map<String, String>> errors) {
+    ProblemDetail body = ProblemDetail.forStatus(status);
     body.setProperty("code", code.name());
     body.setDetail(code.message());
     if (errors != null) {
       body.setProperty("errors", errors);
     }
-    return ResponseEntity.status(code.status()).body(body);
+    return body;
   }
 }

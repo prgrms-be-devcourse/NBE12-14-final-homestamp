@@ -55,7 +55,9 @@ public enum ErrorCode {
   SETTLEMENT_EXISTS(HttpStatus.CONFLICT, "이미 시작된 점검(정산)이 있어요. 그쪽으로 열게요"),
   INSPECTION_LOCKED(HttpStatus.CONFLICT, "잠긴 점검이에요. 내용은 [고치기]로, 빠뜨린 하자는 [+ 빠뜨린 하자 더하기]로 남겨 주세요"),
   UPLOAD_TICKET_INVALID(HttpStatus.UNPROCESSABLE_CONTENT, "이 사진을 다시 올려 주세요"),
-  INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "문제가 생겨 처리하지 못했어요. 잠시 뒤에 다시 해 주세요");
+  INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "문제가 생겨 처리하지 못했어요. 잠시 뒤에 다시 해 주세요"),
+  // Spring이 처리하는 405·406·413·415에 쓴다. 응답 상태는 Spring이 정한 값을 그대로 둔다(06 4-10).
+  UNSUPPORTED_REQUEST(HttpStatus.METHOD_NOT_ALLOWED, "화면을 새로 불러온 뒤 다시 해 주세요");
 
   private final HttpStatus status;
   private final String message;
