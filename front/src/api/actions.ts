@@ -52,6 +52,8 @@ export type SettlementAction =
   | "transfers" // 송금 기록
   | "finish" // 정산 끝내기 제안
   | "finish-confirm" // 정산 끝내기 확인(/finish/confirm)
+  | "finish-not-yet" // 아직 안 끝났어요(/finish/not-yet, 사유)
+  | "finish-alone" // 72시간 답이 없을 때 혼자 끝내기(/finish/alone)
 
 // 정산 항목 하나(돈 안건 장치 /proposals/{id}/…, /settlement-items/{id}/…)
 export type SettlementItemAction =

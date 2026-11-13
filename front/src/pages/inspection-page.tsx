@@ -853,7 +853,12 @@ export function InspectionPage({
           items={settlements}
           onAction={commit}
           onAdd={() => open("settlement")}
-          actions={settlementAvailableActions(room, role, { readOnly })}
+          actions={settlementAvailableActions(
+            room,
+            role,
+            { readOnly },
+            settlements,
+          )}
           itemActionsOf={(s) =>
             settlementItemAvailableActions(s, role, { readOnly })
           }

@@ -99,12 +99,6 @@ export function roomTransfers(room: Room): Transfer[] {
       : [])
   )
 }
-export function transferTotal(room: Room) {
-  return roomTransfers(room).reduce(
-    (sum, t) => sum + (t.direction === "반환" ? t.amount : -t.amount),
-    0,
-  )
-}
 
 const normalizePhone = (phone: string | undefined) =>
   (phone || "").replace(/\D/g, "")

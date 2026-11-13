@@ -14,12 +14,17 @@ import { CountChip } from "@/components/fold"
 import { MoreMenu } from "@/components/more-menu"
 import { cn } from "cn"
 import { parseMoney } from "@/lib/money"
+import { newAmountOffer, respondToOffer, roomTransfers } from "@/lib/workflows"
 import {
-  newAmountOffer,
-  respondToOffer,
-  roomTransfers,
-  transferTotal,
-} from "@/lib/workflows"
+  confirmedTransferTotal,
+  confirmFinish,
+  FINISH_CHANGED_MESSAGE,
+  finishAlone,
+  finishState,
+  pendingTransferTotal,
+  rejectFinish,
+  requestFinish,
+} from "@/lib/settlement-rules"
 import {
   hasResidentId,
   RESIDENT_ID_MESSAGE,
@@ -64,6 +69,7 @@ type Mode =
   | "exclude"
   | "exclude-reject"
   | "transfer"
+  | "finish-not-yet"
   | null
 function offerHistory(offers: AmountOffer[]) {
   return offers.map((o) => (
@@ -104,7 +110,30 @@ export function RoomFinancials({
   const offer = room.depositOffer
   const item = allItems.find((s) => s.id === itemId)
   const total = settlementTotal(room.deposit ?? 0, items)
-  const paid = transferTotal(room)
+  // 송금 합계는 상대가 확인한 송금만(SET-4b, 03 J, 08 10장). 확인 전 송금은 따로 보여요.
+  const paid = confirmedTransferTotal(room)
+  const pendingPaid = pendingTransferTotal(room)
+  const finish = finishState(room, allItems)
+  const [finishError, setFinishError] = useState("")
+  // 정산 끝내기 행동: 먼저 복사본에 적용해 규칙 위반을 확인한 뒤 기록해요.
+  const runFinish = (
+    text: string,
+    update: (r: Room, list: Settlement[]) => void,
+  ) => {
+    try {
+      update(structuredClone(room), structuredClone(allItems))
+    } catch (e) {
+      setFinishError(e instanceof Error ? e.message : "처리할 수 없어요.")
+      return
+    }
+    setFinishError("")
+    onAction(text, (d) =>
+      update(
+        d.rooms.find((r) => r.id === room.id)!,
+        d.settlements.filter((s) => s.roomId === room.id),
+      ),
+    )
+  }
   const transfers = roomTransfers(room)
   const myConfirmed =
     room.depositConfirmed || offer?.by === role || offer?.status === "합의됨"
@@ -259,6 +288,10 @@ export function RoomFinancials({
         ]
         s.excludeProposal = undefined
       })
+    } else if (mode === "finish-not-yet") {
+      runFinish(`정산 끝내기 · 아직 안 끝났어요 · ${reason}`, (r) =>
+        rejectFinish(r, role, reason),
+      )
     } else if (mode === "transfer")
       onAction(
         `${transferDirection} 사실 기록 · ${won(amount)} · 한쪽 기록`,
@@ -717,11 +750,22 @@ export function RoomFinancials({
         {/* 영수증처럼: 순액 · 차액 */}
         <dl className="my-3 divide-y divide-line rounded-[12px] border border-line">
           <div className="flex items-baseline justify-between gap-3 px-4 py-3">
-            <dt className="text-[15px] text-sub">기존 반환·송금 순액</dt>
+            <dt className="text-[15px] text-sub">
+              상대가 확인한 반환·송금 순액
+            </dt>
             <dd className="text-xl font-extrabold text-ink tabular-nums">
               {won(paid)}
             </dd>
           </div>
+          {/* 확인 전 송금은 합계에 넣지 않고 따로 보여요(03 J, 08 10장) */}
+          {pendingPaid !== 0 && (
+            <div className="flex items-baseline justify-between gap-3 px-4 py-3">
+              <dt className="text-[15px] text-sub">받았는지 확인 중</dt>
+              <dd className="text-base font-bold text-sub tabular-nums">
+                {won(pendingPaid)}
+              </dd>
+            </div>
+          )}
           <div
             className="flex items-baseline justify-between gap-3 px-4 py-3"
             aria-live="polite"
@@ -784,31 +828,84 @@ export function RoomFinancials({
             <p className="text-sm text-[#8c9fb9]">
               이견과 확인 없음 항목은 정산이 끝난 뒤에도 그대로 남아요.
             </p>
-            <Button
-              disabled={!has("finish") && !has("finish-confirm")}
-              onClick={() =>
-                onAction(
-                  room.finishBy
-                    ? "정산 끝내기 · 양측 확인"
-                    : "정산 끝내기 제안",
-                  (d) => {
-                    const r = d.rooms.find((r) => r.id === room.id)!
-                    if (
-                      (r.finishBy && r.finishBy !== role) ||
-                      r.connection === "연결 전"
-                    )
-                      r.status = "정산 완료"
-                    else r.finishBy = role
-                  },
-                )
-              }
-            >
-              {room.finishBy === role
-                ? "상대 확인 대기"
-                : room.finishBy
-                  ? "정산 끝내기 확인"
-                  : "정산 끝내기 제안"}
-            </Button>
+            {/* 정산 끝내기(06 SET-5a~e). 버튼은 availableActions로만 그려요. */}
+            <div className="flex flex-col items-end gap-2 max-md:items-stretch">
+              {finish.kind === "changed" && (
+                <p className="text-sm text-warn-ink">
+                  {FINISH_CHANGED_MESSAGE} · 다시 요청할 수 있어요.
+                </p>
+              )}
+              {finish.kind === "not-yet" && (
+                <p className="text-sm text-warn-ink">
+                  {sideName(finish.by)}이 아직 안 끝났다고 답했어요
+                  {finish.text ? ` · ${finish.text}` : ""}
+                </p>
+              )}
+              {finish.kind === "waiting" && finish.by === role && (
+                <p className="text-sm text-sub">
+                  상대의 정산 끝내기 확인을 기다려요
+                  {has("finish-alone")
+                    ? " · 72시간 동안 답이 오지 않아 혼자 끝낼 수 있어요"
+                    : ""}
+                </p>
+              )}
+              <div className="actions">
+                {has("finish-confirm") && (
+                  <Button
+                    onClick={() =>
+                      runFinish("정산 끝내기 · 양측 확인", (r, list) =>
+                        confirmFinish(r, list, role),
+                      )
+                    }
+                  >
+                    정산 끝내기 확인
+                  </Button>
+                )}
+                {has("finish-not-yet") && (
+                  <Button
+                    variant="outline"
+                    onClick={() => open("finish-not-yet")}
+                  >
+                    아직 안 끝났어요
+                  </Button>
+                )}
+                {has("finish-alone") && (
+                  <Button
+                    onClick={() =>
+                      runFinish(
+                        "정산 혼자 끝내기 · 답이 오지 않음",
+                        (r, list) => finishAlone(r, list, role),
+                      )
+                    }
+                  >
+                    혼자 끝내기
+                  </Button>
+                )}
+                {has("finish") &&
+                  (finish.kind === "not-yet" && finish.waitDays > 0 ? (
+                    <small className="muted">
+                      {finish.waitDays}일 뒤 다시 요청할 수 있어요
+                    </small>
+                  ) : (
+                    <Button
+                      onClick={() =>
+                        runFinish("정산 끝내기 제안", (r, list) =>
+                          requestFinish(r, list, role),
+                        )
+                      }
+                    >
+                      {finish.kind === "changed"
+                        ? "다시 요청"
+                        : "정산 끝내기 제안"}
+                    </Button>
+                  ))}
+              </div>
+              {finishError && (
+                <p role="alert" className="form-error">
+                  {finishError}
+                </p>
+              )}
+            </div>
           </div>
         )}
       </Panel>
@@ -825,17 +922,19 @@ export function RoomFinancials({
                 ? "반환·수령 사실 기록"
                 : mode === "item-counter"
                   ? "아니에요 · 다른 안"
-                  : mode === "deposit-dispute"
-                    ? "아니에요 · 다른 금액"
-                    : mode === "exclude"
-                      ? "정산에서 빼기 제안"
-                      : mode === "exclude-reject"
-                        ? "빼기에 동의하지 않아요"
-                        : mode === "deposit"
-                          ? offer || room.depositConfirmed
-                            ? "보증금 바꾸기"
-                            : "보증금 금액 적기"
-                          : "바꾸기"}
+                  : mode === "finish-not-yet"
+                    ? "아직 안 끝났어요"
+                    : mode === "deposit-dispute"
+                      ? "아니에요 · 다른 금액"
+                      : mode === "exclude"
+                        ? "정산에서 빼기 제안"
+                        : mode === "exclude-reject"
+                          ? "빼기에 동의하지 않아요"
+                          : mode === "deposit"
+                            ? offer || room.depositConfirmed
+                              ? "보증금 바꾸기"
+                              : "보증금 금액 적기"
+                            : "바꾸기"}
             </DialogTitle>
             <DialogDescription>
               {mode === "deposit" || mode === "deposit-dispute"

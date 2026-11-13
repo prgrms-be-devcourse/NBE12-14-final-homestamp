@@ -337,7 +337,19 @@ export interface Room {
   received: boolean
   transferAmount?: number
   endRequested?: boolean
+  // 정산 끝내기(06 SET-5): 요청한 쪽, 요청 시각(ISO), 요청할 때의 정산 모습(바뀌면 요청이 닫혀요)
   finishBy?: Role
+  finishAt?: string
+  finishSnapshot?: string
+  // 닫힌 끝내기 요청: 정산이 바뀌어 닫힘(5b) / 상대가 아직 안 끝났어요(5c, 다시 요청은 7일 뒤)
+  finishClosed?: {
+    reason: "changed" | "not-yet"
+    by?: Role
+    text?: string
+    at: string
+  }
+  // 혼자 끝낸 정산(5d): "정산 완료(○○ 확인)"
+  finishedAlone?: Role
   creator?: Role
   phone?: string
   invitedAt?: string

@@ -4,6 +4,7 @@ import type {
   TransferAction,
 } from "@/api/actions"
 import type { Role, Room, Settlement, Transfer } from "@/data/demo"
+import { finishState } from "@/lib/settlement-rules"
 
 type Viewer = { guest?: boolean; readOnly?: boolean }
 
@@ -13,6 +14,8 @@ export function settlementAvailableActions(
   room: Room,
   role: Role,
   viewer: Viewer = {},
+  items: Settlement[] = [],
+  now = Date.now(),
 ): SettlementAction[] {
   if (viewer.guest || viewer.readOnly || room.status === "정산 완료") return []
   const offer = room.depositOffer
@@ -21,8 +24,13 @@ export function settlementAvailableActions(
   if (theirOffer) out.push("deposit-agree", "deposit-dispute")
   out.push("items", "transfers")
   if (room.status === "거주 종료") {
-    if (room.finishBy && room.finishBy !== role) out.push("finish-confirm")
-    else if (!room.finishBy) out.push("finish")
+    // 정산 끝내기(06 SET-5): 요청 뒤 정산이 바뀌었으면 요청은 닫힌 것으로 봐요(5b)
+    const st = finishState(room, items, now)
+    if (st.kind === "waiting" && st.by !== role)
+      out.push("finish-confirm", "finish-not-yet")
+    else if (st.kind === "waiting" && now >= st.canAloneAt)
+      out.push("finish-alone")
+    else if (st.kind !== "waiting") out.push("finish")
   }
   return out
 }
