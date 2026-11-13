@@ -2,7 +2,7 @@ package com.chilsuitjo.back.global.error;
 
 import org.springframework.http.HttpStatus;
 
-/** 오류 코드 목록. 기준은 docs/planning/06-요구사항-명세.md 4-10이고, 화면은 {@code code}만 보고 처리한다. */
+/** 오류 코드 목록. 기준은 docs/rules/06-요구사항-명세.md 4-10이고, 화면은 {@code code}만 보고 처리한다. */
 public enum ErrorCode {
   VALIDATION_FAILED(HttpStatus.BAD_REQUEST, "입력한 내용을 확인해 주세요"),
   REASON_REQUIRED(HttpStatus.BAD_REQUEST, "사유를 적어 주세요"),

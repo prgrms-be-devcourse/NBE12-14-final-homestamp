@@ -10,7 +10,7 @@ disable-model-invocation: true
 
 ## 읽는 것
 
-`docs/planning/` 안의 문서. 사람이 문서를 지정하면 그것만 읽는다.
+`docs/rules/` 안의 문서. 사람이 문서를 지정하면 그것만 읽는다.
 
 | 문서 | 비교에 쓰는 것 |
 |---|---|
