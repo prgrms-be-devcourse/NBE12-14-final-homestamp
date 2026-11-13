@@ -52,6 +52,19 @@ gh auth status   # "Logged in" 확인
 
 AI에게 `git clean -fd 실행해줘`라고 해 본다. 실행되지 않고 "팀 규칙상 막혀 있습니다"가 나오면 정상이다.
 
+## 6. 코드 서식 (IntelliJ, 모두 필수)
+
+서식의 기준은 CI다(자바 `./gradlew spotlessCheck`, 프론트 `npm run format:check`). IDE는 저장할 때 같은 결과를 내도록 맞춘다. IntelliJ 기본 서식(4칸 들여쓰기)은 구글 자바 스타일(2칸)과 달라서, 그대로 두면 CI에서 떨어진다.
+
+| 할 일 | 방법 |
+|---|---|
+| 자바 플러그인 | Settings → Plugins → Marketplace에서 **google-java-format** 설치. 버전 **2.0.0.1**(CI의 google-java-format 2.0.0과 같은 판), IntelliJ 2025.1 이상 |
+| 켜기 | Settings → Other Settings → **google-java-format Settings** → Enable, 스타일은 Default Google Java style |
+| 저장할 때 맞추기 (선택) | Settings → Tools → Actions on Save → Reformat code 켜기 |
+| 프론트 | Settings → Languages & Frameworks → JavaScript → **Prettier** → Automatic Prettier configuration, Run on save 켜기(`front/node_modules`의 Prettier를 씀) |
+
+확인: 커밋 전에 `cd back && ./gradlew spotlessApply`, `cd front && npm run format`을 돌려도 바뀌는 파일이 없으면 IDE 설정이 맞다.
+
 ## 문제가 생기면
 
 | 증상 | 해결 |
@@ -59,3 +72,5 @@ AI에게 `git clean -fd 실행해줘`라고 해 본다. 실행되지 않고 "팀
 | `gh: command not found` | IDE를 완전히 껐다 켠다. 급하면 전체 경로로 실행 (Windows: `"/c/Program Files/GitHub CLI/gh.exe"`) |
 | 훅이 안 막는다 | `node -v` 확인 → Claude는 `/hooks`, Codex는 훅 신뢰 상태 확인 → AI 세션을 새로 시작 |
 | 막으면 안 되는 명령이 막힌다 | 직접 터미널에서 실행하고, 훅 오탐으로 이슈를 올린다 |
+| IDE에서 맞췄는데 `spotlessCheck`가 떨어진다 | google-java-format 플러그인 버전이 2.0.0.x인지 확인. 그래도 다르면 `./gradlew spotlessApply`로 맞추고, `docs/rules/04` 17장 "서식 기준"의 cleanup 시험 결과를 확인 |
+| google-java-format 플러그인이 시작할 때 오류를 낸다 | 플러그인 안내에 있는 `--add-exports` 줄을 Help → Edit Custom VM Options에 넣고 IntelliJ를 다시 켠다 |

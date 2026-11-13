@@ -1,5 +1,7 @@
 plugins {
     id 'java'
+    id 'jacoco'
+    id 'com.diffplug.spotless' version '8.11.0'
     id 'org.springframework.boot' version '4.1.2'
     id 'io.spring.dependency-management' version '1.1.7'
 }
@@ -37,9 +39,54 @@ dependencies {
     testImplementation 'org.springframework.boot:spring-boot-testcontainers'
     testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
     testImplementation 'org.testcontainers:testcontainers-postgresql'
+    testImplementation 'com.tngtech.archunit:archunit-junit5:1.4.1'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 tasks.named('test') {
     useJUnitPlatform()
+    finalizedBy 'jacocoTestReport'
+}
+
+// 서식: google-java-format 버전은 팀 IntelliJ 플러그인(2.0.0.1)과 같게 고정한다(docs/rules/04 17장)
+spotless {
+    java {
+        target 'src/*/java/**/*.java'
+        googleJavaFormat('2.0.0')
+    }
+}
+
+// 커버리지: 도메인 입구(*Service)와 상태 전이(*Transitions)만 줄 80%·분기 70%(docs/rules/04 9-1)
+jacoco {
+    toolVersion = '0.8.16'
+}
+
+tasks.named('jacocoTestReport') {
+    dependsOn 'test'
+    reports {
+        xml.required = true
+        html.required = true
+    }
+}
+
+tasks.named('jacocoTestCoverageVerification') {
+    dependsOn 'test'
+    violationRules {
+        rule {
+            element = 'CLASS'
+            includes = ['*Service', '*Transitions']
+            limit {
+                counter = 'LINE'
+                minimum = 0.80
+            }
+            limit {
+                counter = 'BRANCH'
+                minimum = 0.70
+            }
+        }
+    }
+}
+
+tasks.named('check') {
+    dependsOn 'jacocoTestCoverageVerification'
 }
