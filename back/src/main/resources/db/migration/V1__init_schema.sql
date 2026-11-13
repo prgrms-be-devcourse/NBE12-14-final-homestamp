@@ -35,7 +35,7 @@ $$;
 -- =========================================================
 CREATE TABLE member (
                         id                 uuid PRIMARY KEY,
-                        email              varchar(320) UNIQUE,                 -- 탈퇴하면 NULL
+                        email              varchar(320),                 -- 탈퇴하면 NULL
                         password_hash      varchar(255),
                         display_name       varchar(50),
                         phone              varchar(20),                         -- 인증 번호, 다른 계정이 인증하면 NULL
@@ -846,6 +846,7 @@ ALTER TABLE payment
 -- 15. 인덱스 (05에 적힌 것 + 작업자·조회용)
 -- =========================================================
 -- 계정
+CREATE UNIQUE INDEX ux_member_email_lower ON member (lower(email)) WHERE email IS NOT NULL;
 CREATE UNIQUE INDEX ux_member_phone ON member (phone) WHERE phone IS NOT NULL;   -- 불변식 8
 CREATE INDEX ix_refresh_token_member ON refresh_token (member_id);
 CREATE INDEX ix_refresh_token_family ON refresh_token (family_id);
