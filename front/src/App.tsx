@@ -40,14 +40,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog"
-import {
-  Status,
-  Logo,
-  Panel,
-  Empty,
-  Timeline,
-  Choice,
-} from "@/components/prototype"
+import { Status, Logo, Panel, Empty, Choice } from "@/components/prototype"
 import {
   emptyState,
   other,
@@ -64,11 +57,12 @@ import {
 } from "@/data/demo"
 import { useRouter, type Page } from "@/lib/router"
 import { EmptyState, LoadingState, NotFoundState } from "@/components/states"
-import { NotificationsPage } from "@/components/notifications-page"
+import { NotificationsPage } from "@/pages/notifications-page"
 import { HomeDashboard, RepairListItem } from "@/components/home-dashboard"
 import { RepairDetailPage } from "@/pages/repair-detail-page"
 import { InspectionPage } from "@/pages/inspection-page"
 import { ConnectionPage } from "@/pages/connection-page"
+import { TimelinePage } from "@/pages/timeline-page"
 import { roomAvailableActions } from "@/api/mock/room-actions"
 import { hasAction, type RoomAction } from "@/api/actions"
 import { ApiProvider, createApi } from "@/api"
@@ -2226,17 +2220,7 @@ function HomeStampApp({
                       open={open}
                     />
                   )}
-                  {page === "timeline" && (
-                    <Panel
-                      title={
-                        <>
-                          행동 기록 <CountChip>{events.length}</CountChip>
-                        </>
-                      }
-                    >
-                      <Timeline events={events} />
-                    </Panel>
-                  )}
+                  {page === "timeline" && <TimelinePage events={events} />}
                   {page === "notifications" && (
                     <NotificationsPage
                       accountId={accountId ?? ""}
