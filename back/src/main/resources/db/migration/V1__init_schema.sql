@@ -776,6 +776,12 @@ CREATE INDEX ix_response_request_room ON response_request (room_record_id);
 CREATE UNIQUE INDEX ux_proposal_waiting
     ON response_request (COALESCE(repair_case_id, settlement_item_id, settlement_id))
     WHERE kind = 'PROPOSAL' AND status IN ('WAITING', 'UNCONFIRMED');
+-- 대상 종류별 NULL도 같은 값으로 비교해 같은 호실·같은 종류·같은 대상 WAITING은 하나만 둔다.
+CREATE UNIQUE INDEX ux_response_request_waiting
+    ON response_request (room_record_id, kind, repair_case_id, payment_id, settlement_item_id,
+                         settlement_id, inspection_id, inspection_item_id, settlement_transfer_id)
+    NULLS NOT DISTINCT
+    WHERE status = 'WAITING' AND kind NOT IN ('PROPOSAL', 'INSPECTION_CONFIRM');
 CREATE UNIQUE INDEX ux_inspection_confirm_waiting
     ON response_request (inspection_id, requested_by_side)
     WHERE kind = 'INSPECTION_CONFIRM' AND status = 'WAITING';                        -- 점검 × 방향마다 하나(불변식 21)
