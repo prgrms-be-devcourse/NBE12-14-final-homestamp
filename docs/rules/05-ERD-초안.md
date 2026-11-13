@@ -175,7 +175,7 @@ erDiagram
 | 테이블 | 종류 | 칸 | 제약·메모 |
 |---|---|---|---|
 | `inspection` 점검 | C | `kind`(MOVE_IN/MOVE_OUT), `author_side`, `status`(DRAFT/REQUESTED/LOCKED), `late`, `locked_at`, `lock_reason`(ALL_RESOLVED/NO_ITEMS), `first_shown_at` | `UNIQUE(room_record_id, kind)`(먼저 저장된 측이 기준). 퇴거 점검의 잠김은 거주 종료와 별개 |
-| `inspection_item` 점검 항목 | C | `inspection_id`, `current_version_id`, `confirmed_version_id`, `status`(WAITING/CONFIRMED/NEED_MORE/DISPUTED/UNCONFIRMED), `added_by_side`, `added_after_lock`(잠긴 뒤 추가), `added_after_end` | 항목 = 적은 하자만. 빠뜨린 하자 더하기는 새 기록(누구든, 더하지 않은 쪽이 확인). 확인 요청 `INSPECTION_CONFIRM`은 점검 × 요청 방향마다 하나(부분 유니크 `(inspection_id, requested_by_side) WHERE WAITING`), 두 방향이 모두 끝나야 잠김. 적지 않은 부위는 행이 없음("기록 없음") |
+| `inspection_item` 점검 항목 | C | `inspection_id`, `current_version_id`, `confirmed_version_id`, `status`(PENDING/ACK/NEED_MORE/DISPUTE/UNCONFIRMED, 수리 건 `defect_ack`와 같은 값이라 06 API의 응답 값 ACK·NEED_MORE·DISPUTE를 바꾸지 않고 씀), `added_by_side`, `added_after_lock`(잠긴 뒤 추가), `added_after_end` | 항목 = 적은 하자만. 빠뜨린 하자 더하기는 새 기록(누구든, 더하지 않은 쪽이 확인). 확인 요청 `INSPECTION_CONFIRM`은 점검 × 요청 방향마다 하나(부분 유니크 `(inspection_id, requested_by_side) WHERE WAITING`), 두 방향이 모두 끝나야 잠김. 적지 않은 부위는 행이 없음("기록 없음") |
 | `inspection_item_version` 점검 항목 판 | B | `inspection_item_id`, `no`(판 번호), `room_part_id`, `description`, `previous_id` | `UNIQUE(inspection_item_id, no)` |
 
 부위 사진(하자 아님)은 따로 테이블을 두지 않고 `photo`의 단계(MOVE_IN/MOVE_OUT) + `inspection_id`로 남겨요.
