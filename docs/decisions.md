@@ -69,3 +69,5 @@
 | 2026-11-13 | Spring이 직접 처리하는 예외도 HTTP 상태로 code를 정한다(400 `VALIDATION_FAILED`, 404 `NOT_FOUND`, 그 밖 4xx는 새 코드 `UNSUPPORTED_REQUEST` "화면을 새로 불러온 뒤 다시 해 주세요", 5xx `INTERNAL_ERROR`). 상태는 Spring 값 그대로 | 깨진 JSON·없는 주소·허용 안 된 메서드 응답에 code가 없어 화면이 code만 보고 처리할 수 없었고, 405·415는 사용자가 고칠 입력이 없는 화면 버그나 배포 직후 옛 화면의 요청이라 |
 | 2026-11-13 | 규칙 문서 폴더를 `docs/planning/`에서 `docs/rules/`로 옮긴다(결정 기록 검사도 `docs/rules/`를 본다) | 이 폴더는 기획 초안이 아니라 지금 지키는 규칙의 기준이라, 이름에서 그 뜻이 드러나게 |
 | 2026-11-13 | 화면 부품 표기는 shadcn(Base UI)로 쓴다 | 저장소의 실제 스택이 Radix가 아닌 Base UI 기반 shadcn이라 문서(04·06·09)를 AGENTS.md와 맞춤 |
+| 2026-11-13 | 서식·커버리지 도구 버전을 고정한다: Spotless 8.11.0 + google-java-format 2.0.0(1.37.0 대신), JaCoCo 0.8.16, 프론트 Prettier 3.10.1(세미콜론 없음). 서식 기준은 CI이고 IDE 설정은 `setup.md` 6장 | IntelliJ 플러그인과 같은 판이 있는 것은 2.0.0뿐이고(1.37은 플러그인 판이 없음), JaCoCo는 Java 25 클래스 파일을 읽으려면 최신판이 필요해서 |
+| 2026-11-13 | AWS 리소스 이름은 [프로젝트 이름]-[컴포넌트]로 `homestamp-` 접두어를 쓴다(Terraform `prefix` = `homestamp`, 태그 `Team` = `devcos-team07`) | 여러 팀이 한 계정을 쓰므로 이름과 태그로 우리 것을 구분하라는 AWS OT 지침 |

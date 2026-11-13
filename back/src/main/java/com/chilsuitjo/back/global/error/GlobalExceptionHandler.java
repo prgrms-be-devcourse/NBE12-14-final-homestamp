@@ -44,13 +44,12 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
       WebRequest request) {
     List<Map<String, String>> errors =
         e.getBindingResult().getFieldErrors().stream()
-            .map(
-                f ->
-                    Map.of(
-                        "field",
-                        f.getField(),
-                        "message",
-                        f.getDefaultMessage() == null ? "" : f.getDefaultMessage()))
+            .map(f ->
+                Map.of(
+                    "field",
+                    f.getField(),
+                    "message",
+                    f.getDefaultMessage() == null ? "" : f.getDefaultMessage()))
             .toList();
     ProblemDetail body = problem(ErrorCode.VALIDATION_FAILED, status, errors);
     return super.handleExceptionInternal(e, body, headers, status, request);
