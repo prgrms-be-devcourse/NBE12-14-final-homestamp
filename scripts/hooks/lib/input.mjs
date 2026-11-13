@@ -73,7 +73,7 @@ export function relativeToRepo(abs) {
   return rel.split(path.sep).join("/");
 }
 
-function isMain(metaUrl) {
+export function isMain(metaUrl) {
   if (!process.argv[1]) return false;
   const a = path.resolve(process.argv[1]);
   const b = fileURLToPath(metaUrl);

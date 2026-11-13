@@ -22,7 +22,7 @@ public enum ErrorCode {
   DUPLICATE_PAYMENT(HttpStatus.CONFLICT, "같은 돈이 이미 기록돼 있어요. 그 기록을 확인해 주세요"),
   UPLOAD_TICKET_EXPIRED(HttpStatus.UNPROCESSABLE_CONTENT, "이 사진을 다시 올려 주세요"),
   PHOTO_CHECK_FAILED(HttpStatus.UNPROCESSABLE_CONTENT, "이 사진을 다시 올려 주세요"),
-  ASKED_RECENTLY(HttpStatus.CONFLICT, "○월 ○일부터 다시 물을 수 있어요"),
+  ASKED_RECENTLY(HttpStatus.CONFLICT, "○월 ○일부터 다시 요청할 수 있어요"),
   RESEND_USED(HttpStatus.CONFLICT, "다시 보내기는 한 번만 할 수 있어요"),
   UPLOAD_LIMIT(HttpStatus.TOO_MANY_REQUESTS, "잠시 뒤에 다시 해 주세요"),
   RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "잠시 뒤에 다시 해 주세요"),

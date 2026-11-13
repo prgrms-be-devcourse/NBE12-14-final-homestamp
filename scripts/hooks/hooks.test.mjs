@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { checkBash } from "./guard-bash.mjs";
 import { checkMigration } from "./guard-migration.mjs";
 import { checkSecrets } from "./guard-secrets.mjs";
+import { parsePorcelain, planFormat } from "./format-on-stop.mjs";
 import { REPO_ROOT } from "./lib/input.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -187,5 +188,32 @@ describe("실행 (exit 코드)", () => {
   it("훅 오류는 막지 않고 exit 1", () => {
     const r = spawnSync(process.execPath, [path.join(HERE, "guard-bash.mjs")], { input: "{broken", encoding: "utf8" });
     assert.equal(r.status, 1);
+  });
+});
+
+describe("format-on-stop", () => {
+  it("git status에서 지운 파일은 빼고, 이름 바꾼 파일은 새 경로만", () => {
+    const text = [" M back/src/main/java/A.java", "D  back/src/main/java/Gone.java", "R  back/src/main/java/New.java", "back/src/main/java/Old.java", "?? front/src/x.tsx", ""].join(" ");
+    assert.deepEqual(parsePorcelain(text), ["back/src/main/java/A.java", "back/src/main/java/New.java", "front/src/x.tsx"]);
+  });
+  it("back의 src 아래 .java만 spotless 대상", () => {
+    const { java } = planFormat(["back/src/main/java/A.java", "back/src/test/java/B.java", "back/build.gradle", "docs/x.java"]);
+    assert.deepEqual(java, ["back/src/main/java/A.java", "back/src/test/java/B.java"]);
+  });
+  it("front 파일은 front 기준 경로로, lock 파일·dist·모르는 확장자는 뺌", () => {
+    const { front } = planFormat(["front/src/App.tsx", "front/package-lock.json", "front/dist/a.js", "front/public/logo.png", "front/README.md"]);
+    assert.deepEqual(front, ["src/App.tsx", "README.md"]);
+  });
+  it("바뀐 코드 파일이 없으면 할 일 없음", () => {
+    assert.deepEqual(planFormat(["docs/README.md", "AGENTS.md"]), { java: [], front: [] });
+  });
+  it("실행은 언제나 exit 0 (막지 않음)", () => {
+    const r = spawnSync(process.execPath, [path.join(HERE, "format-on-stop.mjs")], {
+      input: "{}",
+      encoding: "utf8",
+      env: { ...process.env, HOMESTAMP_SKIP_FORMAT: "1" },
+    });
+    assert.equal(r.status, 0);
+    assert.equal(r.stdout, "");
   });
 });

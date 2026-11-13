@@ -93,7 +93,7 @@ erDiagram
     response_request ||--o{ notice : "통지·재통지"
     notice ||--o{ outbox : ""
 
-    room_record ||--o{ photo : "붙는 곳 일곱 중 하나"
+    room_record ||--o{ photo : "붙는 곳 여덟 중 하나"
     photo ||--o| photo_visibility : "숨김·지움"
     correction_request }o--|| room_record : ""
     member ||--o{ member_acknowledgement : "약관·안내·14세"
@@ -111,7 +111,7 @@ erDiagram
 |---|---|---|---|
 | `member` 회원 | C | `email`, `password_hash`, `display_name`, `phone`(인증 번호), `phone_verified_at`, `sms_enabled`, `status`(ACTIVE/WITHDRAWN), `withdrawn_at` | `UNIQUE(email)`, `UNIQUE(phone) WHERE phone IS NOT NULL`(불변식 8). 다른 계정이 같은 번호를 인증하면 이전 계정의 `phone`을 NULL로. 탈퇴하면 email·이름·번호·해시를 지우고(NULL) 행은 남김(행동 기록이 가리키므로) |
 | `refresh_token` | C | `member_id`, `family_id`, `token_hash`, `device_label`, `expires_at`, `revoked_at`, `replaced_by_id` | `UNIQUE(token_hash)`. 폐기 뒤 10초 유예는 `revoked_at`과 `replaced_by_id`로(불변식 12) |
-| `phone_verification` | C | `phone`, `purpose`(SIGNUP/RESET/FIND_ID/CHANGE), `code_hash`, `expires_at`, `attempt_count`, `verified_at` | 짧게 쓰고 지움(하루 뒤 정리). 횟수 제한은 여기서 셈 |
+| `phone_verification` | C | `phone`, `purpose`(SIGNUP/RESET/FIND_ID/CHANGE), `code_hash`, `expires_at`, `attempt_count`, `verified_at`, `consumed_at`(인증 표를 쓴 시각) | 짧게 쓰고 지움(하루 뒤 정리). 횟수 제한은 여기서 셈. 인증 표(06 4-1)는 `purpose`가 같은 API에만 쓰고, 바꾸는 일(가입·재설정·번호 변경)에는 **한 번만**: 그 작업이 성공하는 트랜잭션에서 `UPDATE … SET consumed_at = now() WHERE id = ? AND consumed_at IS NULL`(0줄이면 `CODE_EXPIRED`). 아이디 찾기는 `consumed_at`을 채우지 않음(06 ACC-1f·5a) |
 | `member_acknowledgement` 약관·안내 확인 기록(공유 동의는 여기가 아니라 행동 기록 `SHARE_CONSENT`) | B | `member_id`, `kind`(AGE_14_CONFIRMED/TERMS_AGREED/PRIVACY_NOTICE_ACK), `text_version`(예: `2026-11-12`), `agreed_at` | 문구는 판 번호가 붙은 정적 페이지. 내용이 바뀌면 새 판에 다시 확인. 탈퇴하면 계정과 함께 삭제(보관 삭제 경로). **기록 공유 동의는 여기 두지 않고 `action`의 `SHARE_CONSENT`(payload에 문구 판)로**: 호실 기록과 함께 보관·삭제되어 공유된 기록이 남는 동안 동의 증빙도 남는다 |
 | `sms_opt_out` 수신 거부 | B | `phone_hmac`(PK), `created_at` | 번호는 비밀 키 HMAC. 번호 주인이 가입·인증하면 행을 지움(보관 삭제 경로) |
 
@@ -129,15 +129,15 @@ erDiagram
 
 | 테이블 | 종류 | 칸 | 제약·메모 |
 |---|---|---|---|
-| `action` 행동 기록 | **A** | `actor_member_id`(서버 행동은 NULL), `actor_side`, `actor_key`(회원 ID 또는 `server`), `type`, `idempotency_key`, `room_seq`·`prev_hash`·`hash`(해시 체인, 호실마다), `seen_version_no`(확인할 때 본 모습의 번호), payload에 `while_open_objection`(그 순간 보류·이견이 열려 있었으면 NEED_MORE/DISPUTE: 강행 표시), 대상 칸(`party_id`, `link_id`, `room_part_id`(부위 추가·숨김), `notice_id`(다시 보내기·전달 안 됨 표시), `repair_case_id`, `payment_id`, `inspection_id`, `inspection_item_id`, `settlement_id`, `settlement_item_id`, `settlement_transfer_id`, `proposal_id`, `response_request_id`, `correction_request_id`, `cause_note_id`, `progress_note_id`, `photo_id`), `reason`, `payload`(jsonb, 작은 부가 값만) | `actor_key`는 회원 ID, `server`, 링크 열람이면 `link:<링크 ID>`(가입 전 사람, `actor_member_id`는 NULL), 운영 명령이면 `ops:<담당>`(작업 대장과 짝). `UNIQUE(actor_key, idempotency_key)`(한 요청의 여러 행동은 `<키>#2`…), `UNIQUE(room_record_id, room_seq)`(호실 기록 행을 잠그고 다음 번호. 작업자도 호실마다 트랜잭션을 나눔. 해시 입력 모양은 1주차에 테스트로 고정). `CHECK(num_nonnulls(대상 칸들) <= 1)`(0이면 호실 기록 자체: 이사함, 정산 끝내기). 트리거: UPDATE 거절, DELETE는 `app.purge`일 때만. 대상 칸마다 부분 인덱스. 이름·번호를 복사하지 않음(불변식 1) |
+| `action` 행동 기록 | **A** | `actor_member_id`(서버 행동은 NULL), `actor_side`, `actor_key`(회원 ID 또는 `server`), `type`, `idempotency_key`, `room_seq`·`prev_hash`·`hash`(해시 체인, 호실마다, **NOT NULL, 첫 마이그레이션부터**), `seen_version_no`(확인할 때 본 모습의 번호 = 판 테이블의 `no`, 06 `seenVersionNo`), payload에 `while_open_objection`(그 순간 보류·이견이 열려 있었으면 NEED_MORE/DISPUTE: 강행 표시), 대상 칸(`party_id`, `link_id`, `room_part_id`(부위 추가·숨김), `notice_id`(다시 보내기·전달 안 됨 표시), `repair_case_id`, `payment_id`, `inspection_id`, `inspection_item_id`, `settlement_id`, `settlement_item_id`, `settlement_transfer_id`, `proposal_id`, `response_request_id`, `correction_request_id`, `cause_note_id`, `progress_note_id`, `photo_id`), `reason`, `payload`(jsonb, 작은 부가 값만) | `actor_key`는 회원 ID, `server`, 링크 열람이면 `link:<링크 ID>`(가입 전 사람, `actor_member_id`는 NULL), 운영 명령이면 `ops:<담당>`(작업 대장과 짝). `UNIQUE(actor_key, idempotency_key)`(한 요청의 여러 행동은 `<키>#2`…), `UNIQUE(room_record_id, room_seq)`(호실 기록 행을 잠그고 다음 번호. 작업자도 호실마다 트랜잭션을 나눔. 해시 입력 모양은 1주차에 테스트로 고정). `CHECK(num_nonnulls(대상 칸들) <= 1)`(0이면 호실 기록 자체: 이사함, 정산 끝내기). 트리거: UPDATE 거절, DELETE는 `app.purge`일 때만. 대상 칸마다 부분 인덱스. 이름·번호를 복사하지 않음(불변식 1) |
 
 `type` **전체 목록(기준)**. `apply`의 분기와 API 끝 단어가 이 목록을 따른다. 새 행동은 여기에 먼저 더한다.
 
 | 영역 | 행동 종류 |
 |---|---|
-| 호실·참여 | `CREATE_ROOM`, `EDIT_ROOM_INFO`(내 쪽·주소·별칭, 처음 알리기·초대 전만), `ADD_PART`, `HIDE_PART`, `TOGGLE_PART`, `INVITE`, `CHANGE_INVITE_PHONE`, `REJECT_INVITE`, `CONNECT`, `JOIN`, `SHARE_CONSENT`, `STOP_SHARING`, `RESUME_SHARING`, `MOVE_OUT`, `REQUEST_END`, `CONFIRM_END`, `CONFIRM_LIVING` |
+| 호실·참여 | `CREATE_ROOM`, `EDIT_ROOM_INFO`(내 쪽·주소·별칭, 처음 알리기·초대 전만), `ADD_PART`, `HIDE_PART`, `TOGGLE_PART`, `INVITE`, `CHANGE_INVITE_PHONE`, `REJECT_INVITE`, `CONNECT`, `JOIN`, `SHARE_CONSENT`, `STOP_SHARING`, `RESUME_SHARING`, `MOVE_OUT`, `REQUEST_END`, `CONFIRM_END`, `REJECT_END`("아직 살고 있어요", 사유, 06 4-3 `/move-out/reject`), `CONFIRM_LIVING` |
 | 링크·통지 | `LINK_VIEW`(`link:<ID>`), `OPT_OUT`, `RESEND_NOTICE`, `RENOTIFY`(서버), `MARK_UNCONFIRMED`(서버), `MARK_UNDELIVERED`(서버) |
-| 수리 | `REGISTER`, `SUPPLEMENT`, `RESPOND_DEFECT`, `ACK_DEFECT`, `START_REPAIR`, `REQUEST_CLOSE`, `CONFIRM_CLOSE`, `NOT_YET`, `CLOSE_ALONE`, `REOPEN`, `ADD_PHOTO`, `ASK_PROGRESS`, `NOTE_PROGRESS`, `RESPOND_SITUATION`, `NOTE_CAUSE`, `RESPOND_CAUSE` |
+| 수리 | `REGISTER`, `SUPPLEMENT`, `RESPOND_DEFECT`, `START_REPAIR`, `REQUEST_CLOSE`, `CONFIRM_CLOSE`, `NOT_YET`, `CLOSE_ALONE`, `REOPEN`, `ADD_PHOTO`, `ASK_PROGRESS`, `NOTE_PROGRESS`, `RESPOND_SITUATION`, `NOTE_CAUSE`, `RESPOND_CAUSE` |
 | 고치기 | `CORRECT`, `RESPOND_CORRECTION`, `ACCEPT_ALL_CORRECTIONS`, `RESUBMIT_CORRECTION`, `WITHDRAW_CORRECTION` |
 | 돈·제안 | `RECORD_PAYMENT`, `RESPOND_AMOUNT`, `SUPPLEMENT_PAYMENT`, `PROPOSE`, `AGREE`, `DISPUTE_PROPOSAL`, `COUNTER`, `WITHDRAW` |
 | 점검 | `START_INSPECTION`, `ADD_ITEM`, `ADD_PART_PHOTO`, `REQUEST_INSPECTION_CONFIRM`, `RESPOND_ITEM`, `SUPPLEMENT_ITEM`, `CONFIRM_ALL`, `LOCK`(서버), `FINISH_INSPECTION` |
@@ -160,12 +160,13 @@ erDiagram
 | 테이블 | 종류 | 칸 | 제약·메모 |
 |---|---|---|---|
 | `repair_case` 수리 건 | C | `current_content_id`, `confirmed_content_id`(같이 확인한 모습), `status`(NOT_STARTED/IN_PROGRESS/CLOSE_WAIT/DONE)(수리 진행, 하자 인정과 따로), `closed_by`(BOTH/TENANT/LANDLORD), `defect_ack`(PENDING/ACK/NEED_MORE(보류)/DISPUTE/UNCONFIRMED), `money_status`(UNDECIDED/PENDING/AGREED/DISPUTE/NO_COST), `current_proposal_id`, `agreed_proposal_id`, `previous_case_id`(재발), `related_case_id`(수리 중 새로 찾은 별개 하자면 원래 건), `created_by_side`, `solo`, `first_shown_at` | 상태 칸은 `apply` 결과로만 바뀜. `first_shown_at`이 NULL이면 탈퇴 때 삭제 대상 |
-| `repair_content` 수리 건 내용 판 | B | `repair_case_id`, `room_part_id`, `title`(필수), `description`(NULL 허용), `previous_id`, `created_by_side` | 고치면 새 판 |
-| `cause_note` 원인 설명 | B | `repair_case_id`, `side`, `text`, `basis`(GUESS/SEEN/EXPERT/HEARD), `expert_name`, `previous_id` | 근거 종류가 바뀌면 새 설명. 상대의 동의·이견은 행동 기록(`cause_note_id`) |
+| `repair_content` 수리 건 내용 판 | B | `repair_case_id`, `no`(판 번호, 1부터), `room_part_id`, `title`(필수), `description`(NULL 허용), `previous_id`, `created_by_side` | 고치면 새 판. `UNIQUE(repair_case_id, no)`. 처리 완료(양측 확인)된 수리 건은 새 판을 만들지 않음(`CLOSED_BY_BOTH`, 06 REP-7k) |
+| `cause_note` 원인 설명 | B | `repair_case_id`, `side`, `text`, `basis`(GUESS/SEEN/EXPERT/HEARD), `expert_name`, `previous_id` | 고치면(문장이든 근거 종류든) **언제나 새 행**(`previous_id`로 이전 설명), 고친 내용(`correction_request`)을 쓰지 않음(06 REP-8c). 상대 응답(ACK/NEED_MORE/DISPUTE)은 행동 기록(`cause_note_id`)이고 그 행에만 붙음 |
 | `progress_note` 진행 상황 | B | `repair_case_id`, `side`, `text`, `answers_request_id`(진행 상황 묻기에 대한 답이면), `asks_check`("상황이 바뀌었어요" 확인 요청이면 true. 상대 응답은 작은 C 행 `progress_note_response`(맞아요 / 보류 / 이견)와 응답 요청 `SITUATION_CHECK`) | 수리 상태·돈 상태와 무관. 고치려면 새 행. 사진은 `photo.progress_note_id`. 행동 `ASK_PROGRESS`(응답 요청 `PROGRESS_CHECK`), `NOTE_PROGRESS`. "오래 멈춘 건"은 저장하지 않고 조회로 계산(마지막 당사자 행동 시각) |
+| `progress_note_response` 상황 변화 응답 | C | `progress_note_id`, `side`(응답한 측), `answer`(ACK/NEED_MORE/DISPUTE), `reason` | `asks_check = true`인 진행 상황에만. `UNIQUE(progress_note_id)`(지금 답 하나, 바뀐 이력은 행동 `RESPOND_SITUATION`). 보류·이견 → ACK는 정산 완료 전까지, ACK 뒤는 거절(`ACK_FINAL`). 06 4-6 `progress-notes/{id}/respond` |
 | `payment` 지불 | C | `repair_case_id`, `current_version_id`, `confirmed_version_id`, `confirm_strength`(ONE_SIDE/EVIDENCE/BOTH), `response`(NONE/ACK/NEED_MORE/DISPUTE), `first_shown_at` | 한 수리 건에 지불 여러 개, 지불 하나는 한 수리 건에만. 나누기 기준 금액은 `response = ACK`인 지불의 확인된 판 금액의 합 |
-| `payment_version` 지불 판 | B | `payment_id`, `payer_kind`(TENANT/LANDLORD/THIRD_PARTY), `payer_label`(제3자면 이름 대신 관계: 가족·윗집·보험사), `payee_kind`(VENDOR/COUNTERPART/THIRD_PARTY), `payee_label`, `amount`, `paid_on`(사용자 입력 날짜), `recorded_by_side`(보낸 쪽/받은 쪽), `evidence_kind`, `previous_id` | `amount >= 0`. 중복 검사(같은 수리 건·방향·금액 30일)는 서비스. 증빙이 있었는지는 붙은 사진 카드로 판단(탈퇴로 파일이 지워져도 카드는 남음) |
-| `correction_request` 고친 내용 | C(만든 뒤에는 상태만 바뀜) | (같이 확인한 뒤 고칠 때 생김. **칸 하나 + 새 값 + 기준 판**: `field`, `new_value`(jsonb), `base_version_id`(그때 도장 찍힌 판), 칸마다 확인 전은 하나(아래 부분 UNIQUE), 다시 고치면 이전 것은 `SUPERSEDED`), 대상 칸(`repair_case_id`, `payment_id`, `inspection_item_id`, `settlement_transfer_id`, 없으면 호실 기록의 입주일), `target_key`(대상 종류 + ID를 합친 NOT NULL 문자열, 칸마다 하나 제약에 씀), `retry_of_id`(거절된 고친 내용을 근거를 더해 다시 보낼 때 이전 행), `requested_by_side`, `reason`, `status`(WAITING/ACCEPTED/REJECTED/UNCONFIRMED/WITHDRAWN/SUPERSEDED/CLOSED) | 미리 만든 판을 두지 않는다(통째 반영 방지). 상대가 확인하면 **그때의 도장 찍힌 판 + 이 칸만** 합쳐 새 판을 만들고 두 가리킴을 함께 옮김. 기준 판 이후 같은 칸이 바뀌었으면 합치지 않고 다시 확인. 부분 UNIQUE는 `(target_key, field) WHERE status = 'WAITING'` |
+| `payment_version` 지불 판 | B | `payment_id`, `no`(판 번호), `payer_kind`(TENANT/LANDLORD/THIRD_PARTY), `payer_label`(제3자면 이름 대신 관계: 가족·윗집·보험사), `payee_kind`(VENDOR/COUNTERPART/THIRD_PARTY), `payee_label`, `amount`, `paid_on`(사용자 입력 날짜), `recorded_by_side`(보낸 쪽/받은 쪽), `evidence_kind`, `previous_id` | `amount >= 0`. `UNIQUE(payment_id, no)`. 중복 검사(같은 수리 건·방향·금액 30일)는 서비스. 증빙이 있었는지는 붙은 사진 카드로 판단(탈퇴로 파일이 지워져도 카드는 남음) |
+| `correction_request` 고친 내용 | C(만든 뒤에는 상태만 바뀜) | (같이 확인한 뒤 고칠 때 생김. **칸 하나 + 새 값 + 기준 판**: `field`, `new_value`(jsonb), `base_version_id`(그때 도장 찍힌 판), 칸마다 확인 전은 하나(아래 부분 UNIQUE), 다시 고치면 이전 것은 `SUPERSEDED`), 대상 칸(`repair_case_id`, `payment_id`, `inspection_item_id`, `settlement_transfer_id`, 없으면 호실 기록의 입주일), `target_key`(대상 종류 + ID를 합친 NOT NULL 문자열, 칸마다 하나 제약에 씀), `retry_of_id`(거절된 고친 내용을 근거를 더해 다시 보낼 때 이전 행), `requested_by_side`, `reason`, `status`(WAITING/ACCEPTED/REJECTED/UNCONFIRMED/WITHDRAWN/SUPERSEDED/CLOSED) | 미리 만든 판을 두지 않는다(통째 반영 방지). 상대가 확인하면 **그때의 도장 찍힌 판 + 이 칸만** 합쳐 새 판을 만들고 두 가리킴을 함께 옮김. 기준 판 이후 같은 칸이 바뀌었으면 합치지 않고 다시 확인. 부분 UNIQUE는 `(target_key, field) WHERE status = 'WAITING'`. 대상이 아닌 것: 처리 완료(양측 확인)된 수리 건의 내용(`CLOSED_BY_BOTH`), 원인 설명(고치면 새 `cause_note`). 처리 완료(양측)가 되는 트랜잭션에서 그 수리 건 내용의 WAITING 고친 내용과 그 응답 요청을 `CLOSED`로(지불 고친 내용은 그대로, 06 REP-7l) |
 
 ### 2-6. 점검
 
@@ -173,7 +174,7 @@ erDiagram
 |---|---|---|---|
 | `inspection` 점검 | C | `kind`(MOVE_IN/MOVE_OUT), `author_side`, `status`(DRAFT/REQUESTED/LOCKED), `late`, `locked_at`, `lock_reason`(ALL_RESOLVED/NO_ITEMS), `first_shown_at` | `UNIQUE(room_record_id, kind)`(먼저 저장된 측이 기준). 퇴거 점검의 잠김은 거주 종료와 별개 |
 | `inspection_item` 점검 항목 | C | `inspection_id`, `current_version_id`, `confirmed_version_id`, `status`(WAITING/CONFIRMED/NEED_MORE/DISPUTED/UNCONFIRMED), `added_by_side`, `added_after_lock`(잠긴 뒤 추가), `added_after_end` | 항목 = 적은 하자만. 빠뜨린 하자 더하기는 새 기록(누구든, 더하지 않은 쪽이 확인). 확인 요청 `INSPECTION_CONFIRM`은 점검 × 요청 방향마다 하나(부분 유니크 `(inspection_id, requested_by_side) WHERE WAITING`), 두 방향이 모두 끝나야 잠김. 적지 않은 부위는 행이 없음("기록 없음") |
-| `inspection_item_version` 점검 항목 판 | B | `inspection_item_id`, `room_part_id`, `description`, `previous_id` | |
+| `inspection_item_version` 점검 항목 판 | B | `inspection_item_id`, `no`(판 번호), `room_part_id`, `description`, `previous_id` | `UNIQUE(inspection_item_id, no)` |
 
 부위 사진(하자 아님)은 따로 테이블을 두지 않고 `photo`의 단계(MOVE_IN/MOVE_OUT) + `inspection_id`로 남겨요.
 
@@ -184,7 +185,7 @@ erDiagram
 | `settlement` 정산 | C | `opened_at`, `deposit_status`(NOT_ENTERED/PENDING/AGREED/DISPUTE, 화면 말은 "보증금 확인 전"/"둘 다 확인". "미확인"과 헷갈리지 않게 UNCONFIRMED라 부르지 않음), `current_deposit_proposal_id`(답 기다리는 제안), `agreed_deposit_proposal_id`(지금 합의, 바꾸자는 안이 와도 그대로) | `UNIQUE(room_record_id)` |
 | `settlement_item` 정산 항목 | C | `settlement_id`, `source`(REPAIR/MANUAL), `repair_case_id`, `room_part_id`, `category`, `status`(PENDING/AGREED/DISPUTE/EXCLUDED), `current_proposal_id`, `agreed_proposal_id` | 출처·부위·종류는 만들 때 한 번만 씀(바꾸려면 이 항목을 제외 제안하고 새 항목을 넣음). **금액·방향·사유는 제안 줄에**(정산 항목의 [바꾸기] = 새 제안, 고치기 대상 아님). 합의된 항목만 계산(불변식 6) |
 | `settlement_transfer` 정산 송금 | C | `settlement_id`, `direction`(REFUND/EXTRA), `current_version_id`, `confirmed_version_id`, `recorded_by_side`, `response`(NONE/ACK/NEED_MORE/DISPUTE, 그 기록을 남기지 않은 쪽의 응답: 보낸 쪽 기록이면 받은 쪽, [받았어요(혼자)]면 보낸 쪽), `same_as_transfer_id`(받은 쪽이 실제 받은 금액으로 남긴 [받았어요(혼자)]가 보낸 쪽 기록과 같은 송금이면 그 기록, 합계에서 두 번 세지 않음), `receipt_confirmed_at` | 지불 기록과 같은 "C 머리 + B 판". 받은 쪽 응답은 응답 요청(RECEIPT_CONFIRM). 여러 번. 송금 합계는 **상대가 확인한(`response = ACK`) 판만** 더하고, 같은 송금으로 묶인 두 기록은 한 번만 센다 |
-| `settlement_transfer_version` 정산 송금 판 | B | `settlement_transfer_id`, `amount`, `paid_on`, `previous_id` | 금액·날짜를 고치면 새 판(고치기). 여러 번 |
+| `settlement_transfer_version` 정산 송금 판 | B | `settlement_transfer_id`, `no`(판 번호), `amount`, `paid_on`, `previous_id` | 금액·날짜를 고치면 새 판(고치기). 여러 번. `UNIQUE(settlement_transfer_id, no)` |
 
 정산 후보(수리 건에서 온 금액)와 "합의된 항목으로 계산한 금액"은 **저장하지 않고 계산**해요.
 
@@ -213,9 +214,9 @@ erDiagram
 |---|---|---|---|
 | 1 | 행동 기록 수정·삭제 없음, 이름·번호 복사 없음 | 트리거, `@Immutable` | 행동 기록에 이름·번호 칸이 없음 |
 | 2 | 합의됨은 같은 안에 양 측 행동이 있을 때만 | | `apply`: `agreed_proposal_id`는 상대 측 AGREE가 같은 `proposal_id`를 가리킬 때만 |
-| 3 | 처리 완료(양측 확인)는 종료 요청 + 상대 확인 | | `apply` |
+| 3 | 처리 완료(양측 확인)는 한쪽의 종료 행동(종료 요청 또는 혼자 종료) + 다른 쪽의 종료 확인 | | `apply` |
 | 4 | 미확인은 통지 두 건 전달 + 시간 경과 | | 작업자: 같은 응답 요청의 `notice`가 DELIVERED(또는 VIEWED) 두 건이고 기한이 지났을 때만 `UNCONFIRMED`. 가짜 발송기로 전달됨·최종 실패·결과 없음 세 경우 테스트 |
-| 5 | 링크 열람자는 상태를 바꿀 수 없음 | | 링크 토큰 인증은 읽기 API만 |
+| 5 | 링크 열람자는 기록의 내용과 상태를 바꿀 수 없음(예외: 열람 기록, 문자 그만 받기) | | 링크 토큰 인증은 읽기 API와 `links/stop`만. 남는 행동은 `LINK_VIEW`·`OPT_OUT`뿐 |
 | 6 | 정산 계산은 합의된 항목만 | | 계산 쿼리가 `status = 'AGREED'`만 |
 | 7 | 무효 링크로는 볼 수 없음(사진 주소 5분) | 무효 칸은 되돌리지 않음 | 서명 함수 |
 | 8 | 한 번호는 한 계정 | `UNIQUE(phone)` | |
@@ -226,9 +227,9 @@ erDiagram
 | 13 | 한 계정은 한 호실에서 한 측 | `UNIQUE(room_record_id, member_id)` | 자기 번호 초대 검사 |
 | 14 | 사진은 원본·썸네일이 검사를 통과해야, 제출 트랜잭션에서만 | `original_key`, `thumb_key` NOT NULL | 제출 처리(검사 → 복사 → 행 생성) |
 | 15 | 양 측이 확인한 사실은 혼자 바꾸지 못함 | | `apply`: 확인된 판은 상대 확인 없이 머리를 옮기지 않음 |
-| 16 | 사진은 올린 측만 지우고, 지운 사진은 되돌릴 수 없음 | `photo` 행은 트리거로 보호(남음) | `apply`: `ERASE_PHOTO`는 올린 측만, `erased_at`이 있으면 거절·주소 발급 안 함 |
+| 16 | 사진은 올린 측만 지우고(예외: 다른 사람의 요청은 운영 명령), 지운 사진은 되돌릴 수 없음 | `photo` 행은 트리거로 보호(남음) | `apply`: `ERASE_PHOTO`는 올린 측 또는 `ops:<담당>`(운영 명령)만, `erased_at`이 있으면 거절·주소 발급 안 함 |
 | 17 | 카드 없는 정식 사진 파일은 반드시 지워지고, 카드 있는 파일은 지우지 않음 | `outbox.dedupe_key` UNIQUE | 등록: 복사 전 확인 줄 저장, 카드 트랜잭션에서 줄 삭제. 확인 작업: 줄 `FOR UPDATE` → 카드 재확인 → 삭제 |
-| 18 | 상대가 공유를 그만둔 뒤 남긴 기록은 나에게 안 보임(보이는 범위 전체는 03-상태 3-1 표) | `party.sharing_stopped_at` | 권한 검사 함수 한 곳: 두 측 중 **어느 쪽이든** 공유를 그만둔 시각(둘 다면 이른 쪽) 이후의 상대 측 행동은 뺀다. 그만둔 사람에게도, 남은 사람에게도 같은 규칙(양방향). 수리 상태 같은 상태 행이 그 뒤의 변화를 드러내는 문제는 결정 대기(검토 결과) |
+| 18 | 상대가 공유를 그만둔 뒤 남긴 기록은 나에게 안 보임(보이는 범위 전체는 03-상태 3-1 표) | `party.sharing_stopped_at` | 권한 검사 함수 한 곳: 두 측 중 **어느 쪽이든** 공유를 그만둔 시각(둘 다면 이른 쪽) 이후의 상대 측 행동은 뺀다. 그만둔 사람에게도, 남은 사람에게도 같은 규칙(양방향). 그만둔 뒤의 상태는 C 행을 그대로 보여 주지 않고 **그 시각까지의 행동으로 다시 계산**해 보여 준다(03 6-6의 9, "○월 ○일 기준") |
 | 19 | 정산 끝내기는 상대가 본 정산 모습과 지금이 같을 때만 완료 | | `SETTLE_FINISH` payload에 본 정산 version, 정산을 바꾸는 행동이 같은 트랜잭션에서 기다리는 끝내기 요청을 닫음. 확인 때 version이 다르면 `VERSION_CONFLICT` |
 | 20 | 연결 전 상대에게 돈 확인 요청이 생기지 않고 링크에 돈 내용이 없음 | | 요청을 만드는 곳 한 곳(`notification`)에서 "돈 요청이고 `party.status <> CONNECTED`면 만들지 않음", 링크 응답은 `has_money`만 |
 | 21 | 점검은 모든 항목에 쓰지 않은 쪽의 답 또는 미확인이 있을 때만 잠김 | `INSPECTION_CONFIRM` 부분 유니크(점검 × 방향) | `apply`: 두 방향 요청이 모두 끝나고 모든 항목이 네 상태 중 하나일 때만 LOCKED |
@@ -241,13 +242,13 @@ erDiagram
 
 | 단계 | A 행동 기록 | B 사실 행 | C 상태 행 | 작업 |
 |---|---|---|---|---|
-| 하자 등록 + 알리기 | `REGISTER`, `SHARE_CONSENT` | `repair_content` 판 #1, `photo` 2장 | `repair_case`(NOT_STARTED, `defect_ack` PENDING, UNDECIDED), `party`(INVITED), `link`, `response_request`(DEFECT_CONFIRM, WAITING), `notice`(REQUESTED) | `outbox`(SMS) |
+| 하자 등록 + 알리기 | `REGISTER`, `INVITE`, `SHARE_CONSENT` | `repair_content` 판 #1, `photo` 2장 | `repair_case`(NOT_STARTED, `defect_ack` PENDING, UNDECIDED), `party`(INVITED), `link`, `response_request`(DEFECT_CONFIRM, WAITING), `notice`(REQUESTED) | `outbox`(SMS) |
 | (등록 전) 사진 확인 줄 | | | | `outbox`(ORPHAN_CHECK, 사진마다, 복사보다 먼저 커밋) |
 | 문자 발송 | | | `notice`(SENT, `sent_at`, `next_poll_at`) | 작업자가 발송 |
 | 전달 결과 조회 | | | `notice`(DELIVERED, `delivered_at`), `response_request`(`first_notified_at`, `renotify_due_at` = 전달 + 48h) | 1분·5분·15분마다 조회 |
 | 집주인 링크 열람 | `LINK_VIEW` | | `notice`(VIEWED) | |
 | 가입·연결 | `CONNECT`, `SHARE_CONSENT`(집주인) | | `party`(CONNECTED), `room_record.counterpart_first_connected_at`, `link`(무효) | |
-| 확인 | `CONFIRM` | | `repair_case`(`defect_ack` ACK, 수리 진행은 그대로), `response_request`(ANSWERED) | 세입자에게 서비스 안 알림 |
+| 확인 | `RESPOND_DEFECT`(ACK, 본 판 번호) | | `repair_case`(`defect_ack` ACK, 수리 진행은 그대로), `response_request`(ANSWERED) | 세입자에게 서비스 안 알림 |
 
 한 줄마다 **A·B·C와 아웃박스가 한 트랜잭션**이에요.
 
