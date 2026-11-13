@@ -1523,6 +1523,7 @@ function HomeStampApp({
                     readOnly
                     guest
                     actions={[]}
+                    correctionActionsOf={() => []}
                     onAct={inspectionAct}
                   />
                   <p className="muted">

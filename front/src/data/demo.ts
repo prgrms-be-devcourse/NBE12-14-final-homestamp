@@ -119,6 +119,13 @@ export interface FactCorrection<T = string | number> {
   decidedBy?: Role
   // 점검 정정의 기다림 타이머(시연)
   wait?: "재통지" | "미확인"
+  // 상대 응답이 보류(더 필요한 게 있어요)·이견(사실과 달라요)이면 status는 '거절'이고 그 종류(없으면 이전 방식 거절)
+  answerKind?: "보류" | "이견"
+  // [사진 더해서 다시 요청]: 지난 응답 이력, 더한 근거, 마지막 다시 요청 시각(7일에 한 번)
+  answers?: { kind?: "보류" | "이견"; reason: string; by?: Role; at?: string }[]
+  supplements?: { text: string; photos: number; at: string }[]
+  evidencePhotos?: string[]
+  reaskedAt?: string
 }
 export interface Payment {
   version?: number

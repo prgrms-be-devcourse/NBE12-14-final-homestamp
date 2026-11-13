@@ -21,6 +21,8 @@ import {
   answerCorrection,
   isHidden,
   repairStamped,
+  reaskWaitDays,
+  resubmitRepairCorrection,
   requestRepairEdits,
   togglePhoto,
   toggleWrongPhoto,
@@ -34,6 +36,12 @@ import {
   pendingValue,
 } from "@/lib/corrections"
 import { versionOf } from "@/lib/versions"
+import { hasAction, type CorrectionAction } from "@/api/actions"
+import {
+  RespondButtons,
+  type RespondAnswer,
+} from "@/components/common/respond-buttons"
+import { SupplementRequest } from "@/components/common/supplement-request"
 import { sideName, sideText } from "@/lib/words"
 import { Fold } from "@/components/fold"
 import { MaskedPhotoNotes, PhotoManageList } from "@/components/photo-masks"
@@ -66,7 +74,12 @@ export function correctionLabel(
         : c.mode === "상대 미확인"
           ? "고쳐짐 · 확인 없음일 때 고침"
           : "고쳐짐 · 상대 확인"
-  if (c.status === "거절") return "동의하지 않음 · 지금 기록 그대로"
+  if (c.status === "거절")
+    return c.answerKind === "보류"
+      ? "보충 요청됨 · 지금 기록 그대로"
+      : c.answerKind === "이견"
+        ? "이견 · 지금 기록 그대로"
+        : "동의하지 않음 · 지금 기록 그대로"
   if (c.status === "대체됨") return "새로 고쳐서 바뀜"
   if (c.status === "처리 완료로 닫힘") return "처리 완료로 닫힘"
   return "거둠 · 지금 기록 그대로"
@@ -157,7 +170,7 @@ export function CorrectionRow({
       {c.decidedAt && c.status !== "대체됨" && c.status !== "확인 대기" && (
         <small className="muted block">
           {c.decidedBy
-            ? `${sideText(c.decidedBy)} ${c.status === "반영" ? "확인" : "거절"}`
+            ? `${sideText(c.decidedBy)} ${c.status === "반영" ? "확인" : c.answerKind === "보류" ? "보충 요청" : c.answerKind === "이견" ? "이견" : "동의하지 않음"}`
             : c.status === "철회"
               ? "고친 쪽이 거둠"
               : "처리"}{" "}
@@ -165,8 +178,23 @@ export function CorrectionRow({
         </small>
       )}
       {c.rejectReason && (
-        <div className="dispute-callout">거절 사유: {safe(c.rejectReason)}</div>
+        <div className="dispute-callout">
+          {c.answerKind === "보류"
+            ? "더 필요한 게 있어요"
+            : c.answerKind === "이견"
+              ? "사실과 달라요"
+              : "동의하지 않은 이유"}
+          : {safe(c.rejectReason)}
+        </div>
       )}
+      {c.answers?.length ? (
+        <small className="muted block">
+          이전 응답 {c.answers.length}건 · 근거를 더해 다시 요청했어요
+          {c.evidencePhotos?.length
+            ? ` · 근거 사진 ${c.evidencePhotos.length}장`
+            : ""}
+        </small>
+      ) : null}
       {c.priorDispute && (
         <small className="muted block">
           반영 전 내용에 달려 있던 이견(이력): {safe(c.priorDispute)}
@@ -213,40 +241,63 @@ export function TextEditRow({
 
 /* ── 확인을 기다리는 고치기 요청(수리 건·점검 항목 공통) ──
    본문에는 요약 한 줄만, 칸별 내용과 확인·거절은 펼쳐서. 끝난 고치기는 경과(CorrectionHistory)로 보내요. */
+type Fix = FactCorrection<string | number>
 export function CorrectionPanel({
   list,
   stageOf,
   role,
   guest,
-  readOnly,
-  onAnswer,
-  onReject,
+  actionsOf,
+  onRespond,
+  onResubmit,
   onWithdraw,
   onAcceptAll,
 }: {
-  list: FactCorrection<string | number>[]
+  list: Fix[]
   edits?: TextEdit[]
-  stageOf: (c: FactCorrection<string | number>) => string | undefined
+  stageOf: (c: Fix) => string | undefined
   role: Role
   guest?: boolean
   readOnly?: boolean
-  onAnswer: (c: FactCorrection<string | number>) => void
-  onReject: (c: FactCorrection<string | number>) => void
-  onWithdraw: (c: FactCorrection<string | number>) => void
+  // 고친 내용마다 서버가 준 지금 누를 수 있는 행동(availableActions)
+  actionsOf: (c: Fix) => readonly CorrectionAction[]
+  onRespond: (c: Fix, answer: RespondAnswer, reason: string) => string | void
+  onResubmit: (
+    c: Fix,
+    data: { text: string; photos: string[] },
+  ) => string | void
+  onWithdraw: (c: Fix) => void
   onAcceptAll?: () => void
 }) {
   const safe = (t: string) => (guest ? safeSharedText(t) : t)
+  const has = (c: Fix, a: CorrectionAction) => hasAction(actionsOf(c), a)
   // 기록당 확인 요청 하나(REP-7h): 기다리는 칸을 모두 한 요청으로
   const one = pendingRequest(list)
   const pending = one ? [one] : []
-  const can = !guest && !readOnly
   if (!pending.length) {
-    // 가장 최근 요청이 거절·거둠으로 끝났으면 한 줄로 알려요(자세한 내용은 경과).
+    // 상대가 동의하지 않은 고친 내용: 고친 쪽은 [사진 더해서 다시 요청] / (이대로 둘게요)(08 3장 장면 4)
+    const declined = list.filter((c) => has(c, "resubmit"))
+    if (declined.length)
+      return (
+        <div className="dispute-callout space-y-2">
+          <strong>상대가 고친 내용에 동의하지 않았어요</strong>
+          {declined.map((c) => (
+            <CorrectionRow key={c.id} c={c} safe={safe} compact showReason>
+              <SupplementRequest
+                label="사진 더해서 다시 요청"
+                waitDays={reaskWaitDays(c.reaskedAt)}
+                onSupplement={(data) => onResubmit(c, data)}
+              />
+            </CorrectionRow>
+          ))}
+        </div>
+      )
+    // 가장 최근 요청이 동의받지 못했거나 거둠으로 끝났으면 한 줄로 알려요(자세한 내용은 경과).
     const last = groupCorrections(list.filter((c) => c.status !== "대체됨")).at(
       -1,
     )
     const st = last && groupStatus(last)
-    return st && /거절|거둠/.test(st) ? (
+    return st && /동의하지 않음|보충 요청됨|이견|거둠/.test(st) ? (
       <p className="fix-note">
         최근 고치기 요청 · <strong>{st}</strong>
       </p>
@@ -255,7 +306,7 @@ export function CorrectionPanel({
   return (
     <div className="space-y-2">
       {pending.map((g) => {
-        const answerable = g.items.filter((c) => c.by !== role)
+        const answerable = g.items.filter((c) => has(c, "respond"))
         return (
           <Fold
             key={g.key}
@@ -265,7 +316,7 @@ export function CorrectionPanel({
             sub={`${g.items.map((c) => c.field).join(" · ")} 변경`}
             meta={
               <span className="inline-flex items-center gap-1 rounded-full bg-[#fff6e4] px-[9px] py-[3px] text-[13px] leading-[1.6] font-[650] whitespace-nowrap text-[#bc9146] max-sm:px-[7px] max-sm:py-0.5 max-sm:text-xs">
-                {answerable.length && can ? "내 확인 필요" : groupStatus(g)}
+                {answerable.length ? "내 확인 필요" : groupStatus(g)}
               </span>
             }
           >
@@ -282,35 +333,30 @@ export function CorrectionPanel({
                   compact
                   showReason={!g.reason}
                 >
-                  {can && (
+                  {has(c, "respond") && (
+                    <div className="mt-2">
+                      <RespondButtons
+                        size="sm"
+                        onRespond={(answer, reason) =>
+                          onRespond(c, answer, reason)
+                        }
+                      />
+                    </div>
+                  )}
+                  {has(c, "withdraw") && (
                     <div className="actions mt-2">
-                      {c.by !== role ? (
-                        <>
-                          <Button size="sm" onClick={() => onAnswer(c)}>
-                            확인
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => onReject(c)}
-                          >
-                            거절
-                          </Button>
-                        </>
-                      ) : (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => onWithdraw(c)}
-                        >
-                          이 항목 거두기
-                        </Button>
-                      )}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => onWithdraw(c)}
+                      >
+                        이 항목 거두기
+                      </Button>
                     </div>
                   )}
                 </CorrectionRow>
               ))}
-              {can && onAcceptAll && answerable.length > 1 && (
+              {onAcceptAll && answerable.length > 1 && (
                 <Button size="sm" onClick={onAcceptAll}>
                   변경 항목 모두 확인 ({answerable.length})
                 </Button>
@@ -399,6 +445,7 @@ export function RepairCorrections({
   readOnly,
   guest,
   onAction,
+  correctionActionsOf,
   ref,
 }: {
   r: Repair
@@ -407,10 +454,14 @@ export function RepairCorrections({
   readOnly: boolean
   guest?: boolean
   onAction: OnAction
+  // 고친 내용마다 서버가 준 지금 누를 수 있는 행동(availableActions)
+  correctionActionsOf: (
+    c: FactCorrection<string | number>,
+    list: readonly FactCorrection<string | number>[],
+  ) => readonly CorrectionAction[]
   ref?: Ref<RepairCorrectionsHandle>
 }) {
-  const [mode, setMode] = useState<"edit" | "photos" | "reject" | null>(null)
-  const [target, setTarget] = useState("")
+  const [mode, setMode] = useState<"edit" | "photos" | null>(null)
   const [zone, setZone] = useState("욕실")
   const [part, setPart] = useState("천장")
   const [photos, setPhotos] = useState<string[]>([])
@@ -450,15 +501,31 @@ export function RepairCorrections({
       role={role}
       guest={guest}
       readOnly={readOnly}
-      onAnswer={(c) =>
-        run(`고친 내용 확인(${c.field}) · 본 모습 ${versionOf(r)}번`, (x) =>
-          answerCorrection(x, role, c.id, true),
+      actionsOf={(c) => correctionActionsOf(c, list)}
+      onRespond={(c, answer, reason) =>
+        answer === "ACK"
+          ? run(`고친 내용 확인(${c.field}) · 본 모습 ${versionOf(r)}번`, (x) =>
+              answerCorrection(x, role, c.id, true),
+            )
+          : run(
+              `고친 내용 ${answer === "NEED_MORE" ? "보충 요청" : "이견"}(${c.field}) · ${reason}`,
+              (x) =>
+                answerCorrection(
+                  x,
+                  role,
+                  c.id,
+                  false,
+                  reason,
+                  answer === "NEED_MORE" ? "보류" : "이견",
+                ),
+            )
+      }
+      onResubmit={(c, data) =>
+        run(
+          `고친 내용 사진 더해서 다시 요청(${c.field})${data.text ? ` · ${data.text}` : ""}${data.photos.length ? ` · 사진 ${data.photos.length}장` : ""}`,
+          (x) => resubmitRepairCorrection(x, role, c.id, data),
         )
       }
-      onReject={(c) => {
-        setTarget(c.id)
-        setMode("reject")
-      }}
       onWithdraw={(c) =>
         run(`고친 내용 거둠(${c.field})`, (x) =>
           withdrawCorrection(x, role, c.id),
@@ -618,29 +685,6 @@ export function RepairCorrections({
             상대가 확인한 뒤라 ‘확인 뒤 추가’로 표시돼요.
           </p>
         )}
-      </ActionDialog>
-      <ActionDialog
-        open={mode === "reject"}
-        title="고친 내용 거절"
-        description="거절하면 지금 기록은 그대로 두고, 고친 내용과 거절 사유가 경과에 남아요."
-        submitLabel="거절 남기기"
-        onClose={() => setMode(null)}
-        onSubmit={(f) =>
-          run("고친 내용 거절", (x) =>
-            answerCorrection(
-              x,
-              role,
-              target,
-              false,
-              String(f.get("reason") || ""),
-            ),
-          )
-        }
-      >
-        <div className="field">
-          <label htmlFor="reject-reason">거절 사유 · 필수</label>
-          <Textarea id="reject-reason" name="reason" required />
-        </div>
       </ActionDialog>
     </>
   )

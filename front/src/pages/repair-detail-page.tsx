@@ -19,6 +19,7 @@ import {
   repairAvailableActions,
 } from "@/api/mock/repair-actions"
 import { RepairDetail } from "@/features/repair/repair-detail"
+import { correctionAvailableActions } from "@/api/mock/correction-actions"
 import { RepairActions, RepairBadges } from "@/features/repair/repair-status"
 import {
   CorrectionHistory,
@@ -264,6 +265,12 @@ export function RepairDetailPage({
           readOnly={readOnly}
           guest={isGuest}
           onAction={onAction}
+          correctionActionsOf={(c, list) =>
+            correctionAvailableActions(c, role, list, {
+              guest: isGuest,
+              readOnly,
+            })
+          }
         />
       }
       timeline={

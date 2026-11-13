@@ -1,4 +1,8 @@
 import type { FactCorrection } from "@/data/demo"
+import { assertCanReask, newEvidence } from "@/lib/reask"
+
+const nowText = () =>
+  new Date().toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })
 
 type C = FactCorrection<string | number>
 // 한 번의 [고치기]로 남긴 칸별 고친 내용을 한 요청으로 묶어요(같은 사람·같은 시각·같은 이유).
@@ -63,3 +67,64 @@ export function pendingRequest(list: C[]): CorrectionGroup | undefined {
 // 칸별로 지금 확인을 기다리는 값. 다시 고치기 창을 열 때 미리 채워요.
 export const pendingValue = (list: C[] | undefined, field: string) =>
   list?.filter((c) => c.status === "확인 대기" && c.field === field).at(-1)?.to
+
+// 고친 내용 응답(03 G표, 08 3장 장면 3·4): 상대가 [아니에요 · 더 필요해요]로 답하면 앞모습은 그대로이고
+// 고친 내용은 보류·이견으로 나란히 남아요(상태 '거절' + 종류). 고친 쪽은 [사진 더해서 다시 요청]을 할 수 있어요.
+export function declineCorrection(
+  c: C,
+  role: C["by"],
+  kind: "보류" | "이견",
+  reason: string,
+) {
+  if (!reason.trim()) throw new Error("사유를 입력해 주세요.")
+  c.status = "거절"
+  c.answerKind = kind
+  c.rejectReason = reason.trim()
+  c.decidedBy = role
+  c.decidedAt = nowText()
+  c.wait = undefined
+}
+// [사진 더해서 다시 요청]: 같은 고친 내용에 새 근거(사진·설명 하나 이상)를 더해 다시 확인을 받아요. 한 기록에 7일에 한 번.
+// 그사이 같은 칸을 새로 고쳤으면(더 나중 고친 내용이 있으면) 다시 요청하지 않아요.
+export function resubmitCorrection(
+  c: C,
+  role: C["by"],
+  list: C[],
+  data: { text: string; photos: string[] },
+  now = Date.now(),
+) {
+  if (c.by !== role) throw new Error("고친 쪽만 다시 요청할 수 있어요.")
+  if (c.status !== "거절")
+    throw new Error("동의받지 못한 고친 내용만 다시 요청할 수 있어요.")
+  // 고친 내용은 남긴 순서대로 쌓여요. 같은 칸에 뒤에 남긴 것이 있으면 이건 지난 고친 내용이에요.
+  const newer = list.slice(list.indexOf(c) + 1).some((x) => x.field === c.field)
+  if (newer)
+    throw new Error(
+      "같은 칸을 새로 고쳤어요. 새 고친 내용으로 확인을 받아 주세요.",
+    )
+  const { text, photos } = newEvidence(data, {
+    texts: [c.reason, ...(c.supplements || []).map((s) => s.text)],
+    photos: c.evidencePhotos || [],
+  })
+  assertCanReask(c.reaskedAt, now)
+  c.answers = [
+    ...(c.answers || []),
+    {
+      kind: c.answerKind,
+      reason: c.rejectReason || "",
+      by: c.decidedBy,
+      at: c.decidedAt,
+    },
+  ]
+  c.supplements = [
+    ...(c.supplements || []),
+    { text, photos: photos.length, at: nowText() },
+  ]
+  c.evidencePhotos = [...(c.evidencePhotos || []), ...photos]
+  c.status = "확인 대기"
+  c.answerKind = undefined
+  c.rejectReason = undefined
+  c.decidedBy = undefined
+  c.decidedAt = undefined
+  c.reaskedAt = new Date(now).toISOString()
+}

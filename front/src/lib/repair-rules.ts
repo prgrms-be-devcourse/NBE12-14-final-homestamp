@@ -24,6 +24,7 @@ import {
   NEW_EVIDENCE_REQUIRED,
   REASK_DAYS,
 } from "@/lib/reask"
+import { declineCorrection, resubmitCorrection } from "@/lib/corrections"
 export { reaskWaitDays, NEW_EVIDENCE_REQUIRED, REASK_DAYS }
 
 // 고치기(상태와 규칙 G, decisions 2026-11-11): 도장(상대의 맞아요·보류·이견) 전에는 바로 고쳐지고,
@@ -867,6 +868,7 @@ export function answerCorrection(
   id: string,
   accept: boolean,
   reason = "",
+  kind: "보류" | "이견" = "이견",
 ) {
   const found = findCorrection(r, id)
   // 같은 칸을 다시 고쳐 이 요청이 닫혔으면, 보던 내용과 달라졌으니 다시 보고 확인해요(REP-7j).
@@ -875,18 +877,27 @@ export function answerCorrection(
     throw new Error(CLOSED_BY_BOTH_MESSAGE)
   if (!found || found.c.status !== "확인 대기" || found.c.by === role)
     throw new Error("상대가 고친 확인 대기 내용에만 답할 수 있어요.")
-  if (!accept && !reason.trim()) throw new Error("거절 사유를 입력해 주세요.")
-  found.c.decidedBy = role
   if (accept) {
+    found.c.decidedBy = role
     found.c.mode = "상대 확인"
     if (found.pay) found.pay.confirmed = true
     applyCorrection(r, found.c, found.pay)
-  } else {
-    found.c.status = "거절"
-    found.c.rejectReason = reason.trim()
-    found.c.decidedAt = nowText()
-  }
+  } else declineCorrection(found.c, role, kind, reason)
   clearWait(r, `fix:${id}`)
+}
+// [사진 더해서 다시 요청](수리 건 내용·지불 금액의 고친 내용)
+export function resubmitRepairCorrection(
+  r: Repair,
+  role: Role,
+  id: string,
+  data: { text: string; photos: string[] },
+  now = Date.now(),
+) {
+  const found = findCorrection(r, id)
+  if (!found) throw new Error("고친 내용을 찾을 수 없어요.")
+  if (!found.pay && closedByBoth(r)) throw new Error(CLOSED_BY_BOTH_MESSAGE)
+  const list = (found.pay ? found.pay.corrections : r.corrections) || []
+  resubmitCorrection(found.c, role, list, data, now)
 }
 // [모두 확인]: 수리 건에 상대가 고친 확인 대기 내용을 칸마다 확인 행동으로 저장
 export function acceptAllCorrections(r: Repair, role: Role) {

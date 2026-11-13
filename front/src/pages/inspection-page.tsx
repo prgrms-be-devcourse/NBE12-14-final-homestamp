@@ -49,6 +49,7 @@ import {
   inspectionAvailableActions,
   inspectionItemAvailableActions,
 } from "@/api/mock/inspection-actions"
+import { correctionAvailableActions } from "@/api/mock/correction-actions"
 import { RespondButtons } from "@/components/common/respond-buttons"
 import { SupplementRequest } from "@/components/common/supplement-request"
 
@@ -244,6 +245,9 @@ export function InspectionPage({
           role={role}
           readOnly={readOnly}
           actions={itemActions(i)}
+          correctionActionsOf={(c, list) =>
+            correctionAvailableActions(c, role, list, { readOnly })
+          }
           onAct={inspectionAct}
           history={
             i.disputes?.length ? (

@@ -37,5 +37,11 @@ export type InspectionItemAction =
   | "corrections" // 고치기
   | "photos" // 사진 추가
 
+// 고친 내용 하나(POST /api/corrections/{id}/respond · /resubmit · /withdraw)
+export type CorrectionAction =
+  | "respond" // 고친 내용 응답(맞아요 / 아니에요 · 더 필요해요)
+  | "resubmit" // 사진 더해서 다시 요청
+  | "withdraw" // 거두기
+
 export const hasAction = <A extends string>(list: readonly A[], a: A) =>
   list.includes(a)

@@ -17,6 +17,7 @@ import {
 } from "@/lib/versions"
 import { sideText } from "@/lib/words"
 import { assertCanReask, newEvidence } from "@/lib/reask"
+import { declineCorrection, resubmitCorrection } from "@/lib/corrections"
 
 // 점검(상태와 규칙 H)과 정정(G). 잠긴 점검에는 정정만 덧붙이고, 원래 기록은 지우지 않습니다.
 // 잠금 판단: 처음 점검 항목만 셉니다. 정정으로 추가 요청한 항목과 정정으로 삭제된 항목은 잠금 판단에서 뺍니다.
@@ -293,23 +294,47 @@ export function answer(
   cid: string,
   accept: boolean,
   reason = "",
+  kind: "보류" | "이견" = "이견",
 ) {
   const i = item(d, id)
   const c = findCorrection(i, cid)
   if (c.status === "대체됨") throw new Error(VERSION_CONFLICT_MESSAGE)
   if (c.status !== "확인 대기" || c.by === role)
     throw new Error("상대가 고친 확인 대기 내용에만 답할 수 있어요.")
-  c.decidedBy = role
   if (accept) {
+    c.decidedBy = role
     pinLock(d, i)
     apply(i, c)
-  } else {
-    if (!reason.trim()) throw new Error("거절 사유를 입력해 주세요.")
-    c.status = "거절"
-    c.rejectReason = reason.trim()
-    c.decidedAt = nowText()
-    c.wait = undefined
-  }
+  } else if (c === i.addRequest) {
+    // 빠뜨린 하자 더하기는 새 기록이에요(03 H). 보류·이견이어도 항목으로 남고, 그 응답이 항목에 붙어요.
+    if (!reason.trim()) throw new Error("사유를 입력해 주세요.")
+    c.decidedBy = role
+    pinLock(d, i)
+    apply(i, c)
+    i.ack = kind === "보류" ? "보충 요청" : "이견"
+    i.disputes = [
+      ...(i.disputes || []),
+      { by: role, kind, reason: reason.trim(), at: nowText() },
+    ]
+  } else declineCorrection(c, role, kind, reason)
+}
+// [사진 더해서 다시 요청](점검 항목의 고친 내용)
+export function resubmit(
+  d: DemoState,
+  role: Role,
+  id: string,
+  cid: string,
+  data: { text: string; photos: string[] },
+  now = Date.now(),
+) {
+  const i = item(d, id)
+  resubmitCorrection(
+    findCorrection(i, cid),
+    role,
+    i.corrections || [],
+    data,
+    now,
+  )
 }
 // [모두 확인]: 이 항목에 상대가 고친 확인 대기 내용을 칸마다 확인
 export function acceptAllItem(d: DemoState, role: Role, id: string) {

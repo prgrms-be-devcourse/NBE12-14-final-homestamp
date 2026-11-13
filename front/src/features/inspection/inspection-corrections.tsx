@@ -13,6 +13,7 @@ import {
 import {
   partGroups,
   type DemoState,
+  type FactCorrection,
   type Inspection,
   type Role,
   type Room,
@@ -28,11 +29,20 @@ import {
   isItemStamped,
   requestAdd,
   requestItemEdits,
+  resubmit,
   toggleItemWrongPhoto,
   withdraw,
 } from "@/lib/inspection-rules"
 import { sideText } from "@/lib/words"
-import { hasAction, type InspectionItemAction } from "@/api/actions"
+import {
+  hasAction,
+  type CorrectionAction,
+  type InspectionItemAction,
+} from "@/api/actions"
+import {
+  RespondButtons,
+  type RespondAnswer,
+} from "@/components/common/respond-buttons"
 import { Fold } from "@/components/fold"
 import { MaskedPhotoNotes, PhotoManageList } from "@/components/photo-masks"
 import { maskOf, maskPhoto, objectToMask } from "@/lib/photo-privacy"
@@ -128,6 +138,7 @@ export function InspectionItemCorrections({
   history,
   onShare,
   actions,
+  correctionActionsOf,
 }: {
   i: Inspection
   db: DemoState
@@ -139,9 +150,13 @@ export function InspectionItemCorrections({
   onShare?: () => void
   // 이 항목에서 서버가 준 지금 누를 수 있는 행동(availableActions)
   actions: readonly InspectionItemAction[]
+  // 고친 내용·빠뜨린 하자마다 서버가 준 지금 누를 수 있는 행동
+  correctionActionsOf: (
+    c: FactCorrection<string | number>,
+    list: readonly FactCorrection<string | number>[],
+  ) => readonly CorrectionAction[]
 }) {
-  const [mode, setMode] = useState<"edit" | "photos" | "reject" | null>(null)
-  const [target, setTarget] = useState("")
+  const [mode, setMode] = useState<"edit" | "photos" | null>(null)
   const [zone, setZone] = useState("욕실")
   const [part, setPart] = useState("천장")
   const [photos, setPhotos] = useState<string[]>([])
@@ -155,6 +170,30 @@ export function InspectionItemCorrections({
     setError("")
     onAct(text, update, i.id)
   }
+  // 고친 내용·빠뜨린 하자에 대한 응답: 맞아요 / 더 필요해요(보류) / 사실과 달라요(이견)
+  const respond = (
+    cid: string,
+    field: string,
+    a: RespondAnswer,
+    reason: string,
+  ) =>
+    a === "ACK"
+      ? run(`${i.title} · ${field} 확인 · 본 모습 ${i.version ?? 1}번`, (d) =>
+          answer(d, role, i.id, cid, true),
+        )
+      : run(
+          `${i.title} · ${field} ${a === "NEED_MORE" ? "보충 요청" : "이견"} · ${reason}`,
+          (d) =>
+            answer(
+              d,
+              role,
+              i.id,
+              cid,
+              false,
+              reason,
+              a === "NEED_MORE" ? "보류" : "이견",
+            ),
+        )
   const canEdit = hasAction(actions, "corrections")
   const canAddPhotos = hasAction(actions, "photos")
   const draft = i.publication === "draft"
@@ -192,44 +231,29 @@ export function InspectionItemCorrections({
       )}
       {add && add.status === "확인 대기" && (
         <CorrectionRow c={add} stage={add.wait}>
-          {!readOnly && !guest && (
+          {hasAction(correctionActionsOf(add, [add]), "respond") && (
+            <div className="mt-2">
+              <RespondButtons
+                size="sm"
+                onRespond={(a, reason) =>
+                  respond(add.id, "빠뜨린 하자", a, reason)
+                }
+              />
+            </div>
+          )}
+          {hasAction(correctionActionsOf(add, [add]), "withdraw") && (
             <div className="actions mt-2">
-              {add.by !== role ? (
-                <>
-                  <Button
-                    size="sm"
-                    onClick={() =>
-                      run(`${i.title} · 빠진 하자 추가 확인`, (d) =>
-                        answer(d, role, i.id, add.id, true),
-                      )
-                    }
-                  >
-                    확인
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      setTarget(add.id)
-                      setMode("reject")
-                    }}
-                  >
-                    거절
-                  </Button>
-                </>
-              ) : (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() =>
-                    run(`${i.title} · 빠진 하자 추가 요청 거둠`, (d) =>
-                      withdraw(d, role, i.id, add.id),
-                    )
-                  }
-                >
-                  거두기
-                </Button>
-              )}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  run(`${i.title} · 빠뜨린 하자 더하기 거둠`, (d) =>
+                    withdraw(d, role, i.id, add.id),
+                  )
+                }
+              >
+                거두기
+              </Button>
             </div>
           )}
         </CorrectionRow>
@@ -240,16 +264,14 @@ export function InspectionItemCorrections({
         role={role}
         guest={guest}
         readOnly={readOnly}
-        onAnswer={(c) =>
+        actionsOf={(c) => correctionActionsOf(c, i.corrections || [])}
+        onRespond={(c, a, reason) => respond(c.id, c.field, a, reason)}
+        onResubmit={(c, data) =>
           run(
-            `${i.title} · 고친 내용 확인(${c.field}) · 본 모습 ${i.version ?? 1}번`,
-            (d) => answer(d, role, i.id, c.id, true),
+            `${i.title} · 고친 내용 사진 더해서 다시 요청(${c.field})${data.text ? ` · ${data.text}` : ""}${data.photos.length ? ` · 사진 ${data.photos.length}장` : ""}`,
+            (d) => resubmit(d, role, i.id, c.id, data),
           )
         }
-        onReject={(c) => {
-          setTarget(c.id)
-          setMode("reject")
-        }}
         onWithdraw={(c) =>
           run(`${i.title} · 고친 내용 거둠(${c.field})`, (d) =>
             withdraw(d, role, i.id, c.id),
@@ -512,23 +534,6 @@ export function InspectionItemCorrections({
           {photos.length > 0 && (
             <small className="muted">{photos.length}장 선택됨</small>
           )}
-        </div>
-      </ActionDialog>
-      <ActionDialog
-        open={mode === "reject"}
-        title="거절"
-        description="거절하면 지금 기록은 그대로 두고, 요청과 거절 사유가 나란히 남아요."
-        submitLabel="거절 남기기"
-        onClose={() => setMode(null)}
-        onSubmit={(f) =>
-          run(`${i.title} · 고친 내용 거절`, (d) =>
-            answer(d, role, i.id, target, false, String(f.get("reason") || "")),
-          )
-        }
-      >
-        <div className="field">
-          <label htmlFor="ij-reason">거절 사유 · 필수</label>
-          <Textarea id="ij-reason" name="reason" required />
         </div>
       </ActionDialog>
     </div>
