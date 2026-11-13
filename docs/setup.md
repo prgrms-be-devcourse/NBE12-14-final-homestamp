@@ -90,7 +90,7 @@ npm run dev                # http://localhost:5173, /api는 백엔드(8080)로 �
 
 - **설정 파일을 만들 필요가 없다.** DB 주소·계정은 Spring Boot가 `compose.yml`에서 읽어 넣는다(`spring-boot-docker-compose`). `application-local.yml`은 만들지 않는다(`.gitignore`·비밀값 훅이 막는 파일이라 팀이 같은 설정을 나눌 수 없다).
 - **데이터는 남는다.** 앱을 꺼도 DB 데이터는 Docker 볼륨(`homestamp_homestamp-db`)에 남는다. 처음부터 다시 하려면 `cd back && docker compose down -v`(볼륨까지 지움, 되돌릴 수 없음).
-- **포트는 실행할 때마다 바뀐다.** 각자 PC의 5432와 부딪히지 않게 고정하지 않았다. IntelliJ Database 창이나 DBeaver로 열 때는 `cd back && docker compose port postgres 5432`로 확인한다(DB·계정·비밀번호 모두 `homestamp`, 로컬 전용).
+- **포트는 실행할 때마다 바뀐다.** 각자 PC의 5432와 부딪히지 않게 고정하지 않았다. IntelliJ Database 창이나 DBeaver로 열 때는 `cd back && docker compose port postgres 5432`로 확인한다(DB·계정·비밀번호 모두 `homestamp`). 이 비밀번호는 **로컬 전용**이라 공개 저장소에 있어도 된다: DB는 내 PC 안(`127.0.0.1`)에서만 접속을 받고 진짜 데이터가 없다. 운영 DB 비밀번호는 Parameter Store에만 둔다(`docs/rules/04` 6장).
 - **테스트는 이 DB를 쓰지 않는다.** `./gradlew test`·`build`는 Testcontainers가 따로 DB를 띄운다(CI와 같음).
 
 ### 지금 알아 둘 것
