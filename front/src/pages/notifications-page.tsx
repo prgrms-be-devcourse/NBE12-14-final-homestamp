@@ -3,7 +3,7 @@ import { Bell, CheckCheck, ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Panel } from "@/components/prototype"
 import { EmptyState, ErrorState, LoadingState } from "@/components/states"
-import { useApi, useApiQuery } from "@/api"
+import { useApi, useApiQuery } from "@/api/hooks"
 import { errorMessage } from "@/api/errors"
 import type { Notice, Room } from "@/data/demo"
 

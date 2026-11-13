@@ -21,32 +21,12 @@ import {
 import { Status, Timeline } from "@/components/prototype"
 import { EmptyState } from "@/components/states"
 import type { Event, Notice, Repair, Role, Room } from "@/data/demo"
-import { recordTimeMs } from "@/lib/repair-rules"
 import type { Page } from "@/lib/router"
 import { myTurn } from "@/lib/turn"
 import { cn } from "cn"
 import { plainText } from "@/lib/plain-words"
+import { daysSince, lastActivity, moneyLabel } from "@/lib/activity"
 import { sideName } from "@/lib/words"
-
-const DAY = 864e5
-// 수리 건의 마지막 당사자 행동 시각(경과 기록 기준). 오래 멈춘 건(REP-6a, 14일) 판단에 써요.
-export function lastActivity(r: Repair, events: Event[]) {
-  const times = events
-    .filter(
-      (e) =>
-        e.target?.kind === "repair" &&
-        e.target.id === r.id &&
-        e.by !== "서버 자동",
-    )
-    .map((e) => recordTimeMs(e.at))
-    .filter((t): t is number => t !== undefined)
-  return times.length ? Math.max(...times) : recordTimeMs(r.date)
-}
-export const daysSince = (ms?: number) =>
-  ms === undefined
-    ? undefined
-    : Math.max(1, Math.floor((Date.now() - ms) / DAY) + 1)
-export const moneyLabel = (r: Repair) => r.proposal?.status || "미정"
 
 // 홈 카드 한 장(제목 · 설명 · 오른쪽 버튼 + 내용). warm: 내가 답할 것처럼 맨 위에서 눈에 띄어야 하는 카드
 function Section({

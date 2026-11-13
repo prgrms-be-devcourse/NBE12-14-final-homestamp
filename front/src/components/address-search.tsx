@@ -2,7 +2,7 @@ import { useState } from "react"
 import { Loader2, MapPin, Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { useApi } from "@/api"
+import { useApi } from "@/api/hooks"
 import { errorMessage } from "@/api/errors"
 import type { AddressRegion } from "@/api/types"
 

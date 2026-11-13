@@ -19,6 +19,11 @@ import {
   repairAvailableActions,
 } from "@/api/mock/repair-actions"
 import { RepairDetail } from "@/features/repair/repair-detail"
+import {
+  beforePhotos,
+  visibleAfter,
+  visibleBefore,
+} from "@/features/repair/record-photos"
 import { correctionAvailableActions } from "@/api/mock/correction-actions"
 import { RepairActions, RepairBadges } from "@/features/repair/repair-status"
 import {
@@ -26,9 +31,6 @@ import {
   RepairCorrections,
   type RepairCorrectionsHandle,
   PhotoVisibility,
-  visibleBefore,
-  visibleAfter,
-  beforePhotos,
   WrongPhotos,
   RepairMaskedNotes,
 } from "@/features/repair/repair-records"

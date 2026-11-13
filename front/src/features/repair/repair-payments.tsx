@@ -4,7 +4,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Choice, Panel, Status } from "@/components/prototype"
-import { ActionDialog, tryOn } from "@/components/action-dialog"
+import { ActionDialog } from "@/components/action-dialog"
+import { tryOn } from "@/lib/try-on"
 import { CorrectionRow } from "@/features/repair/repair-records"
 import { MoneyInput } from "@/components/money-input"
 import { RespondButtons } from "@/components/common/respond-buttons"
@@ -132,12 +133,15 @@ export function RepairPayments({
     setMode("add")
   }
   // 홈의 '돌려줬다면 기록하기'에서 넘어오면 같은 지불 기록 창을 미리 채워 엽니다.
+  // 새 미리 채움 값이 오면 그리는 중에 창을 열고(effect 안 setState 대신), 다 쓴 뒤 부모에게 알려요.
+  const [usedPrefill, setUsedPrefill] = useState<typeof prefill>()
+  if (prefill && !readOnly && prefill !== usedPrefill) {
+    setUsedPrefill(prefill)
+    openAdd(prefill.from, prefill.to, String(prefill.amount))
+  }
   useEffect(() => {
-    if (prefill && !readOnly) {
-      openAdd(prefill.from, prefill.to, String(prefill.amount))
-      onPrefillUsed?.()
-    }
-  }, [prefill]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (prefill && prefill === usedPrefill) onPrefillUsed?.()
+  }, [prefill, usedPrefill, onPrefillUsed])
   function add(f: FormData) {
     const amount = parseMoney(String(f.get("amount") || ""))
     if (!Number.isSafeInteger(amount) || amount <= 0)

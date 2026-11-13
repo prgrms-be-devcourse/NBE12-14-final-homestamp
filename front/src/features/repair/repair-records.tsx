@@ -3,7 +3,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Choice, Status } from "@/components/prototype"
-import { ActionDialog, tryOn } from "@/components/action-dialog"
+import { ActionDialog } from "@/components/action-dialog"
+import { tryOn } from "@/lib/try-on"
 import { LongText } from "@/features/inspection/inspection-disputes"
 import {
   other,
@@ -36,6 +37,7 @@ import {
   pendingValue,
 } from "@/lib/corrections"
 import { versionOf } from "@/lib/versions"
+import { correctionLabel } from "@/features/repair/correction-label"
 import { hasAction, type CorrectionAction } from "@/api/actions"
 import {
   RespondButtons,
@@ -54,36 +56,6 @@ import {
 import { Image as ImageIcon, PencilLine } from "lucide-react"
 
 type OnAction = (text: string, update: (r: Repair) => void) => void
-
-// 고친 내용의 상태 문구(상태와 규칙 G: 도장 전이면 바로 바뀜, 도장 뒤면 상대 확인이 있어야 바뀜)
-export function correctionLabel(
-  c: FactCorrection<string | number>,
-  stage?: string,
-) {
-  if (c.status === "확인 대기")
-    return stage === "미확인"
-      ? "확인 없음 · 72시간 동안 답이 오지 않았어요 · 지금 기록 그대로"
-      : stage === "재통지"
-        ? "확인 전 · 다시 알렸어요"
-        : "상대 확인 전"
-  if (c.status === "반영")
-    return c.mode === "확인 전"
-      ? "확인 전에 고침"
-      : c.mode === "상대 없음"
-        ? "고쳐짐 · 혼자 기록할 때 고침"
-        : c.mode === "상대 미확인"
-          ? "고쳐짐 · 확인 없음일 때 고침"
-          : "고쳐짐 · 상대 확인"
-  if (c.status === "거절")
-    return c.answerKind === "보류"
-      ? "보충 요청됨 · 지금 기록 그대로"
-      : c.answerKind === "이견"
-        ? "이견 · 지금 기록 그대로"
-        : "동의하지 않음 · 지금 기록 그대로"
-  if (c.status === "대체됨") return "새로 고쳐서 바뀜"
-  if (c.status === "처리 완료로 닫힘") return "처리 완료로 닫힘"
-  return "거둠 · 지금 기록 그대로"
-}
 // 바뀐 글자만 표시: 앞뒤 같은 부분은 그대로, 가운데 바뀐 부분만 지운 글자(취소선)·새 글자(강조)로 보여 줘요.
 export function DiffText({ from, to }: { from: string; to: string }) {
   let start = 0
@@ -690,11 +662,6 @@ export function RepairCorrections({
   )
 }
 
-// 잘못 올린 사진(PHO-9): 지우지 않고 흐리게 맨 뒤에 보여요.
-export const splitWrong = (photos: string[], wrong?: number[]) => ({
-  main: photos.filter((_, n) => !wrong?.includes(n)),
-  wrong: photos.filter((_, n) => wrong?.includes(n)),
-})
 export function WrongPhotos({
   photos,
   masks,
@@ -735,25 +702,6 @@ export function WrongPhotos({
     </div>
   )
 }
-
-// 링크 화면에 보일 사진만 고릅니다. 올린 사람만 자기 사진을 숨길 수 있어요.
-export const visibleBefore = (r: Repair) =>
-  r.photos.filter((_, i) => !isHidden(r, `b:${i}`))
-// 수리 전 사진: 잘못 올린 사진은 흐리게 맨 뒤로(링크 화면에서는 숨긴 사진 제외)
-export function beforePhotos(r: Repair, guest?: boolean) {
-  const list = r.photos
-    .map((src, n) => ({ src, n }))
-    .filter((x) => !guest || !isHidden(r, `b:${x.n}`))
-  return {
-    main: list.filter((x) => !r.wrongPhotos?.includes(x.n)).map((x) => x.src),
-    wrong: list.filter((x) => r.wrongPhotos?.includes(x.n)).map((x) => x.src),
-    wrongMasks: list
-      .filter((x) => r.wrongPhotos?.includes(x.n))
-      .map((x) => maskOf(r, `b:${x.n}`)),
-  }
-}
-export const visibleAfter = (r: Repair, recordId: string, photos: string[]) =>
-  photos.filter((_, i) => !isHidden(r, `a:${recordId}:${i}`))
 
 /* ── 개인정보 이유로 가린 사진(팀 회의 결정: 삭제 없음, 흐리게 가리고 상대는 이견) ── */
 // 가린 사진 목록(누가·언제·이견)

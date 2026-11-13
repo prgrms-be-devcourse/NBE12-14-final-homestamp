@@ -20,7 +20,8 @@ import {
 } from "@/features/inspection/inspection-corrections"
 import { InspectionDisputes } from "@/features/inspection/inspection-disputes"
 import { ComparisonRow } from "@/features/inspection/comparison-row"
-import { splitWrong, WrongPhotos } from "@/features/repair/repair-records"
+import { WrongPhotos } from "@/features/repair/repair-records"
+import { splitWrong } from "@/features/repair/record-photos"
 import type {
   DemoState,
   Inspection,
