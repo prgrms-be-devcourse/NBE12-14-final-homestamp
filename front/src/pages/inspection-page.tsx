@@ -9,8 +9,8 @@ import { Notice } from "@/components/notice"
 import { PhotoGallery } from "@/components/photo-gallery"
 import { RecordDescription } from "@/components/record-description"
 import { RepairListItem, StatusTag } from "@/components/home-dashboard"
-import { RoomFinancials } from "@/components/room-financials"
-import { RepairCandidates } from "@/components/repair-candidates"
+import { RoomFinancials } from "@/features/settlement/room-financials"
+import { RepairCandidates } from "@/features/settlement/repair-candidates"
 import {
   ConfirmAllItems,
   InspectionItemCorrections,
