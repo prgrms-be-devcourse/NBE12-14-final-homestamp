@@ -12,7 +12,7 @@ Java 25 · Spring Boot 4.1 · PostgreSQL · Flyway | React 19 · Vite · TypeScr
 
 ## 자주 쓰는 명령
 - 백엔드: `cd back && ./gradlew build` / `./gradlew test` (Windows는 `gradlew.bat`)
-- 프론트: `cd front && npm run dev` / `npm run build` / `npm run lint`
+- 프론트: `cd front && npm run dev` / `npm run build` / `npm run lint` / `npm run format`
 - 훅 테스트: `node --test scripts/hooks/hooks.test.mjs` (훅을 고치면 꼭 돌린다)
 
 ## 팀 규칙
@@ -26,7 +26,7 @@ Java 25 · Spring Boot 4.1 · PostgreSQL · Flyway | React 19 · Vite · TypeScr
 - 브랜치·커밋은 `git-convention` 스킬로, 이슈는 `issue` 스킬로, PR은 `pr-body` 스킬로 만든다 (모두 사람이 부를 때만)
 - 이슈는 `.github/ISSUE_TEMPLATE/task.md`를 따르고, PR 본문의 `closes #번호`로 이슈와 연결한다
 - PR 본문은 `.github/pull_request_template.md`를 따른다
-- 자바는 구글 자바 스타일. 포매터가 맞춘다 (Spotless 설정 후 커밋 전에 `./gradlew spotlessApply`)
+- 자바는 구글 자바 스타일, 프론트는 Prettier. 포매터가 맞춘다 (커밋 전에 `cd back && ./gradlew spotlessApply`, `cd front && npm run format`. IDE 설정은 `docs/setup.md` 6장)
 
 ## AI가 지킬 것
 - 작업을 시작하기 전에 `docs/failure-memory.md`를 읽는다. 같은 실수를 반복하면 기록을 제안하고, 사람이 승인한 뒤에만 추가한다

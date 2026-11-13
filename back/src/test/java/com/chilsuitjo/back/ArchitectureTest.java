@@ -11,8 +11,8 @@ import com.tngtech.archunit.lang.ArchRule;
 /**
  * 패키지 부르는 방향 검사. 규칙은 docs/rules/09-프로젝트-구조.md 3장.
  *
- * <p>패키지는 전체 경로로 쓴다. {@code "..link.."}처럼 짧게 쓰면 다른 라이브러리의 같은 이름 패키지에도 걸린다. 규칙은 "이 도메인에 의존하지
- * 않는다"로만 쓴다(허용 목록으로 쓰면 라이브러리를 더할 때마다 실패한다).
+ * <p>패키지는 전체 경로로 쓴다. {@code "..link.."}처럼 짧게 쓰면 다른 라이브러리의 같은 이름 패키지에도 걸린다. 규칙은 "이 도메인에 의존하지 않는다"로만
+ * 쓴다(허용 목록으로 쓰면 라이브러리를 더할 때마다 실패한다).
  */
 @AnalyzeClasses(
     packages = "com.chilsuitjo.back",
@@ -32,14 +32,33 @@ class ArchitectureTest {
   /** 09 3장의 [도메인] 층 가운데 action·notification이 몰라야 하는 것. */
   private static final String[] 도메인 =
       packages(
-          "member", "room", "inspection", "repair", "proposal", "payment", "settlement", "photo",
+          "member",
+          "room",
+          "inspection",
+          "repair",
+          "proposal",
+          "payment",
+          "settlement",
+          "photo",
           "link");
 
   /** global(바닥) 위의 모든 패키지. */
   private static final String[] GLOBAL_위 =
       packages(
-          "member", "auth", "room", "inspection", "action", "repair", "correction", "proposal",
-          "payment", "settlement", "photo", "notification", "link", "respond");
+          "member",
+          "auth",
+          "room",
+          "inspection",
+          "action",
+          "repair",
+          "correction",
+          "proposal",
+          "payment",
+          "settlement",
+          "photo",
+          "notification",
+          "link",
+          "respond");
 
   @ArchTest
   static final ArchRule 고리_없음 =
