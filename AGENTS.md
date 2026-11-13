@@ -8,7 +8,7 @@ Java 25 · Spring Boot 4.1 · PostgreSQL · Flyway | React 19 · Vite · TypeScr
 - `back/` Spring Boot (Gradle). 패키지 루트 `com.chilsuitjo.back`
 - `front/` React (Vite). import alias `@/` = `front/src/`
 - `.agents/skills/` 스킬 원본 · `.claude/`, `.codex/` 도구별 설정 · `scripts/hooks/` 훅 스크립트
-- `docs/` 읽는 순서·주제별 기준 문서는 `docs/README.md` · 기획 `docs/planning/` · 결정 기록 (`docs/decisions.md`) · AI 실수 기록 (`docs/failure-memory.md`) · 처음 설정 (`docs/setup.md`)
+- `docs/` 읽는 순서·주제별 기준 문서는 `docs/README.md` · 규칙 문서 `docs/rules/` · 결정 기록 (`docs/decisions.md`) · AI 실수 기록 (`docs/failure-memory.md`) · 처음 설정 (`docs/setup.md`)
 
 ## 자주 쓰는 명령
 - 백엔드: `cd back && ./gradlew build` / `./gradlew test` (Windows는 `gradlew.bat`)
@@ -18,7 +18,7 @@ Java 25 · Spring Boot 4.1 · PostgreSQL · Flyway | React 19 · Vite · TypeScr
 ## 팀 규칙
 - 브랜치: `{타입}/{back|front|common}/{설명}` 소문자와 `-`만
   - 예) `feat/back/admin-login`, `chore/common/harness-setup`
-  - `common`은 back·front 어느 쪽에도 속하지 않는 저장소 전체 작업 (하네스, CI, 루트 설정, 문서). 예) `docs/common/planning-update`
+  - `common`은 back·front 어느 쪽에도 속하지 않는 저장소 전체 작업 (하네스, CI, 루트 설정, 문서). 예) `docs/common/rules-update`
   - back·front가 함께 바뀌는 작은 작업은 한 브랜치로 하고, 가운데는 더 많이 바뀐 쪽
 - 커밋: `타입: 내용` (한국어 한 줄, 50자 이내, 범위 표시 없음)
   - 타입 = `feat` `fix` `test` `docs` `refactor` `chore`
@@ -41,6 +41,6 @@ Java 25 · Spring Boot 4.1 · PostgreSQL · Flyway | React 19 · Vite · TypeScr
 
 ## 패키지·데이터 원칙·코드 규칙
 규칙은 아래 원본에만 있다. 여기에 옮겨 적지 않는다.
-- 패키지·부르는 방향·이름 규칙: `docs/planning/09-프로젝트-구조.md`
-- 테이블 종류(A 행동 기록·B 사실 행·C 상태 행)와 고칠 수 있는 칸: `docs/planning/05-ERD-초안.md` 0장
+- 패키지·부르는 방향·이름 규칙: `docs/rules/09-프로젝트-구조.md`
+- 테이블 종류(A 행동 기록·B 사실 행·C 상태 행)와 고칠 수 있는 칸: `docs/rules/05-ERD-초안.md` 0장
 - 늘 지키는 원칙: `docs/decisions.md` "늘 지키는 원칙"
