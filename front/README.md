@@ -1,75 +1,56 @@
-# React + TypeScript + Vite
+# 집라인 UI 프로토타입
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React + Vite + TypeScript + Tailwind CSS v4 + shadcn/ui **Base UI / Nova**를 유지한 7팀 시연용 화면입니다. `docs/`의 기획서·사용자 시나리오·상태와 규칙을 기능 기준으로, 별도 HTML을 디자인 참고로 사용했습니다.
 
-Currently, two official plugins are available:
+## 실행
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+`front/`에서 Node.js 24 이상을 사용합니다.
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
+```sh
+npm ci
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://npmx.dev/package/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://npmx.dev/package/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
+```sh
+npm run build
+npm run lint
+npm test
 ```
+
+## 시연 경로
+
+1. 홈에서 **하자 등록** → 부위·설명·사진 등록 → 상단 **임대인 전환** → **하자 사실 확인** → **수리 시작**.
+2. **비용 부담 제안** → 상대 측으로 전환 → **같은 안에 동의** 또는 사유를 적어 **이견** → **새 부담 제안**으로 역제안. 나눠서 부담과 0원 제안도 가능합니다. 자기 제안에 동의할 수 없습니다.
+3. 지불 사실 남기기에서 **업체 지불**과 **당사자 간 상환**을 선택합니다. 상환은 보냈어요/받았어요 방향을 구분합니다. **순지출 = 업체·상대에게 낸 돈 − 상대에게서 받은 돈**이며, 기록한 측과 실제 낸 측을 구분합니다. 확인 대기 기록도 한쪽이 남긴 사실로 계산하고 확인 강도를 별도 표시합니다.
+4. 수리 후 사진 기록 → **종료 확인 요청** → 상대 측에서 **수리 종료 확인**. 비용 합의와 수리 상태는 독립적입니다. 종료 후 돈이 미정이거나 실제 지불과 부담이 다르면 홈의 별도 목록에 남습니다.
+4. **호실 기록 → 새 호실**: 상대 없이 시작 → 단독 하자 기록 → **초대 및 연결**에서 번호와 공유 동의를 입력 → 상대 역할로 전환해 연결 확인. 첫 하자 등록 때 알리기/나중에를 기본 선택 없이 묻습니다.
+5. **입주 점검**: 상대 없는 호실은 알리기/나중에를 선택해야 저장됩니다. 알리기는 저장 뒤 번호·공유 확인을 받는 초대 폼으로 이어지고, 나중에는 단독 기록(상대 확인 없음)으로 남습니다. 상태·사진 등록 및 상대 확인/이견. 모든 항목의 응답이 정리되면 추가 버튼을 잠급니다. 늦은 입주 기록은 별도 안내합니다. 기록하지 않은 부위는 ‘기록 없음’입니다.
+6. 호실을 **망원빌라 201호**로 바꿔 **퇴거·정산**: 입주·퇴거 사진 비교, 세 상태로 나눈 정산 항목, 항목 추가·상대 동의, 반환·수령 기록, 정산 끝내기 제안·확인을 체험합니다. 초기 합의 금액은 **9,995,000원**이며 이견인 150,000원은 계산에서 제외됩니다.
+7. 하자 상세의 **비회원 공유 화면 체험**: 회원 시연 안에서 연 미리보기만 회원 화면으로 돌아갈 수 있습니다. 외부 `?share=...` 진입에는 복귀·역할 전환 버튼이 없으며, 로그인 시연과 연결 확인을 거쳐야 호실 화면으로 이동합니다. 한 수리 건의 공개된 사진·설명·수리 상태·정정/행동 이력만 표시합니다. 호실 이름·주소·정산·지불·부담 합의와 응답 버튼은 표시하지 않습니다. 기본 예시는 `?share=leak`로 직접 열 수 있습니다.
+8. 상단 아바타 또는 모바일 메뉴 하단 계정에서 로그인·회원가입 시연. 인증 요청 후 예시 번호 **123456**을 입력합니다. 실제 계정·인증 정보는 저장하지 않습니다.
+
+## 구현 경계
+
+- 데이터는 React 메모리에 있습니다. **새로고침·새 탭에서는 초기 목업으로 돌아갑니다.** 사용자가 추가한 기록의 공유 시연은 같은 탭의 버튼으로 확인하세요.
+- 실제 API·DB·JWT·SMS·본인 인증·송금·서버 타이머·접근 권한 검증은 없습니다. 역할 전환은 두 별도 당사자를 연기하기 위한 도구입니다.
+- 사진은 JPEG/PNG/WebP, 한 번에 최대 10장·장당 10MB입니다. 브라우저에서 긴 변 2048px 이하 JPEG로 다시 그려 미리보기를 보관하며 서버로 보내지 않습니다. HEIC는 JPEG 변환 후 선택하도록 안내합니다.
+- 기록 수정·삭제 대신 설명 보충·새 제안·이견을 누적합니다. 사실 정정 승인, 제3자 부담, OCR, 내보내기, 여러 번의 반환·수령, 실제 발송 타이머는 후속 구현 대상입니다. 반환은 계산된 금액으로 한 번 기록하는 시연입니다.
+- ‘상대 미확인’ 초기 예시는 목업이며 48시간+24시간 타이머가 실행되는 것은 아닙니다. 미응답으로 비용 합의를 자동 생성하지 않습니다.
+- 정산 완료 후 읽기 전용이며, 보관·삭제 정책은 안내만 합니다. 개인정보 처리방침·약관 전문은 실제 서비스 연결 전 확정해야 합니다.
+
+## 자동 테스트
+
+Vitest + Testing Library + jsdom으로 실제 React 화면을 렌더링해 외부 공유 진입·로그인·연결 확인, 회원 역할 전환, 입주 점검 초대/단독 기록, 지불·상환 방향·상대 확인, 새 호실 타임라인을 검증합니다. 순지출 계산은 전액·일부·초과 상환, 분담, 역방향 상환, 기존 지불 형식도 검사합니다.
+
+## 서버 연동 시 교체할 곳
+
+- `src/data/demo.ts`: 도메인 타입·초기 데이터. 사진은 현재 data URL이며 추후 업로드 결과 식별자로 교체합니다.
+- `src/hooks/use-demo.ts`: 메모리 명령 저장소. 행동 대상 호실을 지정할 수 있어 새 호실 생성 기록은 새 호실에 남습니다. 서버 API, 서버 시각·버전·멱등성·알림 호출로 교체합니다.
+- `src/lib/service-rules.ts`: 합의된 정산 계산, 실제 지불 방향에 따른 순지출과 돈이 남은 건 분류, 공유 설명의 연락처 가림.
+- `src/components/ui/`: 공식 shadcn Base Nova 컴포넌트. textarea·select·checkbox는 CLI로 추가했습니다.
+- `src/components/prototype.tsx`: 서비스 표현용 카드 구성·상태 배지·사진 예시·타임라인. 입력·버튼 등은 `ui/` 컴포넌트를 사용합니다.
+- `src/App.tsx`: 화면 전환 및 시연 행동. 데이터 소스와 UI를 분리해 뒀으며 실제 인증·권한 검사는 서버에서도 수행해야 합니다.
+
+빌드 시 기존 Vite 설정의 `__dirname`에 대한 향후 호환성 안내가 나올 수 있으나 빌드는 통과합니다. 프로젝트 초기 설정을 유지했습니다.
+
+외부 공유 진입의 연결 시연은 로그인과 별도입니다. 로그인 뒤 `호실 연결 확인 · 시연`을 열고, 초기 목업 번호 `01098765432`로 `번호 일치 확인 · 시연`을 누른 다음 기록 공유 동의와 `연결 수락 · 시연`을 완료해야 전체 회원 메뉴가 열립니다. 별도 초대 번호가 저장된 호실은 그 번호와 비교합니다. 번호 변경·취소 후 재진입 시 확인과 수락은 초기화됩니다. 실제 휴대폰 인증이나 소유권 검증은 수행하지 않습니다.
