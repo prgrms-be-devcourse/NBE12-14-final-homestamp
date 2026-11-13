@@ -1,6 +1,11 @@
-import type { RepairAction } from "@/api/actions"
-import type { Repair, Role, Room } from "@/data/demo"
-import { canRecur, roomSoloReason, soloReasonFor } from "@/lib/repair-rules"
+import type { PaymentAction, RepairAction } from "@/api/actions"
+import type { Payment, Repair, Role, Room } from "@/data/demo"
+import {
+  canRecur,
+  openPaymentDispute,
+  roomSoloReason,
+  soloReasonFor,
+} from "@/lib/repair-rules"
 
 // 서버가 연결되기 전 Mock: GET /api/repair-cases/{id}의 availableActions를 서버 대신 계산해요.
 // 서버가 연결되면 응답에 담긴 값을 그대로 쓰고 이 함수는 쓰지 않아요. 판단은 여기에서만 하고 화면은 하지 않아요.
@@ -50,5 +55,20 @@ export function repairAvailableActions(
       !bothClosed,
   )
   add("corrections", mine && !bothClosed)
+  return out
+}
+
+// 지불마다의 availableActions(MONEY-2). 지불·돈 기록은 거주가 끝난 뒤에도 정산 전까지 이어져요.
+export function paymentAvailableActions(
+  p: Payment,
+  role: Role,
+  viewer: { guest?: boolean; readOnly?: boolean } = {},
+): PaymentAction[] {
+  if (viewer.guest || viewer.readOnly) return []
+  const mine = p.by === role
+  const out: PaymentAction[] = []
+  if (!mine && !p.confirmed) out.push("respond")
+  if (mine && !p.confirmed && openPaymentDispute(p)) out.push("supplement")
+  if (mine) out.push("corrections")
   return out
 }

@@ -2,6 +2,7 @@ import { expect, test } from "vitest"
 import { createDemo, type Payment, type Repair } from "../src/data/demo"
 import {
   confirmDefect,
+  NEW_EVIDENCE_REQUIRED,
   openPaymentDispute,
   reaskWaitDays,
   repairStamped,
@@ -11,6 +12,7 @@ import {
   supplementDefect,
   supplementPayment,
 } from "../src/lib/repair-rules"
+import { paymentAvailableActions } from "../src/api/mock/repair-actions"
 
 // 응답 두 버튼과 보류·보충(08-화면-기본-틀 2장, 03 G '응답과 그 뒤', MONEY-2)
 const repair = (): Repair => ({
@@ -87,4 +89,48 @@ test("MONEY-2b 지불에도 보류와 보충이 있다", () => {
   expect(() =>
     supplementPayment(p, "임차인", { text: "다시", photos: [] }, NOW + DAY),
   ).toThrow("6일 뒤")
+})
+
+test("같은 설명·이미 올린 사진만으로는 보충이 되지 않는다(03 G: 같은 요청 반복 방지)", () => {
+  const r = repair()
+  r.photos = ["old.jpg"]
+  respondDefect(r, "임대인", "보류", "더 필요해요")
+  expect(() =>
+    supplementDefect(
+      r,
+      "임차인",
+      { text: ` ${r.description} `, photos: [] },
+      NOW,
+    ),
+  ).toThrow(NEW_EVIDENCE_REQUIRED)
+  expect(() =>
+    supplementDefect(r, "임차인", { text: "", photos: ["old.jpg"] }, NOW),
+  ).toThrow(NEW_EVIDENCE_REQUIRED)
+  supplementDefect(r, "임차인", { text: "벽 위쪽도 찍었어요", photos: [] }, NOW)
+  respondDefect(r, "임대인", "보류", "아직 부족해요")
+  expect(() =>
+    supplementDefect(
+      r,
+      "임차인",
+      { text: "벽 위쪽도 찍었어요", photos: [] },
+      NOW + 8 * DAY,
+    ),
+  ).toThrow(NEW_EVIDENCE_REQUIRED)
+})
+
+test("지불 버튼은 지불마다의 행동 목록을 따른다", () => {
+  const p: Payment = {
+    id: "p1",
+    by: "임차인",
+    amount: 10000,
+    confirmed: false,
+  }
+  expect(paymentAvailableActions(p, "임대인")).toEqual(["respond"])
+  expect(paymentAvailableActions(p, "임차인")).toEqual(["corrections"])
+  respondPayment(p, "임대인", "보류", "영수증")
+  expect(paymentAvailableActions(p, "임차인")).toEqual([
+    "supplement",
+    "corrections",
+  ])
+  expect(paymentAvailableActions(p, "임대인", { readOnly: true })).toEqual([])
 })

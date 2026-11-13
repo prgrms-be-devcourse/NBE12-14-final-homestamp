@@ -14,7 +14,10 @@ import type {
   Room,
 } from "@/data/demo"
 import { hasAction, type RepairAction } from "@/api/actions"
-import { repairAvailableActions } from "@/api/mock/repair-actions"
+import {
+  paymentAvailableActions,
+  repairAvailableActions,
+} from "@/api/mock/repair-actions"
 import { RepairDetail } from "@/features/repair/repair-detail"
 import { RepairActions, RepairBadges } from "@/features/repair/repair-status"
 import {
@@ -308,6 +311,9 @@ export function RepairDetailPage({
             role={role}
             readOnly={readOnly}
             onAction={onAction}
+            actionsOf={(p) =>
+              paymentAvailableActions(p, role, { guest: isGuest, readOnly })
+            }
             prefill={moneyPrefill}
             onPrefillUsed={onPrefillUsed}
           />

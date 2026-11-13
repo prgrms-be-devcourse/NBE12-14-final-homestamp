@@ -138,6 +138,8 @@ export interface Payment {
   corrections?: FactCorrection<number>[]
   // 마지막 [보충하고 다시 확인 요청] 시각(ISO). 한 기록에 7일에 한 번이에요.
   reaskedAt?: string
+  // 보충하고 다시 요청할 때 더한 설명들(같은 설명을 다시 내는 반복 요청을 막는 데 써요)
+  supplements?: { text: string; photos: number; at: string }[]
 }
 // inspectionRefs는 과거 시연 연결 메타데이터의 이력 호환성용입니다. 현 MVP에서는 읽거나 새로 기록하지 않습니다.
 export type WaitStage = "재통지" | "미확인"
@@ -171,6 +173,8 @@ export interface Repair {
   }
   // 마지막 [보충하고 다시 확인 요청] 시각(ISO). 한 기록에 7일에 한 번이에요.
   reaskedAt?: string
+  // 보충하고 다시 요청할 때 더한 설명들(같은 설명을 다시 내는 반복 요청을 막는 데 써요)
+  supplements?: { text: string; photos: number; at: string }[]
   // 앞모습 번호(고친 내용이 반영될 때마다 +1). 확인할 때 본 번호와 비교해요.
   version?: number
   startFlag?:

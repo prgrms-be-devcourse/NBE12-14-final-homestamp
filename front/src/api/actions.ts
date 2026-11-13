@@ -16,5 +16,11 @@ export type RepairAction =
   | "corrections" // 고치기
   | "recur" // 같은 곳 재발 · 새 수리 건
 
+// 지불 하나(수리 건 상세 응답 안의 지불마다, POST /api/payments/{id}/respond · /supplement, POST /api/corrections)
+export type PaymentAction =
+  | "respond" // 금액 응답(맞아요 / 아니에요 · 더 필요해요)
+  | "supplement" // 보충하고 다시 확인 요청
+  | "corrections" // 금액 고치기
+
 export const hasAction = <A extends string>(list: readonly A[], a: A) =>
   list.includes(a)

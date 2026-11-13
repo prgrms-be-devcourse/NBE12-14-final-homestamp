@@ -223,6 +223,21 @@ function assertCanReask(reaskedAt: string | undefined, now: number) {
   const days = reaskWaitDays(reaskedAt, now)
   if (days > 0) throw new Error(`${days}일 뒤 다시 요청할 수 있어요.`)
 }
+// 다시 요청에는 새 근거가 하나 이상 있어야 해요(03 G: "같은 요청 반복 방지").
+// 이미 올린 사진, 이미 남긴 설명(원래 설명·이전 보충)과 같은 것은 새 근거로 치지 않아요.
+export const NEW_EVIDENCE_REQUIRED =
+  "새 사진이나 새 설명을 하나 이상 더해 주세요. 이미 남긴 사진이나 설명과 같은 것은 보충이 되지 않아요."
+function newEvidence(
+  data: { text: string; photos: string[] },
+  had: { texts: (string | undefined)[]; photos: string[] },
+) {
+  const norm = (t?: string) => (t ?? "").replace(/\s+/g, " ").trim()
+  const text = norm(data.text)
+  const photos = data.photos.filter((p) => !had.photos.includes(p))
+  const freshText = text && !had.texts.some((t) => norm(t) === text) ? text : ""
+  if (!freshText && !photos.length) throw new Error(NEW_EVIDENCE_REQUIRED)
+  return { text: freshText, photos }
+}
 // [보충하고 다시 확인 요청]: 기록한 쪽이 사진이나 설명을 하나 이상 더해 새 확인 요청을 보내요.
 export function supplementDefect(
   r: Repair,
@@ -233,11 +248,13 @@ export function supplementDefect(
   if (r.author !== role) throw new Error("보충은 처음 기록한 쪽이 해요.")
   if (r.ack !== "보충 요청" && r.ack !== "이견")
     throw new Error("보충 요청이나 이견을 받은 기록에만 다시 요청할 수 있어요.")
-  const text = data.text.trim()
-  if (!text && !data.photos.length)
-    throw new Error("사진이나 설명을 하나 이상 더해 주세요.")
+  const { text, photos } = newEvidence(data, {
+    texts: [r.description, ...(r.supplements || []).map((s) => s.text)],
+    photos: r.photos,
+  })
   assertCanReask(r.reaskedAt, now)
   const prev = r.ackDispute
+  const at = nowText()
   r.notes = [
     ...(r.notes || []),
     {
@@ -245,15 +262,19 @@ export function supplementDefect(
       by: role,
       text: [
         text,
-        data.photos.length ? `사진 ${data.photos.length}장 추가` : "",
+        photos.length ? `사진 ${photos.length}장 추가` : "",
         prev ? `(이전 답: ${prev.type} · ${prev.reason})` : "",
       ]
         .filter(Boolean)
         .join(" · "),
-      at: nowText(),
+      at,
     },
   ]
-  r.photos = [...r.photos, ...data.photos]
+  r.supplements = [
+    ...(r.supplements || []),
+    { text, photos: photos.length, at },
+  ]
+  r.photos = [...r.photos, ...photos]
   r.ack = "확인 대기"
   r.ackDispute = undefined
   r.reaskedAt = new Date(now).toISOString()
@@ -300,12 +321,18 @@ export function supplementPayment(
   if (p.by !== role) throw new Error("보충은 지불을 기록한 쪽이 해요.")
   if (p.confirmed || !openPaymentDispute(p))
     throw new Error("보충 요청이나 이견을 받은 지불에만 다시 요청할 수 있어요.")
-  if (!data.text.trim() && !data.photos.length)
-    throw new Error("사진이나 설명을 하나 이상 더해 주세요.")
+  const { text, photos } = newEvidence(data, {
+    texts: (p.supplements || []).map((s) => s.text),
+    photos: p.photos || [],
+  })
   assertCanReask(p.reaskedAt, now)
   p.disputes = p.disputes?.map((d) => ({ ...d, closed: true }))
-  // 보충 설명은 행동 기록(경과)에 남고, 사진은 증빙에 더해져요.
-  p.photos = [...(p.photos || []), ...data.photos]
+  // 보충 설명은 기록에 남고(행동 기록에도 함께), 사진은 증빙에 더해져요.
+  p.supplements = [
+    ...(p.supplements || []),
+    { text, photos: photos.length, at: nowText() },
+  ]
+  p.photos = [...(p.photos || []), ...photos]
   p.reaskedAt = new Date(now).toISOString()
 }
 // 수리 후 사진은 종료(요청·혼자 종료) 전에 1장 이상 있어야 해요.

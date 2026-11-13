@@ -7,6 +7,7 @@ import {
   soloClose,
 } from "../src/lib/repair-rules"
 import { RepairPayments } from "../src/features/repair/repair-payments"
+import { paymentAvailableActions } from "../src/api/mock/repair-actions"
 
 const doing = (afterPhotos?: string[]): Repair => ({
   ...structuredClone(createDemo().repairs[0]),
@@ -46,6 +47,7 @@ test("지불 기록: 증빙 종류(영수증)는 선택이지만 증빙 사진�
       room={room}
       role="임차인"
       readOnly={false}
+      actionsOf={(p) => paymentAvailableActions(p, "임차인")}
       onAction={() => {
         saved++
       }}

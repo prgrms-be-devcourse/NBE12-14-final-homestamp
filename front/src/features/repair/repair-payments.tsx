@@ -11,6 +11,7 @@ import { RespondButtons } from "@/components/common/respond-buttons"
 import { SupplementRequest } from "@/components/common/supplement-request"
 import { PhotoGallery } from "@/components/photo-gallery"
 import { MoneyLeftNotice } from "@/features/repair/money-left"
+import { hasAction, type PaymentAction } from "@/api/actions"
 import {
   uid,
   won,
@@ -70,6 +71,7 @@ export function RepairPayments({
   role,
   readOnly,
   onAction,
+  actionsOf,
   prefill,
   onPrefillUsed,
 }: {
@@ -78,6 +80,8 @@ export function RepairPayments({
   role: Role
   readOnly: boolean
   onAction: OnAction
+  // 지불마다 서버가 준 지금 누를 수 있는 행동(availableActions)
+  actionsOf: (p: Payment) => readonly PaymentAction[]
   prefill?: { from: Role; to: Role; amount: number }
   onPrefillUsed?: () => void
 }) {
@@ -226,6 +230,7 @@ export function RepairPayments({
               const theirs = p.by !== role && !p.confirmed
               // 지금 열려 있는 보류·이견(보충하고 다시 요청하면 지난 것이 돼요, MONEY-2)
               const open = openPaymentDispute(p)
+              const acts = actionsOf(p)
               // 지불 카드 한 장. 상대가 남겨서 내가 확인할 기록이면 주황 테두리와 왼쪽 띠로 강조해요.
               return (
                 <div
@@ -310,7 +315,7 @@ export function RepairPayments({
                       상대가 남긴 기록이에요 · <strong>확인 전</strong>
                     </p>
                   )}
-                  {!readOnly && theirs && (
+                  {hasAction(acts, "respond") && (
                     <RespondButtons
                       size="sm"
                       answered={
@@ -337,7 +342,7 @@ export function RepairPayments({
                       }
                     />
                   )}
-                  {!readOnly && p.by === role && open && !p.confirmed && (
+                  {hasAction(acts, "supplement") && (
                     <SupplementRequest
                       waitDays={reaskWaitDays(p.reaskedAt)}
                       onSupplement={(data) =>
@@ -350,7 +355,7 @@ export function RepairPayments({
                   )}
                   {!readOnly && (
                     <div className="actions">
-                      {p.by === role && !pending && (
+                      {hasAction(acts, "corrections") && !pending && (
                         <Button
                           size="sm"
                           variant="outline"
