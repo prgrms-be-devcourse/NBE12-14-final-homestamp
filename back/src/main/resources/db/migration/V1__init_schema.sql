@@ -895,6 +895,9 @@ CREATE UNIQUE INDEX ux_inspection_confirm_waiting
 -- 점검·정산
 CREATE INDEX ix_inspection_item_inspection ON inspection_item (inspection_id);
 CREATE INDEX ix_inspection_item_version_room_part ON inspection_item_version (room_part_id);
+CREATE UNIQUE INDEX ux_settlement_item_active_repair
+    ON settlement_item (settlement_id, repair_case_id)
+    WHERE source = 'REPAIR' AND status <> 'EXCLUDED';
 CREATE INDEX ix_settlement_item_settlement ON settlement_item (settlement_id);
 CREATE INDEX ix_settlement_transfer_settlement ON settlement_transfer (settlement_id);
 
