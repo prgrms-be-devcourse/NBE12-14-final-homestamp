@@ -10,177 +10,194 @@
    화면 색은 여기 이름으로만 써요(예: text-ink, text-sub, bg-page, bg-brand-soft, border-warn-line).
    색을 바꾸려면 이 블록의 값만 고치면 화면 전체가 같이 바뀌어요. */
 @theme {
-    /* 화면 폭 기준점: max-md = 760px 이하(휴대폰), max-sm = 640px 이하, lg = 1100px 이상, xl = 1280px 이상 */
-    --breakpoint-sm: 641px;
-    --breakpoint-md: 761px;
-    --breakpoint-lg: 1100px;
-    --breakpoint-xl: 1280px;
+  /* 화면 폭 기준점: max-md = 760px 이하(휴대폰), max-sm = 640px 이하, lg = 1100px 이상, xl = 1280px 이상 */
+  --breakpoint-sm: 641px;
+  --breakpoint-md: 761px;
+  --breakpoint-lg: 1100px;
+  --breakpoint-xl: 1280px;
 
-    --color-page: #f5f7fb;        /* 화면 바탕 */
-    --color-ink: #172033;         /* 제목·본문 진한 글자 */
-    --color-body: #4c5a6e;        /* 설명 글 */
-    --color-sub: #5f6b7d;         /* 보조 글자 */
-    --color-hint: #8d9db2;        /* 흐린 안내 글자 */
-    --color-faint: #9aa6b8;       /* 화살표 아이콘 등 */
-    --color-line: #e5eaf2;        /* 테두리 */
-    --color-line-strong: #c9d6f3; /* 올려 둔(hover) 테두리 */
-    --color-hover: #f7f9fd;       /* 올려 둔 바탕 */
-    --color-soft: #f5f7fb;        /* 연한 상자 바탕 */
-    --color-chip: #eef2f8;        /* 건수 칩 바탕 */
-    --color-tag: #f2f5fa;         /* 작은 꼬리표 바탕 */
+  --color-page: #f5f7fb; /* 화면 바탕 */
+  --color-ink: #172033; /* 제목·본문 진한 글자 */
+  --color-body: #4c5a6e; /* 설명 글 */
+  --color-sub: #5f6b7d; /* 보조 글자 */
+  --color-hint: #8d9db2; /* 흐린 안내 글자 */
+  --color-faint: #9aa6b8; /* 화살표 아이콘 등 */
+  --color-line: #e5eaf2; /* 테두리 */
+  --color-line-strong: #c9d6f3; /* 올려 둔(hover) 테두리 */
+  --color-hover: #f7f9fd; /* 올려 둔 바탕 */
+  --color-soft: #f5f7fb; /* 연한 상자 바탕 */
+  --color-chip: #eef2f8; /* 건수 칩 바탕 */
+  --color-tag: #f2f5fa; /* 작은 꼬리표 바탕 */
 
-    --color-brand: #2457d6;       /* 파랑(현재·선택) */
-    --color-brand-soft: #eef3ff;
-    --color-brand-ink: #1d43a8;
-    --color-brand-line: #d4e0fb;
+  --color-brand: #2457d6; /* 파랑(현재·선택) */
+  --color-brand-soft: #eef3ff;
+  --color-brand-ink: #1d43a8;
+  --color-brand-line: #d4e0fb;
 
-    --color-warn-soft: #fff6e9;   /* 주황(확인 필요 안내) */
-    --color-warn-ink: #9a5b00;
-    --color-warn-line: #f1d9b0;
+  --color-warn-soft: #fff6e9; /* 주황(확인 필요 안내) */
+  --color-warn-ink: #9a5b00;
+  --color-warn-line: #f1d9b0;
 
-    --color-turn: #f08a24;        /* 내 차례 */
-    --color-turn-soft: #fff1e0;
-    --color-turn-ink: #a0560a;
-    --color-turn-bg: #fffaf3;
-    --color-turn-line: #f3c88f;
+  --color-turn: #f08a24; /* 내 차례 */
+  --color-turn-soft: #fff1e0;
+  --color-turn-ink: #a0560a;
+  --color-turn-bg: #fffaf3;
+  --color-turn-line: #f3c88f;
 
-    --color-ok-soft: #e7f6ee;     /* 초록(완료) */
-    --color-ok-ink: #1d7a46;
-    --color-ok-line: #bfe5cf;
+  --color-ok-soft: #e7f6ee; /* 초록(완료) */
+  --color-ok-ink: #1d7a46;
+  --color-ok-line: #bfe5cf;
 
-    --color-danger-soft: #fff0ed; /* 분홍(이견·오류) */
-    --color-danger-ink: #a85f52;
-    --color-danger-line: #f1d8d1;
+  --color-danger-soft: #fff0ed; /* 분홍(이견·오류) */
+  --color-danger-ink: #a85f52;
+  --color-danger-line: #f1d8d1;
 }
 
 @theme inline {
-    --font-heading: var(--font-sans);
-    --font-sans: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
-    --color-sidebar-ring: var(--sidebar-ring);
-    --color-sidebar-border: var(--sidebar-border);
-    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-    --color-sidebar-accent: var(--sidebar-accent);
-    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-    --color-sidebar-primary: var(--sidebar-primary);
-    --color-sidebar-foreground: var(--sidebar-foreground);
-    --color-sidebar: var(--sidebar);
-    --color-chart-5: var(--chart-5);
-    --color-chart-4: var(--chart-4);
-    --color-chart-3: var(--chart-3);
-    --color-chart-2: var(--chart-2);
-    --color-chart-1: var(--chart-1);
-    --color-ring: var(--ring);
-    --color-input: var(--input);
-    --color-border: var(--border);
-    --color-destructive: var(--destructive);
-    --color-accent-foreground: var(--accent-foreground);
-    --color-accent: var(--accent);
-    --color-muted-foreground: var(--muted-foreground);
-    --color-muted: var(--muted);
-    --color-secondary-foreground: var(--secondary-foreground);
-    --color-secondary: var(--secondary);
-    --color-primary-foreground: var(--primary-foreground);
-    --color-primary: var(--primary);
-    --color-popover-foreground: var(--popover-foreground);
-    --color-popover: var(--popover);
-    --color-card-foreground: var(--card-foreground);
-    --color-card: var(--card);
-    --color-foreground: var(--foreground);
-    --color-background: var(--background);
-    --radius-sm: calc(var(--radius) * 0.6);
-    --radius-md: calc(var(--radius) * 0.8);
-    --radius-lg: var(--radius);
-    --radius-xl: calc(var(--radius) * 1.4);
-    --radius-2xl: calc(var(--radius) * 1.8);
-    --radius-3xl: calc(var(--radius) * 2.2);
-    --radius-4xl: calc(var(--radius) * 2.6);
+  --font-heading: var(--font-sans);
+  --font-sans:
+    "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont,
+    "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
 }
 
 :root {
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: #2869e8;
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: #8d9db2;
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
-    --border: #e5eaf2;
-    --input: #dfe7f2;
-    --ring: #8aaff0;
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --radius: 0.625rem;
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.145 0 0);
-    --sidebar-primary: oklch(0.205 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.97 0 0);
-    --sidebar-accent-foreground: oklch(0.205 0 0);
-    --sidebar-border: oklch(0.922 0 0);
-    --sidebar-ring: oklch(0.708 0 0);
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: #2869e8;
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: #8d9db2;
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: #e5eaf2;
+  --input: #dfe7f2;
+  --ring: #8aaff0;
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --radius: 0.625rem;
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
 }
 
 .dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
-    }
+  }
   body {
     @apply bg-background text-foreground;
     margin: 0;
     -webkit-font-smoothing: antialiased;
-    }
+  }
   html {
     @apply font-sans;
-    }
-  #root { @apply min-h-screen; }
-  button, a, input, textarea { -webkit-tap-highlight-color: transparent; }
-  button:not(:disabled) { @apply cursor-pointer; }
+  }
+  #root {
+    @apply min-h-screen;
+  }
+  button,
+  a,
+  input,
+  textarea {
+    -webkit-tap-highlight-color: transparent;
+  }
+  button:not(:disabled) {
+    @apply cursor-pointer;
+  }
   @media (prefers-reduced-motion: reduce) {
-    *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; }
+    *,
+    *::before,
+    *::after {
+      scroll-behavior: auto !important;
+      animation: none !important;
+      transition: none !important;
+    }
   }
 }
