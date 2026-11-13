@@ -77,18 +77,28 @@ jobs:
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
-          pattern='co-authored-by:|generated with \[?(claude|codex|chatgpt|copilot)'
-          found=0
-          if printf '%s' "$PR_BODY" | grep -qiE "$pattern"; then
-            echo "::error::PR 본문에 AI 도구 서명이 있어요. 지워 주세요"
-            found=1
-          fi
+          python3 - <<'PY'
+          import os, re, subprocess, sys
+          # scripts/hooks/guard-bash.mjs의 SIGNATURE_RE와 같은 규칙. 바꿀 때 두 곳을 함께 고친다.
+          # AI 도구 이름이 붙은 서명만 막는다(사람끼리 남긴 Co-authored-by는 막지 않음)
+          tools = "claude|anthropic|codex|openai|chatgpt|copilot|gemini"
+          signature = re.compile(
+              rf"co-authored-by:[^\n]*\b({tools})\b|generated\s+(with|by)\s*\[?\s*({tools})\b", re.I
+          )
+          found = False
+          if signature.search(os.environ.get("PR_BODY") or ""):
+              print("::error::PR 본문에 AI 도구 서명이 있어요. 지워 주세요")
+              found = True
           # 스쿼시 병합 때 커밋 메시지가 본문으로 합쳐지므로 커밋도 본다
-          if git log --format=%B "$BASE_SHA".."$HEAD_SHA" | grep -qiE "$pattern"; then
-            echo "::error::커밋 메시지에 AI 도구 서명이 있어요. 커밋을 고쳐 주세요"
-            found=1
-          fi
-          exit $found
+          log = subprocess.run(
+              ["git", "log", "--format=%B", f"{os.environ['BASE_SHA']}..{os.environ['HEAD_SHA']}"],
+              capture_output=True, text=True, check=True,
+          ).stdout
+          if signature.search(log):
+              print("::error::커밋 메시지에 AI 도구 서명이 있어요. 커밋을 고쳐 주세요")
+              found = True
+          sys.exit(1 if found else 0)
+          PY
 
   # 모든 PR: 규칙 문서가 바뀌면 결정 기록도 (라벨 no-decision이면 건너뜀)
   decision-record:
@@ -182,10 +192,15 @@ jobs:
       - run: npm run format:check
       - run: npm run build
 
+  # 훅에는 Windows 전용 분기(PowerShell 경로, gradlew.bat)가 있고 팀의 절반이 Windows라 두 운영체제에서 돌린다
   hooks:
     needs: changes
     if: needs.changes.outputs.hooks == 'true'
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
