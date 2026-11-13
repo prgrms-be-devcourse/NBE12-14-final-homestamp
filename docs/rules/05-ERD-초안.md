@@ -20,7 +20,7 @@
 | 칸 | 내용 |
 |---|---|
 | `id` | UUID v7(Hibernate가 저장할 때 생성, 앱·화면은 넣지 않음) |
-| `room_record_id` | 호실 기록. 계정·템플릿·삭제 기록·아웃박스·횟수 세기(`rate_counter`)를 뺀 모든 테이블. 보관 삭제와 탈퇴를 호실 기록 하나 기준으로 처리하려고 |
+| `room_record_id` | 호실 기록. 계정·템플릿·법정동(`region`)·삭제 기록·아웃박스·횟수 세기(`rate_counter`)를 뺀 모든 테이블. 보관 삭제와 탈퇴를 호실 기록 하나 기준으로 처리하려고 |
 | `created_at` | 서버 시각(`timestamptz`) |
 | `version` | C 테이블만. 낙관적 잠금 |
 
@@ -63,6 +63,7 @@ CHECK (num_nonnulls(repair_case_id, payment_id, inspection_id, ...) = 1)
 ```mermaid
 erDiagram
     member ||--o{ party : "연결"
+    region ||--o{ room_record : "법정동"
     room_record ||--|{ party : "측 자리 2개"
     room_record ||--o{ room_part : "부위"
     part_template ||--o{ room_part : "복사"
@@ -120,7 +121,8 @@ erDiagram
 | 테이블 | 종류 | 칸 | 제약·메모 |
 |---|---|---|---|
 | `part_template` 부위 템플릿 | 고정 | `zone`, `name`, `sort_order`, `optional` | Flyway 기본 데이터, 6구역 28개 |
-| `room_record` 호실 기록 | C | `sido`, `sigungu`, `dong`(읍·면·동), `alias`, `move_in_date`, `status`(LIVING/ENDED/SETTLED), `created_by_side`, `counterpart_first_connected_at`, `ended_at`, `settled_at`, `autoclose_due_at`, `delete_due_at`, `inactivity_notice_due_at`(마지막 당사자 행동 시각은 이 행에 두지 않고 `action`의 `(room_record_id, created_at)` 인덱스로 계산. 모든 행동이 이 행의 version을 올리면 같은 호실의 다른 건끼리 충돌함) | `counterpart_first_connected_at`이 NULL이면 탈퇴 때 통째 삭제. **`joined_into_id`, `joined_at`**: 합류 전 기록이면 합류한 호실 기록을 가리킴(새 행동 없음, 예외는 `ERASE_PHOTO`, 쓴 사람만 읽기, 삭제는 그 기록을 따라감), `CHECK(joined_into_id <> id)`, 합류한 기록은 다시 합류할 수 없음(서비스 검사). 기한 칸은 사건이 생길 때 저장. `move_in_date`는 고치기가 반영될 때만 바뀜(같이 확인한 뒤 고친 값은 내가 고친 내용 `correction_request`에) |
+| `region` 법정동 | 고정 | `code`(법정동 코드 `char(10)`, PK), `sido`, `sigungu`, `dong`, `active` | Flyway 기본 데이터(별도 V 파일): 행정표준코드관리시스템 법정동코드 전체자료에서 지금 있는 읍·면·동만(리·행정동 제외). 없어진 동은 지우지 않고 `active = false`(가리키는 호실 기록이 있을 수 있어서). 검색용 인덱스 `(dong)`, 단계 선택은 코드 앞자리(시·도 2자리, 시·군·구 5자리)로 |
+| `room_record` 호실 기록 | C | `region_code`(`REFERENCES region(code)`, NOT NULL, 주소는 이 칸 하나. 이름은 `region`에서 읽음), `alias`, `move_in_date`, `status`(LIVING/ENDED/SETTLED), `created_by_side`, `counterpart_first_connected_at`, `ended_at`, `settled_at`, `autoclose_due_at`, `delete_due_at`, `inactivity_notice_due_at`(마지막 당사자 행동 시각은 이 행에 두지 않고 `action`의 `(room_record_id, created_at)` 인덱스로 계산. 모든 행동이 이 행의 version을 올리면 같은 호실의 다른 건끼리 충돌함) | `counterpart_first_connected_at`이 NULL이면 탈퇴 때 통째 삭제. **`joined_into_id`, `joined_at`**: 합류 전 기록이면 합류한 호실 기록을 가리킴(새 행동 없음, 예외는 `ERASE_PHOTO`, 쓴 사람만 읽기, 삭제는 그 기록을 따라감), `CHECK(joined_into_id <> id)`, 합류한 기록은 다시 합류할 수 없음(서비스 검사). 기한 칸은 사건이 생길 때 저장. `move_in_date`는 고치기가 반영될 때만 바뀜(같이 확인한 뒤 고친 값은 내가 고친 내용 `correction_request`에) |
 | `party` 당사자(측 자리) | C | `side`(TENANT/LANDLORD), `member_id`, `invite_phone`, `status`(EMPTY/NUMBER_ONLY/INVITED/CONNECTED/SHARING_STOPPED/REJECTED/WITHDRAWN), `connected_at`, `sharing_stopped_at`(공유 그만두기 시각, 그 사람이 다시 공유하면 NULL) | `UNIQUE(room_record_id, side)`, `UNIQUE(room_record_id, member_id)`(불변식 13). 자기 번호 초대 금지는 서비스 검사. `invite_phone`은 문자를 보내야 해서 평문(RDS 저장소 암호화), 연결·수신 거부·탈퇴 때 NULL |
 | `room_part` 호실 부위 | C | `template_id`, `zone`, `name`, `sort_order`, `enabled`, `hidden_at` | 지우지 않고 숨기기만 |
 | `link` 링크 | C | `kind`(INVITE/SETTLEMENT_INVITE), `party_id`(받는 자리), `repair_case_id` / `inspection_id`(공유한 기록, 없으면 호실 초대 화면), `token_hash`, `issued_by_member_id`, `invalidated_at`, `invalidated_reason`, `failed_view_count` | `UNIQUE(token_hash)`. 무효가 되면 다시 유효해지지 않음(불변식 7) |
