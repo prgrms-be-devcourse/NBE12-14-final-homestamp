@@ -9,7 +9,7 @@ import com.tngtech.archunit.junit.ArchTest;
 import com.tngtech.archunit.lang.ArchRule;
 
 /**
- * 패키지 부르는 방향 검사. 규칙은 docs/planning/09-프로젝트-구조.md 3장.
+ * 패키지 부르는 방향 검사. 규칙은 docs/rules/09-프로젝트-구조.md 3장.
  *
  * <p>패키지는 전체 경로로 쓴다. {@code "..link.."}처럼 짧게 쓰면 다른 라이브러리의 같은 이름 패키지에도 걸린다. 규칙은 "이 도메인에 의존하지
  * 않는다"로만 쓴다(허용 목록으로 쓰면 라이브러리를 더할 때마다 실패한다).
