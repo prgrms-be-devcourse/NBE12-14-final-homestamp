@@ -46,6 +46,23 @@ PR 제목과 본문 초안을 만든다. **사람이 승인해야만** push하�
 - `closes #번호`가 있으면 PR이 `dev`(기본 브랜치)에 머지될 때 이슈가 자동으로 닫히고, 이슈 화면에도 PR이 연결돼 보인다
 - 훅 등록 파일(`.claude/settings.json`, `.codex/hooks.json`)이 바뀌었으면 PR 포인트에 `Codex 사용자: /hooks에서 다시 신뢰 필요` 한 줄을 넣는다
 
+## 라벨
+
+PR 제목의 타입과 **같은 이름의 라벨 하나**를 붙인다. 라벨은 저장소에 미리 만들어 둔 것만 쓴다(`gh label list`로 확인, 없으면 만들지 말고 알린다).
+
+| 제목 타입 | 라벨 |
+|---|---|
+| `feat` | `feat` |
+| `fix` | `fix` |
+| `test` | `test` |
+| `docs` | `docs` |
+| `refactor` | `refactor` |
+| `chore` | `chore` |
+
+- **`style`**: UI 스타일·CSS만 바꾸는 일이면 타입 라벨에 **더해서** 붙인다(제목 타입은 위 여섯 개 중 하나, `style`은 커밋 타입이 아님)
+- 라벨은 초안에 `라벨: feat`처럼 보여 주고 승인받는다
+- 규칙 문서(`docs/rules/`)만 문장을 다듬었고 뜻이 바뀌지 않아 `docs/decisions.md`에 줄이 없으면 `no-decision`도 제안한다(CI 결정 기록 검사가 건너뜀)
+
 ## 리뷰어 정하기
 
 바뀐 파일에서 **누구의 것을 건드렸는지** 찾아 리뷰어를 제안한다. **주인은 `docs/rules/07-WBS.md` 0장 역할 표 하나만** 기준이다(주인 표를 두 곳에 두지 않는다). 아래는 07의 패키지·폴더를 파일·테이블·기능 ID에 대응시키는 법이다.
@@ -94,6 +111,7 @@ PR 제목과 본문 초안을 만든다. **사람이 승인해야만** push하�
 ```
 제목: feat: 관리자 로그인 추가
 base: dev ← feat/back/admin-login   (드래프트면 "Draft PR")
+라벨: feat
 리뷰어: @jinni1 (05 2-5 payment 칸 변경)   (없으면 줄 생략)
 
 (본문 마크다운)
@@ -105,7 +123,7 @@ base: dev ← feat/back/admin-login   (드래프트면 "Draft PR")
 2. `git push -u origin <현재 브랜치>`
 3. PR 생성 (드래프트로 해 달라고 했으면 `--draft`를 붙인다)
    ```
-   gh pr create --base dev --head <현재 브랜치> --title "<제목>" [--reviewer <아이디>,<아이디>] --body-file - <<'BODY'
+   gh pr create --base dev --head <현재 브랜치> --title "<제목>" --label <라벨>[,style] [--reviewer <아이디>,<아이디>] --body-file - <<'BODY'
    <본문>
    BODY
    ```
@@ -118,7 +136,7 @@ base: dev ← feat/back/admin-login   (드래프트면 "Draft PR")
 1. 지금 본문과 PR의 커밋 목록을 비교해, 본문에 아직 없는 변경을 찾는다
 2. **사람이 쓴 내용은 그대로 둔다** — 궁금한 점, 체크한 체크박스, 사람이 고친 문장. 빠진 변경만 해당 칸에 줄을 더한다
 3. 바뀌는 줄만 보여 준다 (`+ 추가할 줄`, `- 지울 줄`). 지울 줄은 이유도 적는다
-4. 사람이 "갱신해줘"라고 승인하면: 아직 push하지 않은 커밋이 있으면 `git push` → `gh pr edit <번호> --body-file -` (heredoc으로 본문 전달)
+4. 사람이 "갱신해줘"라고 승인하면: 아직 push하지 않은 커밋이 있으면 `git push` → `gh pr edit <번호> --body-file -` (heredoc으로 본문 전달). 라벨이 없거나 다르면 `--add-label <라벨>`도 함께
 5. PR URL을 보여 준다
 
 제목은 사람이 바꿔 달라고 할 때만 `gh pr edit <번호> --title`로 바꾼다.
