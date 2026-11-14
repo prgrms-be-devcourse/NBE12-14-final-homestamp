@@ -46,11 +46,55 @@ PR 제목과 본문 초안을 만든다. **사람이 승인해야만** push하�
 - `closes #번호`가 있으면 PR이 `dev`(기본 브랜치)에 머지될 때 이슈가 자동으로 닫히고, 이슈 화면에도 PR이 연결돼 보인다
 - 훅 등록 파일(`.claude/settings.json`, `.codex/hooks.json`)이 바뀌었으면 PR 포인트에 `Codex 사용자: /hooks에서 다시 신뢰 필요` 한 줄을 넣는다
 
+## 리뷰어 정하기
+
+바뀐 파일에서 **누구의 것을 건드렸는지** 찾아 리뷰어를 제안한다. **주인은 `docs/rules/07-WBS.md` 0장 역할 표 하나만** 기준이다(주인 표를 두 곳에 두지 않는다). 아래는 07의 패키지·폴더를 파일·테이블·기능 ID에 대응시키는 법이다.
+
+### 1. 필요한 주인 모으기
+
+| 바뀐 것 | 주인 찾는 법 |
+|---|---|
+| 백엔드 도메인 패키지, `global/`, 프론트 `front/src/features/<도메인>/`, CI, 하네스 | `.github/CODEOWNERS`. PR을 열면 GitHub가 **자동으로** 요청한다 |
+| `docs/rules/05-ERD-초안.md`, `back/src/main/resources/db/migration/V*.sql` | 바뀐 **테이블 이름**으로 아래 "테이블 → 주인" 표를 본다(절 이름으로 정하지 않는다. 예: `link`는 05 2-2에 있지만 D) |
+| `docs/rules/06-요구사항-명세.md` | 바뀐 기능 ID·수용 기준·API의 **앞글자**로 아래 "기능 ID → 주인" 표를 본다 |
+| 여러 도메인이 쓰는 것: 공개 인터페이스(`ActionWriter`, `Correctable`, 응답 공통 처리), 공통 DTO, 프론트 `components/common` | **만든 주인 + 쓰는 쪽 주인 모두** |
+
+**테이블 → 주인** (07 0장 패키지 기준)
+
+| 주인 | 테이블 |
+|---|---|
+| A (`member` `auth` `room` `inspection`) | `member`, `refresh_token`, `phone_verification`, `member_acknowledgement`, `region`, `part_template`, `room_record`, `party`, `room_part`, `inspection`, `inspection_item`, `inspection_item_version` |
+| B (`action` `repair` `correction`) | `action`, `repair_case`, `repair_content`, `cause_note`, `progress_note`, `progress_note_response`, `correction_request` |
+| C (`proposal` `payment` `settlement` `photo`) | `proposal`, `proposal_line`, `payment`, `payment_version`, `settlement`, `settlement_item`, `settlement_transfer`, `settlement_transfer_version`, `photo`, `photo_visibility` |
+| D (`notification` `link` `respond`) | `response_request`, `notice`, `outbox`, `in_app_notification`, `link`, `sms_opt_out`(수신 거부는 통지 규칙, 03 K) |
+| **여러 주인** | `rate_counter`: 바뀐 `counter_key`를 쓰는 쪽(인증·로그인 = A, 업로드 = C, 문자 한도·다시 요청 = D) |
+| **리뷰어 확인 필요** | `deletion_log`(보관 삭제·탈퇴, 07 0장에 주인 없음), 위 표에 없는 새 테이블 |
+
+**기능 ID → 주인** (07 0장 도메인 기준)
+
+| 앞글자 | 주인 |
+|---|---|
+| `ACC`·`ROOM`·`INSP` | A |
+| `REP` | B |
+| `MONEY`·`SET`·`PHO` | C |
+| `NOTI`·`LINK` | D |
+| `CONS`·`KEEP`·`DL`·`OPS`·`SLO`, 화면 ID `S-`, 07 0장에 없는 앞글자 | **리뷰어 확인 필요** (07 0장에 주인이 생기면 이 표에 옮긴다) |
+
+### 2. 빼고 비교하기
+
+1. 위에서 모은 주인 목록에서 **PR을 올리는 사람 자신만** 뺀다. 자기가 만든 공개 인터페이스를 바꿨어도 **쓰는 쪽 주인은 남긴다**
+2. CODEOWNERS로 자동 요청될 사람은 `--reviewer`에 다시 넣지 않는다
+3. "리뷰어 확인 필요"가 하나라도 있으면 리뷰어를 지어내지 않고 사람에게 묻는다
+
+- 주인의 GitHub 아이디는 `.github/CODEOWNERS` 머리 주석에서 읽는다
+- 결과 모양에 `리뷰어: @아이디 (이유)`로 보여 주고, PR 포인트에도 "○○ 테이블이 바뀌어 @아이디 확인 부탁드려요" 한 줄을 넣는다
+
 ## 결과 모양
 
 ```
 제목: feat: 관리자 로그인 추가
 base: dev ← feat/back/admin-login   (드래프트면 "Draft PR")
+리뷰어: @jinni1 (05 2-5 payment 칸 변경)   (없으면 줄 생략)
 
 (본문 마크다운)
 ```
@@ -61,7 +105,7 @@ base: dev ← feat/back/admin-login   (드래프트면 "Draft PR")
 2. `git push -u origin <현재 브랜치>`
 3. PR 생성 (드래프트로 해 달라고 했으면 `--draft`를 붙인다)
    ```
-   gh pr create --base dev --head <현재 브랜치> --title "<제목>" --body-file - <<'BODY'
+   gh pr create --base dev --head <현재 브랜치> --title "<제목>" [--reviewer <아이디>,<아이디>] --body-file - <<'BODY'
    <본문>
    BODY
    ```

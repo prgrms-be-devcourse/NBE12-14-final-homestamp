@@ -67,5 +67,17 @@ back/src/main/resources/db/migration/V1__init.sql:10 — dev에 들어간 마이
 
 ### PR 번호로 봤을 때 덧붙일 것
 
+**주인 확인**: `gh pr view <번호> --json author,reviewRequests,reviews`로 작성자와 리뷰어를 본다.
+1. 바뀐 파일에서 **필요한 주인을 모두** 모은다. 기준은 `pr-body` 스킬 "리뷰어 정하기"의 1단계(CODEOWNERS, 테이블 → 주인, 기능 ID → 주인, 공개 인터페이스·공통 DTO는 만든 주인 + 쓰는 쪽 주인)
+2. 그중 **작성자만** 뺀다. 작성자가 자기 것(예: `ActionWriter`)을 바꿨어도 쓰는 쪽 주인은 남는다
+3. 남은 주인 중 리뷰 요청(`reviewRequests`)에도 리뷰(`reviews`)에도 없는 사람이 있으면 결과 맨 위에 한 줄 적는다. "리뷰어 확인 필요"로 분류된 것은 그대로 적는다
+
+```
+주인 확인 필요: 05 2-3 action 칸 변경 — B(@yoo-sihun) 리뷰어 없음
+주인 확인 필요: ActionWriter 시그니처 변경 — 쓰는 쪽 A·C·D 중 @jinni1 리뷰어 없음
+리뷰어 확인 필요: deletion_log 변경 (07 0장에 주인 없음)
+```
+
+
 결과 아래에 **PR 코멘트 초안**을 한 덩어리로 붙인다 (위 목록을 PR 작성자가 읽기 쉬운 문장으로, AI 도구 서명 없이).
 이 스킬은 코멘트를 올리지 않는다. 사람이 초안을 보고 승인하면, 메인 에이전트나 사람이 `gh pr review <번호> --comment --body-file -`로 올린다.

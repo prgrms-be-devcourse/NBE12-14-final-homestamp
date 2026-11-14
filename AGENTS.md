@@ -26,6 +26,7 @@ Java 25 · Spring Boot 4.1 · PostgreSQL · Flyway | React 19 · Vite · TypeScr
 - 브랜치·커밋은 `git-convention` 스킬로, 이슈는 `issue` 스킬로, PR은 `pr-body` 스킬로 만든다 (모두 사람이 부를 때만)
 - 이슈는 `.github/ISSUE_TEMPLATE/task.md`를 따르고, PR 본문의 `closes #번호`로 이슈와 연결한다
 - PR 본문은 `.github/pull_request_template.md`를 따른다
+- 다른 도메인의 코드나 공통 계약(05 ERD 테이블·06 API·`V*.sql`·공개 인터페이스·공통 DTO)을 바꾸면 그 주인을 리뷰어로 넣는다. 주인은 `docs/rules/07-WBS.md` 0장 기준. 도메인 코드(백엔드 도메인 패키지·`global/`, 프론트 `front/src/features/<도메인>/`)는 `.github/CODEOWNERS`가 자동으로 요청하고, 공통 계약은 `pr-body` 스킬이 찾아 제안한다(작성자만 빼고 만든 주인 + 쓰는 쪽 주인)
 - 자바는 구글 자바 스타일, 프론트는 Prettier. 포매터가 맞춘다 (커밋 전에 `cd back && ./gradlew spotlessApply`, `cd front && npm run format`. IDE 설정은 `docs/setup.md` 6장)
 
 ## AI가 지킬 것

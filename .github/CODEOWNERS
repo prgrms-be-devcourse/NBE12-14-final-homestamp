@@ -1,0 +1,62 @@
+# 도메인 주인 = 그 도메인 코드가 바뀐 PR의 리뷰어 (docs/rules/07-WBS.md 0장, 09-프로젝트-구조.md 2장)
+# PR을 열면 GitHub가 여기 적힌 주인을 리뷰어로 자동 요청한다. 자기 PR이면 요청되지 않는다.
+# 경로로 나눌 수 없는 공통 계약(05 ERD·06 API·V 파일·공통 DTO)은 pr-body 스킬이 담당자를 찾아 제안한다.
+# 대상: 백엔드 도메인 패키지(main·test)와 프론트 도메인 폴더(front/src/features/<도메인>/, 09 5장), global, CI, 하네스.
+# 프론트 공통 부품(components/common·ui, pages, api, lib)은 여러 도메인이 쓰므로 넣지 않는다(pr-body 스킬이 제안).
+# 같은 파일에 여러 줄이 맞으면 아래쪽 줄이 이긴다(global/ 전체 → global/security·global/scheduler 순서).
+#
+# A 황희리 @cheeerry0 · B 유시헌 @yoo-sihun · C 이세진 @jinni1 · D·운영 백혜승 @dewyflowers
+
+# global 전체: 모두가 쓰는 바닥 층(ErrorCode·설정 등). 주로 맡는 A·D가 함께 리뷰 (09 2장 공통 줄, 07 0장)
+/back/src/*/java/com/chilsuitjo/back/global/          @cheeerry0 @dewyflowers
+
+# A: 회원·인증·호실·점검, 보안
+/back/src/*/java/com/chilsuitjo/back/member/          @cheeerry0
+/back/src/*/java/com/chilsuitjo/back/auth/            @cheeerry0
+/back/src/*/java/com/chilsuitjo/back/room/            @cheeerry0
+/back/src/*/java/com/chilsuitjo/back/inspection/      @cheeerry0
+/back/src/*/java/com/chilsuitjo/back/global/security/ @cheeerry0
+
+# B: 기록과 수리
+/back/src/*/java/com/chilsuitjo/back/action/          @yoo-sihun
+/back/src/*/java/com/chilsuitjo/back/repair/          @yoo-sihun
+/back/src/*/java/com/chilsuitjo/back/correction/      @yoo-sihun
+
+# C: 돈과 증빙
+/back/src/*/java/com/chilsuitjo/back/proposal/        @jinni1
+/back/src/*/java/com/chilsuitjo/back/payment/         @jinni1
+/back/src/*/java/com/chilsuitjo/back/settlement/      @jinni1
+/back/src/*/java/com/chilsuitjo/back/photo/           @jinni1
+
+# D: 기다림·통지·링크, 예약 작업
+/back/src/*/java/com/chilsuitjo/back/notification/    @dewyflowers
+/back/src/*/java/com/chilsuitjo/back/link/            @dewyflowers
+/back/src/*/java/com/chilsuitjo/back/respond/         @dewyflowers
+/back/src/*/java/com/chilsuitjo/back/global/scheduler/ @dewyflowers
+
+# 프론트 도메인 폴더 (09 5장 features/<도메인>/, 백엔드 패키지 이름과 같게)
+/front/src/features/member/                           @cheeerry0
+/front/src/features/auth/                             @cheeerry0
+/front/src/features/room/                             @cheeerry0
+/front/src/features/inspection/                       @cheeerry0
+/front/src/features/action/                           @yoo-sihun
+/front/src/features/repair/                           @yoo-sihun
+/front/src/features/correction/                       @yoo-sihun
+/front/src/features/proposal/                         @jinni1
+/front/src/features/payment/                          @jinni1
+/front/src/features/settlement/                       @jinni1
+/front/src/features/photo/                            @jinni1
+/front/src/features/notification/                     @dewyflowers
+/front/src/features/link/                             @dewyflowers
+/front/src/features/respond/                          @dewyflowers
+
+# 운영: CI/CD·배포
+/.github/workflows/                                   @dewyflowers
+/infra/                                               @dewyflowers
+
+# 하네스(AI 규칙·스킬·훅)
+/AGENTS.md                                            @yoo-sihun
+/.agents/                                             @yoo-sihun
+/.claude/                                             @yoo-sihun
+/.codex/                                              @yoo-sihun
+/scripts/hooks/                                       @yoo-sihun
