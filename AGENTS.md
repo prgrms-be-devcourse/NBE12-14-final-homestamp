@@ -11,7 +11,7 @@ Java 25 · Spring Boot 4.1 · PostgreSQL · Flyway | React 19 · Vite · TypeScr
 - `docs/` 읽는 순서·주제별 기준 문서는 `docs/README.md` · 규칙 문서 `docs/rules/` · 결정 기록 (`docs/decisions.md`) · AI 실수 기록 (`docs/failure-memory.md`) · 처음 설정 (`docs/setup.md`)
 
 ## 자주 쓰는 명령
-- 백엔드: `cd back && ./gradlew build` / `./gradlew test` (Windows는 `gradlew.bat`)
+- 백엔드: `cd back && ./gradlew bootRun`(로컬 DB가 Docker로 같이 뜸, `docs/setup.md` 7장) / `./gradlew build` / `./gradlew test` (Windows는 `gradlew.bat`)
 - 프론트: `cd front && npm run dev` / `npm run build` / `npm run lint` / `npm run format`
 - 훅 테스트: `node --test scripts/hooks/hooks.test.mjs` (훅을 고치면 꼭 돌린다)
 
