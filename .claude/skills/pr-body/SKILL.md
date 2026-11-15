@@ -123,7 +123,7 @@ base: dev ← feat/back/admin-login   (드래프트면 "Draft PR")
 2. `git push -u origin <현재 브랜치>`
 3. PR 생성 (드래프트로 해 달라고 했으면 `--draft`를 붙인다)
    ```
-   gh pr create --base dev --head <현재 브랜치> --title "<제목>" --label <라벨>[,style] [--reviewer <아이디>,<아이디>] --body-file - <<'BODY'
+   gh pr create --base dev --head <현재 브랜치> --title "<제목>" --label <라벨>[,style][,no-decision] [--reviewer <아이디>,<아이디>] --body-file - <<'BODY'
    <본문>
    BODY
    ```
@@ -136,7 +136,7 @@ base: dev ← feat/back/admin-login   (드래프트면 "Draft PR")
 1. 지금 본문과 PR의 커밋 목록을 비교해, 본문에 아직 없는 변경을 찾는다
 2. **사람이 쓴 내용은 그대로 둔다** — 궁금한 점, 체크한 체크박스, 사람이 고친 문장. 빠진 변경만 해당 칸에 줄을 더한다
 3. 바뀌는 줄만 보여 준다 (`+ 추가할 줄`, `- 지울 줄`). 지울 줄은 이유도 적는다
-4. 사람이 "갱신해줘"라고 승인하면: 아직 push하지 않은 커밋이 있으면 `git push` → `gh pr edit <번호> --body-file -` (heredoc으로 본문 전달). 라벨이 없거나 다르면 `--add-label <라벨>`도 함께
+4. 사람이 "갱신해줘"라고 승인하면: 아직 push하지 않은 커밋이 있으면 `git push` → `gh pr edit <번호> --body-file -` (heredoc으로 본문 전달). 라벨이 없거나 다르면 `--add-label <라벨>[,style][,no-decision]`도 함께(`no-decision`은 위 "라벨" 절의 조건일 때만)
 5. PR URL을 보여 준다
 
 제목은 사람이 바꿔 달라고 할 때만 `gh pr edit <번호> --title`로 바꾼다.
