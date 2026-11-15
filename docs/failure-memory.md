@@ -21,6 +21,12 @@ AI(Claude·Codex)가 **반복한 실수**나 **위험했던 실수**를 남긴�
 
 ## 기록
 
+### 2026-11-15 apply 뒤 plan 확인을 빼먹어 서버를 다시 만들 뻔함
+- 무슨 일: EC2에 associate_public_ip_address = false를 적고 탄력적 IP를 붙였는데, AWS가 그 칸을 true로 보여 줘서 다음 plan이 EC2를 지우고 다시 만들려 했다. EC2 apply 뒤 plan으로 "No changes"를 확인하지 않아 다음 단계에서야 보였다
+- 왜 문제: 모르고 apply하면 서버 디스크(인증서, 이미지, 설정)가 사라지고 서비스가 멈춘다
+- 앞으로: apply 뒤에는 꼭 plan을 다시 돌려 No changes를 확인하고, plan에 "must be replaced"·"destroy"가 있으면 이유를 찾기 전에는 apply하지 않는다. 만들 때만 정하는 칸은 AWS가 나중에 값을 바꿔 보여 줄 수 있는지 먼저 본다
+- 막는 장치: 없음
+
 ### 2026-11-15 AWS 설명 칸에 허용되지 않는 글자를 넣어 apply가 중간에 실패함
 - 무슨 일: 보안 그룹 규칙 description에 "Let's Encrypt"의 작은따옴표를 넣었는데, terraform validate는 통과하고 apply에서 AWS가 400으로 거절해 14개 중 2개가 만들어지지 않았다
 - 왜 문제: validate·plan으로는 안 걸리고 apply 중간에 실패한다. 상태가 반쯤 만들어진 채로 남는다
