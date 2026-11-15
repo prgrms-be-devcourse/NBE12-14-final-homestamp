@@ -14,4 +14,5 @@
 - [ ] 바뀐 도메인 테스트 통과
 - [ ] ./gradlew spotlessApply 했나요?
 - [ ] 동작·규칙을 바꿨다면 기준 문서(`docs/rules/` 03·05·06 등)와 `docs/decisions.md`도 고쳤나요?
+- [ ] 다른 도메인 코드나 공통 계약(05 ERD·06 API·V 파일·공통 DTO·공개 인터페이스)을 바꿨다면 그 주인을 리뷰어로 넣었나요?
 - [ ] code-reviewer 결과를 확인했나요?
