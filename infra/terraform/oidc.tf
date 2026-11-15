@@ -10,6 +10,7 @@
 # 저장소 이름을 바꾸거나 같은 이름으로 새 저장소를 만들어도 이 역할을 맡지 못한다
 locals {
   github_sub_prefix = "repo:prgrms-be-devcourse@88020948/NBE12-14-final-homestamp@1453694560"
+  tf_state_key      = "tfstate/homestamp.tfstate" # backend.tf의 key와 같아야 한다(backend 블록은 변수를 못 써서 여기에 한 번 더 적음)
 }
 
 # 계정에 하나뿐인 공용 자원. 다른 팀도 쓸 수 있어 과정 담당자 확인 없이 지우지 않는다(04 13-1)
@@ -63,11 +64,18 @@ resource "aws_iam_role_policy_attachment" "tf_plan_readonly" {
 }
 
 data "aws_iam_policy_document" "tf_plan" {
-  # 상태 파일 읽기 + 잠금 파일(.tflock) 만들고 지우기
+  # 상태 파일(장부)은 읽기만. plan 역할로 장부를 덮어쓰거나 지울 수 없게(PR #43 리뷰)
   statement {
-    sid       = "StateReadAndLock"
+    sid       = "StateReadOnly"
+    actions   = ["s3:GetObject"]
+    resources = ["arn:aws:s3:::${local.ops_bucket}/${local.tf_state_key}"]
+  }
+
+  # 잠금 파일(use_lockfile이 만드는 <장부>.tflock)만 만들고 지운다
+  statement {
+    sid       = "LockFileOnly"
     actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
-    resources = ["arn:aws:s3:::${local.ops_bucket}/tfstate/*"]
+    resources = ["arn:aws:s3:::${local.ops_bucket}/${local.tf_state_key}.tflock"]
   }
 
   # ReadOnlyAccess는 계정의 모든 버킷 파일을 읽을 수 있다(다른 팀 버킷, 우리 사진, 감사 기록 포함).
