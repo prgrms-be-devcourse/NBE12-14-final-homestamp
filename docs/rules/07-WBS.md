@@ -22,6 +22,9 @@
 | C | 이세진 | 돈과 증빙 (`proposal`, `payment`, `settlement`, `photo`) | B |
 | D | 백혜승 | 기다림·통지·링크 (`notification`, `link`, `respond`, `global/scheduler`) | A |
 | 운영 | 백혜승 | CI/CD·배포 (`infra/`, `.github/workflows/`) | + 1명 |
+| 하네스 | 유시헌 | AI 규칙·스킬·훅 (`AGENTS.md`, `.agents/`, `.claude/`, `.codex/`, `scripts/hooks/`) | + 1명 |
+
+`global/`의 나머지(`error`·`config` 등)와 프론트 공통 부품은 주인을 두지 않고 다 같이 맡아요(아래 "다 같이"). 이 경로가 바뀐 PR의 리뷰어는 `pr-body` 스킬이 "리뷰어 확인 필요"로 물어요.
 
 ---
 

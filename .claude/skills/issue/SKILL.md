@@ -30,10 +30,26 @@ disable-model-invocation: true
 
 4. 초안과 함께 이 작업에 맞는 **브랜치 이름**도 `git-convention` 규칙으로 제안한다
 
+## 라벨
+
+제목의 타입과 **같은 이름의 라벨 하나**를 붙인다. 라벨은 저장소에 미리 만들어 둔 것만 쓴다(`gh label list`로 확인, 없으면 만들지 말고 알린다).
+
+| 제목 타입 | 라벨 |
+|---|---|
+| `feat` | `feat` |
+| `fix` | `fix` |
+| `test` | `test` |
+| `docs` | `docs` |
+| `refactor` | `refactor` |
+| `chore` | `chore` |
+
+- **`style`**: UI 스타일·CSS만 바꾸는 일이면 타입 라벨에 **더해서** 붙인다(제목 타입은 위 여섯 개 중 하나, `style`은 커밋 타입이 아님)
+- 라벨은 초안에 `라벨: feat`처럼 보여 주고 승인받는다
+
 ## 올리기 (사람이 "올려줘"라고 승인한 뒤에만)
 
 ```
-gh issue create --title "<제목>" --body-file - <<'BODY'
+gh issue create --title "<제목>" --label <라벨>[,style] --body-file - <<'BODY'
 <본문>
 BODY
 ```
