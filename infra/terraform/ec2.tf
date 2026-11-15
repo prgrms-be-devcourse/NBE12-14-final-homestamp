@@ -55,7 +55,8 @@ resource "aws_instance" "web" {
   vpc_security_group_ids = [aws_security_group.web.id]
   iam_instance_profile   = aws_iam_instance_profile.web.name
 
-  associate_public_ip_address = false # 탄력적 IP를 붙인다
+  # 자동 공인 IP는 서브넷(map_public_ip_on_launch = false)이 막는다. 여기서 false로 적으면
+  # 탄력적 IP를 붙인 뒤 AWS가 true로 보여 줘서 Terraform이 서버를 다시 만들려 한다(아래 ignore_changes)
 
   # CPU 크레딧을 다 쓰면 느려질 뿐 추가 요금은 내지 않게(unlimited는 넘친 만큼 요금)
   credit_specification {
@@ -87,7 +88,8 @@ resource "aws_instance" "web" {
   lifecycle {
     # 새 이미지가 나와도, 시작 스크립트를 고쳐도 서버를 다시 만들지 않는다.
     # 시작 스크립트는 처음 켤 때만 돈다. 이미지를 올릴 때는 일부러 바꾼다
-    ignore_changes = [ami, user_data]
+    # associate_public_ip_address: 탄력적 IP가 붙으면 AWS가 true로 바꿔 보여 준다(만들 때만 정하는 칸)
+    ignore_changes = [ami, user_data, associate_public_ip_address]
   }
 }
 
