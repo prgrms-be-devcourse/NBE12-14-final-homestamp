@@ -125,6 +125,7 @@ base: dev ← feat/back/admin-login   (드래프트면 "Draft PR")
 3. PR 생성 (드래프트로 해 달라고 했으면 `--draft`를 붙인다)
    ```
    gh pr create --base dev --head <현재 브랜치> --title "<제목>" --label <라벨>[,style][,no-decision] [--reviewer <아이디>,<아이디>] --body-file - <<'BODY'
+   gh pr create --base dev --head <현재 브랜치> --title "<제목>" [--reviewer <아이디>,<아이디>] --body-file - <<'BODY'
    <본문>
    BODY
    ```
