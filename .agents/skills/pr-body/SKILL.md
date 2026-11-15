@@ -54,7 +54,8 @@ PR 제목과 본문 초안을 만든다. **사람이 승인해야만** push하�
 
 | 바뀐 것 | 주인 찾는 법 |
 |---|---|
-| 백엔드 도메인 패키지, `global/`, 프론트 `front/src/features/<도메인>/`, CI, 하네스 | `.github/CODEOWNERS`. PR을 열면 GitHub가 **자동으로** 요청한다 |
+| 백엔드 도메인 패키지, `global/security`·`global/scheduler`, 프론트 `front/src/features/<도메인>/`, CI, 하네스 | `.github/CODEOWNERS`. PR을 열면 GitHub가 **자동으로** 요청한다 |
+| `global/`의 나머지(`error`·`config` 등 모두가 쓰는 바닥 층, 07 "다 같이"), 프론트 공통 부품(`components/common`·`ui`, `pages`, `api`, `lib`) | **리뷰어 확인 필요** (07 0장에 주인이 없음) |
 | `docs/rules/05-ERD-초안.md`, `back/src/main/resources/db/migration/V*.sql` | 바뀐 **테이블 이름**으로 아래 "테이블 → 주인" 표를 본다(절 이름으로 정하지 않는다. 예: `link`는 05 2-2에 있지만 D) |
 | `docs/rules/06-요구사항-명세.md` | 바뀐 기능 ID·수용 기준·API의 **앞글자**로 아래 "기능 ID → 주인" 표를 본다 |
 | 여러 도메인이 쓰는 것: 공개 인터페이스(`ActionWriter`, `Correctable`, 응답 공통 처리), 공통 DTO, 프론트 `components/common` | **만든 주인 + 쓰는 쪽 주인 모두** |
