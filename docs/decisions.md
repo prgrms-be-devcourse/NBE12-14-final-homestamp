@@ -107,3 +107,4 @@
 | 2026-11-16 | 지적된 칼럼 중 confirm_strength·solo·confirmed_content_id·failed_view_count·photo.sort_order는 용도를 명시해 유지한다. settlement.opened_at은 created_at으로 대신하고 repair_case.related_case_id는 제거한다 | 03·06이 사용하는 값을 일괄 제거하지 않고 중복 시각과 요구사항에 없는 별개 하자 연결만 줄임 |
 | 2026-11-16 | 전화번호 저장·비교와 번호 HMAC 입력은 국내 휴대폰 번호를 숫자만 남긴 같은 형식으로 정규화한다 | 표기 차이로 번호 유니크·수신 거부·발송 한도를 우회하는 일을 방지 |
 | 2026-11-16 | 정산 항목의 부위는 수동 항목만 저장하고 수리 건 후보는 원래 수리 건의 부위를 따른다. 묶음 알림의 group_key·group_count는 함께 존재하고 일반 알림에서는 둘 다 비운다 | 같은 정보의 출처가 갈리거나 불완전한 묶음 알림 상태가 생기는 일을 방지 |
+| 2026-11-16 | 도메인 안 폴더를 `api/application/domain/infra` 네 층에서 `controller/dto/service/entity/rule/repository` 여섯 폴더로 바꾼다. 엔티티는 `entity/`, 상태 전이(`*Transitions`)·상태 값·enum·도메인 이벤트는 `rule/`, Repository와 외부 호출은 `repository/`에 둔다(09 2장) | 팀에 익숙한 이름이고, 엔티티(DB 모양)와 규칙(`apply`)을 다른 폴더에 두어 규칙이 DB를 모르게 하려고. 규칙 폴더를 `domain`이라 하면 업무 영역 "도메인"(`repair` 등 패키지)과 말이 겹쳐 `rule`로 함(팀 결정) |
