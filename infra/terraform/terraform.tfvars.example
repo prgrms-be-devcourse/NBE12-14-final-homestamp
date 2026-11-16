@@ -1,0 +1,5 @@
+# 이 파일을 terraform.tfvars로 복사해 값을 채운다. terraform.tfvars는 .gitignore가 막아 저장소에 올라가지 않는다
+#   cp terraform.tfvars.example terraform.tfvars
+# 계정 번호는 `aws sts get-caller-identity --profile homestamp`의 Account 값
+
+aws_account_id = "000000000000"
