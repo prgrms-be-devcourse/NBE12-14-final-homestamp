@@ -32,7 +32,7 @@ V1은 부모 삭제 보호·수신 거부 UPDATE 금지·회원 확인 기록 �
 
 | 대상 | 실행 주체·조건 | 함께 남기는 것 |
 |---|---|---|
-| `sms_opt_out` | 앱 역할. 번호 주인의 가입·번호 인증 완료와 같은 트랜잭션에서 해당 번호 HMAC의 행만 삭제. 인증 코드 발급·검증 단계에서는 삭제하지 않음 | `deletion_log`의 번호 HMAC과 `AUDIT_WRITE` 아웃박스. 과거 `OPT_OUT` 행동은 유지 |
+| `sms_opt_out` | 앱 역할. 번호 주인의 가입·번호 인증 완료와 같은 트랜잭션에서 해당 번호 HMAC의 행만 삭제. 인증 코드 발급·검증 단계에서는 삭제하지 않음 | `deletion_log`에 `target_kind = 'SMS_OPT_OUT'`, `target_id = NULL`, `phone_hmac = 지운 번호 HMAC`을 기록하고 `AUDIT_WRITE` 아웃박스를 함께 남긴다. 과거 `OPT_OUT` 행동은 유지 |
 | `member_acknowledgement` | 앱이 탈퇴 처리 전용 함수를 호출. 함수는 소유자 권한으로 회원 행을 잠그고 `WITHDRAWN`인지 검사한 뒤 그 회원의 확인 기록만 삭제. 활성 회원이면 거절 | 확인 기록별 삭제 감사와 `AUDIT_WRITE` 아웃박스. 회원 개인정보 가림과 같은 트랜잭션에서 처리하며 하나라도 실패하면 롤백 |
 
 탈퇴 전용 함수는 PUBLIC EXECUTE를 제거하고 앱에 해당 함수의 EXECUTE만 허용한다. 일반 B 삭제 권한이나 호실 삭제 함수 실행 권한으로 넓히지 않는다. 함수는 안전한 `search_path`와 명시적인 스키마 참조를 사용하고 purge 플래그는 호출 전 값으로 복구한다. 본인 인증과 탈퇴 권한은 계정 서비스가 확인한다. 함수는 `record.purge_member_acknowledgements(uuid, timestamptz)`다. 두 번째 인자는 서비스 Clock의 시각이며 NULL은 거절한다. 함수 안에서 기록별 UUID v7 삭제 감사와 `AUDIT_WRITE`를 만들고, 아웃박스 payload에는 `deletionLogId`만 담는다. 다시 호출해도 이미 지운 기록은 중복 감사하지 않는다.

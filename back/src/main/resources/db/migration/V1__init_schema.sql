@@ -171,7 +171,6 @@ CREATE TABLE state.party (
                        CONSTRAINT uq_party_room_side   UNIQUE (room_record_id, side),
                        CONSTRAINT uq_party_room_member UNIQUE (room_record_id, member_id),   -- 불변식 13
                        CHECK (status NOT IN ('CONNECTED', 'SHARING_STOPPED') OR member_id IS NOT NULL),
-                       CHECK (status NOT IN ('NUMBER_ONLY', 'INVITED') OR invite_phone IS NOT NULL),
                        CHECK (status <> 'SHARING_STOPPED' OR sharing_stopped_at IS NOT NULL)
 );
 
@@ -606,7 +605,7 @@ CREATE TABLE record.action (
                         content_digest          bytea,                            -- 내용 원문을 복사하지 않고 당시 판에 연결
                         actor_member_id         uuid REFERENCES state.member (id),     -- 서버·링크·운영 행동은 NULL
                         actor_side              varchar(10) CHECK (actor_side IN ('TENANT', 'LANDLORD')),
-                        actor_key               varchar(80)  NOT NULL,           -- 회원 ID / server / state.link:<ID> / ops:<담당>
+                        actor_key               varchar(80)  NOT NULL,           -- 회원 ID / server / link:<ID> / ops:<담당>
                         type                    varchar(40)  NOT NULL,
                         idempotency_key         varchar(100) NOT NULL,           -- 한 요청의 여러 행동은 <키>#2 …
                         seen_version_no         int,                              -- 판의 no, CONFIRM_FINISH는 state.settlement.snapshot_no
@@ -703,7 +702,7 @@ ALTER TABLE state.in_app_notification ADD CONSTRAINT ck_in_app_request_room
     CHECK (response_request_id IS NULL OR room_record_id IS NOT NULL);
 
 CREATE TABLE state.rate_counter (
-                              counter_key  varchar(200) NOT NULL,   -- upload:<회원>, verify:<번호 HMAC>, sms:<번호 HMAC>, sms-state.member:<회원>, sms-total, rerequest:…
+                              counter_key  varchar(200) NOT NULL,   -- upload:<회원>, verify:<번호 HMAC>, sms:<번호 HMAC>, sms-member:<회원>, sms-total, rerequest:…
                               window_date  date         NOT NULL,
                               count        int          NOT NULL CHECK (count >= 0),
                               PRIMARY KEY (counter_key, window_date)
@@ -712,7 +711,7 @@ CREATE TABLE state.rate_counter (
 CREATE TABLE log.deletion_log (
                               id           uuid PRIMARY KEY,
                               target_kind  varchar(40)  NOT NULL,
-                              target_id    uuid         NOT NULL,                      -- FK 없음(지운 대상)
+                              target_id    uuid,                                       -- FK 없음(지운 대상 UUID, 번호 HMAC 대상은 NULL)
                               reason       varchar(30)  NOT NULL,
                               phone_hmac   varchar(128),                               -- 수신 거부일 때
                               chain_room_id uuid,                                     -- FK 없음: 삭제된 행동의 호실, 호실 삭제 뒤에도 보존
@@ -720,7 +719,8 @@ CREATE TABLE log.deletion_log (
                               prev_hash    bytea CHECK (octet_length(prev_hash) = 32),
                               action_hash  bytea CHECK (octet_length(action_hash) = 32),
                               created_at   timestamptz  NOT NULL,
-                              CHECK ((target_kind = 'ACTION' AND num_nonnulls(chain_room_id, room_seq, prev_hash, action_hash) = 4)
+                              CONSTRAINT ck_deletion_log_target CHECK (target_id IS NOT NULL OR phone_hmac IS NOT NULL),
+                              CHECK ((target_kind = 'ACTION' AND target_id IS NOT NULL AND num_nonnulls(chain_room_id, room_seq, prev_hash, action_hash) = 4)
                                   OR (target_kind <> 'ACTION' AND num_nonnulls(chain_room_id, room_seq, prev_hash, action_hash) = 0))
 );
 

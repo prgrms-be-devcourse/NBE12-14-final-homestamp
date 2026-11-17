@@ -1,6 +1,7 @@
 package com.chilsuitjo.back;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -9,6 +10,53 @@ import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
 
 class DeletionLogSchemaTest extends SchemaTestSupport {
+  @Test
+  void recordsOptOutDeletionWithoutInventingTargetUuid() {
+    UUID id = UUID.randomUUID();
+    jdbc.update(
+        """
+        INSERT INTO deletion_log (id, target_kind, phone_hmac, reason, created_at)
+        VALUES (?, 'SMS_OPT_OUT', ?, 'PHONE_VERIFIED', CURRENT_TIMESTAMP)
+        """,
+        id,
+        "a".repeat(64));
+    assertNull(
+        jdbc.queryForObject("SELECT target_id FROM deletion_log WHERE id = ?", UUID.class, id));
+  }
+
+  @Test
+  void rejectsDeletionWithoutAnyTargetIdentifier() {
+    var error =
+        assertThrows(
+            DataIntegrityViolationException.class,
+            () ->
+                jdbc.update(
+                    """
+                    INSERT INTO deletion_log (id, target_kind, reason, created_at)
+                    VALUES (?, 'SMS_OPT_OUT', 'PHONE_VERIFIED', CURRENT_TIMESTAMP)
+                    """,
+                    UUID.randomUUID()));
+    assertTrue(error.getMessage().contains("ck_deletion_log_target"));
+  }
+
+  @Test
+  void actionDeletionStillRequiresTargetUuidEvenWithPhoneHmac() {
+    assertThrows(
+        DataIntegrityViolationException.class,
+        () ->
+            jdbc.update(
+                """
+                INSERT INTO deletion_log (id, target_kind, phone_hmac, reason, chain_room_id,
+                  room_seq, prev_hash, action_hash, created_at)
+                VALUES (?, 'ACTION', ?, 'WITHDRAWAL', ?, 1, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                UUID.randomUUID(),
+                "a".repeat(64),
+                UUID.randomUUID(),
+                new byte[32],
+                new byte[32]));
+  }
+
   @Test
   void preservesLinkAcrossConsecutiveDeletedActionsWithoutRoomForeignKey() {
     UUID deletedRoom = UUID.randomUUID();
