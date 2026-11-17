@@ -1,0 +1,110 @@
+# infra/terraform을 바꾼 PR에서 terraform plan을 돌려 "무엇이 바뀌나"만 알려 준다 (04 13-1, #42)
+#
+# 보안 (공개 저장소라 Actions 로그를 누구나 본다)
+# - AWS 키 없음: GitHub OIDC → homestamp-tf-plan 역할(읽기 전용, 이 저장소의 pull_request만)
+# - 계정 번호는 Secret(AWS_ACCOUNT_ID)이라 로그에 *** 로 가려진다
+# - plan 전체(보안 그룹·IAM 정책·시작 스크립트)는 로그에 찍지 않고, 바뀌는 자원 목록과 요약만 남긴다
+# - pull_request_target을 쓰지 않는다. 포크에서 온 PR은 GitHub가 OIDC 토큰을 주지 않아 아예 건너뛴다
+# - 외부 Action은 커밋 SHA로 고정한다(AWS 권한을 받는 워크플로라 태그가 바뀌는 위험을 막음)
+# - apply는 여기서 하지 않는다(apply 역할은 따로, #42)
+
+name: Terraform plan
+
+on:
+  pull_request:
+    paths:
+      - "infra/terraform/**"
+      - ".github/workflows/terraform-plan.yml"
+
+permissions:
+  contents: read
+  id-token: write # OIDC 토큰 받기
+  pull-requests: write # 요약 댓글
+
+concurrency:
+  group: terraform-plan-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    # 포크 PR은 Secret과 OIDC 토큰이 없어 실패만 하므로 돌리지 않는다
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: infra/terraform
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      TF_VAR_aws_account_id: ${{ secrets.AWS_ACCOUNT_ID }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.17.1 # 노트북과 같은 판(versions.tf, 04 17장)
+          terraform_wrapper: false # 출력이 단계 결과로 새어 나가지 않게
+
+      - name: AWS 자격 증명 (OIDC)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/homestamp-tf-plan
+          role-session-name: gha-plan-pr${{ github.event.pull_request.number }}-${{ github.run_id }}
+          aws-region: ap-northeast-2
+          mask-aws-account-id: true
+          role-duration-seconds: 900
+
+      - name: 서식 검사
+        run: terraform fmt -check -recursive
+
+      - name: init
+        run: terraform init -lockfile=readonly -no-color
+
+      - name: validate
+        run: terraform validate -no-color
+
+      - name: plan
+        id: plan
+        run: |
+          set +e
+          terraform plan -no-color -lock-timeout=120s -out=tfplan > plan.log 2>&1
+          code=$?
+          set -e
+          if [ "$code" -ne 0 ]; then
+            # 실패하면 원인을 봐야 하므로 오류 부분만 보여 준다(계정 번호는 ***로 가려짐)
+            grep -A20 -E "^(│ )?Error" plan.log || tail -n 40 plan.log
+            exit "$code"
+          fi
+
+      - name: 요약 만들기
+        run: |
+          {
+            echo "### Terraform plan"
+            echo
+            echo '```'
+            terraform show -no-color tfplan | grep -E '^  # |^Plan:|^No changes' || true
+            echo '```'
+            echo
+            echo "바뀌는 자원 목록과 요약만 보여 줘요. 자세한 내용은 노트북에서 \`terraform plan\`으로 확인해요."
+            if terraform show -no-color tfplan | grep -qE 'must be replaced|will be destroyed'; then
+              echo
+              echo "> ⚠️ **지우거나 다시 만드는 자원이 있어요.** 이유를 확인하기 전에는 apply하지 않아요(failure-memory 2026-11-15)."
+            fi
+          } > summary.md
+          cat summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: PR 댓글
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file summary.md --edit-last \
+            || gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file summary.md
+
+      - name: 계획 파일 지우기
+        if: always()
+        run: rm -f tfplan plan.log summary.md

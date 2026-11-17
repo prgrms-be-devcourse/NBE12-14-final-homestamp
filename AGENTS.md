@@ -8,7 +8,7 @@ Java 25 · Spring Boot 4.1 · PostgreSQL · Flyway | React 19 · Vite · TypeScr
 - `back/` Spring Boot (Gradle). 패키지 루트 `com.chilsuitjo.back`
 - `front/` React (Vite). import alias `@/` = `front/src/`
 - `.agents/skills/` 스킬 원본 · `.claude/`, `.codex/` 도구별 설정 · `scripts/hooks/` 훅 스크립트
-- `docs/` 읽는 순서·주제별 기준 문서는 `docs/README.md` · 규칙 문서 `docs/rules/` · 결정 기록 (`docs/decisions.md`) · AI 실수 기록 (`docs/failure-memory.md`) · 처음 설정 (`docs/setup.md`)
+- `docs/` 개발 기준은 `docs/rules/06-요구사항-명세.md`(기준 문서. 0장에 주제별로 더 깊게 읽을 곳) · 규칙 문서 `docs/rules/` · 처음 보는 사람용 읽는 순서 `docs/README.md` · 결정 기록 (`docs/decisions.md`) · AI 실수 기록 (`docs/failure-memory.md`) · 처음 설정 (`docs/setup.md`)
 
 ## 자주 쓰는 명령
 - 백엔드: `cd back && ./gradlew bootRun`(로컬 DB가 Docker로 같이 뜸, `docs/setup.md` 7장) / `./gradlew build` / `./gradlew test` (Windows는 `gradlew.bat`)
@@ -25,13 +25,15 @@ Java 25 · Spring Boot 4.1 · PostgreSQL · Flyway | React 19 · Vite · TypeScr
   - 한 커밋에는 한 가지 일만
 - 브랜치·커밋은 `git-convention` 스킬로, 이슈는 `issue` 스킬로, PR은 `pr-body` 스킬로 만든다 (모두 사람이 부를 때만)
 - 이슈는 `.github/ISSUE_TEMPLATE/task.md`를 따르고, PR 본문의 `closes #번호`로 이슈와 연결한다
+- 이슈·PR에는 제목 타입과 같은 라벨(`feat` `fix` `test` `docs` `refactor` `chore`) 하나를 붙이고, UI 스타일·CSS만 바꾸면 `style`을 더한다
 - PR 본문은 `.github/pull_request_template.md`를 따른다
+- 다른 도메인의 코드나 공통 계약(05 ERD 테이블·06 API·`V*.sql`·공개 인터페이스·공통 DTO)을 바꾸면 그 주인을 리뷰어로 넣는다. 주인은 `docs/rules/07-WBS.md` 0장 기준. 도메인 코드(백엔드 도메인 패키지·`global/security`·`global/scheduler`, 프론트 `front/src/features/<도메인>/`)는 `.github/CODEOWNERS`가 자동으로 요청하고, 공통 계약과 07에 주인이 없는 공통 코드(`global/`의 나머지 등)는 `pr-body` 스킬이 찾아 제안한다(작성자만 빼고 만든 주인 + 쓰는 쪽 주인, 주인이 없으면 "리뷰어 확인 필요")
 - 자바는 구글 자바 스타일, 프론트는 Prettier. 포매터가 맞춘다 (커밋 전에 `cd back && ./gradlew spotlessApply`, `cd front && npm run format`. IDE 설정은 `docs/setup.md` 6장)
 
 ## AI가 지킬 것
 - 작업을 시작하기 전에 `docs/failure-memory.md`를 읽는다. 같은 실수를 반복하면 기록을 제안하고, 사람이 승인한 뒤에만 추가한다
 - 문서를 근거로 답할 때는 근거 위치(`파일` + 장·표 이름)를 함께 적는다. 문서의 일부만 읽었으면 읽은 범위를 밝힌다
-- 문서끼리 내용이 다르면 한쪽을 조용히 고르지 않는다. 어디가 다른지 알리고, `docs/README.md` "문서끼리 다르면"의 기준 문서를 따랐다고 적는다
+- 문서끼리 내용이 다르면 한쪽을 조용히 고르지 않는다. 어디가 다른지 알리고, 어떻게 고칠지는 `docs/rules/06-요구사항-명세.md` 0장 "문서끼리 다르면"을 따른다
 - `git commit`, `git push`, 이슈·PR 생성은 사람이 확인한 뒤에만 한다. `issue`·`pr-body` 스킬은 초안을 먼저 보여 주고 승인을 받은 뒤에 올린다
 - 커밋 메시지·이슈·PR 본문에 AI 도구 서명(`Co-Authored-By: Claude ...`, `Generated with ...` 등)을 넣지 않는다 (Claude·Codex 공통)
 - 비밀값 파일(`.env*`, `*.pem`, `*.key`, `application-prod*`, `application-local*`)은 읽거나 고치지 않는다
