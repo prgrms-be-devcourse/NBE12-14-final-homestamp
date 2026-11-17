@@ -128,3 +128,8 @@
 | 2026-11-17 | 트랜잭션 경계는 `ActionPipeline`이 맡는다. 도메인 서비스는 pipeline 바깥에 `@Transactional`을 두지 않고, 같은 키가 동시에 와 제약에 걸리면 pipeline이 되돌린 뒤 새 트랜잭션에서 처음 결과를 찾아 `replayed`로 돌려준다 | 06 4-0 "제약 오류를 잡아 되돌린 뒤 새 트랜잭션에서 다시 찾는다"는 바깥 트랜잭션이 있으면 할 수 없음(#57 리뷰) |
 | 2026-11-17 | 호실을 만드는 요청(`CREATE_ROOM`)은 `ActionBatch.newRoom`으로 연다. 잠금·공통 거절을 건너뛰고, 저장이 돌려준 새 호실의 첫 행동(`room_seq` 1)으로 남긴다 | 아직 호실 행이 없어 잠글 행도 읽을 당사자도 없음(#57 리뷰) |
 | 2026-11-17 | pipeline 대상은 행동 기록을 남기는 요청(06 4-0 `Idempotency-Key` 필수)이다. `apply`의 입력은 `ActionEntry.payload`로 받고 도메인은 `payloadAs(자기 record)`로 바꿔 쓴다 | 06 4-0이 뺀 요청까지 pipeline으로 다르게 구현되지 않게. 행동 기록의 `payload`와 입력을 한 모양으로 두면서 도메인 코드는 타입을 지키려고(#57 리뷰) |
+| 2026-11-17 | 미리 아는 조건은 `ActionStep.when`(잠근 뒤 읽은 상태로 판단, 거짓이면 그 단계를 기록 없이 건너뜀)으로, 단계 도중에 생기는 서버 기록은 `ActionFollowUps.add`(상태 없는 기록만, 같은 호실)로 남긴다. pipeline에는 특정 행동·도메인 분기를 넣지 않는다 | 퇴거 점검 시작의 조건부 정산 열기와, 지불 확인 이벤트 등으로 정산이 바뀔 때의 `CLOSE_FINISH_REQUEST`(서버)를 배치 하나로 남기려고. 조건을 부르는 쪽에 두어 pipeline이 커지지 않게(C 초안 v2 질문) |
+| 2026-11-17 | 지불 금액 확인으로 합의가 풀리는 `ProposalService.rebase`는 행동으로 남기지 않고 원인 행동(`RESPOND_AMOUNT` 등)에 딸린 일로 둔다 | 05 2-3에 행동이 없고, 원인 행동의 기록에서 다시 계산할 수 있음(C 초안 v2 질문) |
+| 2026-11-17 | `Correctable`에 `attachEvidence(대상 ID, 고친 내용 ID, 업로드 표)`를 더해, 다시 보낼 때의 근거 사진은 대상 도메인이 `PhotoService.attach`로 붙인다 | `correction`은 아래층이라 `photo`를 부를 수 없음(C 초안 v2 질문) |
+| 2026-11-17 | 정산 완료 뒤와 합류 전 기록에서 되는 사진 행동은 `ERASE_PHOTO`뿐이다. 숨김·보이기·잘못 올림 표시와 해제는 막는다 | 개인정보 지우기만 예외로 두는 원칙(03 3-1)과 맞춤(C 초안 v2 제안) |
+| 2026-11-17 | 수리비 부담 제안(`POST /api/repair-cases/{id}/proposals`)은 `RepairController`가 받아 이 호실의 수리 건인지 확인한 뒤 `ProposalService.propose`를 부른다 | 지불 기록(2026-11-16)과 같은 방식으로, `ProposalController`에는 `/api/proposals/{id}/*`만 남김(C 초안 v2 제안) |
