@@ -755,30 +755,42 @@ ALTER TABLE record.repair_content ADD CONSTRAINT uq_repair_content_id_head_room 
 ALTER TABLE record.inspection_item_version ADD CONSTRAINT uq_inspection_item_version_id_head_room UNIQUE (id, inspection_item_id, room_record_id);
 ALTER TABLE record.payment_version ADD CONSTRAINT uq_payment_version_id_head_room UNIQUE (id, payment_id, room_record_id);
 ALTER TABLE record.settlement_transfer_version ADD CONSTRAINT uq_settlement_transfer_version_id_head_room UNIQUE (id, settlement_transfer_id, room_record_id);
+-- 같은 건 안에서만 이어지는 참조(이전 판·이전 설명, 머리의 현재·합의 제안, 역제안·바꾼 제안, 답한 진행 상황 묻기, 다시 보낸 고친 내용)도 그 건까지 묶는다.
+ALTER TABLE record.cause_note ADD CONSTRAINT uq_cause_note_id_case_room UNIQUE (id, repair_case_id, room_record_id);
+ALTER TABLE record.proposal ADD CONSTRAINT uq_proposal_id_repair_case_room UNIQUE (id, repair_case_id, room_record_id);
+ALTER TABLE record.proposal ADD CONSTRAINT uq_proposal_id_settlement_item_room UNIQUE (id, settlement_item_id, room_record_id);
+ALTER TABLE record.proposal ADD CONSTRAINT uq_proposal_id_settlement_room UNIQUE (id, settlement_id, room_record_id);
+ALTER TABLE state.response_request ADD CONSTRAINT uq_response_request_id_case_room UNIQUE (id, repair_case_id, room_record_id);
+ALTER TABLE state.correction_request ADD CONSTRAINT uq_correction_request_id_target_room UNIQUE (id, target_key, field, room_record_id);
 
 ALTER TABLE state.repair_case ADD CONSTRAINT fk_repair_case_previous_case_id_room FOREIGN KEY (previous_case_id, room_record_id) REFERENCES state.repair_case (id, room_record_id);
 ALTER TABLE record.repair_content ADD CONSTRAINT fk_repair_content_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES state.repair_case (id, room_record_id);
 ALTER TABLE record.repair_content ADD CONSTRAINT fk_repair_content_room_part_id_room FOREIGN KEY (room_part_id, room_record_id) REFERENCES state.room_part (id, room_record_id);
-ALTER TABLE record.repair_content ADD CONSTRAINT fk_repair_content_previous_id_room FOREIGN KEY (previous_id, room_record_id) REFERENCES record.repair_content (id, room_record_id);
+ALTER TABLE record.repair_content ADD CONSTRAINT fk_repair_content_previous_id_room FOREIGN KEY (previous_id, repair_case_id, room_record_id) REFERENCES record.repair_content (id, repair_case_id, room_record_id);
 ALTER TABLE state.inspection_item ADD CONSTRAINT fk_inspection_item_inspection_id_room FOREIGN KEY (inspection_id, room_record_id) REFERENCES state.inspection (id, room_record_id);
 ALTER TABLE record.inspection_item_version ADD CONSTRAINT fk_inspection_item_version_inspection_item_id_room FOREIGN KEY (inspection_item_id, room_record_id) REFERENCES state.inspection_item (id, room_record_id);
 ALTER TABLE record.inspection_item_version ADD CONSTRAINT fk_inspection_item_version_room_part_id_room FOREIGN KEY (room_part_id, room_record_id) REFERENCES state.room_part (id, room_record_id);
-ALTER TABLE record.inspection_item_version ADD CONSTRAINT fk_inspection_item_version_previous_id_room FOREIGN KEY (previous_id, room_record_id) REFERENCES record.inspection_item_version (id, room_record_id);
+ALTER TABLE record.inspection_item_version ADD CONSTRAINT fk_inspection_item_version_previous_id_room FOREIGN KEY (previous_id, inspection_item_id, room_record_id) REFERENCES record.inspection_item_version (id, inspection_item_id, room_record_id);
 ALTER TABLE state.settlement_item ADD CONSTRAINT fk_settlement_item_settlement_id_room FOREIGN KEY (settlement_id, room_record_id) REFERENCES state.settlement (id, room_record_id);
 ALTER TABLE state.settlement_item ADD CONSTRAINT fk_settlement_item_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES state.repair_case (id, room_record_id);
 ALTER TABLE state.settlement_item ADD CONSTRAINT fk_settlement_item_room_part_id_room FOREIGN KEY (room_part_id, room_record_id) REFERENCES state.room_part (id, room_record_id);
 ALTER TABLE state.settlement_transfer ADD CONSTRAINT fk_settlement_transfer_settlement_id_room FOREIGN KEY (settlement_id, room_record_id) REFERENCES state.settlement (id, room_record_id);
 ALTER TABLE state.settlement_transfer ADD CONSTRAINT fk_settlement_transfer_same_as_transfer_id_room FOREIGN KEY (same_as_transfer_id, room_record_id) REFERENCES state.settlement_transfer (id, room_record_id);
 ALTER TABLE record.settlement_transfer_version ADD CONSTRAINT fk_settlement_transfer_version_settlement_transfer_id_room FOREIGN KEY (settlement_transfer_id, room_record_id) REFERENCES state.settlement_transfer (id, room_record_id);
-ALTER TABLE record.settlement_transfer_version ADD CONSTRAINT fk_settlement_transfer_version_previous_id_room FOREIGN KEY (previous_id, room_record_id) REFERENCES record.settlement_transfer_version (id, room_record_id);
+ALTER TABLE record.settlement_transfer_version ADD CONSTRAINT fk_settlement_transfer_version_previous_id_room FOREIGN KEY (previous_id, settlement_transfer_id, room_record_id) REFERENCES record.settlement_transfer_version (id, settlement_transfer_id, room_record_id);
 ALTER TABLE state.payment ADD CONSTRAINT fk_payment_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES state.repair_case (id, room_record_id);
 ALTER TABLE record.payment_version ADD CONSTRAINT fk_payment_version_payment_id_room FOREIGN KEY (payment_id, room_record_id) REFERENCES state.payment (id, room_record_id);
-ALTER TABLE record.payment_version ADD CONSTRAINT fk_payment_version_previous_id_room FOREIGN KEY (previous_id, room_record_id) REFERENCES record.payment_version (id, room_record_id);
+ALTER TABLE record.payment_version ADD CONSTRAINT fk_payment_version_previous_id_room FOREIGN KEY (previous_id, payment_id, room_record_id) REFERENCES record.payment_version (id, payment_id, room_record_id);
 ALTER TABLE record.proposal ADD CONSTRAINT fk_proposal_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES state.repair_case (id, room_record_id);
 ALTER TABLE record.proposal ADD CONSTRAINT fk_proposal_settlement_item_id_room FOREIGN KEY (settlement_item_id, room_record_id) REFERENCES state.settlement_item (id, room_record_id);
 ALTER TABLE record.proposal ADD CONSTRAINT fk_proposal_settlement_id_room FOREIGN KEY (settlement_id, room_record_id) REFERENCES state.settlement (id, room_record_id);
-ALTER TABLE record.proposal ADD CONSTRAINT fk_proposal_counter_of_id_room FOREIGN KEY (counter_of_id, room_record_id) REFERENCES record.proposal (id, room_record_id);
-ALTER TABLE record.proposal ADD CONSTRAINT fk_proposal_replaces_id_room FOREIGN KEY (replaces_id, room_record_id) REFERENCES record.proposal (id, room_record_id);
+-- 제안의 대상 칸은 셋 중 하나만 차 있어서, 대상마다 FK를 두면 비어 있지 않은 하나가 같은 안건인지 검사한다.
+ALTER TABLE record.proposal ADD CONSTRAINT fk_proposal_counter_of_repair_case FOREIGN KEY (counter_of_id, repair_case_id, room_record_id) REFERENCES record.proposal (id, repair_case_id, room_record_id);
+ALTER TABLE record.proposal ADD CONSTRAINT fk_proposal_counter_of_settlement_item FOREIGN KEY (counter_of_id, settlement_item_id, room_record_id) REFERENCES record.proposal (id, settlement_item_id, room_record_id);
+ALTER TABLE record.proposal ADD CONSTRAINT fk_proposal_counter_of_settlement FOREIGN KEY (counter_of_id, settlement_id, room_record_id) REFERENCES record.proposal (id, settlement_id, room_record_id);
+ALTER TABLE record.proposal ADD CONSTRAINT fk_proposal_replaces_repair_case FOREIGN KEY (replaces_id, repair_case_id, room_record_id) REFERENCES record.proposal (id, repair_case_id, room_record_id);
+ALTER TABLE record.proposal ADD CONSTRAINT fk_proposal_replaces_settlement_item FOREIGN KEY (replaces_id, settlement_item_id, room_record_id) REFERENCES record.proposal (id, settlement_item_id, room_record_id);
+ALTER TABLE record.proposal ADD CONSTRAINT fk_proposal_replaces_settlement FOREIGN KEY (replaces_id, settlement_id, room_record_id) REFERENCES record.proposal (id, settlement_id, room_record_id);
 ALTER TABLE record.proposal_line ADD CONSTRAINT fk_proposal_line_proposal_id_room FOREIGN KEY (proposal_id, room_record_id) REFERENCES record.proposal (id, room_record_id);
 ALTER TABLE state.link ADD CONSTRAINT fk_link_party_id_room FOREIGN KEY (party_id, room_record_id) REFERENCES state.party (id, room_record_id);
 ALTER TABLE state.link ADD CONSTRAINT fk_link_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES state.repair_case (id, room_record_id);
@@ -792,15 +804,15 @@ ALTER TABLE state.response_request ADD CONSTRAINT fk_response_request_inspection
 ALTER TABLE state.response_request ADD CONSTRAINT fk_response_request_inspection_item_id_room FOREIGN KEY (inspection_item_id, room_record_id) REFERENCES state.inspection_item (id, room_record_id);
 ALTER TABLE state.response_request ADD CONSTRAINT fk_response_request_settlement_transfer_id_room FOREIGN KEY (settlement_transfer_id, room_record_id) REFERENCES state.settlement_transfer (id, room_record_id);
 ALTER TABLE record.cause_note ADD CONSTRAINT fk_cause_note_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES state.repair_case (id, room_record_id);
-ALTER TABLE record.cause_note ADD CONSTRAINT fk_cause_note_previous_id_room FOREIGN KEY (previous_id, room_record_id) REFERENCES record.cause_note (id, room_record_id);
+ALTER TABLE record.cause_note ADD CONSTRAINT fk_cause_note_previous_id_room FOREIGN KEY (previous_id, repair_case_id, room_record_id) REFERENCES record.cause_note (id, repair_case_id, room_record_id);
 ALTER TABLE record.progress_note ADD CONSTRAINT fk_progress_note_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES state.repair_case (id, room_record_id);
-ALTER TABLE record.progress_note ADD CONSTRAINT fk_progress_note_answers_request_id_room FOREIGN KEY (answers_request_id, room_record_id) REFERENCES state.response_request (id, room_record_id);
+ALTER TABLE record.progress_note ADD CONSTRAINT fk_progress_note_answers_request_id_room FOREIGN KEY (answers_request_id, repair_case_id, room_record_id) REFERENCES state.response_request (id, repair_case_id, room_record_id);
 ALTER TABLE state.progress_note_response ADD CONSTRAINT fk_progress_note_response_progress_note_id_room FOREIGN KEY (progress_note_id, room_record_id) REFERENCES record.progress_note (id, room_record_id);
 ALTER TABLE state.correction_request ADD CONSTRAINT fk_correction_request_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES state.repair_case (id, room_record_id);
 ALTER TABLE state.correction_request ADD CONSTRAINT fk_correction_request_payment_id_room FOREIGN KEY (payment_id, room_record_id) REFERENCES state.payment (id, room_record_id);
 ALTER TABLE state.correction_request ADD CONSTRAINT fk_correction_request_inspection_item_id_room FOREIGN KEY (inspection_item_id, room_record_id) REFERENCES state.inspection_item (id, room_record_id);
 ALTER TABLE state.correction_request ADD CONSTRAINT fk_correction_request_settlement_transfer_id_room FOREIGN KEY (settlement_transfer_id, room_record_id) REFERENCES state.settlement_transfer (id, room_record_id);
-ALTER TABLE state.correction_request ADD CONSTRAINT fk_correction_request_retry_of_id_room FOREIGN KEY (retry_of_id, room_record_id) REFERENCES state.correction_request (id, room_record_id);
+ALTER TABLE state.correction_request ADD CONSTRAINT fk_correction_request_retry_of_id_room FOREIGN KEY (retry_of_id, target_key, field, room_record_id) REFERENCES state.correction_request (id, target_key, field, room_record_id);
 ALTER TABLE record.photo ADD CONSTRAINT fk_photo_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES state.repair_case (id, room_record_id);
 ALTER TABLE record.photo ADD CONSTRAINT fk_photo_inspection_item_id_room FOREIGN KEY (inspection_item_id, room_record_id) REFERENCES state.inspection_item (id, room_record_id);
 ALTER TABLE record.photo ADD CONSTRAINT fk_photo_inspection_id_room FOREIGN KEY (inspection_id, room_record_id) REFERENCES state.inspection (id, room_record_id);
@@ -841,9 +853,9 @@ ALTER TABLE state.repair_case
   ADD CONSTRAINT fk_repair_case_confirmed_content
     FOREIGN KEY (confirmed_content_id, id, room_record_id) REFERENCES record.repair_content (id, repair_case_id, room_record_id) DEFERRABLE INITIALLY DEFERRED,
   ADD CONSTRAINT fk_repair_case_current_proposal
-    FOREIGN KEY (current_proposal_id, room_record_id) REFERENCES record.proposal (id, room_record_id),
+    FOREIGN KEY (current_proposal_id, id, room_record_id) REFERENCES record.proposal (id, repair_case_id, room_record_id),
   ADD CONSTRAINT fk_repair_case_agreed_proposal
-    FOREIGN KEY (agreed_proposal_id, room_record_id) REFERENCES record.proposal (id, room_record_id);
+    FOREIGN KEY (agreed_proposal_id, id, room_record_id) REFERENCES record.proposal (id, repair_case_id, room_record_id);
 
 ALTER TABLE state.inspection_item
     ADD CONSTRAINT fk_inspection_item_current_version
@@ -853,15 +865,15 @@ ALTER TABLE state.inspection_item
 
 ALTER TABLE state.settlement
     ADD CONSTRAINT fk_settlement_current_deposit_proposal
-        FOREIGN KEY (current_deposit_proposal_id, room_record_id) REFERENCES record.proposal (id, room_record_id),
+        FOREIGN KEY (current_deposit_proposal_id, id, room_record_id) REFERENCES record.proposal (id, settlement_id, room_record_id),
   ADD CONSTRAINT fk_settlement_agreed_deposit_proposal
-    FOREIGN KEY (agreed_deposit_proposal_id, room_record_id) REFERENCES record.proposal (id, room_record_id);
+    FOREIGN KEY (agreed_deposit_proposal_id, id, room_record_id) REFERENCES record.proposal (id, settlement_id, room_record_id);
 
 ALTER TABLE state.settlement_item
     ADD CONSTRAINT fk_settlement_item_current_proposal
-        FOREIGN KEY (current_proposal_id, room_record_id) REFERENCES record.proposal (id, room_record_id),
+        FOREIGN KEY (current_proposal_id, id, room_record_id) REFERENCES record.proposal (id, settlement_item_id, room_record_id),
   ADD CONSTRAINT fk_settlement_item_agreed_proposal
-    FOREIGN KEY (agreed_proposal_id, room_record_id) REFERENCES record.proposal (id, room_record_id);
+    FOREIGN KEY (agreed_proposal_id, id, room_record_id) REFERENCES record.proposal (id, settlement_item_id, room_record_id);
 
 ALTER TABLE state.settlement_transfer
     ADD CONSTRAINT fk_settlement_transfer_current_version

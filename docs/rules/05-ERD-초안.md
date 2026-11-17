@@ -37,7 +37,7 @@ V1은 테이블·FK·트리거·함수에 스키마를 명시한다. JPA 엔티�
 
 ### 호실 경계와 삭제 제약
 
-호실 소속 테이블 사이의 참조는 부모의 `UNIQUE(id, room_record_id)`와 자식의 `(parent_id, room_record_id)` 복합 FK로 묶는다. 현재·확인 판을 가리키는 지연 FK도 포함하며, 이 FK는 머리 ID까지 묶어(판의 `UNIQUE(id, 머리_id, room_record_id)`) 같은 호실의 다른 머리 판을 가리키지 못하게 한다. `in_app_notification`은 응답 요청이 있으면 호실도 필수다(서비스 안내만 NULL 허용). 계정·고정 데이터 참조와 호실 합치기의 `joined_into_id`는 이 규칙의 대상이 아니다.
+호실 소속 테이블 사이의 참조는 부모의 `UNIQUE(id, room_record_id)`와 자식의 `(parent_id, room_record_id)` 복합 FK로 묶는다. 현재·확인 판을 가리키는 지연 FK도 포함하며, 이 FK는 머리 ID까지 묶어(판의 `UNIQUE(id, 머리_id, room_record_id)`) 같은 호실의 다른 머리 판을 가리키지 못하게 한다. 같은 건 안에서만 이어지는 참조도 그 건까지 묶는다: 판·원인 설명의 `previous_id`, 머리의 현재·합의 제안(수리 건·정산 항목·보증금), 제안의 `counter_of_id`·`replaces_id`(대상 칸마다 FK), 진행 상황의 `answers_request_id`(같은 수리 건의 요청), 고친 내용의 `retry_of_id`(같은 `target_key`·`field`). `in_app_notification`은 응답 요청이 있으면 호실도 필수다(서비스 안내만 NULL 허용). 계정·고정 데이터 참조와 호실 합치기의 `joined_into_id`는 이 규칙의 대상이 아니다.
 
 직접 소유 관계인 `room_record_id → room_record.id`는 `ON DELETE CASCADE`다. 호실끼리의 `joined_into_id`는 NO ACTION으로 남겨 다른 호실까지 지우지 않으며, 다른 호실이 합치기 대상으로 참조 중이면 삭제를 거절한다. `deletion_log`와 아웃박스는 호실 FK를 두지 않아 함께 지워지지 않는다.
 
