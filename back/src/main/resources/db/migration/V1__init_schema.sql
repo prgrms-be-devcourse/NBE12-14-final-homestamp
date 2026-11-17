@@ -750,6 +750,11 @@ ALTER TABLE state.settlement ADD CONSTRAINT uq_settlement_id_room UNIQUE (id, ro
 ALTER TABLE state.settlement_item ADD CONSTRAINT uq_settlement_item_id_room UNIQUE (id, room_record_id);
 ALTER TABLE state.settlement_transfer ADD CONSTRAINT uq_settlement_transfer_id_room UNIQUE (id, room_record_id);
 ALTER TABLE record.settlement_transfer_version ADD CONSTRAINT uq_settlement_transfer_version_id_room UNIQUE (id, room_record_id);
+-- 머리가 가리키는 현재·확인 판은 그 머리의 판이어야 한다(같은 호실의 다른 머리 판 금지).
+ALTER TABLE record.repair_content ADD CONSTRAINT uq_repair_content_id_head_room UNIQUE (id, repair_case_id, room_record_id);
+ALTER TABLE record.inspection_item_version ADD CONSTRAINT uq_inspection_item_version_id_head_room UNIQUE (id, inspection_item_id, room_record_id);
+ALTER TABLE record.payment_version ADD CONSTRAINT uq_payment_version_id_head_room UNIQUE (id, payment_id, room_record_id);
+ALTER TABLE record.settlement_transfer_version ADD CONSTRAINT uq_settlement_transfer_version_id_head_room UNIQUE (id, settlement_transfer_id, room_record_id);
 
 ALTER TABLE state.repair_case ADD CONSTRAINT fk_repair_case_previous_case_id_room FOREIGN KEY (previous_case_id, room_record_id) REFERENCES state.repair_case (id, room_record_id);
 ALTER TABLE record.repair_content ADD CONSTRAINT fk_repair_content_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES state.repair_case (id, room_record_id);
@@ -832,9 +837,9 @@ ALTER TABLE state.in_app_notification ADD CONSTRAINT fk_in_app_notification_resp
 
 ALTER TABLE state.repair_case
     ADD CONSTRAINT fk_repair_case_current_content
-        FOREIGN KEY (current_content_id, room_record_id) REFERENCES record.repair_content (id, room_record_id) DEFERRABLE INITIALLY DEFERRED,
+        FOREIGN KEY (current_content_id, id, room_record_id) REFERENCES record.repair_content (id, repair_case_id, room_record_id) DEFERRABLE INITIALLY DEFERRED,
   ADD CONSTRAINT fk_repair_case_confirmed_content
-    FOREIGN KEY (confirmed_content_id, room_record_id) REFERENCES record.repair_content (id, room_record_id) DEFERRABLE INITIALLY DEFERRED,
+    FOREIGN KEY (confirmed_content_id, id, room_record_id) REFERENCES record.repair_content (id, repair_case_id, room_record_id) DEFERRABLE INITIALLY DEFERRED,
   ADD CONSTRAINT fk_repair_case_current_proposal
     FOREIGN KEY (current_proposal_id, room_record_id) REFERENCES record.proposal (id, room_record_id),
   ADD CONSTRAINT fk_repair_case_agreed_proposal
@@ -842,9 +847,9 @@ ALTER TABLE state.repair_case
 
 ALTER TABLE state.inspection_item
     ADD CONSTRAINT fk_inspection_item_current_version
-        FOREIGN KEY (current_version_id, room_record_id) REFERENCES record.inspection_item_version (id, room_record_id) DEFERRABLE INITIALLY DEFERRED,
+        FOREIGN KEY (current_version_id, id, room_record_id) REFERENCES record.inspection_item_version (id, inspection_item_id, room_record_id) DEFERRABLE INITIALLY DEFERRED,
   ADD CONSTRAINT fk_inspection_item_confirmed_version
-    FOREIGN KEY (confirmed_version_id, room_record_id) REFERENCES record.inspection_item_version (id, room_record_id) DEFERRABLE INITIALLY DEFERRED;
+    FOREIGN KEY (confirmed_version_id, id, room_record_id) REFERENCES record.inspection_item_version (id, inspection_item_id, room_record_id) DEFERRABLE INITIALLY DEFERRED;
 
 ALTER TABLE state.settlement
     ADD CONSTRAINT fk_settlement_current_deposit_proposal
@@ -860,15 +865,15 @@ ALTER TABLE state.settlement_item
 
 ALTER TABLE state.settlement_transfer
     ADD CONSTRAINT fk_settlement_transfer_current_version
-        FOREIGN KEY (current_version_id, room_record_id) REFERENCES record.settlement_transfer_version (id, room_record_id) DEFERRABLE INITIALLY DEFERRED,
+        FOREIGN KEY (current_version_id, id, room_record_id) REFERENCES record.settlement_transfer_version (id, settlement_transfer_id, room_record_id) DEFERRABLE INITIALLY DEFERRED,
   ADD CONSTRAINT fk_settlement_transfer_confirmed_version
-    FOREIGN KEY (confirmed_version_id, room_record_id) REFERENCES record.settlement_transfer_version (id, room_record_id) DEFERRABLE INITIALLY DEFERRED;
+    FOREIGN KEY (confirmed_version_id, id, room_record_id) REFERENCES record.settlement_transfer_version (id, settlement_transfer_id, room_record_id) DEFERRABLE INITIALLY DEFERRED;
 
 ALTER TABLE state.payment
     ADD CONSTRAINT fk_payment_current_version
-        FOREIGN KEY (current_version_id, room_record_id) REFERENCES record.payment_version (id, room_record_id) DEFERRABLE INITIALLY DEFERRED,
+        FOREIGN KEY (current_version_id, id, room_record_id) REFERENCES record.payment_version (id, payment_id, room_record_id) DEFERRABLE INITIALLY DEFERRED,
   ADD CONSTRAINT fk_payment_confirmed_version
-    FOREIGN KEY (confirmed_version_id, room_record_id) REFERENCES record.payment_version (id, room_record_id) DEFERRABLE INITIALLY DEFERRED;
+    FOREIGN KEY (confirmed_version_id, id, room_record_id) REFERENCES record.payment_version (id, payment_id, room_record_id) DEFERRABLE INITIALLY DEFERRED;
 
 -- =========================================================
 -- 15. 인덱스 (05에 적힌 것 + 작업자·조회용)
