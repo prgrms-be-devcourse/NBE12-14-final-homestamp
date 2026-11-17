@@ -179,6 +179,21 @@ resource "aws_s3_bucket_policy" "ops" {
 resource "aws_s3_bucket_lifecycle_configuration" "ops" {
   bucket = local.ops_bucket
 
+  # SSM 세션 기록(관리 역할 셸): 접속기록 1년(decisions 2026-11-11, 04 8장)
+  rule {
+    id     = "ssm-session-logs-365d"
+    status = "Enabled"
+    filter {
+      prefix = "logs/ssm/"
+    }
+    expiration {
+      days = 365
+    }
+    noncurrent_version_expiration {
+      noncurrent_days = 1
+    }
+  }
+
   rule {
     id     = "s3-access-logs-30d"
     status = "Enabled"
