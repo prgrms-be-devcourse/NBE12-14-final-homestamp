@@ -15,11 +15,22 @@
 | **B** | 사실 행 | 안 됨 | 사람이 입력한 내용. 고치면 이전 행을 가리키는 새 행(판) |
 | **C** | 상태 행 | 상태·기한·version·"지금 판" 칸만 | 지금 어디까지 왔나. 행동 기록에서 다시 계산할 수 있는 사본. 그 밖의 칸은 만들 때 한 번만 쓴다 |
 
+### DB 스키마와 권한
+
+| 스키마 | 들어가는 테이블 | 앱 권한 |
+|---|---|---|
+| `record` | A 행동 기록과 B 사실 행(약관 확인 포함). 상태의 원본인 `action`도 여기 둔다 | SELECT·INSERT만 |
+| `state` | C 상태 행과 고정 조회 데이터(`part_template`, `region`) | C는 필요한 DML, 고정 데이터는 SELECT만 |
+| `log` | B 삭제 감사 `deletion_log` | INSERT만(기존 기록 조회는 삭제 작업 역할) |
+| `public` | Flyway 이력 `flyway_schema_history` | 앱 접근 없음 |
+
+V1은 테이블·FK·트리거·함수에 스키마를 명시한다. JPA 엔티티를 만들 때 `@Table(schema = "record"/"state"/"log")`를 명시한다. 스키마 분리는 A·B·C 분류를 바꾸지 않는다. `deletion_log`는 감사 목적의 B라 `log`에 두며, `member_acknowledgement`의 탈퇴 삭제만 제한된 함수로 허용한다. 운영 역할·기본 권한·예외 권한은 `../runbooks/DB-보관-삭제.md` 「역할 분리」를 따른다.
+
 ### 모든 테이블의 공통 칸
 
 | 칸 | 내용 |
 |---|---|
-| `id` | UUID v7(Hibernate가 저장할 때 생성, 앱·화면은 넣지 않음) |
+| `id` | UUID v7(일반 엔티티는 Hibernate가 저장할 때 생성, 앱·화면은 넣지 않음. 탈퇴 함수의 감사·아웃박스는 DB `uuidv7()`로 생성) |
 | `room_record_id` | 호실 기록. 계정·템플릿·법정동(`region`)·삭제 기록·아웃박스·횟수 세기(`rate_counter`)를 뺀 모든 테이블. 보관 삭제와 탈퇴를 호실 기록 하나 기준으로 처리하려고. `in_app_notification`은 호실과 무관한 서비스 안내(번호 인증 해제 등)면 NULL |
 | `created_at` | 서버 시각(`timestamptz`). 고정 데이터(`part_template`, `region`)와 `rate_counter`에는 없음 |
 | `version` | C 테이블만. 낙관적 잠금. `rate_counter`와 `sms_opt_out`은 예외: 각각 원자적 증감과 행의 존재 여부로 상태를 관리한다 |
@@ -32,9 +43,9 @@
 
 A·B 테이블은 UPDATE와 TRUNCATE를 항상 거절한다(행 트리거 + BEFORE TRUNCATE 문장 트리거). DELETE는 **실행 역할이 테이블 소유자이고 `app.purge = on`일 때만** 통과한다. 플래그만 켠 앱 역할은 거절한다. 호실 통째 삭제는 PUBLIC 실행 권한을 제거한 `purge_room_record(uuid)` SECURITY DEFINER 함수로 모으고, 별도 삭제 작업 역할에만 EXECUTE를 준다. 함수 소유자는 보호 테이블 소유자와 같아야 하며 앱은 그 역할을 상속할 수 없다. 호출 전 모든 행동의 삭제 감사 기록이 원본과 일치해야 한다. 운영 권한과 호출 순서는 `../runbooks/DB-보관-삭제.md`를 따른다. 일부 비공개 초안만 지우는 함수는 아직 구현하지 않았다.
 
-이 보호는 부모에서 시작한 연쇄 삭제에도 적용해야 한다. 앱에 `room_record` DELETE 권한이 잘못 부여돼도 purge 플래그만 켜서 A·B를 지울 수 없어야 한다. `room_record` 자체의 삭제도 소유자 권한과 purge 플래그가 함께 있을 때만 허용한다. 구체적인 트리거와 권한 회귀 테스트는 구현 작업이다.
+이 보호는 부모에서 시작한 연쇄 삭제에도 적용해야 한다. 앱에 `room_record` DELETE 권한이 잘못 부여돼도 purge 플래그만 켜서 A·B를 지울 수 없어야 한다. `room_record` 자체의 삭제도 소유자 권한과 purge 플래그가 함께 있을 때만 허용한다. V1의 부모 DELETE 트리거와 일반 역할 회귀 테스트로 검사한다.
 
-호실 밖의 B인 `member_acknowledgement`는 탈퇴 처리 전용 삭제 경로를 둔다. 앱에는 직접 DELETE나 호실 삭제 함수 실행 권한을 주지 않고, 탈퇴한 회원의 확인 기록만 지우는 제한된 함수의 EXECUTE만 예외로 허용한다. 함수는 회원 행을 잠그고 `WITHDRAWN` 상태를 검사한 뒤, 확인 기록별 삭제 감사와 `AUDIT_WRITE` 아웃박스를 보존하고 삭제한다. 회원 가림·확인 기록 삭제·감사 보존은 같은 탈퇴 트랜잭션이며 실패하면 함께 롤백한다. 함수 이름과 SQL은 구현하면서 정한다.
+호실 밖의 B인 `member_acknowledgement`는 탈퇴 처리 전용 삭제 경로를 둔다. 앱에는 직접 DELETE나 호실 삭제 함수 실행 권한을 주지 않고, 탈퇴한 회원의 확인 기록만 지우는 제한된 함수의 EXECUTE만 예외로 허용한다. 함수는 회원 행을 잠그고 `WITHDRAWN` 상태를 검사한 뒤, 확인 기록별 삭제 감사와 `AUDIT_WRITE` 아웃박스를 보존하고 삭제한다. 회원 가림·확인 기록 삭제·감사 보존은 같은 탈퇴 트랜잭션이며 실패하면 함께 롤백한다. `record.purge_member_acknowledgements(uuid, timestamptz)`로 처리하며 시각은 호출 서비스의 Clock에서 받는다.
 
 ### 원칙의 예외: 신원·연락처 칸
 
@@ -212,7 +223,7 @@ erDiagram
 
 | 테이블 | 종류 | 칸 | 제약·메모 |
 |---|---|---|---|
-| `settlement` 정산 | C | `opened_at`, `deposit_status`(NOT_ENTERED/PENDING/AGREED/DISPUTE, 화면 말은 "보증금 확인 전"/"둘 다 확인". "미확인"과 헷갈리지 않게 UNCONFIRMED라 부르지 않음), `current_deposit_proposal_id`(답 기다리는 제안), `agreed_deposit_proposal_id`(지금 합의, 바꾸자는 안이 와도 그대로), `snapshot_no`(**정산 모습 번호**, 1부터. 06 SET-5e "정산 모습 3번 → 4번". `version`처럼 바뀌는 칸) | `UNIQUE(room_record_id)`. **정산 모습 번호**: 항목·송금·보증금 제안은 다른 행이라 바뀌어도 `settlement.version`이 오르지 않으므로 따로 센다. 정산에 무엇이든 더해지거나 바뀌면(항목 추가·제외 제안, 금액 제안·응답·이견, 수리 건에서 온 금액이 바뀌어 항목이 확인 대기가 됨, 보증금 제안·응답, 송금 기록·응답·고치기, 누가 했든, 03-상태 1-4) 그 행동의 트랜잭션에서 `UPDATE settlement SET snapshot_no = snapshot_no + 1`(이 행을 잠금). 화면은 이 번호를 받아 끝내기 확인 때 `seenVersionNo`로 돌려보낸다 |
+| `settlement` 정산 | C | `deposit_status`(NOT_ENTERED/PENDING/AGREED/DISPUTE, 화면 말은 "보증금 확인 전"/"둘 다 확인". "미확인"과 헷갈리지 않게 UNCONFIRMED라 부르지 않음), `current_deposit_proposal_id`(답 기다리는 제안), `agreed_deposit_proposal_id`(지금 합의, 바꾸자는 안이 와도 그대로), `snapshot_no`(**정산 모습 번호**, 1부터. 06 SET-5e "정산 모습 3번 → 4번". `version`처럼 바뀌는 칸) | `UNIQUE(room_record_id)`. **정산 모습 번호**: 항목·송금·보증금 제안은 다른 행이라 바뀌어도 `settlement.version`이 오르지 않으므로 따로 센다. 정산에 무엇이든 더해지거나 바뀌면(항목 추가·제외 제안, 금액 제안·응답·이견, 수리 건에서 온 금액이 바뀌어 항목이 확인 대기가 됨, 보증금 제안·응답, 송금 기록·응답·고치기, 누가 했든, 03-상태 1-4) 그 행동의 트랜잭션에서 `UPDATE settlement SET snapshot_no = snapshot_no + 1`(이 행을 잠금). 화면은 이 번호를 받아 끝내기 확인 때 `seenVersionNo`로 돌려보낸다 |
 | `settlement_item` 정산 항목 | C | `settlement_id`, `source`(REPAIR/MANUAL), `repair_case_id`, `room_part_id`, `category`, `status`(PENDING/AGREED/DISPUTE/EXCLUDED), `current_proposal_id`(답 기다리는 제안, 2-4), `agreed_proposal_id` | 출처·부위·종류는 만들 때 한 번만 씀(바꾸려면 이 항목을 제외 제안하고 새 항목을 넣음). **금액·방향은 제안 줄, 사유는 제안(`proposal.reason`)에**(정산 항목의 [바꾸기] = 새 제안, 고치기 대상 아님). 합의된 항목만 계산(불변식 6). `UNIQUE(settlement_id, repair_case_id) WHERE source = 'REPAIR' AND status <> 'EXCLUDED'`로 유효 수리 건 후보 중복을 막는다. 제외한 항목은 이력으로 두고 새 후보를 넣을 수 있으며 수동 항목은 제한하지 않는다. `room_part_id`는 MANUAL일 때만 쓰고 REPAIR이면 수리 건의 부위를 따른다. |
 | `settlement_transfer` 정산 송금 | C | `settlement_id`, `direction`(REFUND/EXTRA), `current_version_id`, `confirmed_version_id`, `recorded_by_side`, `response`(NONE/ACK/NEED_MORE/DISPUTE, 그 기록을 남기지 않은 쪽의 응답: 보낸 쪽 기록이면 받은 쪽, [받았어요(혼자)]면 보낸 쪽), `same_as_transfer_id`(받은 쪽이 실제 받은 금액으로 남긴 [받았어요(혼자)]가 보낸 쪽 기록과 같은 송금이면 그 기록, 합계에서 두 번 세지 않음), `receipt_confirmed_at` | 지불 기록과 같은 "C 머리 + B 판". 받은 쪽 응답은 응답 요청(RECEIPT_CONFIRM). 여러 번. 송금 합계는 **상대가 확인한(`response = ACK`) 판만** 더하고, 같은 송금으로 묶인 두 기록은 한 번만 센다 |
 | `settlement_transfer_version` 정산 송금 판 | B | `settlement_transfer_id`, `no`(판 번호), `amount`, `paid_on`, `previous_id` | 금액·날짜를 고치면 새 판(고치기). 여러 번. `UNIQUE(settlement_transfer_id, no)` |
@@ -302,7 +313,7 @@ erDiagram
 | 항목 | 어디서 |
 |---|---|
 | 칸 이름·타입 다듬기, 인덱스 목록 | 첫 마이그레이션을 쓰면서 |
-| 2026-11-16 설계 반영 | 수신 거부 C 분류·탈퇴 전용 삭제 경로·부모 삭제 보호·링크 제약·원인 설명 수정 분기 제한·불필요 칼럼 제거를 SQL·권한·테스트에 반영하는 것은 후속 구현이다. 현재 V1에 모두 구현됐다는 뜻이 아니다 |
+| 2026-11-16 설계 반영 | V1에 수신 거부 C 분류·탈퇴 전용 삭제 함수·부모 삭제 보호·링크 제약·원인 설명 수정 분기 제한·불필요 칼럼 제거를 반영한다. 운영 역할·GRANT 적용과 서비스의 인증·권한·감사 트랜잭션 연결은 후속 구현이다 |
 | 하루 한 번 어긋남 검사 | 여유가 있을 때(선택) |
 
 숫자(문자 하루 한도, 사진 장수·크기, 하루 업로드 한도)는 `06-요구사항-명세.md` 설정값 표에 정해져 있고, 해시 체인 칸은 첫 마이그레이션에 넣는다(검증 API·화면은 Should).

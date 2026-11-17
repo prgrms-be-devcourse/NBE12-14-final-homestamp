@@ -11,12 +11,29 @@ import org.springframework.dao.DataAccessException;
 
 class PurgePermissionSchemaTest extends SchemaTestSupport {
   @Test
+  void appCannotCascadeDeleteBySettingFlagEvenWithParentDeleteGrant() {
+    UUID room = room();
+    repair(room);
+    action(room);
+    String app = role();
+    jdbc.execute("GRANT USAGE ON SCHEMA state, record, log TO " + app);
+    jdbc.execute("GRANT SELECT, DELETE ON ALL TABLES IN SCHEMA state, record, log TO " + app);
+    jdbc.execute("SET LOCAL ROLE " + app);
+    jdbc.execute("SET LOCAL app.purge = 'on'");
+    var error =
+        assertThrows(
+            DataAccessException.class,
+            () -> jdbc.update("DELETE FROM room_record WHERE id = ?", room));
+    assertTrue(error.getMessage().contains("room deletion requires purge owner"));
+  }
+
+  @Test
   void appCannotEnableDeletionJustBySettingFlagEvenWithDeleteGrant() {
     UUID room = room();
     UUID repair = repair(room);
     String role = role();
-    jdbc.execute("GRANT USAGE ON SCHEMA public TO " + role);
-    jdbc.execute("GRANT SELECT, DELETE ON ALL TABLES IN SCHEMA public TO " + role);
+    jdbc.execute("GRANT USAGE ON SCHEMA state, record, log TO " + role);
+    jdbc.execute("GRANT SELECT, DELETE ON ALL TABLES IN SCHEMA state, record, log TO " + role);
     jdbc.execute("SET LOCAL ROLE " + role);
     jdbc.execute("SET LOCAL app.purge = 'on'");
     var error =
@@ -30,7 +47,7 @@ class PurgePermissionSchemaTest extends SchemaTestSupport {
   void functionIsNotExecutableByAppByDefault() {
     UUID room = room();
     String role = role();
-    jdbc.execute("GRANT USAGE ON SCHEMA public TO " + role);
+    jdbc.execute("GRANT USAGE ON SCHEMA state, record, log TO " + role);
     jdbc.execute("SET LOCAL ROLE " + role);
     var error = assertThrows(DataAccessException.class, () -> purge(room));
     assertTrue(
@@ -48,7 +65,7 @@ class PurgePermissionSchemaTest extends SchemaTestSupport {
     UUID action = action(room);
     audit(action, new byte[32]);
     String worker = role();
-    jdbc.execute("GRANT USAGE ON SCHEMA public TO " + worker);
+    jdbc.execute("GRANT USAGE ON SCHEMA state, record, log TO " + worker);
     jdbc.execute("GRANT EXECUTE ON FUNCTION purge_room_record(uuid) TO " + worker);
     assertFalse(
         jdbc.queryForObject(

@@ -17,8 +17,8 @@ class RoomCascadeSchemaTest extends SchemaTestSupport {
     for (String table :
         jdbc.queryForList(
             """
-            SELECT table_name FROM information_schema.columns
-            WHERE table_schema = 'public' AND column_name = 'room_record_id'
+            SELECT table_schema || '.' || table_name FROM information_schema.columns
+            WHERE table_schema IN ('state', 'record', 'log') AND column_name = 'room_record_id'
             """,
             String.class)) {
       assertEquals(

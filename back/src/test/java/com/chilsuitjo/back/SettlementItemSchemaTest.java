@@ -36,8 +36,8 @@ class SettlementItemSchemaTest extends SchemaTestSupport {
     UUID id = UUID.randomUUID();
     jdbc.update(
         """
-        INSERT INTO settlement (id, room_record_id, opened_at, deposit_status, created_at, version)
-        VALUES (?, ?, CURRENT_TIMESTAMP, 'NOT_ENTERED', CURRENT_TIMESTAMP, 0)
+        INSERT INTO settlement (id, room_record_id, deposit_status, created_at, version)
+        VALUES (?, ?, 'NOT_ENTERED', CURRENT_TIMESTAMP, 0)
         """,
         id,
         room);

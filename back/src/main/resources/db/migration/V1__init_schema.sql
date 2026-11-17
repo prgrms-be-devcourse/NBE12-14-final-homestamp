@@ -1,15 +1,22 @@
 -- V1__init_schema.sql
 -- HOMESTAMP 전체 스키마 (37개 테이블)
 -- 기준: docs/rules/06-요구사항-명세.md(기준점), 테이블·칸은 docs/rules/05-ERD-초안.md 2장
--- id는 Hibernate가 넣는 UUID v7, created_at은 앱 Clock (DEFAULT 없음, 불변식 10)
+-- 일반 엔티티 id는 Hibernate UUID v7, 탈퇴 함수의 감사·아웃박스 id는 DB uuidv7()
+-- created_at은 앱 Clock (탈퇴 함수도 인자로 받음, DEFAULT 없음, 불변식 10)
 -- enum은 varchar + CHECK (JPA @Enumerated(STRING), ddl-auto=validate)
 -- 뒤에서 만드는 테이블을 가리키는 FK는 14절에서 ALTER로 붙인다(순환 참조)
+
+-- A·B는 record, C·고정 조회 데이터는 state, 삭제 감사는 log에 둔다.
+-- Flyway 이력은 public에 둔다. 앱에는 public CREATE 및 소유자 역할을 주지 않는다.
+CREATE SCHEMA IF NOT EXISTS record;
+CREATE SCHEMA IF NOT EXISTS state;
+CREATE SCHEMA IF NOT EXISTS log;
 
 -- =========================================================
 -- 0. 덧붙이기만 하는 테이블 보호 ([A]·[B], 05 2-3·04 4-0)
 --    UPDATE·TRUNCATE는 언제나 거절, DELETE는 테이블 소유자 권한 + app.purge = 'on'에서만
 -- =========================================================
-CREATE FUNCTION forbid_change() RETURNS trigger
+CREATE FUNCTION record.forbid_change() RETURNS trigger
     LANGUAGE plpgsql AS $$
 BEGIN
   IF TG_OP = 'DELETE' AND current_setting('app.purge', true) = 'on'
@@ -21,11 +28,25 @@ END IF;
 END;
 $$;
 
--- 무효가 된 링크는 다시 유효해지지 않는다(불변식 7, 05 3장)
-CREATE FUNCTION forbid_link_revalidate() RETURNS trigger
+-- 부모에서 시작한 CASCADE도 앱의 삭제 권한을 높여 주지 않는다.
+CREATE FUNCTION state.guard_room_delete() RETURNS trigger
     LANGUAGE plpgsql AS $$
 BEGIN
-  IF OLD.invalidated_at IS NOT NULL AND NEW.invalidated_at IS DISTINCT FROM OLD.invalidated_at THEN
+  IF current_setting('app.purge', true) = 'on'
+      AND current_user = (SELECT pg_catalog.pg_get_userbyid(relowner)
+                          FROM pg_catalog.pg_class WHERE oid = TG_RELID) THEN
+    RETURN OLD;
+  END IF;
+  RAISE EXCEPTION 'room deletion requires purge owner';
+END;
+$$;
+
+-- 무효가 된 링크는 다시 유효해지지 않는다(불변식 7, 05 3장)
+CREATE FUNCTION state.forbid_link_revalidate() RETURNS trigger
+    LANGUAGE plpgsql AS $$
+BEGIN
+  IF OLD.invalidated_at IS NOT NULL AND (NEW.invalidated_at IS DISTINCT FROM OLD.invalidated_at
+      OR NEW.invalidated_reason IS DISTINCT FROM OLD.invalidated_reason) THEN
     RAISE EXCEPTION 'link % cannot be revalidated', OLD.id;
 END IF;
 RETURN NEW;
@@ -35,7 +56,7 @@ $$;
 -- =========================================================
 -- 1. 계정 (05 2-1)
 -- =========================================================
-CREATE TABLE member (
+CREATE TABLE state.member (
                         id                 uuid PRIMARY KEY,
                         email              varchar(320),                 -- 탈퇴하면 NULL
                         password_hash      varchar(255),
@@ -50,20 +71,20 @@ CREATE TABLE member (
                         CHECK ((status = 'WITHDRAWN') = (withdrawn_at IS NOT NULL))
 );
 
-CREATE TABLE refresh_token (
+CREATE TABLE state.refresh_token (
                                id              uuid PRIMARY KEY,
-                               member_id       uuid         NOT NULL REFERENCES member (id),
+                               member_id       uuid         NOT NULL REFERENCES state.member (id),
                                family_id       uuid         NOT NULL,
                                token_hash      varchar(128) NOT NULL UNIQUE,
                                device_label    varchar(100),
                                expires_at      timestamptz  NOT NULL,
                                revoked_at      timestamptz,
-                               replaced_by_id  uuid REFERENCES refresh_token (id),
+                               replaced_by_id  uuid REFERENCES state.refresh_token (id),
                                created_at      timestamptz  NOT NULL,
                                version         bigint       NOT NULL
 );
 
-CREATE TABLE phone_verification (
+CREATE TABLE state.phone_verification (
                                     id             uuid PRIMARY KEY,
                                     phone          varchar(20)  NOT NULL,
                                     purpose        varchar(10)  NOT NULL CHECK (purpose IN ('SIGNUP', 'RESET', 'FIND_ID', 'CHANGE')),
@@ -77,16 +98,16 @@ CREATE TABLE phone_verification (
                                     CHECK (consumed_at IS NULL OR verified_at IS NOT NULL)
 );
 
-CREATE TABLE member_acknowledgement (
+CREATE TABLE record.member_acknowledgement (
                                         id            uuid PRIMARY KEY,
-                                        member_id     uuid        NOT NULL REFERENCES member (id),
+                                        member_id     uuid        NOT NULL REFERENCES state.member (id),
                                         kind          varchar(20) NOT NULL CHECK (kind IN ('AGE_14_CONFIRMED', 'TERMS_AGREED', 'PRIVACY_NOTICE_ACK')),
                                         text_version  varchar(20) NOT NULL,
                                         agreed_at     timestamptz NOT NULL,
                                         created_at    timestamptz NOT NULL
 );
 
-CREATE TABLE sms_opt_out (
+CREATE TABLE state.sms_opt_out (
                              phone_hmac  varchar(128) PRIMARY KEY,
                              created_at  timestamptz  NOT NULL
 );
@@ -94,7 +115,7 @@ CREATE TABLE sms_opt_out (
 -- =========================================================
 -- 2. 호실과 참여 (05 2-2, link는 7절)
 -- =========================================================
-CREATE TABLE part_template (
+CREATE TABLE state.part_template (
                                id          uuid PRIMARY KEY,
                                zone        varchar(30) NOT NULL,
                                name        varchar(50) NOT NULL,
@@ -103,7 +124,7 @@ CREATE TABLE part_template (
 );
 
 -- 법정동 기본 데이터는 별도 V 파일에서 적재(05 2-2)
-CREATE TABLE region (
+CREATE TABLE state.region (
     code        char(10) PRIMARY KEY CHECK (code ~ '^[0-9]{10}$'),
     sido        varchar(20) NOT NULL,
     sigungu     varchar(30),                                    -- 세종특별자치시는 시·군·구가 없어 NULL
@@ -111,9 +132,9 @@ CREATE TABLE region (
     active      boolean NOT NULL DEFAULT true
 );
 
-CREATE TABLE room_record (
+CREATE TABLE state.room_record (
                              id                              uuid PRIMARY KEY,
-                             region_code                     char(10) NOT NULL REFERENCES region (code),
+                             region_code                     char(10) NOT NULL REFERENCES state.region (code),
                              alias                           varchar(50) NOT NULL,
                              move_in_date                    date,
                              status                          varchar(10) NOT NULL CHECK (status IN ('LIVING', 'ENDED', 'SETTLED')),
@@ -124,7 +145,7 @@ CREATE TABLE room_record (
                              autoclose_due_at                timestamptz,
                              delete_due_at                   timestamptz,
                              inactivity_notice_due_at        timestamptz,
-                             joined_into_id                  uuid REFERENCES room_record (id),
+                             joined_into_id                  uuid REFERENCES state.room_record (id),
                              joined_at                       timestamptz,
                              created_at                      timestamptz NOT NULL,
                              version                         bigint      NOT NULL,
@@ -134,11 +155,11 @@ CREATE TABLE room_record (
                              CHECK (status <> 'SETTLED' OR settled_at IS NOT NULL)
 );
 
-CREATE TABLE party (
+CREATE TABLE state.party (
                        id                  uuid PRIMARY KEY,
-                       room_record_id      uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
+                       room_record_id      uuid        NOT NULL REFERENCES state.room_record (id) ON DELETE CASCADE,
                        side                varchar(10) NOT NULL CHECK (side IN ('TENANT', 'LANDLORD')),
-                       member_id           uuid REFERENCES member (id),
+                       member_id           uuid REFERENCES state.member (id),
                        invite_phone        varchar(20),                         -- 문자를 보내야 해서 평문, 연결·수신 거부·탈퇴 때 NULL
                        status              varchar(20) NOT NULL CHECK (status IN (
                                                                                   'EMPTY', 'NUMBER_ONLY', 'INVITED', 'CONNECTED',
@@ -154,10 +175,10 @@ CREATE TABLE party (
                        CHECK (status <> 'SHARING_STOPPED' OR sharing_stopped_at IS NOT NULL)
 );
 
-CREATE TABLE room_part (
+CREATE TABLE state.room_part (
                            id              uuid PRIMARY KEY,
-                           room_record_id  uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
-                           template_id     uuid REFERENCES part_template (id),    -- 직접 추가한 부위면 NULL
+                           room_record_id  uuid        NOT NULL REFERENCES state.room_record (id) ON DELETE CASCADE,
+                           template_id     uuid REFERENCES state.part_template (id),    -- 직접 추가한 부위면 NULL
                            zone            varchar(30) NOT NULL,
                            name            varchar(50) NOT NULL,
                            sort_order      int         NOT NULL,
@@ -170,9 +191,9 @@ CREATE TABLE room_part (
 -- =========================================================
 -- 3. 수리 건과 내용 판 (05 2-5)
 -- =========================================================
-CREATE TABLE repair_case (
+CREATE TABLE state.repair_case (
                              id                    uuid PRIMARY KEY,
-                             room_record_id        uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
+                             room_record_id        uuid        NOT NULL REFERENCES state.room_record (id) ON DELETE CASCADE,
                              current_content_id    uuid        NOT NULL,             -- FK는 14절(지연 검사)
                              confirmed_content_id  uuid,                             -- 같이 확인한 모습, FK는 14절
                              status                varchar(20) NOT NULL CHECK (status IN ('NOT_STARTED', 'IN_PROGRESS', 'CLOSE_WAIT', 'DONE')),
@@ -182,20 +203,18 @@ CREATE TABLE repair_case (
                              current_proposal_id   uuid,                             -- FK는 14절
                              agreed_proposal_id    uuid,                             -- FK는 14절
                              previous_case_id      uuid, -- 재발
-                             related_case_id       uuid, -- 수리 중 새로 찾은 별개 하자면 원래 건
                              created_by_side       varchar(10) NOT NULL CHECK (created_by_side IN ('TENANT', 'LANDLORD')),
                              solo                  boolean     NOT NULL DEFAULT false,
                              first_shown_at        timestamptz,                      -- NULL이면 탈퇴 때 삭제 대상
                              created_at            timestamptz NOT NULL,
                              version               bigint      NOT NULL,
                              CHECK ((status = 'DONE') = (closed_by IS NOT NULL)),
-                             CHECK (previous_case_id <> id),
-                             CHECK (related_case_id <> id)
+                             CHECK (previous_case_id <> id)
 );
 
-CREATE TABLE repair_content (
+CREATE TABLE record.repair_content (
                                 id               uuid PRIMARY KEY,
-                                room_record_id   uuid         NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
+                                room_record_id   uuid         NOT NULL REFERENCES state.room_record (id) ON DELETE CASCADE,
                                 repair_case_id   uuid         NOT NULL,
                                 no               int          NOT NULL CHECK (no >= 1),
   room_part_id     uuid         NOT NULL,
@@ -210,9 +229,9 @@ CREATE TABLE repair_content (
 -- =========================================================
 -- 4. 점검 (05 2-6)
 -- =========================================================
-CREATE TABLE inspection (
+CREATE TABLE state.inspection (
                             id              uuid PRIMARY KEY,
-                            room_record_id  uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
+                            room_record_id  uuid        NOT NULL REFERENCES state.room_record (id) ON DELETE CASCADE,
                             kind            varchar(10) NOT NULL CHECK (kind IN ('MOVE_IN', 'MOVE_OUT')),
                             author_side     varchar(10) NOT NULL CHECK (author_side IN ('TENANT', 'LANDLORD')),
                             status          varchar(10) NOT NULL CHECK (status IN ('DRAFT', 'REQUESTED', 'LOCKED')),
@@ -227,9 +246,9 @@ CREATE TABLE inspection (
                             CHECK ((locked_at IS NULL) = (lock_reason IS NULL))
 );
 
-CREATE TABLE inspection_item (
+CREATE TABLE state.inspection_item (
                                  id                    uuid PRIMARY KEY,
-                                 room_record_id        uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
+                                 room_record_id        uuid        NOT NULL REFERENCES state.room_record (id) ON DELETE CASCADE,
                                  inspection_id         uuid        NOT NULL,
                                  current_version_id    uuid        NOT NULL,             -- FK는 14절(지연 검사)
                                  confirmed_version_id  uuid,                             -- FK는 14절
@@ -241,9 +260,9 @@ CREATE TABLE inspection_item (
                                  version               bigint      NOT NULL
 );
 
-CREATE TABLE inspection_item_version (
+CREATE TABLE record.inspection_item_version (
                                          id                  uuid PRIMARY KEY,
-                                         room_record_id      uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
+                                         room_record_id      uuid        NOT NULL REFERENCES state.room_record (id) ON DELETE CASCADE,
                                          inspection_item_id  uuid        NOT NULL,
                                          no                  int         NOT NULL CHECK (no >= 1),
   room_part_id        uuid        NOT NULL,
@@ -256,10 +275,10 @@ CREATE TABLE inspection_item_version (
 -- =========================================================
 -- 5. 정산 (05 2-7)
 -- =========================================================
-CREATE TABLE settlement (
+CREATE TABLE state.settlement (
                             id                           uuid PRIMARY KEY,
-                            room_record_id               uuid        NOT NULL UNIQUE REFERENCES room_record (id) ON DELETE CASCADE,
-                            opened_at                    timestamptz NOT NULL,
+                            room_record_id               uuid        NOT NULL UNIQUE REFERENCES state.room_record (id) ON DELETE CASCADE,
+
                             deposit_status               varchar(20) NOT NULL CHECK (deposit_status IN ('NOT_ENTERED', 'PENDING', 'AGREED', 'DISPUTE')),
                             current_deposit_proposal_id  uuid,                      -- FK는 14절
                             agreed_deposit_proposal_id   uuid,                      -- FK는 14절
@@ -268,9 +287,9 @@ CREATE TABLE settlement (
                             version                      bigint      NOT NULL
 );
 
-CREATE TABLE settlement_item (
+CREATE TABLE state.settlement_item (
                                  id                   uuid PRIMARY KEY,
-                                 room_record_id       uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
+                                 room_record_id       uuid        NOT NULL REFERENCES state.room_record (id) ON DELETE CASCADE,
                                  settlement_id        uuid        NOT NULL,
                                  source               varchar(10) NOT NULL CHECK (source IN ('REPAIR', 'MANUAL')),
                                  repair_case_id       uuid,
@@ -281,12 +300,13 @@ CREATE TABLE settlement_item (
                                  agreed_proposal_id   uuid,                              -- FK는 14절
                                  created_at           timestamptz NOT NULL,
                                  version              bigint      NOT NULL,
-                                 CHECK ((source = 'REPAIR') = (repair_case_id IS NOT NULL))
+                                 CHECK ((source = 'REPAIR') = (repair_case_id IS NOT NULL)),
+                                 CONSTRAINT ck_settlement_item_manual_part CHECK (source = 'MANUAL' OR room_part_id IS NULL)
 );
 
-CREATE TABLE settlement_transfer (
+CREATE TABLE state.settlement_transfer (
                                      id                    uuid PRIMARY KEY,
-                                     room_record_id        uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
+                                     room_record_id        uuid        NOT NULL REFERENCES state.room_record (id) ON DELETE CASCADE,
                                      settlement_id         uuid        NOT NULL,
                                      direction             varchar(10) NOT NULL CHECK (direction IN ('REFUND', 'EXTRA')),
                                      current_version_id    uuid        NOT NULL,             -- FK는 14절(지연 검사)
@@ -300,9 +320,9 @@ CREATE TABLE settlement_transfer (
                                      CHECK (same_as_transfer_id <> id)
 );
 
-CREATE TABLE settlement_transfer_version (
+CREATE TABLE record.settlement_transfer_version (
                                              id                      uuid PRIMARY KEY,
-                                             room_record_id          uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
+                                             room_record_id          uuid        NOT NULL REFERENCES state.room_record (id) ON DELETE CASCADE,
                                              settlement_transfer_id  uuid        NOT NULL,
                                              no                      int         NOT NULL CHECK (no >= 1),
   amount                  bigint      NOT NULL CHECK (amount >= 0),
@@ -315,9 +335,9 @@ CREATE TABLE settlement_transfer_version (
 -- =========================================================
 -- 6. 지불과 돈 안건 장치 (05 2-5·2-4)
 -- =========================================================
-CREATE TABLE payment (
+CREATE TABLE state.payment (
                          id                    uuid PRIMARY KEY,
-                         room_record_id        uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
+                         room_record_id        uuid        NOT NULL REFERENCES state.room_record (id) ON DELETE CASCADE,
                          repair_case_id        uuid        NOT NULL,
                          current_version_id    uuid        NOT NULL,             -- FK는 14절(지연 검사)
                          confirmed_version_id  uuid,                             -- FK는 14절
@@ -328,9 +348,9 @@ CREATE TABLE payment (
                          version               bigint      NOT NULL
 );
 
-CREATE TABLE payment_version (
+CREATE TABLE record.payment_version (
                                  id                uuid PRIMARY KEY,
-                                 room_record_id    uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
+                                 room_record_id    uuid        NOT NULL REFERENCES state.room_record (id) ON DELETE CASCADE,
                                  payment_id        uuid        NOT NULL,
                                  no                int         NOT NULL CHECK (no >= 1),
   payer_kind        varchar(20) NOT NULL CHECK (payer_kind IN ('TENANT', 'LANDLORD', 'THIRD_PARTY')),
@@ -346,9 +366,9 @@ CREATE TABLE payment_version (
   CONSTRAINT uq_payment_version_no UNIQUE (payment_id, no)
 );
 
-CREATE TABLE proposal (
+CREATE TABLE record.proposal (
                           id                  uuid PRIMARY KEY,
-                          room_record_id      uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
+                          room_record_id      uuid        NOT NULL REFERENCES state.room_record (id) ON DELETE CASCADE,
                           repair_case_id      uuid,       -- 부담
                           settlement_item_id  uuid,   -- 정산 항목 금액·제외
                           settlement_id       uuid,        -- 보증금
@@ -364,9 +384,9 @@ CREATE TABLE proposal (
                           CHECK (NOT exclude OR settlement_item_id IS NOT NULL)
 );
 
-CREATE TABLE proposal_line (
+CREATE TABLE record.proposal_line (
                                id                 uuid PRIMARY KEY,
-                               room_record_id     uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
+                               room_record_id     uuid        NOT NULL REFERENCES state.room_record (id) ON DELETE CASCADE,
                                proposal_id        uuid        NOT NULL,
                                line_kind          varchar(20) NOT NULL CHECK (line_kind IN ('TENANT', 'LANDLORD', 'THIRD_PARTY', 'DEDUCT', 'ADD', 'DEPOSIT')),
                                third_party_label  varchar(30),
@@ -378,30 +398,32 @@ CREATE TABLE proposal_line (
 -- =========================================================
 -- 7. 링크 (05 2-2)
 -- =========================================================
-CREATE TABLE link (
+CREATE TABLE state.link (
                       id                   uuid PRIMARY KEY,
-                      room_record_id       uuid         NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
+                      room_record_id       uuid         NOT NULL REFERENCES state.room_record (id) ON DELETE CASCADE,
                       kind                 varchar(20)  NOT NULL CHECK (kind IN ('INVITE', 'SETTLEMENT_INVITE')),
                       party_id             uuid         NOT NULL,
                       repair_case_id       uuid,    -- 공유한 기록(없으면 호실 초대 화면)
                       inspection_id        uuid,
                       token_hash           varchar(128) NOT NULL UNIQUE,
-                      issued_by_member_id  uuid         NOT NULL REFERENCES member (id),
+                      issued_by_member_id  uuid         NOT NULL REFERENCES state.member (id),
                       invalidated_at       timestamptz,
-                      invalidated_reason   varchar(30),
+                      invalidated_reason   varchar(30) CHECK (invalidated_reason IN (
+                          'REINVITED', 'CONNECTED', 'RESIDENCE_ENDED', 'ISSUER_WITHDRAWN', 'SHARING_STOPPED', 'SETTLED')),
                       failed_view_count    int          NOT NULL DEFAULT 0 CHECK (failed_view_count >= 0),
                       created_at           timestamptz  NOT NULL,
                       version              bigint       NOT NULL,
                       CHECK (num_nonnulls(repair_case_id, inspection_id) <= 1),
-                      CHECK (kind <> 'SETTLEMENT_INVITE' OR num_nonnulls(repair_case_id, inspection_id) = 0)
+                      CHECK (kind <> 'SETTLEMENT_INVITE' OR num_nonnulls(repair_case_id, inspection_id) = 0),
+                      CONSTRAINT ck_link_invalidated_pair CHECK ((invalidated_at IS NULL) = (invalidated_reason IS NULL))
 );
 
 -- =========================================================
 -- 8. 응답 요청 (05 2-4, 기다림 타이머)
 -- =========================================================
-CREATE TABLE response_request (
+CREATE TABLE state.response_request (
                                   id                      uuid PRIMARY KEY,
-                                  room_record_id          uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
+                                  room_record_id          uuid        NOT NULL REFERENCES state.room_record (id) ON DELETE CASCADE,
                                   kind                    varchar(30) NOT NULL CHECK (kind IN (
                                                                                                'DEFECT_CONFIRM', 'SITUATION_CHECK', 'CORRECTION_CONFIRM', 'AMOUNT_CONFIRM',
                                                                                                'PROPOSAL', 'CLOSE_CONFIRM', 'INSPECTION_CONFIRM', 'RECEIPT_CONFIRM',
@@ -438,9 +460,9 @@ CREATE TABLE response_request (
 -- =========================================================
 -- 9. 원인 설명·진행 상황·고친 내용 (05 2-5)
 -- =========================================================
-CREATE TABLE cause_note (
+CREATE TABLE record.cause_note (
                             id              uuid PRIMARY KEY,
-                            room_record_id  uuid         NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
+                            room_record_id  uuid         NOT NULL REFERENCES state.room_record (id) ON DELETE CASCADE,
                             repair_case_id  uuid         NOT NULL,
                             side            varchar(10)  NOT NULL CHECK (side IN ('TENANT', 'LANDLORD')),
                             text            text         NOT NULL,
@@ -450,9 +472,9 @@ CREATE TABLE cause_note (
                             created_at      timestamptz  NOT NULL
 );
 
-CREATE TABLE progress_note (
+CREATE TABLE record.progress_note (
                                id                  uuid PRIMARY KEY,
-                               room_record_id      uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
+                               room_record_id      uuid        NOT NULL REFERENCES state.room_record (id) ON DELETE CASCADE,
                                repair_case_id      uuid        NOT NULL,
                                side                varchar(10) NOT NULL CHECK (side IN ('TENANT', 'LANDLORD')),
                                text                text        NOT NULL,
@@ -461,9 +483,9 @@ CREATE TABLE progress_note (
                                created_at          timestamptz NOT NULL
 );
 
-CREATE TABLE progress_note_response (
+CREATE TABLE state.progress_note_response (
                                         id                uuid PRIMARY KEY,
-                                        room_record_id    uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
+                                        room_record_id    uuid        NOT NULL REFERENCES state.room_record (id) ON DELETE CASCADE,
                                         progress_note_id  uuid        NOT NULL UNIQUE,  -- 지금 답 하나
                                         side              varchar(10) NOT NULL CHECK (side IN ('TENANT', 'LANDLORD')),
                                         answer            varchar(10) NOT NULL CHECK (answer IN ('ACK', 'NEED_MORE', 'DISPUTE')),
@@ -473,9 +495,9 @@ CREATE TABLE progress_note_response (
                                         CHECK (answer = 'ACK' OR reason IS NOT NULL)
 );
 
-CREATE TABLE correction_request (
+CREATE TABLE state.correction_request (
                                     id                      uuid PRIMARY KEY,
-                                    room_record_id          uuid         NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
+                                    room_record_id          uuid         NOT NULL REFERENCES state.room_record (id) ON DELETE CASCADE,
                                     field                   varchar(40)  NOT NULL,
                                     new_value               jsonb        NOT NULL,
                                     base_version_id         uuid,                           -- 그때 도장 찍힌 판(다형 참조라 FK 없음)
@@ -503,9 +525,9 @@ CREATE TABLE correction_request (
 -- =========================================================
 -- 10. 사진 (05 2-8)
 -- =========================================================
-CREATE TABLE photo (
+CREATE TABLE record.photo (
                        id                      uuid PRIMARY KEY,
-                       room_record_id          uuid         NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
+                       room_record_id          uuid         NOT NULL REFERENCES state.room_record (id) ON DELETE CASCADE,
                        repair_case_id          uuid,
                        inspection_item_id      uuid,
                        inspection_id           uuid,       -- 부위 사진(하자 아님)
@@ -532,9 +554,9 @@ CREATE TABLE photo (
                        CHECK (redacted_from_photo_id <> id)
 );
 
-CREATE TABLE photo_visibility (
+CREATE TABLE state.photo_visibility (
                                   photo_id        uuid PRIMARY KEY,
-                                  room_record_id  uuid        NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
+                                  room_record_id  uuid        NOT NULL REFERENCES state.room_record (id) ON DELETE CASCADE,
                                   hidden_on_link  boolean     NOT NULL DEFAULT false,
                                   marked_wrong_at timestamptz,
                                   erased_at       timestamptz,                            -- 한 번 채우면 되돌리지 않음
@@ -547,9 +569,9 @@ CREATE TABLE photo_visibility (
 -- =========================================================
 -- 11. 통지 (05 2-9)
 -- =========================================================
-CREATE TABLE notice (
+CREATE TABLE state.notice (
                         id                   uuid PRIMARY KEY,
-                        room_record_id       uuid         NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
+                        room_record_id       uuid         NOT NULL REFERENCES state.room_record (id) ON DELETE CASCADE,
                         response_request_id  uuid,
                         link_id              uuid,
                         recipient_party_id   uuid         NOT NULL,
@@ -575,19 +597,19 @@ CREATE TABLE notice (
 --     앱이 내용 지문을 행동 hash 입력에 포함한다. 체인 검증과 실제 내용 지문 검증은 둘 다 필요
 --     대상 칸 0개 = 호실 기록 자체(이사함, 정산 끝내기)
 -- =========================================================
-CREATE TABLE action (
+CREATE TABLE record.action (
                         id                      uuid PRIMARY KEY,
-                        room_record_id          uuid         NOT NULL REFERENCES room_record (id) ON DELETE CASCADE,
+                        room_record_id          uuid         NOT NULL REFERENCES state.room_record (id) ON DELETE CASCADE,
                         room_seq                bigint       NOT NULL CHECK (room_seq >= 1),
                         prev_hash               bytea        NOT NULL,
                         hash                    bytea        NOT NULL,
                         content_digest          bytea,                            -- 내용 원문을 복사하지 않고 당시 판에 연결
-                        actor_member_id         uuid REFERENCES member (id),     -- 서버·링크·운영 행동은 NULL
+                        actor_member_id         uuid REFERENCES state.member (id),     -- 서버·링크·운영 행동은 NULL
                         actor_side              varchar(10) CHECK (actor_side IN ('TENANT', 'LANDLORD')),
-                        actor_key               varchar(80)  NOT NULL,           -- 회원 ID / server / link:<ID> / ops:<담당>
+                        actor_key               varchar(80)  NOT NULL,           -- 회원 ID / server / state.link:<ID> / ops:<담당>
                         type                    varchar(40)  NOT NULL,
                         idempotency_key         varchar(100) NOT NULL,           -- 한 요청의 여러 행동은 <키>#2 …
-                        seen_version_no         int,                              -- 판의 no, CONFIRM_FINISH는 settlement.snapshot_no
+                        seen_version_no         int,                              -- 판의 no, CONFIRM_FINISH는 state.settlement.snapshot_no
                         reason                  text,
                         payload                 jsonb,                            -- 작은 부가 값만(while_open_objection 등, 이름·번호 금지)
                         party_id                uuid,
@@ -647,7 +669,7 @@ CREATE TABLE action (
 -- =========================================================
 -- 13. 작업·알림·횟수·삭제 기록 (05 2-9)
 -- =========================================================
-CREATE TABLE outbox (
+CREATE TABLE state.outbox (
                         id               uuid PRIMARY KEY,
                         kind             varchar(20)  NOT NULL CHECK (kind IN ('SMS', 'S3_DELETE', 'AUDIT_WRITE', 'ORPHAN_CHECK')),
                         dedupe_key       varchar(300) UNIQUE,                    -- 고아 파일 확인은 orphan-check:<원본 키>
@@ -659,10 +681,10 @@ CREATE TABLE outbox (
                         version          bigint       NOT NULL
 );
 
-CREATE TABLE in_app_notification (
+CREATE TABLE state.in_app_notification (
                                      id                   uuid PRIMARY KEY,
-                                     room_record_id       uuid REFERENCES room_record (id) ON DELETE CASCADE,  -- 서비스 안내(번호 인증 해제 등)는 NULL
-                                     member_id            uuid        NOT NULL REFERENCES member (id),
+                                     room_record_id       uuid REFERENCES state.room_record (id) ON DELETE CASCADE,  -- 서비스 안내(번호 인증 해제 등)는 NULL
+                                     member_id            uuid        NOT NULL REFERENCES state.member (id),
                                      kind                 varchar(10) NOT NULL CHECK (kind IN ('RESPONSE', 'INFO', 'SERVICE')),
                                      response_request_id  uuid,
                                      target_kind          varchar(30),                        -- 이동할 대상(05 "이동할 대상")
@@ -673,20 +695,21 @@ CREATE TABLE in_app_notification (
                                      expires_at           timestamptz NOT NULL,               -- 30일
                                      created_at           timestamptz NOT NULL,
                                      version              bigint      NOT NULL,
-                                     CHECK ((target_kind IS NULL) = (target_id IS NULL))
+                                     CHECK ((target_kind IS NULL) = (target_id IS NULL)),
+                                     CONSTRAINT ck_in_app_group_pair CHECK ((group_key IS NULL) = (group_count IS NULL))
 );
 
-ALTER TABLE in_app_notification ADD CONSTRAINT ck_in_app_request_room
+ALTER TABLE state.in_app_notification ADD CONSTRAINT ck_in_app_request_room
     CHECK (response_request_id IS NULL OR room_record_id IS NOT NULL);
 
-CREATE TABLE rate_counter (
-                              counter_key  varchar(200) NOT NULL,   -- upload:<회원>, verify:<번호 HMAC>, sms:<번호 HMAC>, sms-member:<회원>, sms-total, rerequest:…
+CREATE TABLE state.rate_counter (
+                              counter_key  varchar(200) NOT NULL,   -- upload:<회원>, verify:<번호 HMAC>, sms:<번호 HMAC>, sms-state.member:<회원>, sms-total, rerequest:…
                               window_date  date         NOT NULL,
                               count        int          NOT NULL CHECK (count >= 0),
                               PRIMARY KEY (counter_key, window_date)
 );
 
-CREATE TABLE deletion_log (
+CREATE TABLE log.deletion_log (
                               id           uuid PRIMARY KEY,
                               target_kind  varchar(40)  NOT NULL,
                               target_id    uuid         NOT NULL,                      -- FK 없음(지운 대상)
@@ -706,300 +729,301 @@ CREATE TABLE deletion_log (
 --     머리 → 지금 판은 지연 검사(같은 트랜잭션에서 머리와 첫 판을 어느 순서로 넣어도 됨)
 -- =========================================================
 -- 호실이 다른 부모를 연결할 수 없도록 모든 호실 소속 참조에 복합 FK를 둔다.
-ALTER TABLE cause_note ADD CONSTRAINT uq_cause_note_id_room UNIQUE (id, room_record_id);
-ALTER TABLE correction_request ADD CONSTRAINT uq_correction_request_id_room UNIQUE (id, room_record_id);
-ALTER TABLE inspection ADD CONSTRAINT uq_inspection_id_room UNIQUE (id, room_record_id);
-ALTER TABLE inspection_item ADD CONSTRAINT uq_inspection_item_id_room UNIQUE (id, room_record_id);
-ALTER TABLE inspection_item_version ADD CONSTRAINT uq_inspection_item_version_id_room UNIQUE (id, room_record_id);
-ALTER TABLE link ADD CONSTRAINT uq_link_id_room UNIQUE (id, room_record_id);
-ALTER TABLE notice ADD CONSTRAINT uq_notice_id_room UNIQUE (id, room_record_id);
-ALTER TABLE party ADD CONSTRAINT uq_party_id_room UNIQUE (id, room_record_id);
-ALTER TABLE payment ADD CONSTRAINT uq_payment_id_room UNIQUE (id, room_record_id);
-ALTER TABLE payment_version ADD CONSTRAINT uq_payment_version_id_room UNIQUE (id, room_record_id);
-ALTER TABLE photo ADD CONSTRAINT uq_photo_id_room UNIQUE (id, room_record_id);
-ALTER TABLE progress_note ADD CONSTRAINT uq_progress_note_id_room UNIQUE (id, room_record_id);
-ALTER TABLE proposal ADD CONSTRAINT uq_proposal_id_room UNIQUE (id, room_record_id);
-ALTER TABLE repair_case ADD CONSTRAINT uq_repair_case_id_room UNIQUE (id, room_record_id);
-ALTER TABLE repair_content ADD CONSTRAINT uq_repair_content_id_room UNIQUE (id, room_record_id);
-ALTER TABLE response_request ADD CONSTRAINT uq_response_request_id_room UNIQUE (id, room_record_id);
-ALTER TABLE room_part ADD CONSTRAINT uq_room_part_id_room UNIQUE (id, room_record_id);
-ALTER TABLE settlement ADD CONSTRAINT uq_settlement_id_room UNIQUE (id, room_record_id);
-ALTER TABLE settlement_item ADD CONSTRAINT uq_settlement_item_id_room UNIQUE (id, room_record_id);
-ALTER TABLE settlement_transfer ADD CONSTRAINT uq_settlement_transfer_id_room UNIQUE (id, room_record_id);
-ALTER TABLE settlement_transfer_version ADD CONSTRAINT uq_settlement_transfer_version_id_room UNIQUE (id, room_record_id);
+ALTER TABLE record.cause_note ADD CONSTRAINT uq_cause_note_id_room UNIQUE (id, room_record_id);
+ALTER TABLE state.correction_request ADD CONSTRAINT uq_correction_request_id_room UNIQUE (id, room_record_id);
+ALTER TABLE state.inspection ADD CONSTRAINT uq_inspection_id_room UNIQUE (id, room_record_id);
+ALTER TABLE state.inspection_item ADD CONSTRAINT uq_inspection_item_id_room UNIQUE (id, room_record_id);
+ALTER TABLE record.inspection_item_version ADD CONSTRAINT uq_inspection_item_version_id_room UNIQUE (id, room_record_id);
+ALTER TABLE state.link ADD CONSTRAINT uq_link_id_room UNIQUE (id, room_record_id);
+ALTER TABLE state.notice ADD CONSTRAINT uq_notice_id_room UNIQUE (id, room_record_id);
+ALTER TABLE state.party ADD CONSTRAINT uq_party_id_room UNIQUE (id, room_record_id);
+ALTER TABLE state.payment ADD CONSTRAINT uq_payment_id_room UNIQUE (id, room_record_id);
+ALTER TABLE record.payment_version ADD CONSTRAINT uq_payment_version_id_room UNIQUE (id, room_record_id);
+ALTER TABLE record.photo ADD CONSTRAINT uq_photo_id_room UNIQUE (id, room_record_id);
+ALTER TABLE record.progress_note ADD CONSTRAINT uq_progress_note_id_room UNIQUE (id, room_record_id);
+ALTER TABLE record.proposal ADD CONSTRAINT uq_proposal_id_room UNIQUE (id, room_record_id);
+ALTER TABLE state.repair_case ADD CONSTRAINT uq_repair_case_id_room UNIQUE (id, room_record_id);
+ALTER TABLE record.repair_content ADD CONSTRAINT uq_repair_content_id_room UNIQUE (id, room_record_id);
+ALTER TABLE state.response_request ADD CONSTRAINT uq_response_request_id_room UNIQUE (id, room_record_id);
+ALTER TABLE state.room_part ADD CONSTRAINT uq_room_part_id_room UNIQUE (id, room_record_id);
+ALTER TABLE state.settlement ADD CONSTRAINT uq_settlement_id_room UNIQUE (id, room_record_id);
+ALTER TABLE state.settlement_item ADD CONSTRAINT uq_settlement_item_id_room UNIQUE (id, room_record_id);
+ALTER TABLE state.settlement_transfer ADD CONSTRAINT uq_settlement_transfer_id_room UNIQUE (id, room_record_id);
+ALTER TABLE record.settlement_transfer_version ADD CONSTRAINT uq_settlement_transfer_version_id_room UNIQUE (id, room_record_id);
 
-ALTER TABLE repair_case ADD CONSTRAINT fk_repair_case_previous_case_id_room FOREIGN KEY (previous_case_id, room_record_id) REFERENCES repair_case (id, room_record_id);
-ALTER TABLE repair_case ADD CONSTRAINT fk_repair_case_related_case_id_room FOREIGN KEY (related_case_id, room_record_id) REFERENCES repair_case (id, room_record_id);
-ALTER TABLE repair_content ADD CONSTRAINT fk_repair_content_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES repair_case (id, room_record_id);
-ALTER TABLE repair_content ADD CONSTRAINT fk_repair_content_room_part_id_room FOREIGN KEY (room_part_id, room_record_id) REFERENCES room_part (id, room_record_id);
-ALTER TABLE repair_content ADD CONSTRAINT fk_repair_content_previous_id_room FOREIGN KEY (previous_id, room_record_id) REFERENCES repair_content (id, room_record_id);
-ALTER TABLE inspection_item ADD CONSTRAINT fk_inspection_item_inspection_id_room FOREIGN KEY (inspection_id, room_record_id) REFERENCES inspection (id, room_record_id);
-ALTER TABLE inspection_item_version ADD CONSTRAINT fk_inspection_item_version_inspection_item_id_room FOREIGN KEY (inspection_item_id, room_record_id) REFERENCES inspection_item (id, room_record_id);
-ALTER TABLE inspection_item_version ADD CONSTRAINT fk_inspection_item_version_room_part_id_room FOREIGN KEY (room_part_id, room_record_id) REFERENCES room_part (id, room_record_id);
-ALTER TABLE inspection_item_version ADD CONSTRAINT fk_inspection_item_version_previous_id_room FOREIGN KEY (previous_id, room_record_id) REFERENCES inspection_item_version (id, room_record_id);
-ALTER TABLE settlement_item ADD CONSTRAINT fk_settlement_item_settlement_id_room FOREIGN KEY (settlement_id, room_record_id) REFERENCES settlement (id, room_record_id);
-ALTER TABLE settlement_item ADD CONSTRAINT fk_settlement_item_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES repair_case (id, room_record_id);
-ALTER TABLE settlement_item ADD CONSTRAINT fk_settlement_item_room_part_id_room FOREIGN KEY (room_part_id, room_record_id) REFERENCES room_part (id, room_record_id);
-ALTER TABLE settlement_transfer ADD CONSTRAINT fk_settlement_transfer_settlement_id_room FOREIGN KEY (settlement_id, room_record_id) REFERENCES settlement (id, room_record_id);
-ALTER TABLE settlement_transfer ADD CONSTRAINT fk_settlement_transfer_same_as_transfer_id_room FOREIGN KEY (same_as_transfer_id, room_record_id) REFERENCES settlement_transfer (id, room_record_id);
-ALTER TABLE settlement_transfer_version ADD CONSTRAINT fk_settlement_transfer_version_settlement_transfer_id_room FOREIGN KEY (settlement_transfer_id, room_record_id) REFERENCES settlement_transfer (id, room_record_id);
-ALTER TABLE settlement_transfer_version ADD CONSTRAINT fk_settlement_transfer_version_previous_id_room FOREIGN KEY (previous_id, room_record_id) REFERENCES settlement_transfer_version (id, room_record_id);
-ALTER TABLE payment ADD CONSTRAINT fk_payment_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES repair_case (id, room_record_id);
-ALTER TABLE payment_version ADD CONSTRAINT fk_payment_version_payment_id_room FOREIGN KEY (payment_id, room_record_id) REFERENCES payment (id, room_record_id);
-ALTER TABLE payment_version ADD CONSTRAINT fk_payment_version_previous_id_room FOREIGN KEY (previous_id, room_record_id) REFERENCES payment_version (id, room_record_id);
-ALTER TABLE proposal ADD CONSTRAINT fk_proposal_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES repair_case (id, room_record_id);
-ALTER TABLE proposal ADD CONSTRAINT fk_proposal_settlement_item_id_room FOREIGN KEY (settlement_item_id, room_record_id) REFERENCES settlement_item (id, room_record_id);
-ALTER TABLE proposal ADD CONSTRAINT fk_proposal_settlement_id_room FOREIGN KEY (settlement_id, room_record_id) REFERENCES settlement (id, room_record_id);
-ALTER TABLE proposal ADD CONSTRAINT fk_proposal_counter_of_id_room FOREIGN KEY (counter_of_id, room_record_id) REFERENCES proposal (id, room_record_id);
-ALTER TABLE proposal ADD CONSTRAINT fk_proposal_replaces_id_room FOREIGN KEY (replaces_id, room_record_id) REFERENCES proposal (id, room_record_id);
-ALTER TABLE proposal_line ADD CONSTRAINT fk_proposal_line_proposal_id_room FOREIGN KEY (proposal_id, room_record_id) REFERENCES proposal (id, room_record_id);
-ALTER TABLE link ADD CONSTRAINT fk_link_party_id_room FOREIGN KEY (party_id, room_record_id) REFERENCES party (id, room_record_id);
-ALTER TABLE link ADD CONSTRAINT fk_link_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES repair_case (id, room_record_id);
-ALTER TABLE link ADD CONSTRAINT fk_link_inspection_id_room FOREIGN KEY (inspection_id, room_record_id) REFERENCES inspection (id, room_record_id);
-ALTER TABLE response_request ADD CONSTRAINT fk_response_request_progress_note_id_room FOREIGN KEY (progress_note_id, room_record_id) REFERENCES progress_note (id, room_record_id);
-ALTER TABLE response_request ADD CONSTRAINT fk_response_request_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES repair_case (id, room_record_id);
-ALTER TABLE response_request ADD CONSTRAINT fk_response_request_payment_id_room FOREIGN KEY (payment_id, room_record_id) REFERENCES payment (id, room_record_id);
-ALTER TABLE response_request ADD CONSTRAINT fk_response_request_settlement_item_id_room FOREIGN KEY (settlement_item_id, room_record_id) REFERENCES settlement_item (id, room_record_id);
-ALTER TABLE response_request ADD CONSTRAINT fk_response_request_settlement_id_room FOREIGN KEY (settlement_id, room_record_id) REFERENCES settlement (id, room_record_id);
-ALTER TABLE response_request ADD CONSTRAINT fk_response_request_inspection_id_room FOREIGN KEY (inspection_id, room_record_id) REFERENCES inspection (id, room_record_id);
-ALTER TABLE response_request ADD CONSTRAINT fk_response_request_inspection_item_id_room FOREIGN KEY (inspection_item_id, room_record_id) REFERENCES inspection_item (id, room_record_id);
-ALTER TABLE response_request ADD CONSTRAINT fk_response_request_settlement_transfer_id_room FOREIGN KEY (settlement_transfer_id, room_record_id) REFERENCES settlement_transfer (id, room_record_id);
-ALTER TABLE cause_note ADD CONSTRAINT fk_cause_note_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES repair_case (id, room_record_id);
-ALTER TABLE cause_note ADD CONSTRAINT fk_cause_note_previous_id_room FOREIGN KEY (previous_id, room_record_id) REFERENCES cause_note (id, room_record_id);
-ALTER TABLE progress_note ADD CONSTRAINT fk_progress_note_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES repair_case (id, room_record_id);
-ALTER TABLE progress_note ADD CONSTRAINT fk_progress_note_answers_request_id_room FOREIGN KEY (answers_request_id, room_record_id) REFERENCES response_request (id, room_record_id);
-ALTER TABLE progress_note_response ADD CONSTRAINT fk_progress_note_response_progress_note_id_room FOREIGN KEY (progress_note_id, room_record_id) REFERENCES progress_note (id, room_record_id);
-ALTER TABLE correction_request ADD CONSTRAINT fk_correction_request_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES repair_case (id, room_record_id);
-ALTER TABLE correction_request ADD CONSTRAINT fk_correction_request_payment_id_room FOREIGN KEY (payment_id, room_record_id) REFERENCES payment (id, room_record_id);
-ALTER TABLE correction_request ADD CONSTRAINT fk_correction_request_inspection_item_id_room FOREIGN KEY (inspection_item_id, room_record_id) REFERENCES inspection_item (id, room_record_id);
-ALTER TABLE correction_request ADD CONSTRAINT fk_correction_request_settlement_transfer_id_room FOREIGN KEY (settlement_transfer_id, room_record_id) REFERENCES settlement_transfer (id, room_record_id);
-ALTER TABLE correction_request ADD CONSTRAINT fk_correction_request_retry_of_id_room FOREIGN KEY (retry_of_id, room_record_id) REFERENCES correction_request (id, room_record_id);
-ALTER TABLE photo ADD CONSTRAINT fk_photo_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES repair_case (id, room_record_id);
-ALTER TABLE photo ADD CONSTRAINT fk_photo_inspection_item_id_room FOREIGN KEY (inspection_item_id, room_record_id) REFERENCES inspection_item (id, room_record_id);
-ALTER TABLE photo ADD CONSTRAINT fk_photo_inspection_id_room FOREIGN KEY (inspection_id, room_record_id) REFERENCES inspection (id, room_record_id);
-ALTER TABLE photo ADD CONSTRAINT fk_photo_payment_id_room FOREIGN KEY (payment_id, room_record_id) REFERENCES payment (id, room_record_id);
-ALTER TABLE photo ADD CONSTRAINT fk_photo_cause_note_id_room FOREIGN KEY (cause_note_id, room_record_id) REFERENCES cause_note (id, room_record_id);
-ALTER TABLE photo ADD CONSTRAINT fk_photo_settlement_item_id_room FOREIGN KEY (settlement_item_id, room_record_id) REFERENCES settlement_item (id, room_record_id);
-ALTER TABLE photo ADD CONSTRAINT fk_photo_progress_note_id_room FOREIGN KEY (progress_note_id, room_record_id) REFERENCES progress_note (id, room_record_id);
-ALTER TABLE photo ADD CONSTRAINT fk_photo_correction_request_id_room FOREIGN KEY (correction_request_id, room_record_id) REFERENCES correction_request (id, room_record_id);
-ALTER TABLE photo ADD CONSTRAINT fk_photo_redacted_from_photo_id_room FOREIGN KEY (redacted_from_photo_id, room_record_id) REFERENCES photo (id, room_record_id);
-ALTER TABLE photo ADD CONSTRAINT fk_photo_room_part_id_room FOREIGN KEY (room_part_id, room_record_id) REFERENCES room_part (id, room_record_id);
-ALTER TABLE photo_visibility ADD CONSTRAINT fk_photo_visibility_photo_id_room FOREIGN KEY (photo_id, room_record_id) REFERENCES photo (id, room_record_id);
-ALTER TABLE notice ADD CONSTRAINT fk_notice_response_request_id_room FOREIGN KEY (response_request_id, room_record_id) REFERENCES response_request (id, room_record_id);
-ALTER TABLE notice ADD CONSTRAINT fk_notice_link_id_room FOREIGN KEY (link_id, room_record_id) REFERENCES link (id, room_record_id);
-ALTER TABLE notice ADD CONSTRAINT fk_notice_recipient_party_id_room FOREIGN KEY (recipient_party_id, room_record_id) REFERENCES party (id, room_record_id);
-ALTER TABLE notice ADD CONSTRAINT fk_notice_batch_lead_id_room FOREIGN KEY (batch_lead_id, room_record_id) REFERENCES notice (id, room_record_id);
-ALTER TABLE action ADD CONSTRAINT fk_action_party_id_room FOREIGN KEY (party_id, room_record_id) REFERENCES party (id, room_record_id);
-ALTER TABLE action ADD CONSTRAINT fk_action_link_id_room FOREIGN KEY (link_id, room_record_id) REFERENCES link (id, room_record_id);
-ALTER TABLE action ADD CONSTRAINT fk_action_room_part_id_room FOREIGN KEY (room_part_id, room_record_id) REFERENCES room_part (id, room_record_id);
-ALTER TABLE action ADD CONSTRAINT fk_action_notice_id_room FOREIGN KEY (notice_id, room_record_id) REFERENCES notice (id, room_record_id);
-ALTER TABLE action ADD CONSTRAINT fk_action_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES repair_case (id, room_record_id);
-ALTER TABLE action ADD CONSTRAINT fk_action_payment_id_room FOREIGN KEY (payment_id, room_record_id) REFERENCES payment (id, room_record_id);
-ALTER TABLE action ADD CONSTRAINT fk_action_inspection_id_room FOREIGN KEY (inspection_id, room_record_id) REFERENCES inspection (id, room_record_id);
-ALTER TABLE action ADD CONSTRAINT fk_action_inspection_item_id_room FOREIGN KEY (inspection_item_id, room_record_id) REFERENCES inspection_item (id, room_record_id);
-ALTER TABLE action ADD CONSTRAINT fk_action_settlement_id_room FOREIGN KEY (settlement_id, room_record_id) REFERENCES settlement (id, room_record_id);
-ALTER TABLE action ADD CONSTRAINT fk_action_settlement_item_id_room FOREIGN KEY (settlement_item_id, room_record_id) REFERENCES settlement_item (id, room_record_id);
-ALTER TABLE action ADD CONSTRAINT fk_action_settlement_transfer_id_room FOREIGN KEY (settlement_transfer_id, room_record_id) REFERENCES settlement_transfer (id, room_record_id);
-ALTER TABLE action ADD CONSTRAINT fk_action_proposal_id_room FOREIGN KEY (proposal_id, room_record_id) REFERENCES proposal (id, room_record_id);
-ALTER TABLE action ADD CONSTRAINT fk_action_response_request_id_room FOREIGN KEY (response_request_id, room_record_id) REFERENCES response_request (id, room_record_id);
-ALTER TABLE action ADD CONSTRAINT fk_action_correction_request_id_room FOREIGN KEY (correction_request_id, room_record_id) REFERENCES correction_request (id, room_record_id);
-ALTER TABLE action ADD CONSTRAINT fk_action_cause_note_id_room FOREIGN KEY (cause_note_id, room_record_id) REFERENCES cause_note (id, room_record_id);
-ALTER TABLE action ADD CONSTRAINT fk_action_progress_note_id_room FOREIGN KEY (progress_note_id, room_record_id) REFERENCES progress_note (id, room_record_id);
-ALTER TABLE action ADD CONSTRAINT fk_action_photo_id_room FOREIGN KEY (photo_id, room_record_id) REFERENCES photo (id, room_record_id);
-ALTER TABLE in_app_notification ADD CONSTRAINT fk_in_app_notification_response_request_id_room FOREIGN KEY (response_request_id, room_record_id) REFERENCES response_request (id, room_record_id);
+ALTER TABLE state.repair_case ADD CONSTRAINT fk_repair_case_previous_case_id_room FOREIGN KEY (previous_case_id, room_record_id) REFERENCES state.repair_case (id, room_record_id);
+ALTER TABLE record.repair_content ADD CONSTRAINT fk_repair_content_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES state.repair_case (id, room_record_id);
+ALTER TABLE record.repair_content ADD CONSTRAINT fk_repair_content_room_part_id_room FOREIGN KEY (room_part_id, room_record_id) REFERENCES state.room_part (id, room_record_id);
+ALTER TABLE record.repair_content ADD CONSTRAINT fk_repair_content_previous_id_room FOREIGN KEY (previous_id, room_record_id) REFERENCES record.repair_content (id, room_record_id);
+ALTER TABLE state.inspection_item ADD CONSTRAINT fk_inspection_item_inspection_id_room FOREIGN KEY (inspection_id, room_record_id) REFERENCES state.inspection (id, room_record_id);
+ALTER TABLE record.inspection_item_version ADD CONSTRAINT fk_inspection_item_version_inspection_item_id_room FOREIGN KEY (inspection_item_id, room_record_id) REFERENCES state.inspection_item (id, room_record_id);
+ALTER TABLE record.inspection_item_version ADD CONSTRAINT fk_inspection_item_version_room_part_id_room FOREIGN KEY (room_part_id, room_record_id) REFERENCES state.room_part (id, room_record_id);
+ALTER TABLE record.inspection_item_version ADD CONSTRAINT fk_inspection_item_version_previous_id_room FOREIGN KEY (previous_id, room_record_id) REFERENCES record.inspection_item_version (id, room_record_id);
+ALTER TABLE state.settlement_item ADD CONSTRAINT fk_settlement_item_settlement_id_room FOREIGN KEY (settlement_id, room_record_id) REFERENCES state.settlement (id, room_record_id);
+ALTER TABLE state.settlement_item ADD CONSTRAINT fk_settlement_item_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES state.repair_case (id, room_record_id);
+ALTER TABLE state.settlement_item ADD CONSTRAINT fk_settlement_item_room_part_id_room FOREIGN KEY (room_part_id, room_record_id) REFERENCES state.room_part (id, room_record_id);
+ALTER TABLE state.settlement_transfer ADD CONSTRAINT fk_settlement_transfer_settlement_id_room FOREIGN KEY (settlement_id, room_record_id) REFERENCES state.settlement (id, room_record_id);
+ALTER TABLE state.settlement_transfer ADD CONSTRAINT fk_settlement_transfer_same_as_transfer_id_room FOREIGN KEY (same_as_transfer_id, room_record_id) REFERENCES state.settlement_transfer (id, room_record_id);
+ALTER TABLE record.settlement_transfer_version ADD CONSTRAINT fk_settlement_transfer_version_settlement_transfer_id_room FOREIGN KEY (settlement_transfer_id, room_record_id) REFERENCES state.settlement_transfer (id, room_record_id);
+ALTER TABLE record.settlement_transfer_version ADD CONSTRAINT fk_settlement_transfer_version_previous_id_room FOREIGN KEY (previous_id, room_record_id) REFERENCES record.settlement_transfer_version (id, room_record_id);
+ALTER TABLE state.payment ADD CONSTRAINT fk_payment_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES state.repair_case (id, room_record_id);
+ALTER TABLE record.payment_version ADD CONSTRAINT fk_payment_version_payment_id_room FOREIGN KEY (payment_id, room_record_id) REFERENCES state.payment (id, room_record_id);
+ALTER TABLE record.payment_version ADD CONSTRAINT fk_payment_version_previous_id_room FOREIGN KEY (previous_id, room_record_id) REFERENCES record.payment_version (id, room_record_id);
+ALTER TABLE record.proposal ADD CONSTRAINT fk_proposal_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES state.repair_case (id, room_record_id);
+ALTER TABLE record.proposal ADD CONSTRAINT fk_proposal_settlement_item_id_room FOREIGN KEY (settlement_item_id, room_record_id) REFERENCES state.settlement_item (id, room_record_id);
+ALTER TABLE record.proposal ADD CONSTRAINT fk_proposal_settlement_id_room FOREIGN KEY (settlement_id, room_record_id) REFERENCES state.settlement (id, room_record_id);
+ALTER TABLE record.proposal ADD CONSTRAINT fk_proposal_counter_of_id_room FOREIGN KEY (counter_of_id, room_record_id) REFERENCES record.proposal (id, room_record_id);
+ALTER TABLE record.proposal ADD CONSTRAINT fk_proposal_replaces_id_room FOREIGN KEY (replaces_id, room_record_id) REFERENCES record.proposal (id, room_record_id);
+ALTER TABLE record.proposal_line ADD CONSTRAINT fk_proposal_line_proposal_id_room FOREIGN KEY (proposal_id, room_record_id) REFERENCES record.proposal (id, room_record_id);
+ALTER TABLE state.link ADD CONSTRAINT fk_link_party_id_room FOREIGN KEY (party_id, room_record_id) REFERENCES state.party (id, room_record_id);
+ALTER TABLE state.link ADD CONSTRAINT fk_link_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES state.repair_case (id, room_record_id);
+ALTER TABLE state.link ADD CONSTRAINT fk_link_inspection_id_room FOREIGN KEY (inspection_id, room_record_id) REFERENCES state.inspection (id, room_record_id);
+ALTER TABLE state.response_request ADD CONSTRAINT fk_response_request_progress_note_id_room FOREIGN KEY (progress_note_id, room_record_id) REFERENCES record.progress_note (id, room_record_id);
+ALTER TABLE state.response_request ADD CONSTRAINT fk_response_request_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES state.repair_case (id, room_record_id);
+ALTER TABLE state.response_request ADD CONSTRAINT fk_response_request_payment_id_room FOREIGN KEY (payment_id, room_record_id) REFERENCES state.payment (id, room_record_id);
+ALTER TABLE state.response_request ADD CONSTRAINT fk_response_request_settlement_item_id_room FOREIGN KEY (settlement_item_id, room_record_id) REFERENCES state.settlement_item (id, room_record_id);
+ALTER TABLE state.response_request ADD CONSTRAINT fk_response_request_settlement_id_room FOREIGN KEY (settlement_id, room_record_id) REFERENCES state.settlement (id, room_record_id);
+ALTER TABLE state.response_request ADD CONSTRAINT fk_response_request_inspection_id_room FOREIGN KEY (inspection_id, room_record_id) REFERENCES state.inspection (id, room_record_id);
+ALTER TABLE state.response_request ADD CONSTRAINT fk_response_request_inspection_item_id_room FOREIGN KEY (inspection_item_id, room_record_id) REFERENCES state.inspection_item (id, room_record_id);
+ALTER TABLE state.response_request ADD CONSTRAINT fk_response_request_settlement_transfer_id_room FOREIGN KEY (settlement_transfer_id, room_record_id) REFERENCES state.settlement_transfer (id, room_record_id);
+ALTER TABLE record.cause_note ADD CONSTRAINT fk_cause_note_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES state.repair_case (id, room_record_id);
+ALTER TABLE record.cause_note ADD CONSTRAINT fk_cause_note_previous_id_room FOREIGN KEY (previous_id, room_record_id) REFERENCES record.cause_note (id, room_record_id);
+ALTER TABLE record.progress_note ADD CONSTRAINT fk_progress_note_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES state.repair_case (id, room_record_id);
+ALTER TABLE record.progress_note ADD CONSTRAINT fk_progress_note_answers_request_id_room FOREIGN KEY (answers_request_id, room_record_id) REFERENCES state.response_request (id, room_record_id);
+ALTER TABLE state.progress_note_response ADD CONSTRAINT fk_progress_note_response_progress_note_id_room FOREIGN KEY (progress_note_id, room_record_id) REFERENCES record.progress_note (id, room_record_id);
+ALTER TABLE state.correction_request ADD CONSTRAINT fk_correction_request_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES state.repair_case (id, room_record_id);
+ALTER TABLE state.correction_request ADD CONSTRAINT fk_correction_request_payment_id_room FOREIGN KEY (payment_id, room_record_id) REFERENCES state.payment (id, room_record_id);
+ALTER TABLE state.correction_request ADD CONSTRAINT fk_correction_request_inspection_item_id_room FOREIGN KEY (inspection_item_id, room_record_id) REFERENCES state.inspection_item (id, room_record_id);
+ALTER TABLE state.correction_request ADD CONSTRAINT fk_correction_request_settlement_transfer_id_room FOREIGN KEY (settlement_transfer_id, room_record_id) REFERENCES state.settlement_transfer (id, room_record_id);
+ALTER TABLE state.correction_request ADD CONSTRAINT fk_correction_request_retry_of_id_room FOREIGN KEY (retry_of_id, room_record_id) REFERENCES state.correction_request (id, room_record_id);
+ALTER TABLE record.photo ADD CONSTRAINT fk_photo_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES state.repair_case (id, room_record_id);
+ALTER TABLE record.photo ADD CONSTRAINT fk_photo_inspection_item_id_room FOREIGN KEY (inspection_item_id, room_record_id) REFERENCES state.inspection_item (id, room_record_id);
+ALTER TABLE record.photo ADD CONSTRAINT fk_photo_inspection_id_room FOREIGN KEY (inspection_id, room_record_id) REFERENCES state.inspection (id, room_record_id);
+ALTER TABLE record.photo ADD CONSTRAINT fk_photo_payment_id_room FOREIGN KEY (payment_id, room_record_id) REFERENCES state.payment (id, room_record_id);
+ALTER TABLE record.photo ADD CONSTRAINT fk_photo_cause_note_id_room FOREIGN KEY (cause_note_id, room_record_id) REFERENCES record.cause_note (id, room_record_id);
+ALTER TABLE record.photo ADD CONSTRAINT fk_photo_settlement_item_id_room FOREIGN KEY (settlement_item_id, room_record_id) REFERENCES state.settlement_item (id, room_record_id);
+ALTER TABLE record.photo ADD CONSTRAINT fk_photo_progress_note_id_room FOREIGN KEY (progress_note_id, room_record_id) REFERENCES record.progress_note (id, room_record_id);
+ALTER TABLE record.photo ADD CONSTRAINT fk_photo_correction_request_id_room FOREIGN KEY (correction_request_id, room_record_id) REFERENCES state.correction_request (id, room_record_id);
+ALTER TABLE record.photo ADD CONSTRAINT fk_photo_redacted_from_photo_id_room FOREIGN KEY (redacted_from_photo_id, room_record_id) REFERENCES record.photo (id, room_record_id);
+ALTER TABLE record.photo ADD CONSTRAINT fk_photo_room_part_id_room FOREIGN KEY (room_part_id, room_record_id) REFERENCES state.room_part (id, room_record_id);
+ALTER TABLE state.photo_visibility ADD CONSTRAINT fk_photo_visibility_photo_id_room FOREIGN KEY (photo_id, room_record_id) REFERENCES record.photo (id, room_record_id);
+ALTER TABLE state.notice ADD CONSTRAINT fk_notice_response_request_id_room FOREIGN KEY (response_request_id, room_record_id) REFERENCES state.response_request (id, room_record_id);
+ALTER TABLE state.notice ADD CONSTRAINT fk_notice_link_id_room FOREIGN KEY (link_id, room_record_id) REFERENCES state.link (id, room_record_id);
+ALTER TABLE state.notice ADD CONSTRAINT fk_notice_recipient_party_id_room FOREIGN KEY (recipient_party_id, room_record_id) REFERENCES state.party (id, room_record_id);
+ALTER TABLE state.notice ADD CONSTRAINT fk_notice_batch_lead_id_room FOREIGN KEY (batch_lead_id, room_record_id) REFERENCES state.notice (id, room_record_id);
+ALTER TABLE record.action ADD CONSTRAINT fk_action_party_id_room FOREIGN KEY (party_id, room_record_id) REFERENCES state.party (id, room_record_id);
+ALTER TABLE record.action ADD CONSTRAINT fk_action_link_id_room FOREIGN KEY (link_id, room_record_id) REFERENCES state.link (id, room_record_id);
+ALTER TABLE record.action ADD CONSTRAINT fk_action_room_part_id_room FOREIGN KEY (room_part_id, room_record_id) REFERENCES state.room_part (id, room_record_id);
+ALTER TABLE record.action ADD CONSTRAINT fk_action_notice_id_room FOREIGN KEY (notice_id, room_record_id) REFERENCES state.notice (id, room_record_id);
+ALTER TABLE record.action ADD CONSTRAINT fk_action_repair_case_id_room FOREIGN KEY (repair_case_id, room_record_id) REFERENCES state.repair_case (id, room_record_id);
+ALTER TABLE record.action ADD CONSTRAINT fk_action_payment_id_room FOREIGN KEY (payment_id, room_record_id) REFERENCES state.payment (id, room_record_id);
+ALTER TABLE record.action ADD CONSTRAINT fk_action_inspection_id_room FOREIGN KEY (inspection_id, room_record_id) REFERENCES state.inspection (id, room_record_id);
+ALTER TABLE record.action ADD CONSTRAINT fk_action_inspection_item_id_room FOREIGN KEY (inspection_item_id, room_record_id) REFERENCES state.inspection_item (id, room_record_id);
+ALTER TABLE record.action ADD CONSTRAINT fk_action_settlement_id_room FOREIGN KEY (settlement_id, room_record_id) REFERENCES state.settlement (id, room_record_id);
+ALTER TABLE record.action ADD CONSTRAINT fk_action_settlement_item_id_room FOREIGN KEY (settlement_item_id, room_record_id) REFERENCES state.settlement_item (id, room_record_id);
+ALTER TABLE record.action ADD CONSTRAINT fk_action_settlement_transfer_id_room FOREIGN KEY (settlement_transfer_id, room_record_id) REFERENCES state.settlement_transfer (id, room_record_id);
+ALTER TABLE record.action ADD CONSTRAINT fk_action_proposal_id_room FOREIGN KEY (proposal_id, room_record_id) REFERENCES record.proposal (id, room_record_id);
+ALTER TABLE record.action ADD CONSTRAINT fk_action_response_request_id_room FOREIGN KEY (response_request_id, room_record_id) REFERENCES state.response_request (id, room_record_id);
+ALTER TABLE record.action ADD CONSTRAINT fk_action_correction_request_id_room FOREIGN KEY (correction_request_id, room_record_id) REFERENCES state.correction_request (id, room_record_id);
+ALTER TABLE record.action ADD CONSTRAINT fk_action_cause_note_id_room FOREIGN KEY (cause_note_id, room_record_id) REFERENCES record.cause_note (id, room_record_id);
+ALTER TABLE record.action ADD CONSTRAINT fk_action_progress_note_id_room FOREIGN KEY (progress_note_id, room_record_id) REFERENCES record.progress_note (id, room_record_id);
+ALTER TABLE record.action ADD CONSTRAINT fk_action_photo_id_room FOREIGN KEY (photo_id, room_record_id) REFERENCES record.photo (id, room_record_id);
+ALTER TABLE state.in_app_notification ADD CONSTRAINT fk_in_app_notification_response_request_id_room FOREIGN KEY (response_request_id, room_record_id) REFERENCES state.response_request (id, room_record_id);
 
-ALTER TABLE repair_case
+ALTER TABLE state.repair_case
     ADD CONSTRAINT fk_repair_case_current_content
-        FOREIGN KEY (current_content_id, room_record_id) REFERENCES repair_content (id, room_record_id) DEFERRABLE INITIALLY DEFERRED,
+        FOREIGN KEY (current_content_id, room_record_id) REFERENCES record.repair_content (id, room_record_id) DEFERRABLE INITIALLY DEFERRED,
   ADD CONSTRAINT fk_repair_case_confirmed_content
-    FOREIGN KEY (confirmed_content_id, room_record_id) REFERENCES repair_content (id, room_record_id) DEFERRABLE INITIALLY DEFERRED,
+    FOREIGN KEY (confirmed_content_id, room_record_id) REFERENCES record.repair_content (id, room_record_id) DEFERRABLE INITIALLY DEFERRED,
   ADD CONSTRAINT fk_repair_case_current_proposal
-    FOREIGN KEY (current_proposal_id, room_record_id) REFERENCES proposal (id, room_record_id),
+    FOREIGN KEY (current_proposal_id, room_record_id) REFERENCES record.proposal (id, room_record_id),
   ADD CONSTRAINT fk_repair_case_agreed_proposal
-    FOREIGN KEY (agreed_proposal_id, room_record_id) REFERENCES proposal (id, room_record_id);
+    FOREIGN KEY (agreed_proposal_id, room_record_id) REFERENCES record.proposal (id, room_record_id);
 
-ALTER TABLE inspection_item
+ALTER TABLE state.inspection_item
     ADD CONSTRAINT fk_inspection_item_current_version
-        FOREIGN KEY (current_version_id, room_record_id) REFERENCES inspection_item_version (id, room_record_id) DEFERRABLE INITIALLY DEFERRED,
+        FOREIGN KEY (current_version_id, room_record_id) REFERENCES record.inspection_item_version (id, room_record_id) DEFERRABLE INITIALLY DEFERRED,
   ADD CONSTRAINT fk_inspection_item_confirmed_version
-    FOREIGN KEY (confirmed_version_id, room_record_id) REFERENCES inspection_item_version (id, room_record_id) DEFERRABLE INITIALLY DEFERRED;
+    FOREIGN KEY (confirmed_version_id, room_record_id) REFERENCES record.inspection_item_version (id, room_record_id) DEFERRABLE INITIALLY DEFERRED;
 
-ALTER TABLE settlement
+ALTER TABLE state.settlement
     ADD CONSTRAINT fk_settlement_current_deposit_proposal
-        FOREIGN KEY (current_deposit_proposal_id, room_record_id) REFERENCES proposal (id, room_record_id),
+        FOREIGN KEY (current_deposit_proposal_id, room_record_id) REFERENCES record.proposal (id, room_record_id),
   ADD CONSTRAINT fk_settlement_agreed_deposit_proposal
-    FOREIGN KEY (agreed_deposit_proposal_id, room_record_id) REFERENCES proposal (id, room_record_id);
+    FOREIGN KEY (agreed_deposit_proposal_id, room_record_id) REFERENCES record.proposal (id, room_record_id);
 
-ALTER TABLE settlement_item
+ALTER TABLE state.settlement_item
     ADD CONSTRAINT fk_settlement_item_current_proposal
-        FOREIGN KEY (current_proposal_id, room_record_id) REFERENCES proposal (id, room_record_id),
+        FOREIGN KEY (current_proposal_id, room_record_id) REFERENCES record.proposal (id, room_record_id),
   ADD CONSTRAINT fk_settlement_item_agreed_proposal
-    FOREIGN KEY (agreed_proposal_id, room_record_id) REFERENCES proposal (id, room_record_id);
+    FOREIGN KEY (agreed_proposal_id, room_record_id) REFERENCES record.proposal (id, room_record_id);
 
-ALTER TABLE settlement_transfer
+ALTER TABLE state.settlement_transfer
     ADD CONSTRAINT fk_settlement_transfer_current_version
-        FOREIGN KEY (current_version_id, room_record_id) REFERENCES settlement_transfer_version (id, room_record_id) DEFERRABLE INITIALLY DEFERRED,
+        FOREIGN KEY (current_version_id, room_record_id) REFERENCES record.settlement_transfer_version (id, room_record_id) DEFERRABLE INITIALLY DEFERRED,
   ADD CONSTRAINT fk_settlement_transfer_confirmed_version
-    FOREIGN KEY (confirmed_version_id, room_record_id) REFERENCES settlement_transfer_version (id, room_record_id) DEFERRABLE INITIALLY DEFERRED;
+    FOREIGN KEY (confirmed_version_id, room_record_id) REFERENCES record.settlement_transfer_version (id, room_record_id) DEFERRABLE INITIALLY DEFERRED;
 
-ALTER TABLE payment
+ALTER TABLE state.payment
     ADD CONSTRAINT fk_payment_current_version
-        FOREIGN KEY (current_version_id, room_record_id) REFERENCES payment_version (id, room_record_id) DEFERRABLE INITIALLY DEFERRED,
+        FOREIGN KEY (current_version_id, room_record_id) REFERENCES record.payment_version (id, room_record_id) DEFERRABLE INITIALLY DEFERRED,
   ADD CONSTRAINT fk_payment_confirmed_version
-    FOREIGN KEY (confirmed_version_id, room_record_id) REFERENCES payment_version (id, room_record_id) DEFERRABLE INITIALLY DEFERRED;
+    FOREIGN KEY (confirmed_version_id, room_record_id) REFERENCES record.payment_version (id, room_record_id) DEFERRABLE INITIALLY DEFERRED;
 
 -- =========================================================
 -- 15. 인덱스 (05에 적힌 것 + 작업자·조회용)
 -- =========================================================
 -- 계정
-CREATE UNIQUE INDEX ux_member_email_lower ON member (lower(email)) WHERE email IS NOT NULL;
-CREATE UNIQUE INDEX ux_member_phone ON member (phone) WHERE phone IS NOT NULL;   -- 불변식 8
-CREATE INDEX ix_refresh_token_member ON refresh_token (member_id);
-CREATE INDEX ix_refresh_token_family ON refresh_token (family_id);
-CREATE INDEX ix_phone_verification_phone ON phone_verification (phone, created_at);
-CREATE INDEX ix_member_acknowledgement_member ON member_acknowledgement (member_id);
+CREATE UNIQUE INDEX ux_member_email_lower ON state.member (lower(email)) WHERE email IS NOT NULL;
+CREATE UNIQUE INDEX ux_member_phone ON state.member (phone) WHERE phone IS NOT NULL;   -- 불변식 8
+CREATE INDEX ix_refresh_token_member ON state.refresh_token (member_id);
+CREATE INDEX ix_refresh_token_family ON state.refresh_token (family_id);
+CREATE INDEX ix_phone_verification_phone ON state.phone_verification (phone, created_at);
+CREATE INDEX ix_member_acknowledgement_member ON record.member_acknowledgement (member_id);
 
 -- 호실과 참여
-CREATE INDEX ix_region_dong ON region (dong);
-CREATE INDEX ix_room_record_autoclose ON room_record (autoclose_due_at) WHERE autoclose_due_at IS NOT NULL;
-CREATE INDEX ix_room_record_delete ON room_record (delete_due_at) WHERE delete_due_at IS NOT NULL;
-CREATE INDEX ix_room_record_inactivity ON room_record (inactivity_notice_due_at) WHERE inactivity_notice_due_at IS NOT NULL;
-CREATE INDEX ix_party_member ON party (member_id) WHERE member_id IS NOT NULL;
-CREATE INDEX ix_party_invite_phone ON party (invite_phone) WHERE invite_phone IS NOT NULL;  -- GET /api/invitations
-CREATE INDEX ix_room_part_room ON room_part (room_record_id);
-CREATE INDEX ix_link_party ON link (party_id);
+CREATE INDEX ix_region_dong ON state.region (dong);
+CREATE INDEX ix_room_record_autoclose ON state.room_record (autoclose_due_at) WHERE autoclose_due_at IS NOT NULL;
+CREATE INDEX ix_room_record_delete ON state.room_record (delete_due_at) WHERE delete_due_at IS NOT NULL;
+CREATE INDEX ix_room_record_inactivity ON state.room_record (inactivity_notice_due_at) WHERE inactivity_notice_due_at IS NOT NULL;
+CREATE INDEX ix_party_member ON state.party (member_id) WHERE member_id IS NOT NULL;
+CREATE INDEX ix_party_invite_phone ON state.party (invite_phone) WHERE invite_phone IS NOT NULL;  -- GET /api/invitations
+CREATE INDEX ix_room_part_room ON state.room_part (room_record_id);
+CREATE INDEX ix_link_party ON state.link (party_id);
 
 -- 수리와 돈
-CREATE INDEX ix_repair_case_room ON repair_case (room_record_id);
-CREATE INDEX ix_repair_content_room_part ON repair_content (room_part_id);
-CREATE INDEX ix_cause_note_repair_case ON cause_note (repair_case_id);
-CREATE INDEX ix_progress_note_repair_case ON progress_note (repair_case_id);
-CREATE INDEX ix_payment_repair_case ON payment (repair_case_id);
-CREATE INDEX ix_proposal_repair_case ON proposal (repair_case_id) WHERE repair_case_id IS NOT NULL;
-CREATE INDEX ix_proposal_settlement_item ON proposal (settlement_item_id) WHERE settlement_item_id IS NOT NULL;
-CREATE INDEX ix_proposal_settlement ON proposal (settlement_id) WHERE settlement_id IS NOT NULL;
-CREATE INDEX ix_proposal_line_proposal ON proposal_line (proposal_id);
-CREATE UNIQUE INDEX ux_correction_waiting ON correction_request (target_key, field) WHERE status = 'WAITING';
+CREATE INDEX ix_repair_case_room ON state.repair_case (room_record_id);
+CREATE INDEX ix_repair_content_room_part ON record.repair_content (room_part_id);
+CREATE UNIQUE INDEX ux_cause_note_previous ON record.cause_note (previous_id) WHERE previous_id IS NOT NULL;
+CREATE INDEX ix_cause_note_repair_case ON record.cause_note (repair_case_id);
+CREATE INDEX ix_progress_note_repair_case ON record.progress_note (repair_case_id);
+CREATE INDEX ix_payment_repair_case ON state.payment (repair_case_id);
+CREATE INDEX ix_proposal_repair_case ON record.proposal (repair_case_id) WHERE repair_case_id IS NOT NULL;
+CREATE INDEX ix_proposal_settlement_item ON record.proposal (settlement_item_id) WHERE settlement_item_id IS NOT NULL;
+CREATE INDEX ix_proposal_settlement ON record.proposal (settlement_id) WHERE settlement_id IS NOT NULL;
+CREATE INDEX ix_proposal_line_proposal ON record.proposal_line (proposal_id);
+CREATE UNIQUE INDEX ux_correction_waiting ON state.correction_request (target_key, field) WHERE status = 'WAITING';
 
 -- 응답 요청: 작업자는 이 테이블만 본다
-CREATE INDEX ix_response_request_renotify ON response_request (renotify_due_at) WHERE status = 'WAITING';
-CREATE INDEX ix_response_request_unconfirmed ON response_request (unconfirmed_due_at) WHERE status = 'WAITING';
-CREATE INDEX ix_response_request_room ON response_request (room_record_id);
+CREATE INDEX ix_response_request_renotify ON state.response_request (renotify_due_at) WHERE status = 'WAITING';
+CREATE INDEX ix_response_request_unconfirmed ON state.response_request (unconfirmed_due_at) WHERE status = 'WAITING';
+CREATE INDEX ix_response_request_room ON state.response_request (room_record_id);
 CREATE UNIQUE INDEX ux_proposal_waiting
-    ON response_request (COALESCE(repair_case_id, settlement_item_id, settlement_id))
+    ON state.response_request (COALESCE(repair_case_id, settlement_item_id, settlement_id))
     WHERE kind = 'PROPOSAL' AND status IN ('WAITING', 'UNCONFIRMED');
 -- 대상 종류별 NULL도 같은 값으로 비교해 같은 호실·같은 종류·같은 대상 WAITING은 하나만 둔다.
 CREATE UNIQUE INDEX ux_response_request_waiting
-    ON response_request (room_record_id, kind, repair_case_id, payment_id, settlement_item_id,
+    ON state.response_request (room_record_id, kind, repair_case_id, payment_id, settlement_item_id,
                          settlement_id, inspection_id, inspection_item_id, settlement_transfer_id, progress_note_id)
     NULLS NOT DISTINCT
     WHERE status = 'WAITING' AND kind NOT IN ('PROPOSAL', 'INSPECTION_CONFIRM');
 CREATE UNIQUE INDEX ux_inspection_confirm_waiting
-    ON response_request (inspection_id, requested_by_side)
+    ON state.response_request (inspection_id, requested_by_side)
     WHERE kind = 'INSPECTION_CONFIRM' AND status = 'WAITING';                        -- 점검 × 방향마다 하나(불변식 21)
 
 -- 점검·정산
-CREATE INDEX ix_inspection_item_inspection ON inspection_item (inspection_id);
-CREATE INDEX ix_inspection_item_version_room_part ON inspection_item_version (room_part_id);
+CREATE INDEX ix_inspection_item_inspection ON state.inspection_item (inspection_id);
+CREATE INDEX ix_inspection_item_version_room_part ON record.inspection_item_version (room_part_id);
 CREATE UNIQUE INDEX ux_settlement_item_active_repair
-    ON settlement_item (settlement_id, repair_case_id)
+    ON state.settlement_item (settlement_id, repair_case_id)
     WHERE source = 'REPAIR' AND status <> 'EXCLUDED';
-CREATE INDEX ix_settlement_item_settlement ON settlement_item (settlement_id);
-CREATE INDEX ix_settlement_transfer_settlement ON settlement_transfer (settlement_id);
+CREATE INDEX ix_settlement_item_settlement ON state.settlement_item (settlement_id);
+CREATE INDEX ix_settlement_transfer_settlement ON state.settlement_transfer (settlement_id);
 
 -- 사진
-CREATE INDEX ix_photo_room_part_stage ON photo (room_record_id, room_part_id, stage)
+CREATE INDEX ix_photo_room_part_stage ON record.photo (room_record_id, room_part_id, stage)
     WHERE room_part_id IS NOT NULL;                                                   -- 나란히 보기(부위 사진만 부위 칸이 있음)
-CREATE INDEX ix_photo_repair_case ON photo (repair_case_id) WHERE repair_case_id IS NOT NULL;
-CREATE INDEX ix_photo_inspection_item ON photo (inspection_item_id) WHERE inspection_item_id IS NOT NULL;
-CREATE INDEX ix_photo_inspection ON photo (inspection_id) WHERE inspection_id IS NOT NULL;
-CREATE INDEX ix_photo_payment ON photo (payment_id) WHERE payment_id IS NOT NULL;
-CREATE INDEX ix_photo_cause_note ON photo (cause_note_id) WHERE cause_note_id IS NOT NULL;
-CREATE INDEX ix_photo_settlement_item ON photo (settlement_item_id) WHERE settlement_item_id IS NOT NULL;
-CREATE INDEX ix_photo_progress_note ON photo (progress_note_id) WHERE progress_note_id IS NOT NULL;
-CREATE INDEX ix_photo_correction_request ON photo (correction_request_id) WHERE correction_request_id IS NOT NULL;
+CREATE INDEX ix_photo_repair_case ON record.photo (repair_case_id) WHERE repair_case_id IS NOT NULL;
+CREATE INDEX ix_photo_inspection_item ON record.photo (inspection_item_id) WHERE inspection_item_id IS NOT NULL;
+CREATE INDEX ix_photo_inspection ON record.photo (inspection_id) WHERE inspection_id IS NOT NULL;
+CREATE INDEX ix_photo_payment ON record.photo (payment_id) WHERE payment_id IS NOT NULL;
+CREATE INDEX ix_photo_cause_note ON record.photo (cause_note_id) WHERE cause_note_id IS NOT NULL;
+CREATE INDEX ix_photo_settlement_item ON record.photo (settlement_item_id) WHERE settlement_item_id IS NOT NULL;
+CREATE INDEX ix_photo_progress_note ON record.photo (progress_note_id) WHERE progress_note_id IS NOT NULL;
+CREATE INDEX ix_photo_correction_request ON record.photo (correction_request_id) WHERE correction_request_id IS NOT NULL;
 
 -- 행동 기록: 대상 칸마다 부분 인덱스
-CREATE INDEX ix_action_room_created ON action (room_record_id, created_at);       -- 경과, 마지막 당사자 행동
-CREATE INDEX ix_action_party ON action (party_id) WHERE party_id IS NOT NULL;
-CREATE INDEX ix_action_link ON action (link_id) WHERE link_id IS NOT NULL;
-CREATE INDEX ix_action_room_part ON action (room_part_id) WHERE room_part_id IS NOT NULL;
-CREATE INDEX ix_action_notice ON action (notice_id) WHERE notice_id IS NOT NULL;
-CREATE INDEX ix_action_repair_case ON action (repair_case_id) WHERE repair_case_id IS NOT NULL;
-CREATE INDEX ix_action_payment ON action (payment_id) WHERE payment_id IS NOT NULL;
-CREATE INDEX ix_action_inspection ON action (inspection_id) WHERE inspection_id IS NOT NULL;
-CREATE INDEX ix_action_inspection_item ON action (inspection_item_id) WHERE inspection_item_id IS NOT NULL;
-CREATE INDEX ix_action_settlement ON action (settlement_id) WHERE settlement_id IS NOT NULL;
-CREATE INDEX ix_action_settlement_item ON action (settlement_item_id) WHERE settlement_item_id IS NOT NULL;
-CREATE INDEX ix_action_settlement_transfer ON action (settlement_transfer_id) WHERE settlement_transfer_id IS NOT NULL;
-CREATE INDEX ix_action_proposal ON action (proposal_id) WHERE proposal_id IS NOT NULL;
-CREATE INDEX ix_action_response_request ON action (response_request_id) WHERE response_request_id IS NOT NULL;
-CREATE INDEX ix_action_correction_request ON action (correction_request_id) WHERE correction_request_id IS NOT NULL;
-CREATE INDEX ix_action_cause_note ON action (cause_note_id) WHERE cause_note_id IS NOT NULL;
-CREATE INDEX ix_action_progress_note ON action (progress_note_id) WHERE progress_note_id IS NOT NULL;
-CREATE INDEX ix_action_photo ON action (photo_id) WHERE photo_id IS NOT NULL;
+CREATE INDEX ix_action_room_created ON record.action (room_record_id, created_at);       -- 경과, 마지막 당사자 행동
+CREATE INDEX ix_action_party ON record.action (party_id) WHERE party_id IS NOT NULL;
+CREATE INDEX ix_action_link ON record.action (link_id) WHERE link_id IS NOT NULL;
+CREATE INDEX ix_action_room_part ON record.action (room_part_id) WHERE room_part_id IS NOT NULL;
+CREATE INDEX ix_action_notice ON record.action (notice_id) WHERE notice_id IS NOT NULL;
+CREATE INDEX ix_action_repair_case ON record.action (repair_case_id) WHERE repair_case_id IS NOT NULL;
+CREATE INDEX ix_action_payment ON record.action (payment_id) WHERE payment_id IS NOT NULL;
+CREATE INDEX ix_action_inspection ON record.action (inspection_id) WHERE inspection_id IS NOT NULL;
+CREATE INDEX ix_action_inspection_item ON record.action (inspection_item_id) WHERE inspection_item_id IS NOT NULL;
+CREATE INDEX ix_action_settlement ON record.action (settlement_id) WHERE settlement_id IS NOT NULL;
+CREATE INDEX ix_action_settlement_item ON record.action (settlement_item_id) WHERE settlement_item_id IS NOT NULL;
+CREATE INDEX ix_action_settlement_transfer ON record.action (settlement_transfer_id) WHERE settlement_transfer_id IS NOT NULL;
+CREATE INDEX ix_action_proposal ON record.action (proposal_id) WHERE proposal_id IS NOT NULL;
+CREATE INDEX ix_action_response_request ON record.action (response_request_id) WHERE response_request_id IS NOT NULL;
+CREATE INDEX ix_action_correction_request ON record.action (correction_request_id) WHERE correction_request_id IS NOT NULL;
+CREATE INDEX ix_action_cause_note ON record.action (cause_note_id) WHERE cause_note_id IS NOT NULL;
+CREATE INDEX ix_action_progress_note ON record.action (progress_note_id) WHERE progress_note_id IS NOT NULL;
+CREATE INDEX ix_action_photo ON record.action (photo_id) WHERE photo_id IS NOT NULL;
 
 -- 통지·작업·알림
-CREATE INDEX ix_notice_response_request ON notice (response_request_id);
-CREATE INDEX ix_notice_poll ON notice (next_poll_at) WHERE status = 'SENT';
-CREATE INDEX ix_outbox_pending ON outbox (next_attempt_at) WHERE status = 'PENDING';
-CREATE UNIQUE INDEX ux_in_app_group ON in_app_notification (member_id, group_key) WHERE group_key IS NOT NULL;
-CREATE INDEX ix_in_app_member ON in_app_notification (member_id, created_at);
-CREATE INDEX ix_in_app_expires ON in_app_notification (expires_at);
-CREATE INDEX ix_rate_counter_window ON rate_counter (window_date);
-CREATE UNIQUE INDEX ux_deletion_log_chain ON deletion_log (chain_room_id, room_seq) WHERE target_kind = 'ACTION';
+CREATE INDEX ix_notice_response_request ON state.notice (response_request_id);
+CREATE INDEX ix_notice_poll ON state.notice (next_poll_at) WHERE status = 'SENT';
+CREATE INDEX ix_outbox_pending ON state.outbox (next_attempt_at) WHERE status = 'PENDING';
+CREATE UNIQUE INDEX ux_in_app_group ON state.in_app_notification (member_id, group_key) WHERE group_key IS NOT NULL;
+CREATE INDEX ix_in_app_member ON state.in_app_notification (member_id, created_at);
+CREATE INDEX ix_in_app_expires ON state.in_app_notification (expires_at);
+CREATE INDEX ix_rate_counter_window ON state.rate_counter (window_date);
+CREATE UNIQUE INDEX ux_deletion_log_chain ON log.deletion_log (chain_room_id, room_seq) WHERE target_kind = 'ACTION';
 
 -- =========================================================
--- 16. 트리거 연결 ([A] action, [B] 사실 행)
+-- 16. 트리거 연결 ([A] record.action, [B] 사실 행)
 -- =========================================================
-CREATE TRIGGER trg_action_append_only                      BEFORE UPDATE OR DELETE ON action                      FOR EACH ROW EXECUTE FUNCTION forbid_change();
-CREATE TRIGGER trg_member_acknowledgement_append_only      BEFORE UPDATE OR DELETE ON member_acknowledgement      FOR EACH ROW EXECUTE FUNCTION forbid_change();
-CREATE TRIGGER trg_sms_opt_out_append_only                 BEFORE UPDATE OR DELETE ON sms_opt_out                 FOR EACH ROW EXECUTE FUNCTION forbid_change();
-CREATE TRIGGER trg_repair_content_append_only              BEFORE UPDATE OR DELETE ON repair_content              FOR EACH ROW EXECUTE FUNCTION forbid_change();
-CREATE TRIGGER trg_cause_note_append_only                  BEFORE UPDATE OR DELETE ON cause_note                  FOR EACH ROW EXECUTE FUNCTION forbid_change();
-CREATE TRIGGER trg_progress_note_append_only               BEFORE UPDATE OR DELETE ON progress_note               FOR EACH ROW EXECUTE FUNCTION forbid_change();
-CREATE TRIGGER trg_payment_version_append_only             BEFORE UPDATE OR DELETE ON payment_version             FOR EACH ROW EXECUTE FUNCTION forbid_change();
-CREATE TRIGGER trg_proposal_append_only                    BEFORE UPDATE OR DELETE ON proposal                    FOR EACH ROW EXECUTE FUNCTION forbid_change();
-CREATE TRIGGER trg_proposal_line_append_only               BEFORE UPDATE OR DELETE ON proposal_line               FOR EACH ROW EXECUTE FUNCTION forbid_change();
-CREATE TRIGGER trg_inspection_item_version_append_only     BEFORE UPDATE OR DELETE ON inspection_item_version     FOR EACH ROW EXECUTE FUNCTION forbid_change();
-CREATE TRIGGER trg_settlement_transfer_version_append_only BEFORE UPDATE OR DELETE ON settlement_transfer_version FOR EACH ROW EXECUTE FUNCTION forbid_change();
-CREATE TRIGGER trg_photo_append_only                       BEFORE UPDATE OR DELETE ON photo                       FOR EACH ROW EXECUTE FUNCTION forbid_change();
-CREATE TRIGGER trg_deletion_log_append_only                BEFORE UPDATE OR DELETE ON deletion_log                FOR EACH ROW EXECUTE FUNCTION forbid_change();
-CREATE TRIGGER trg_link_invalidated_once                   BEFORE UPDATE ON link                                  FOR EACH ROW EXECUTE FUNCTION forbid_link_revalidate();
+CREATE TRIGGER trg_room_record_purge_only BEFORE DELETE ON state.room_record FOR EACH ROW EXECUTE FUNCTION state.guard_room_delete();
+CREATE TRIGGER trg_action_append_only                      BEFORE UPDATE OR DELETE ON record.action                      FOR EACH ROW EXECUTE FUNCTION record.forbid_change();
+CREATE TRIGGER trg_member_acknowledgement_append_only      BEFORE UPDATE OR DELETE ON record.member_acknowledgement      FOR EACH ROW EXECUTE FUNCTION record.forbid_change();
+CREATE TRIGGER trg_sms_opt_out_no_update                 BEFORE UPDATE ON state.sms_opt_out                 FOR EACH ROW EXECUTE FUNCTION record.forbid_change();
+CREATE TRIGGER trg_repair_content_append_only              BEFORE UPDATE OR DELETE ON record.repair_content              FOR EACH ROW EXECUTE FUNCTION record.forbid_change();
+CREATE TRIGGER trg_cause_note_append_only                  BEFORE UPDATE OR DELETE ON record.cause_note                  FOR EACH ROW EXECUTE FUNCTION record.forbid_change();
+CREATE TRIGGER trg_progress_note_append_only               BEFORE UPDATE OR DELETE ON record.progress_note               FOR EACH ROW EXECUTE FUNCTION record.forbid_change();
+CREATE TRIGGER trg_payment_version_append_only             BEFORE UPDATE OR DELETE ON record.payment_version             FOR EACH ROW EXECUTE FUNCTION record.forbid_change();
+CREATE TRIGGER trg_proposal_append_only                    BEFORE UPDATE OR DELETE ON record.proposal                    FOR EACH ROW EXECUTE FUNCTION record.forbid_change();
+CREATE TRIGGER trg_proposal_line_append_only               BEFORE UPDATE OR DELETE ON record.proposal_line               FOR EACH ROW EXECUTE FUNCTION record.forbid_change();
+CREATE TRIGGER trg_inspection_item_version_append_only     BEFORE UPDATE OR DELETE ON record.inspection_item_version     FOR EACH ROW EXECUTE FUNCTION record.forbid_change();
+CREATE TRIGGER trg_settlement_transfer_version_append_only BEFORE UPDATE OR DELETE ON record.settlement_transfer_version FOR EACH ROW EXECUTE FUNCTION record.forbid_change();
+CREATE TRIGGER trg_photo_append_only                       BEFORE UPDATE OR DELETE ON record.photo                       FOR EACH ROW EXECUTE FUNCTION record.forbid_change();
+CREATE TRIGGER trg_deletion_log_append_only                BEFORE UPDATE OR DELETE ON log.deletion_log                FOR EACH ROW EXECUTE FUNCTION record.forbid_change();
+CREATE TRIGGER trg_link_invalidated_once                   BEFORE UPDATE ON state.link                                  FOR EACH ROW EXECUTE FUNCTION state.forbid_link_revalidate();
 
 -- 행 트리거로 막을 수 없는 TRUNCATE는 보관 삭제 경로에서도 항상 거절한다.
-CREATE TRIGGER trg_action_no_truncate BEFORE TRUNCATE ON action FOR EACH STATEMENT EXECUTE FUNCTION forbid_change();
-CREATE TRIGGER trg_member_acknowledgement_no_truncate BEFORE TRUNCATE ON member_acknowledgement FOR EACH STATEMENT EXECUTE FUNCTION forbid_change();
-CREATE TRIGGER trg_sms_opt_out_no_truncate BEFORE TRUNCATE ON sms_opt_out FOR EACH STATEMENT EXECUTE FUNCTION forbid_change();
-CREATE TRIGGER trg_repair_content_no_truncate BEFORE TRUNCATE ON repair_content FOR EACH STATEMENT EXECUTE FUNCTION forbid_change();
-CREATE TRIGGER trg_cause_note_no_truncate BEFORE TRUNCATE ON cause_note FOR EACH STATEMENT EXECUTE FUNCTION forbid_change();
-CREATE TRIGGER trg_progress_note_no_truncate BEFORE TRUNCATE ON progress_note FOR EACH STATEMENT EXECUTE FUNCTION forbid_change();
-CREATE TRIGGER trg_payment_version_no_truncate BEFORE TRUNCATE ON payment_version FOR EACH STATEMENT EXECUTE FUNCTION forbid_change();
-CREATE TRIGGER trg_proposal_no_truncate BEFORE TRUNCATE ON proposal FOR EACH STATEMENT EXECUTE FUNCTION forbid_change();
-CREATE TRIGGER trg_proposal_line_no_truncate BEFORE TRUNCATE ON proposal_line FOR EACH STATEMENT EXECUTE FUNCTION forbid_change();
-CREATE TRIGGER trg_inspection_item_version_no_truncate BEFORE TRUNCATE ON inspection_item_version FOR EACH STATEMENT EXECUTE FUNCTION forbid_change();
-CREATE TRIGGER trg_settlement_transfer_version_no_truncate BEFORE TRUNCATE ON settlement_transfer_version FOR EACH STATEMENT EXECUTE FUNCTION forbid_change();
-CREATE TRIGGER trg_photo_no_truncate BEFORE TRUNCATE ON photo FOR EACH STATEMENT EXECUTE FUNCTION forbid_change();
-CREATE TRIGGER trg_deletion_log_no_truncate BEFORE TRUNCATE ON deletion_log FOR EACH STATEMENT EXECUTE FUNCTION forbid_change();
+CREATE TRIGGER trg_action_no_truncate BEFORE TRUNCATE ON record.action FOR EACH STATEMENT EXECUTE FUNCTION record.forbid_change();
+CREATE TRIGGER trg_member_acknowledgement_no_truncate BEFORE TRUNCATE ON record.member_acknowledgement FOR EACH STATEMENT EXECUTE FUNCTION record.forbid_change();
+CREATE TRIGGER trg_sms_opt_out_no_truncate BEFORE TRUNCATE ON state.sms_opt_out FOR EACH STATEMENT EXECUTE FUNCTION record.forbid_change();
+CREATE TRIGGER trg_repair_content_no_truncate BEFORE TRUNCATE ON record.repair_content FOR EACH STATEMENT EXECUTE FUNCTION record.forbid_change();
+CREATE TRIGGER trg_cause_note_no_truncate BEFORE TRUNCATE ON record.cause_note FOR EACH STATEMENT EXECUTE FUNCTION record.forbid_change();
+CREATE TRIGGER trg_progress_note_no_truncate BEFORE TRUNCATE ON record.progress_note FOR EACH STATEMENT EXECUTE FUNCTION record.forbid_change();
+CREATE TRIGGER trg_payment_version_no_truncate BEFORE TRUNCATE ON record.payment_version FOR EACH STATEMENT EXECUTE FUNCTION record.forbid_change();
+CREATE TRIGGER trg_proposal_no_truncate BEFORE TRUNCATE ON record.proposal FOR EACH STATEMENT EXECUTE FUNCTION record.forbid_change();
+CREATE TRIGGER trg_proposal_line_no_truncate BEFORE TRUNCATE ON record.proposal_line FOR EACH STATEMENT EXECUTE FUNCTION record.forbid_change();
+CREATE TRIGGER trg_inspection_item_version_no_truncate BEFORE TRUNCATE ON record.inspection_item_version FOR EACH STATEMENT EXECUTE FUNCTION record.forbid_change();
+CREATE TRIGGER trg_settlement_transfer_version_no_truncate BEFORE TRUNCATE ON record.settlement_transfer_version FOR EACH STATEMENT EXECUTE FUNCTION record.forbid_change();
+CREATE TRIGGER trg_photo_no_truncate BEFORE TRUNCATE ON record.photo FOR EACH STATEMENT EXECUTE FUNCTION record.forbid_change();
+CREATE TRIGGER trg_deletion_log_no_truncate BEFORE TRUNCATE ON log.deletion_log FOR EACH STATEMENT EXECUTE FUNCTION record.forbid_change();
 
 -- 보관 삭제의 DB 진입점. 앱 역할은 소유자가 아니어야 하며 EXECUTE를 부여하지 않는다.
 -- 배포 시 별도 삭제 작업 역할에만 EXECUTE를 부여한다. A·B 직접 DELETE 권한은 부여하지 않는다.
 -- 호출자는 같은 트랜잭션에서 삭제 감사 기록·AUDIT_WRITE·S3_DELETE 아웃박스를 먼저 보존한다.
-CREATE FUNCTION purge_room_record(p_room_id uuid) RETURNS boolean
+CREATE FUNCTION state.purge_room_record(p_room_id uuid) RETURNS boolean
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
     previous_purge text := current_setting('app.purge', true);
 BEGIN
     -- 행동을 추가하는 앱과 동일하게 호실부터 잠근다.
-    PERFORM 1 FROM public.room_record WHERE id = p_room_id FOR UPDATE;
+    PERFORM 1 FROM state.room_record WHERE id = p_room_id FOR UPDATE;
     IF NOT FOUND THEN
         RETURN false;
     END IF;
     IF EXISTS (
-        SELECT 1 FROM public.action a
+        SELECT 1 FROM record.action a
         WHERE a.room_record_id = p_room_id AND NOT EXISTS (
-            SELECT 1 FROM public.deletion_log d
+            SELECT 1 FROM log.deletion_log d
             WHERE d.target_kind = 'ACTION' AND d.target_id = a.id
               AND d.chain_room_id = a.room_record_id AND d.room_seq = a.room_seq
               AND d.prev_hash = a.prev_hash AND d.action_hash = a.hash
@@ -1008,9 +1032,47 @@ BEGIN
         RAISE EXCEPTION 'action deletion audit is missing or mismatched for room %', p_room_id;
     END IF;
     PERFORM set_config('app.purge', 'on', true);
-    DELETE FROM public.room_record WHERE id = p_room_id;
+    DELETE FROM state.room_record WHERE id = p_room_id;
     PERFORM set_config('app.purge', COALESCE(previous_purge, 'off'), true);
     RETURN true;
 END;
 $$;
-REVOKE ALL ON FUNCTION purge_room_record(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION state.purge_room_record(uuid) FROM PUBLIC;
+
+-- 호실 밖의 B: 탈퇴한 회원의 약관 확인만 지우는 앱 전용 진입점.
+-- 회원 가림과 같은 트랜잭션에서 호출한다. 시각은 호출 서비스의 Clock으로 전달한다.
+CREATE FUNCTION record.purge_member_acknowledgements(p_member_id uuid, p_created_at timestamptz)
+    RETURNS integer LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+    member_status text;
+    acknowledgement record;
+    audit_id uuid;
+    deleted_count integer := 0;
+    previous_purge text := current_setting('app.purge', true);
+BEGIN
+    IF p_created_at IS NULL THEN
+        RAISE EXCEPTION 'audit timestamp is required';
+    END IF;
+    SELECT status INTO member_status FROM state.member WHERE id = p_member_id FOR UPDATE;
+    IF member_status IS DISTINCT FROM 'WITHDRAWN' THEN
+        RAISE EXCEPTION 'acknowledgement deletion requires withdrawn member';
+    END IF;
+    FOR acknowledgement IN
+        SELECT id FROM record.member_acknowledgement WHERE member_id = p_member_id FOR UPDATE
+    LOOP
+        audit_id := pg_catalog.uuidv7();
+        INSERT INTO log.deletion_log (id, target_kind, target_id, reason, created_at)
+        VALUES (audit_id, 'MEMBER_ACKNOWLEDGEMENT', acknowledgement.id, 'WITHDRAWAL', p_created_at);
+        INSERT INTO state.outbox (id, kind, dedupe_key, payload, status, attempts, next_attempt_at, created_at, version)
+        VALUES (pg_catalog.uuidv7(), 'AUDIT_WRITE', 'audit:' || audit_id,
+                jsonb_build_object('deletionLogId', audit_id), 'PENDING', 0, p_created_at, p_created_at, 0);
+        PERFORM set_config('app.purge', 'on', true);
+        DELETE FROM record.member_acknowledgement WHERE id = acknowledgement.id;
+        deleted_count := deleted_count + 1;
+    END LOOP;
+    PERFORM set_config('app.purge', COALESCE(previous_purge, 'off'), true);
+    RETURN deleted_count;
+END;
+$$;
+REVOKE ALL ON FUNCTION record.purge_member_acknowledgements(uuid, timestamptz) FROM PUBLIC;

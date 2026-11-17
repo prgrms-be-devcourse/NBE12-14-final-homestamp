@@ -20,7 +20,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 /** Flyway가 만든 실제 PostgreSQL에서 내용 지문의 저장 제약을 검사한다. */
 @Import(TestcontainersConfiguration.class)
-@SpringBootTest
+@SpringBootTest(
+    properties =
+        "spring.datasource.hikari.connection-init-sql=SET search_path TO state, record, log, public")
 @Transactional
 class ActionContentDigestSchemaTest {
 

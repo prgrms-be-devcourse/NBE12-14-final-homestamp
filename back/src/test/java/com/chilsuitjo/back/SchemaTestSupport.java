@@ -9,7 +9,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 
 @Import(TestcontainersConfiguration.class)
-@SpringBootTest
+@SpringBootTest(
+    properties =
+        "spring.datasource.hikari.connection-init-sql=SET search_path TO state, record, log, public")
 @Transactional
 abstract class SchemaTestSupport {
   @Autowired protected JdbcTemplate jdbc;
