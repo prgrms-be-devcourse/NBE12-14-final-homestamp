@@ -16,21 +16,31 @@ import org.springframework.stereotype.Service;
 @Service
 public class FakeRoomQueryService implements RoomQueryService {
 
-  private final Map<UUID, RoomPartSummary> parts = new ConcurrentHashMap<>();
+  private final Map<UUID, Part> parts = new ConcurrentHashMap<>();
 
   @Override
-  public RoomPartSummary findPart(UUID roomPartId) {
-    RoomPartSummary part = parts.get(roomPartId);
-    if (part == null) {
+  public RoomPartSummary findPart(UUID roomRecordId, UUID roomPartId) {
+    Part part = parts.get(roomPartId);
+    if (part == null || !part.roomRecordId().equals(roomRecordId)) {
       throw new BusinessException(ErrorCode.NOT_FOUND);
     }
-    return part;
+    return part.summary();
   }
 
   /** 이 호실 기록의 부위로 적어 둔다. */
-  public RoomPartSummary seedPart(UUID roomPartId, UUID roomRecordId, String name) {
-    RoomPartSummary part = new RoomPartSummary(roomRecordId, name);
-    parts.put(roomPartId, part);
-    return part;
+  public RoomPartSummary seedPart(UUID roomRecordId, UUID roomPartId, String name) {
+    return put(roomRecordId, roomPartId, new RoomPartSummary(name, false));
   }
+
+  /** 이 호실 기록의 숨긴 부위로 적어 둔다. */
+  public RoomPartSummary seedHiddenPart(UUID roomRecordId, UUID roomPartId, String name) {
+    return put(roomRecordId, roomPartId, new RoomPartSummary(name, true));
+  }
+
+  private RoomPartSummary put(UUID roomRecordId, UUID roomPartId, RoomPartSummary summary) {
+    parts.put(roomPartId, new Part(roomRecordId, summary));
+    return summary;
+  }
+
+  private record Part(UUID roomRecordId, RoomPartSummary summary) {}
 }
