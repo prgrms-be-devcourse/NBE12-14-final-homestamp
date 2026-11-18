@@ -9,13 +9,11 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
-import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 import java.time.Instant;
 import java.util.UUID;
-import org.hibernate.annotations.UuidGenerator;
 
 /**
  * 수리 건 머리({@code state.repair_case}, 05 2-5, C 테이블). 하자 인정({@code defectAck})과 수리 진행({@code
@@ -28,10 +26,8 @@ import org.hibernate.annotations.UuidGenerator;
 @Table(schema = "state", name = "repair_case")
 public class RepairCase {
 
-  @Id
-  @GeneratedValue
-  @UuidGenerator(style = UuidGenerator.Style.VERSION_7)
-  private UUID id;
+  /** 앱이 저장 전에 만든다({@code Uuids.v7()}). 첫 판과 서로를 가리켜서다(05 0장 {@code id}). */
+  @Id private UUID id;
 
   @Column(name = "room_record_id", nullable = false, updatable = false)
   private UUID roomRecordId;
@@ -90,13 +86,18 @@ public class RepairCase {
 
   protected RepairCase() {}
 
-  /** 하자 등록. 처음 상태는 시작 전·확인 기다림·부담 미정. */
+  /**
+   * 하자 등록. 처음 상태는 시작 전·확인 기다림·부담 미정. {@code id}와 {@code currentContentId}는 첫 판과 함께 {@code
+   * Uuids.v7()}로 미리 만든다. {@code @Version}이 비어 있어 저장할 때 새 행으로 들어간다.
+   */
   public RepairCase(
+      UUID id,
       UUID roomRecordId,
       UUID currentContentId,
       PartySide createdBySide,
       UUID previousCaseId,
       Instant createdAt) {
+    this.id = id;
     this.roomRecordId = roomRecordId;
     this.currentContentId = currentContentId;
     this.createdBySide = createdBySide;
