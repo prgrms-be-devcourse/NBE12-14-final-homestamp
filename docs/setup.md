@@ -61,6 +61,7 @@ AI에게 `git clean -fd 실행해줘`라고 해 본다. 실행되지 않고 "팀
 | 자바 플러그인 | Settings → Plugins → Marketplace에서 **google-java-format** 설치. 버전 **2.0.0.1**(CI의 google-java-format 2.0.0과 같은 판), IntelliJ 2025.1 이상 |
 | 켜기 | Settings → Other Settings → **google-java-format Settings** → Enable, 스타일은 Default Google Java style |
 | 저장할 때 맞추기 (선택) | Settings → Tools → Actions on Save → Reformat code 켜기 |
+| 롬복 | 플러그인은 IntelliJ에 들어 있다. Settings → Build, Execution, Deployment → Compiler → Annotation Processors → **Enable annotation processing**이 켜져 있는지 확인(꺼져 있으면 IDE에만 빨간 줄이 생기고 Gradle 빌드는 된다). 쓰는 규칙은 `docs/rules/09` 2장 |
 | 프론트 | Settings → Languages & Frameworks → JavaScript → **Prettier** → Automatic Prettier configuration, Run on save 켜기(`front/node_modules`의 Prettier를 씀) |
 
 확인: 커밋 전에 `cd back && ./gradlew spotlessApply`, `cd front && npm run format`을 돌려도 바뀌는 파일이 없으면 IDE 설정이 맞다.
@@ -96,6 +97,7 @@ npm run dev                # http://localhost:5173, /api는 백엔드(8080)로 �
 
 ### 지금 알아 둘 것
 
+- **API 문서(Swagger UI)는 로컬에서만 켜진다.** `bootRun`이 local 프로필로 떠서 http://localhost:8080/swagger-ui/index.html 에 열린다(운영에서는 꺼짐, `docs/rules/04` API 문서). 보안 뼈대 전에는 아래처럼 로그인을 요구한다.
 - **API는 401이 정상이다.** 보안 뼈대(A 담당, 1주차 2일차) 전에는 Spring Security 기본값이라 `/api/**`가 모두 401이고, 로그에 `Using generated security password`가 찍힌다. `/actuator/health`는 열려 있어 앱이 떴는지 확인할 수 있다.
 - **테이블은 아직 없다.** V1 마이그레이션(1일차) 전에는 Flyway 기록 테이블만 생긴다.
 
