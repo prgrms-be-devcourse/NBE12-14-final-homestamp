@@ -3,6 +3,7 @@ package com.chilsuitjo.back.action.service;
 import com.chilsuitjo.back.action.dto.ActionCommand;
 import com.chilsuitjo.back.action.dto.ActionEntry;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * 행동 기록 한 줄 쓰기. {@link ActionPipeline} 안쪽 부품이라 package-private이다. 다른 도메인은 import할 수 없고 pipeline만
@@ -15,12 +16,12 @@ import java.util.List;
  */
 interface ActionWriter {
 
-  /** 한 줄 쓰고 저장된 모습을 돌려준다. */
-  ActionEntry write(ActionCommand command);
+  /** 한 줄 쓰고 저장된 모습을 돌려준다. {@code requestId}는 pipeline이 요청마다 하나 만들어 그 요청의 모든 행동에 넣는다(#66). */
+  ActionEntry write(ActionCommand command, UUID requestId);
 
   /**
-   * 이 요청으로 이미 남긴 행동, {@code room_seq} 순. 없으면 빈 목록. 첫 행동은 (주체, {@code <키>})로 찾고, 뒤 행동은 같은 호실의 {@code
-   * <키>#2} …로 찾는다(딸린 행동은 주체가 {@code server}라서 주체로 찾으면 빠진다).
+   * 이 요청으로 이미 남긴 행동, {@code room_seq} 순. 없으면 빈 목록. 첫 행동은 (주체, {@code <키>})로 찾고, 나머지는 그 행동의 {@code
+   * requestId}로 모은다. 같은 호실의 다른 회원이 같은 키를 써도 섞이지 않고, 주체가 다른 딸린 행동({@code server})도 빠지지 않는다.
    */
   List<ActionEntry> findRequest(String actorKey, String idempotencyKey);
 }

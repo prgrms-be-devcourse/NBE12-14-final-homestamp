@@ -30,11 +30,15 @@ public record ActionStep<S>(
     Transitions<S> rules,
     Predicate<S> condition) {
 
+  /** {@code when}을 주지 않은 단계의 조건. 이 값이면 늘 실행되는 단계다(다시 온 요청 비교에서 건너뛸 수 없음). */
+  private static final Predicate<Object> ALWAYS = state -> true;
+
+  @SuppressWarnings("unchecked")
   public ActionStep {
     Objects.requireNonNull(type, "type");
     target = target == null ? done -> null : target;
     payload = payload == null ? Map.of() : Map.copyOf(payload);
-    condition = condition == null ? state -> true : condition;
+    condition = condition == null ? (Predicate<S>) (Predicate<?>) ALWAYS : condition;
     if ((store == null) != (rules == null)) {
       throw new IllegalArgumentException("store와 rules는 함께 주거나 함께 비워요");
     }
@@ -65,6 +69,11 @@ public record ActionStep<S>(
 
   public boolean recordOnly() {
     return store == null;
+  }
+
+  /** {@code when}으로 건너뛸 수 있는 단계인지. 다시 온 요청을 비교할 때 기록이 없어도 되는 단계다. */
+  public boolean optional() {
+    return condition != ALWAYS;
   }
 
   /** 지금 상태가 조건에 맞을 때만 이 단계를 한다(예: 정산이 없을 때만 {@code OPEN_SETTLEMENT}). */

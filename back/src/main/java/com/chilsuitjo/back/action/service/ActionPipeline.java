@@ -120,6 +120,8 @@ public class ActionPipeline {
         gate != null && batch.actor().isMember()
             ? batch.actor().withSide(gate.side())
             : batch.actor();
+    // 한 요청의 행동을 묶는 값(#66). 실제 구현에서는 UUID v7(global/common Uuids)로 바꾼다.
+    UUID requestId = UUID.randomUUID();
     List<ActionResult> results = new ArrayList<>();
     Object lastState = null;
     int written = 0;
@@ -143,13 +145,14 @@ public class ActionPipeline {
         results.add(
             resultOf(
                 actionWriter.write(
-                    requireRoom(command.withTarget(withoutRoomTarget(command.target())))),
+                    requireRoom(command.withTarget(withoutRoomTarget(command.target()))),
+                    requestId),
                 false)); // 8
         written++;
         continue;
       }
 
-      StepOutcome stepOutcome = runStep(step, command, gate, batch.idempotencyKey(), written);
+      StepOutcome stepOutcome = runStep(step, command, gate, requestId, written);
       if (stepOutcome == null) {
         continue; // when이 거짓: 기록 없이 건너뜀
       }
@@ -167,7 +170,7 @@ public class ActionPipeline {
 
   /** 5~9. {@code when}이 거짓이면 null. */
   private <S> StepOutcome runStep(
-      ActionStep<S> step, ActionCommand command, RoomGate gate, String baseKey, int written) {
+      ActionStep<S> step, ActionCommand command, RoomGate gate, UUID requestId, int written) {
     S now = step.store().load(command); // 5
     if (!step.condition().test(now)) {
       return null;
@@ -196,7 +199,7 @@ public class ActionPipeline {
       ActionCommand recorded = requireRoom(toWrite.withTarget(withoutRoomTarget(toWrite.target())));
 
       List<ActionResult> results = new ArrayList<>();
-      ActionResult main = resultOf(actionWriter.write(recorded), false); // 8
+      ActionResult main = resultOf(actionWriter.write(recorded, requestId), false); // 8
       results.add(resultTarget == null ? main : withTarget(main, resultTarget));
 
       int n = written + 1;
@@ -208,13 +211,13 @@ public class ActionPipeline {
                 recorded.roomRecordId(),
                 followUp.actor(),
                 followUp.type(),
-                keyOf(baseKey, n),
+                followUpKey(requestId, n),
                 withoutRoomTarget(followUp.target()),
                 null,
                 null,
                 null,
                 followUp.payload());
-        results.add(resultOf(actionWriter.write(extra), false));
+        results.add(resultOf(actionWriter.write(extra, requestId), false));
       }
       return new StepOutcome(results, next, recorded.roomRecordId());
     } finally {
@@ -238,20 +241,25 @@ public class ActionPipeline {
     }
   }
 
-  /** 2. 같은 키로 다시 온 요청. 같은 키에 다른 행동이면 화면 버그라 거절한다(06 4-0). */
+  /**
+   * 2. 같은 키로 다시 온 요청. 처음 요청과 다르면 화면 버그라 거절한다(06 4-0 "같은 키에 다른 대상·다른 행동").
+   *
+   * <p>같은 요청이란: 같은 호실이고, 요청 주체가 남긴 행동({@code <키>}, {@code <키>#n})이 이번 단계들과 <b>순서대로</b> 짝이 맞는 것이다.
+   * {@code when}으로 건너뛸 수 있는 단계는 짝이 없어도 되고, 짝이 맞은 단계는 대상도 같아야 한다. 딸린 행동은 그 단계에서 생긴 것이라 비교하지 않는다.
+   */
   private Outcome replay(ActionBatch batch, List<ActionEntry> done) {
     ActionStep<?> firstStep = batch.steps().getFirst();
-    ActionEntry firstDone = done.getFirst();
-    // 첫 단계가 when으로 건너뛰어졌을 수 있어서, 처음 남은 행동이 이 요청의 단계 중 하나인지 본다.
-    boolean sameRequest = batch.steps().stream().anyMatch(step -> step.type() == firstDone.type());
-    if (!sameRequest) {
+    if (!batch.isNewRoom() && !batch.roomRecordId().equals(done.getFirst().roomRecordId())) {
       throw new BusinessException(ErrorCode.IDEMPOTENCY_KEY_REUSED);
     }
-    if (firstStep.type() == firstDone.type()) {
-      ActionTarget asked = targetWithoutResults(firstStep);
-      if (asked != null && firstDone.target() != null && !asked.equals(firstDone.target())) {
-        throw new BusinessException(ErrorCode.IDEMPOTENCY_KEY_REUSED);
+    List<Integer> own = new ArrayList<>();
+    for (int i = 0; i < done.size(); i++) {
+      if (isOwnKey(done.get(i).idempotencyKey(), batch.idempotencyKey())) {
+        own.add(i);
       }
+    }
+    if (!matches(batch.steps(), 0, done, own, 0)) {
+      throw new BusinessException(ErrorCode.IDEMPOTENCY_KEY_REUSED);
     }
     List<ActionResult> results = done.stream().map(entry -> resultOf(entry, true)).toList();
     Object state = null;
@@ -283,12 +291,44 @@ public class ActionPipeline {
                 step.payload()));
   }
 
-  private static ActionTarget targetWithoutResults(ActionStep<?> step) {
-    try {
-      return step.target().apply(List.of());
-    } catch (RuntimeException needsEarlierResults) {
-      return null;
+  private static boolean isOwnKey(String key, String baseKey) {
+    return key.equals(baseKey) || key.startsWith(baseKey + "#");
+  }
+
+  /**
+   * 단계 {@code i}부터와 요청 주체의 행동 {@code own[j]}부터가 순서대로 짝이 맞는지. 건너뛸 수 있는 단계는 짝 없이 넘어가 볼 수 있어서(같은 종류가
+   * 이어질 때) 되짚어 본다. 한 요청의 단계는 몇 개뿐이라 비용은 작다.
+   */
+  private static boolean matches(
+      List<ActionStep<?>> steps, int i, List<ActionEntry> done, List<Integer> own, int j) {
+    if (i == steps.size()) {
+      return j == own.size();
     }
+    ActionStep<?> step = steps.get(i);
+    if (j < own.size()
+        && sameAction(step, done, own.get(j))
+        && matches(steps, i + 1, done, own, j + 1)) {
+      return true;
+    }
+    return step.optional() && matches(steps, i + 1, done, own, j);
+  }
+
+  /** 단계와 남은 행동이 같은 종류·같은 대상인지. 대상은 처음 실행 때처럼 그 행동 앞의 결과로 다시 정해 본다. */
+  private static boolean sameAction(ActionStep<?> step, List<ActionEntry> done, int index) {
+    ActionEntry entry = done.get(index);
+    if (step.type() != entry.type()) {
+      return false;
+    }
+    List<ActionResult> before =
+        done.subList(0, index).stream().map(e -> resultOf(e, true)).toList();
+    ActionTarget asked;
+    try {
+      asked = withoutRoomTarget(step.target().apply(before));
+    } catch (RuntimeException cannotResolve) {
+      return true; // 대상을 다시 정할 수 없으면 종류만 본다
+    }
+    // 새로 만드는 행동·호실 자체가 대상인 행동은 물은 대상이 없다
+    return asked == null || asked.equals(entry.target());
   }
 
   /** apply에 넘기는 저장 전 행동. id·roomSeq·지문은 저장할 때 정해진다. */
@@ -300,6 +340,8 @@ public class ActionPipeline {
         c.type(),
         c.actor().side(),
         c.actor().key(),
+        null,
+        null,
         c.target(),
         c.seenVersionNo(),
         null,
@@ -329,6 +371,14 @@ public class ActionPipeline {
 
   private static String keyOf(String baseKey, int n) {
     return n == 1 ? baseKey : baseKey + "#" + n;
+  }
+
+  /**
+   * 딸린 행동의 키. 주체가 요청과 다를 수 있어(대개 {@code server}) 요청 키 대신 {@code request_id}를 쓴다. 두 회원이 같은 키를 써도
+   * {@code UNIQUE(actor_key, idempotency_key)}에서 서로 부딪히지 않는다(#66).
+   */
+  private static String followUpKey(UUID requestId, int n) {
+    return requestId + "#" + n;
   }
 
   /** 행동 기록에는 호실 기록 자체를 대상 칸 없이 남긴다(05 2-3 "0이면 호실 기록 자체"). */

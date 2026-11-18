@@ -13,6 +13,9 @@ import java.util.UUID;
  *
  * @param id 저장 전 미리 보기(pipeline이 {@code apply}에 넘길 때)면 null
  * @param roomSeq 저장 전이면 0
+ * @param idempotencyKey 이 행동의 멱등 키. 요청 주체의 행동은 {@code <키>}, {@code <키>#2} …, 딸린 행동은 {@code
+ *     <requestId>#n}(09 3-1). 저장 전이면 null
+ * @param requestId 한 요청으로 남긴 행동을 묶는 값. 한 요청의 모든 행동이 같은 값이다(#66). 저장 전이면 null
  * @param createdAt 서버 시각. {@code apply}는 {@code Clock}을 부르지 않으므로 시각은 여기서 읽는다(09 2장 {@code rule/})
  */
 public record ActionEntry(
@@ -22,6 +25,8 @@ public record ActionEntry(
     ActionType type,
     PartySide actorSide,
     String actorKey,
+    String idempotencyKey,
+    UUID requestId,
     ActionTarget target,
     Integer seenVersionNo,
     byte[] contentDigest,

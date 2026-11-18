@@ -309,6 +309,8 @@ class ActionPipelineTest {
             null,
             null,
             null,
+            null,
+            null,
             Map.of("answer", "NEED_MORE", "photoId", photo.toString(), "count", 3),
             null);
 
@@ -513,6 +515,147 @@ class ActionPipelineTest {
         .isInstanceOf(IllegalArgumentException.class);
   }
 
+  // ---- 같은 키로 다시 온 요청이 다른 요청과 섞이지 않는다(06 4-0, #64 리뷰) ----
+
+  @Test
+  void 다른_호실에서_같은_키로_오면_IDEMPOTENCY_KEY_REUSED() {
+    UUID otherRoom = UUID.randomUUID();
+    gates.member(otherRoom, tenantId, PartySide.TENANT);
+    pipeline.executeAll(
+        ActionBatch.of(room, Actor.member(tenantId), "k1")
+            .record(ActionType.SHARE_CONSENT, Map.of()));
+
+    assertThatThrownBy(() ->
+            pipeline.executeAll(
+                ActionBatch.of(otherRoom, Actor.member(tenantId), "k1")
+                    .record(ActionType.SHARE_CONSENT, Map.of())))
+        .isInstanceOf(BusinessException.class)
+        .hasMessage(ErrorCode.IDEMPOTENCY_KEY_REUSED.name());
+  }
+
+  @Test
+  void 행동_순서가_바뀐_묶음이면_IDEMPOTENCY_KEY_REUSED() {
+    pipeline.executeAll(
+        ActionBatch.of(room, Actor.member(tenantId), "k1")
+            .record(ActionType.SHARE_CONSENT, Map.of())
+            .step(ActionType.REGISTER, done -> null, store, rules));
+
+    assertThatThrownBy(() ->
+            pipeline.executeAll(
+                ActionBatch.of(room, Actor.member(tenantId), "k1")
+                    .step(ActionType.REGISTER, done -> null, store, rules)
+                    .record(ActionType.SHARE_CONSENT, Map.of())))
+        .isInstanceOf(BusinessException.class)
+        .hasMessage(ErrorCode.IDEMPOTENCY_KEY_REUSED.name());
+  }
+
+  @Test
+  void 행동이_빠진_묶음이면_IDEMPOTENCY_KEY_REUSED() {
+    pipeline.executeAll(
+        ActionBatch.of(room, Actor.member(tenantId), "k1")
+            .record(ActionType.SHARE_CONSENT, Map.of())
+            .step(ActionType.REGISTER, done -> null, store, rules));
+
+    assertThatThrownBy(() ->
+            pipeline.executeAll(
+                ActionBatch.of(room, Actor.member(tenantId), "k1")
+                    .record(ActionType.SHARE_CONSENT, Map.of())))
+        .isInstanceOf(BusinessException.class)
+        .hasMessage(ErrorCode.IDEMPOTENCY_KEY_REUSED.name());
+  }
+
+  @Test
+  void 첫_단계를_건너뛴_묶음도_다음_단계의_대상이_다르면_IDEMPOTENCY_KEY_REUSED() {
+    ActionTarget first = pipeline.execute(register("r1"), store, rules).action().target();
+    ActionTarget second = pipeline.execute(register("r2"), store, rules).action().target();
+    pipeline.executeAll(skippedThenStart(first));
+
+    assertThat(pipeline.executeAll(skippedThenStart(first)).replayed()).isTrue();
+    assertThatThrownBy(() -> pipeline.executeAll(skippedThenStart(second)))
+        .isInstanceOf(BusinessException.class)
+        .hasMessage(ErrorCode.IDEMPOTENCY_KEY_REUSED.name());
+  }
+
+  @Test
+  void 같은_호실의_두_회원이_같은_키를_써도_다시_온_결과가_섞이지_않는다() {
+    BatchResult tenantFirst = pipeline.executeAll(registerThenStart(tenantId));
+    BatchResult landlordFirst = pipeline.executeAll(registerThenStart(landlordId));
+
+    BatchResult tenantAgain = pipeline.executeAll(registerThenStart(tenantId));
+
+    assertThat(landlordFirst.replayed()).isFalse();
+    assertThat(tenantAgain.replayed()).isTrue();
+    assertThat(tenantAgain.actions())
+        .extracting(ActionResult::actionId)
+        .containsExactlyElementsOf(ids(tenantFirst));
+  }
+
+  @Test
+  void 두_회원이_같은_키를_써도_서버_딸린_행동끼리_부딪히지_않는다() {
+    ActionTarget settlement = ActionTarget.settlement(UUID.randomUUID());
+    store.afterSave =
+        () -> followUps.add(Actor.server(), ActionType.CLOSE_FINISH_REQUEST, settlement, Map.of());
+
+    BatchResult tenant =
+        pipeline.executeAll(
+            ActionBatch.of(room, Actor.member(tenantId), "k1")
+                .step(ActionType.REGISTER, done -> null, store, rules));
+    BatchResult landlord =
+        pipeline.executeAll(
+            ActionBatch.of(room, Actor.member(landlordId), "k1")
+                .step(ActionType.REGISTER, done -> null, store, rules));
+
+    assertThat(landlord.replayed()).isFalse();
+    assertThat(writer.findByRoom(room)).hasSize(4);
+    assertThat(writer.findRequest(Actor.member(landlordId).key(), "k1"))
+        .extracting(ActionEntry::id)
+        .containsExactlyElementsOf(ids(landlord));
+    assertThat(writer.findRequest(Actor.member(tenantId).key(), "k1"))
+        .extracting(ActionEntry::id)
+        .containsExactlyElementsOf(ids(tenant));
+  }
+
+  @Test
+  void 한_요청의_행동은_모두_같은_request_id를_갖고_서버_딸린_행동_키는_request_id로_시작한다() {
+    store.afterSave =
+        () ->
+            followUps.add(
+                Actor.server(),
+                ActionType.CLOSE_FINISH_REQUEST,
+                ActionTarget.settlement(UUID.randomUUID()),
+                Map.of());
+
+    pipeline.executeAll(
+        ActionBatch.of(room, Actor.member(tenantId), "k1")
+            .step(ActionType.REGISTER, done -> null, store, rules));
+
+    List<ActionEntry> entries = writer.findRequest(Actor.member(tenantId).key(), "k1");
+    UUID requestId = entries.getFirst().requestId();
+    assertThat(requestId).isNotNull();
+    assertThat(entries).allMatch(entry -> requestId.equals(entry.requestId()));
+    assertThat(entries)
+        .extracting(ActionEntry::idempotencyKey)
+        .containsExactly("k1", requestId + "#2");
+  }
+
+  private ActionBatch skippedThenStart(ActionTarget target) {
+    return ActionBatch.of(room, Actor.member(tenantId), "k1")
+        .step(
+            ActionStep.of(ActionType.START_REPAIR, done -> target, store, rules)
+                .when(now -> now.status().equals("IN_PROGRESS")))
+        .step(ActionType.START_REPAIR, done -> target, store, rules);
+  }
+
+  private ActionBatch registerThenStart(UUID memberId) {
+    return ActionBatch.of(room, Actor.member(memberId), "k1")
+        .step(ActionType.REGISTER, done -> null, store, rules)
+        .step(ActionType.START_REPAIR, done -> done.get(0).target(), store, rules);
+  }
+
+  private static List<UUID> ids(BatchResult result) {
+    return result.actions().stream().map(ActionResult::actionId).toList();
+  }
+
   private ActionCommand register(String key) {
     return command(tenantId, ActionType.REGISTER, key, null);
   }
@@ -621,7 +764,7 @@ class ActionPipelineTest {
     }
 
     @Override
-    public ActionEntry write(ActionCommand command) {
+    public ActionEntry write(ActionCommand command, UUID requestId) {
       throw new DataIntegrityViolationException("uq_action_idempotency");
     }
 

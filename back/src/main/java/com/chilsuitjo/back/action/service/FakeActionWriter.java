@@ -28,7 +28,7 @@ class FakeActionWriter implements ActionWriter, ActionReader {
 
   private final List<ActionEntry> entries = new ArrayList<>();
   private final Map<String, ActionEntry> byFullKey = new HashMap<>();
-  private final Map<String, ActionEntry> byRoomKey = new HashMap<>();
+  private final Map<UUID, List<ActionEntry>> byRequest = new HashMap<>();
   private final Map<UUID, Long> lastSeq = new HashMap<>();
   private final Clock clock;
 
@@ -37,7 +37,7 @@ class FakeActionWriter implements ActionWriter, ActionReader {
   }
 
   @Override
-  public synchronized ActionEntry write(ActionCommand c) {
+  public synchronized ActionEntry write(ActionCommand c, UUID requestId) {
     String fullKey = c.actor().key() + "|" + c.idempotencyKey();
     if (byFullKey.containsKey(fullKey)) {
       throw new DataIntegrityViolationException("uq_action_idempotency: " + fullKey);
@@ -51,6 +51,8 @@ class FakeActionWriter implements ActionWriter, ActionReader {
             c.type(),
             c.actor().side(),
             c.actor().key(),
+            c.idempotencyKey(),
+            requestId,
             c.target(),
             c.seenVersionNo(),
             null,
@@ -59,14 +61,13 @@ class FakeActionWriter implements ActionWriter, ActionReader {
             clock.instant());
     entries.add(entry);
     byFullKey.put(fullKey, entry);
-    String roomKey = c.roomRecordId() + "|" + c.idempotencyKey();
-    byRoomKey.put(roomKey, entry);
-    forgetOnRollback(entry, fullKey, roomKey);
+    byRequest.computeIfAbsent(requestId, id -> new ArrayList<>()).add(entry);
+    forgetOnRollback(entry, fullKey);
     return entry;
   }
 
   /** 실제 DB처럼, 트랜잭션이 되돌려지면 그 안에서 쓴 줄도 없앤다(여러 행동 중 하나가 실패하면 모두 없음). */
-  private void forgetOnRollback(ActionEntry entry, String fullKey, String roomKey) {
+  private void forgetOnRollback(ActionEntry entry, String fullKey) {
     if (!TransactionSynchronizationManager.isSynchronizationActive()) {
       return;
     }
@@ -78,7 +79,12 @@ class FakeActionWriter implements ActionWriter, ActionReader {
               synchronized (FakeActionWriter.this) {
                 entries.remove(entry);
                 byFullKey.remove(fullKey);
-                byRoomKey.remove(roomKey);
+                byRequest.computeIfPresent(
+                    entry.requestId(),
+                    (id, list) -> {
+                      list.remove(entry);
+                      return list.isEmpty() ? null : list;
+                    });
                 lastSeq.computeIfPresent(entry.roomRecordId(), (room, seq) -> seq - 1);
               }
             }
@@ -88,20 +94,12 @@ class FakeActionWriter implements ActionWriter, ActionReader {
 
   @Override
   public synchronized List<ActionEntry> findRequest(String actorKey, String idempotencyKey) {
-    List<ActionEntry> found = new ArrayList<>();
     ActionEntry first = byFullKey.get(actorKey + "|" + idempotencyKey);
     if (first == null) {
-      return found;
+      return List.of();
     }
-    found.add(first);
-    // 뒤 행동은 주체가 다를 수 있다(딸린 행동은 server). 같은 호실의 <키>#n이면 같은 요청이다.
-    for (int n = 2; ; n++) {
-      ActionEntry next = byRoomKey.get(first.roomRecordId() + "|" + idempotencyKey + "#" + n);
-      if (next == null) {
-        return found;
-      }
-      found.add(next);
-    }
+    // 뒤 행동은 주체가 다를 수 있다(딸린 행동은 server). 키가 아니라 request_id로 모은다(#66).
+    return List.copyOf(byRequest.get(first.requestId()));
   }
 
   @Override
