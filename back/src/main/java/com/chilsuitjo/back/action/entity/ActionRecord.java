@@ -69,9 +69,16 @@ public class ActionRecord {
   @Column(nullable = false, length = 40, updatable = false)
   private String type;
 
-  /** 한 요청의 여러 행동은 {@code <키>#2} …. {@code UNIQUE(actor_key, idempotency_key)}. */
+  /**
+   * 요청 주체의 행동은 {@code <키>}, {@code <키>#2} …, 딸린 행동은 {@code <requestId>#n}. {@code UNIQUE(actor_key,
+   * idempotency_key)}.
+   */
   @Column(name = "idempotency_key", nullable = false, length = 100, updatable = false)
   private String idempotencyKey;
+
+  /** 한 요청으로 남긴 행동을 묶는 값. 한 요청의 모든 행동이 같은 값이다(V3, 05 2-3). 행동 해시 입력에 들어간다. */
+  @Column(name = "request_id", nullable = false, updatable = false)
+  private UUID requestId;
 
   @Column(name = "seen_version_no", updatable = false)
   private Integer seenVersionNo;
@@ -152,6 +159,7 @@ public class ActionRecord {
       String actorKey,
       String type,
       String idempotencyKey,
+      UUID requestId,
       Integer seenVersionNo,
       String reason,
       String payload,
@@ -167,6 +175,7 @@ public class ActionRecord {
     this.actorKey = actorKey;
     this.type = type;
     this.idempotencyKey = idempotencyKey;
+    this.requestId = requestId;
     this.seenVersionNo = seenVersionNo;
     this.reason = reason;
     this.payload = payload;
@@ -274,6 +283,10 @@ public class ActionRecord {
 
   public String getIdempotencyKey() {
     return idempotencyKey;
+  }
+
+  public UUID getRequestId() {
+    return requestId;
   }
 
   public Integer getSeenVersionNo() {

@@ -37,6 +37,26 @@ class ActionConstraintSchemaTest extends SchemaTestSupport {
   }
 
   @Test
+  void rejectsActionWithoutRequestId() {
+    UUID room = room();
+    var error =
+        assertThrows(
+            DataIntegrityViolationException.class,
+            () ->
+                jdbc.update(
+                    """
+                    INSERT INTO action (id, room_record_id, room_seq, prev_hash, hash, actor_key,
+                      type, idempotency_key, created_at)
+                    VALUES (?, ?, 1, ?, ?, 'server', 'CREATE_ROOM', 'request', CURRENT_TIMESTAMP)
+                    """,
+                    UUID.randomUUID(),
+                    room,
+                    new byte[32],
+                    new byte[32]));
+    assertTrue(error.getMessage().contains("request_id"));
+  }
+
+  @Test
   void rejectsUnknownActionType() {
     UUID room = room();
     var error =
@@ -58,8 +78,8 @@ class ActionConstraintSchemaTest extends SchemaTestSupport {
                 jdbc.update(
                     """
                     INSERT INTO action (id, room_record_id, room_seq, prev_hash, hash, actor_key,
-                      type, idempotency_key, repair_case_id, room_part_id, created_at)
-                    VALUES (?, ?, 1, ?, ?, 'server', 'REGISTER', 'request', ?, ?, CURRENT_TIMESTAMP)
+                      type, idempotency_key, repair_case_id, room_part_id, request_id, created_at)
+                    VALUES (?, ?, 1, ?, ?, 'server', 'REGISTER', 'request', ?, ?, gen_random_uuid(), CURRENT_TIMESTAMP)
                     """,
                     UUID.randomUUID(),
                     room,
@@ -74,8 +94,8 @@ class ActionConstraintSchemaTest extends SchemaTestSupport {
     jdbc.update(
         """
         INSERT INTO action (id, room_record_id, room_seq, prev_hash, hash, actor_key,
-          type, idempotency_key, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+          type, idempotency_key, request_id, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, gen_random_uuid(), CURRENT_TIMESTAMP)
         """,
         UUID.randomUUID(),
         room,
