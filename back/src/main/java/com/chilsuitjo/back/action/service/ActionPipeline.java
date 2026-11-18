@@ -16,6 +16,7 @@ import com.chilsuitjo.back.action.rule.ActionType.Allow;
 import com.chilsuitjo.back.action.rule.RoomGateReader;
 import com.chilsuitjo.back.action.rule.Transitions;
 import com.chilsuitjo.back.global.common.TargetKind;
+import com.chilsuitjo.back.global.common.Uuids;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import java.time.Clock;
@@ -120,8 +121,8 @@ public class ActionPipeline {
         gate != null && batch.actor().isMember()
             ? batch.actor().withSide(gate.side())
             : batch.actor();
-    // 한 요청의 행동을 묶는 값(#66). 실제 구현에서는 UUID v7(global/common Uuids)로 바꾼다.
-    UUID requestId = UUID.randomUUID();
+    // 한 요청의 행동을 묶는 값(#66). 시간순으로 정렬되도록 UUID v7을 쓴다.
+    UUID requestId = Uuids.v7();
     List<ActionResult> results = new ArrayList<>();
     Object lastState = null;
     int written = 0;
