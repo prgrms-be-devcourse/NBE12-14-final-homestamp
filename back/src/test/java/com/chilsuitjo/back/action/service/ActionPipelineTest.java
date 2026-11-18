@@ -159,7 +159,7 @@ class ActionPipelineTest {
 
   @Test
   void 정산_완료된_호실은_SETTLED이고_사진_지우기만_된다() {
-    gates.put(tenantId, new RoomGate(room, PartySide.TENANT, true, false, false));
+    gates.put(tenantId, new RoomGate(room, PartySide.TENANT, true, false, false, true));
 
     assertThatThrownBy(() -> pipeline.create(register("k1"), store, rules))
         .hasMessage(ErrorCode.SETTLED.name());
@@ -173,7 +173,7 @@ class ActionPipelineTest {
 
   @Test
   void 합류_전_기록은_JOINED_RECORD() {
-    gates.put(tenantId, new RoomGate(room, PartySide.TENANT, false, true, false));
+    gates.put(tenantId, new RoomGate(room, PartySide.TENANT, false, true, false, false));
 
     assertThatThrownBy(() -> pipeline.create(register("k1"), store, rules))
         .hasMessage(ErrorCode.JOINED_RECORD.name());
@@ -182,7 +182,7 @@ class ActionPipelineTest {
   @Test
   void 공유를_그만둔_사람은_응답할_수_없고_내_기록은_남긴다() {
     ActionTarget target = pipeline.create(register("k1"), store, rules).action().target();
-    gates.put(landlordId, new RoomGate(room, PartySide.LANDLORD, false, false, true));
+    gates.put(landlordId, new RoomGate(room, PartySide.LANDLORD, false, false, true, false));
 
     assertThatThrownBy(
             () -> pipeline.execute(respond(landlordId, "k2", target, Answer.ACK), store, rules))
@@ -195,7 +195,7 @@ class ActionPipelineTest {
 
   @Test
   void 서버_행동은_호실_단위_거절을_건너뛴다() {
-    gates.putRoom(new RoomGate(room, null, true, false, false));
+    gates.putRoom(new RoomGate(room, null, true, false, false, true));
 
     BatchResult result =
         pipeline.executeAll(
@@ -394,7 +394,7 @@ class ActionPipelineTest {
 
   @Test
   void 호실_단위_거절은_when보다_먼저_본다() {
-    gates.put(tenantId, new RoomGate(room, PartySide.TENANT, true, false, false));
+    gates.put(tenantId, new RoomGate(room, PartySide.TENANT, true, false, false, true));
 
     assertThatThrownBy(() ->
             pipeline.executeAll(
@@ -405,8 +405,31 @@ class ActionPipelineTest {
   }
 
   @Test
+  void 거주가_끝난_호실에는_새_수리_건을_만들_수_없다() {
+    gates.put(tenantId, new RoomGate(room, PartySide.TENANT, false, false, false, true));
+
+    assertThatThrownBy(() -> pipeline.create(register("k1"), store, rules))
+        .isInstanceOf(BusinessException.class)
+        .hasMessage(ErrorCode.ROOM_ENDED.name());
+    pipeline.executeAll(
+        ActionBatch.of(room, Actor.member(tenantId), "k2")
+            .record(ActionType.NOTE_PROGRESS, Map.of()));
+    assertThat(writer.findByRoom(room))
+        .extracting(ActionEntry::type)
+        .containsExactly(ActionType.NOTE_PROGRESS);
+  }
+
+  @Test
+  void 정산_완료이면서_거주_종료면_SETTLED가_먼저다() {
+    gates.put(tenantId, new RoomGate(room, PartySide.TENANT, true, false, false, true));
+
+    assertThatThrownBy(() -> pipeline.create(register("k1"), store, rules))
+        .hasMessage(ErrorCode.SETTLED.name());
+  }
+
+  @Test
   void 운영_행동도_호실_단위_거절을_건너뛴다() {
-    gates.putRoom(new RoomGate(room, null, true, true, false));
+    gates.putRoom(new RoomGate(room, null, true, true, false, true));
 
     pipeline.executeAll(
         ActionBatch.of(room, Actor.ops("홍길동"), "ops-1").record(ActionType.HIDE_PHOTO, Map.of()));
@@ -416,7 +439,7 @@ class ActionPipelineTest {
 
   @Test
   void 공유를_그만둔_사람은_초대할_수_없다() {
-    gates.put(tenantId, new RoomGate(room, PartySide.TENANT, false, false, true));
+    gates.put(tenantId, new RoomGate(room, PartySide.TENANT, false, false, true, false));
 
     assertThatThrownBy(() ->
             pipeline.executeAll(
@@ -427,7 +450,7 @@ class ActionPipelineTest {
 
   @Test
   void 합류_전_기록에서도_사진_지우기는_된다() {
-    gates.put(tenantId, new RoomGate(room, PartySide.TENANT, false, true, false));
+    gates.put(tenantId, new RoomGate(room, PartySide.TENANT, false, true, false, false));
 
     pipeline.executeAll(
         ActionBatch.of(room, Actor.member(tenantId), "k1")

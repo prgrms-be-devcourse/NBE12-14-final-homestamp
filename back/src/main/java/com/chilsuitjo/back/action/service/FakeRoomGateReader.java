@@ -20,7 +20,7 @@ import org.springframework.stereotype.Component;
  *
  * <pre>{@code
  * gates.member(roomId, memberId, PartySide.TENANT);                       // 거주 중, 막히는 것 없음
- * gates.put(memberId, new RoomGate(roomId, PartySide.TENANT, true, false, false)); // 정산 완료
+ * gates.put(memberId, new RoomGate(roomId, PartySide.TENANT, true, false, false, true)); // 정산 완료
  * }</pre>
  */
 @Component
@@ -40,7 +40,12 @@ public class FakeRoomGateReader implements RoomGateReader {
     }
     RoomGate room = rooms.getOrDefault(roomRecordId, RoomGate.open(roomRecordId, null));
     return new RoomGate(
-        roomRecordId, actor.side(), room.settled(), room.joinedAway(), room.mySharingStopped());
+        roomRecordId,
+        actor.side(),
+        room.settled(),
+        room.joinedAway(),
+        room.mySharingStopped(),
+        room.ended());
   }
 
   /** 거주 중이고 막히는 것이 없는 호실의 당사자로 적어 둔다. 가장 흔한 경우다. */
@@ -48,7 +53,7 @@ public class FakeRoomGateReader implements RoomGateReader {
     return put(memberId, RoomGate.open(roomRecordId, side));
   }
 
-  /** 상태를 직접 정해 적어 둔다(정산 완료, 합류 전 기록, 공유 중단). */
+  /** 상태를 직접 정해 적어 둔다(정산 완료, 합류 전 기록, 공유 중단, 거주 종료). */
   public RoomGate put(UUID memberId, RoomGate gate) {
     members.put(new Key(gate.roomRecordId(), memberId), gate);
     return gate;

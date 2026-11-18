@@ -159,6 +159,11 @@ public enum ActionType {
     return allows.contains(allow);
   }
 
+  /** 거주가 끝난 호실에서 할 수 없는 행동: 새 수리 건 등록(03 불변식 9, 06 REP-1c {@code ROOM_ENDED}). */
+  public boolean blockedAfterEnded() {
+    return this == REGISTER;
+  }
+
   /** 공유를 그만둔 사람이 할 수 없는 행동: 응답·확인과 초대(03 B "공유 그만두기"). */
   public boolean blockedWhileSharingStopped() {
     return kind == Kind.RESPONSE || this == INVITE;

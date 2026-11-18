@@ -48,6 +48,12 @@ class ActionTypeTest {
   }
 
   @Test
+  void 거주가_끝난_호실에서_막히는_행동은_하자_등록뿐이다() {
+    assertThat(Arrays.stream(ActionType.values()).filter(ActionType::blockedAfterEnded))
+        .containsExactly(ActionType.REGISTER);
+  }
+
+  @Test
   void 공유를_그만둔_사람은_응답과_초대를_할_수_없다() {
     assertThat(ActionType.RESPOND_DEFECT.kind()).isEqualTo(Kind.RESPONSE);
     assertThat(ActionType.RESPOND_DEFECT.blockedWhileSharingStopped()).isTrue();
