@@ -1,6 +1,6 @@
 # ERD 초안
 
-> `06-요구사항-명세.md`의 기능·API가 저장하는 값과 `03-상태와-규칙.md`의 상태 기계 12개(A~L)·불변식 21개를 테이블과 제약으로 옮긴 **첫 초안**이에요. 테이블·칸·제약과 **행동 종류 전체 목록(2-3)**은 이 문서에만 있고, 06 2장 추적표가 기능마다 여기를 가리켜요. 칸 이름과 세부 타입은 구현하면서 다듬어요.
+> `06-요구사항-명세.md`의 기능·API가 저장하는 값과 `03-상태와-규칙.md`의 상태 기계 12개(A~L)·불변식 21개를 테이블과 제약으로 옮긴 **첫 초안**이에요. 테이블의 종류·뜻·제약과 **행동 종류 전체 목록(2-3)**은 이 문서에만 있고, 06 2장 추적표가 기능마다 여기를 가리켜요. **정확한 칸 이름·타입은 `back/src/main/resources/db/migration/`의 Flyway V 파일이 기준**이에요(실제 DB가 그 파일로 만들어져서). 칸을 더하거나 바꾸면 새 V 파일과 이 문서를 같은 PR에서 고쳐요.
 > 데이터 모델의 원칙(왜 이렇게 나눴나)은 `04-인프라-아키텍처.md`의 「4-0. 데이터 모델 원칙」에 있어요. 결정의 이유는 `../decisions.md`.
 
 ---
@@ -30,7 +30,7 @@ V1은 테이블·FK·트리거·함수에 스키마를 명시한다. JPA 엔티�
 
 | 칸 | 내용 |
 |---|---|
-| `id` | UUID v7(일반 엔티티는 Hibernate가 저장할 때 생성, 앱·화면은 넣지 않음. 탈퇴 함수의 감사·아웃박스는 DB `uuidv7()`로 생성) |
+| `id` | UUID v7(일반 엔티티는 Hibernate가 저장할 때 생성, 앱·화면은 넣지 않음. 탈퇴 함수의 감사·아웃박스는 DB `uuidv7()`로 생성). **예외: 서로를 가리키는 머리·판 네 쌍**(`repair_case`↔`repair_content`, `inspection_item`↔`inspection_item_version`, `settlement_transfer`↔`settlement_transfer_version`, `payment`↔`payment_version`)은 앱이 UUID v7을 먼저 만들어 생성자로 넣는다. 머리의 `current_*_id`가 NOT NULL이고 판은 머리 ID가 필요해, 머리와 첫 판을 한 트랜잭션에 만들려면 두 ID를 저장 전에 알아야 한다(지연 FK는 참조 검사만 커밋까지 미룬다) |
 | `room_record_id` | 호실 기록. 계정·템플릿·법정동(`region`)·삭제 기록·아웃박스·횟수 세기(`rate_counter`)를 뺀 모든 테이블. 보관 삭제와 탈퇴를 호실 기록 하나 기준으로 처리하려고. `in_app_notification`은 호실과 무관한 서비스 안내(번호 인증 해제 등)면 NULL |
 | `created_at` | 서버 시각(`timestamptz`). 고정 데이터(`part_template`, `region`)와 `rate_counter`에는 없음 |
 | `version` | C 테이블만. 낙관적 잠금. `rate_counter`와 `sms_opt_out`은 예외: 각각 원자적 증감과 행의 존재 여부로 상태를 관리한다 |
@@ -156,9 +156,9 @@ erDiagram
 
 | 테이블 | 종류 | 칸 | 제약·메모 |
 |---|---|---|---|
-| `action` 행동 기록 | **A** | `actor_member_id`(서버 행동은 NULL), `actor_side`, `actor_key`(회원 ID 또는 `server`), `type`, `idempotency_key`, `room_seq`·`prev_hash`·`hash`(해시 체인, 호실마다, **NOT NULL, 첫 마이그레이션부터**), `content_digest`(당시 본 판의 내용·사진 지문을 묶은 SHA-256, bytea 32바이트, 내용 대상이 없으면 NULL), `seen_version_no`(확인할 때 본 모습의 번호 = 판 테이블의 `no`, 정산 끝내기 확인 `CONFIRM_FINISH`면 본 정산 모습 번호 `settlement.snapshot_no`, 06 `seenVersionNo`), payload에 `while_open_objection`(그 순간 보류·이견이 열려 있었으면 NEED_MORE/DISPUTE: 강행 표시), 대상 칸(`party_id`, `link_id`, `room_part_id`(부위 추가·숨김), `notice_id`(다시 보내기·전달 안 됨 표시), `repair_case_id`, `payment_id`, `inspection_id`, `inspection_item_id`, `settlement_id`, `settlement_item_id`, `settlement_transfer_id`, `proposal_id`, `response_request_id`, `correction_request_id`, `cause_note_id`, `progress_note_id`, `photo_id`), `reason`, `payload`(jsonb, 작은 부가 값만) | `actor_key`는 회원 ID, `server`, 링크 열람이면 `link:<링크 ID>`(가입 전 사람, `actor_member_id`는 NULL), 운영 명령이면 `ops:<담당>`(작업 대장과 짝). `UNIQUE(actor_key, idempotency_key)`(한 요청의 여러 행동은 `<키>#2`…), `UNIQUE(room_record_id, room_seq)`(호실 기록 행을 잠그고 다음 번호. 작업자도 호실마다 트랜잭션을 나눔. 해시 입력 모양은 1주차에 테스트로 고정). `CHECK(num_nonnulls(대상 칸들) <= 1)`(0이면 호실 기록 자체: 이사함, 정산 끝내기). 트리거: UPDATE 거절, DELETE는 소유자 권한과 `app.purge`가 함께 있을 때만(호실 기록 통째 삭제, 탈퇴 때 초안 지우기 2-10). 대상 칸마다 부분 인덱스. 이름·번호를 복사하지 않음(불변식 1) |
+| `action` 행동 기록 | **A** | `actor_member_id`(서버 행동은 NULL), `actor_side`, `actor_key`(회원 ID 또는 `server`), `type`, `idempotency_key`, `request_id`(한 요청으로 남긴 행동을 묶는 값. 요청마다 서버가 UUID v7 하나를 만들어 그 요청의 모든 행동(딸린 서버 행동 포함)에 넣는다. FK 없음, 인덱스, V3), `room_seq`·`prev_hash`·`hash`(해시 체인, 호실마다, **NOT NULL, 첫 마이그레이션부터**), `content_digest`(당시 본 판의 내용·사진 지문을 묶은 SHA-256, bytea 32바이트, 내용 대상이 없으면 NULL), `seen_version_no`(확인할 때 본 모습의 번호 = 판 테이블의 `no`, 정산 끝내기 확인 `CONFIRM_FINISH`면 본 정산 모습 번호 `settlement.snapshot_no`, 06 `seenVersionNo`), payload에 `while_open_objection`(그 순간 보류·이견이 열려 있었으면 NEED_MORE/DISPUTE: 강행 표시), 대상 칸(`party_id`, `link_id`, `room_part_id`(부위 추가·숨김), `notice_id`(다시 보내기·전달 안 됨 표시), `repair_case_id`, `payment_id`, `inspection_id`, `inspection_item_id`, `settlement_id`, `settlement_item_id`, `settlement_transfer_id`, `proposal_id`, `response_request_id`, `correction_request_id`, `cause_note_id`, `progress_note_id`, `photo_id`), `reason`, `payload`(jsonb, 작은 부가 값만) | `actor_key`는 회원 ID, `server`, 링크 열람이면 `link:<링크 ID>`(가입 전 사람, `actor_member_id`는 NULL), 운영 명령이면 `ops:<담당>`(작업 대장과 짝). `UNIQUE(actor_key, idempotency_key)`(한 요청의 여러 행동은 `<키>#2`…, 주체가 다른 딸린 행동은 `<request_id>#n`이라 두 회원이 같은 키를 써도 서버 행동끼리 부딪히지 않음), `UNIQUE(room_record_id, room_seq)`(호실 기록 행을 잠그고 다음 번호. 작업자도 호실마다 트랜잭션을 나눔. 해시 입력 모양은 1주차에 테스트로 고정). `CHECK(num_nonnulls(대상 칸들) <= 1)`(0이면 호실 기록 자체: 이사함, 정산 끝내기). 트리거: UPDATE 거절, DELETE는 소유자 권한과 `app.purge`가 함께 있을 때만(호실 기록 통째 삭제, 탈퇴 때 초안 지우기 2-10). 대상 칸마다 부분 인덱스. 이름·번호를 복사하지 않음(불변식 1) |
 
-내용 지문과 행동 해시는 나눠 계산한다. `content_digest`는 당시 본 판의 내용과 그 판에 포함된 사진 지문을 정해진 입력 형식으로 묶은 SHA-256이고, `action.hash`는 이전 해시·행동 정보·대상 ID·판 번호·`content_digest`를 포함해 계산한다. 같은 판의 내용 지문은 재사용할 수 있지만, 실제 내용을 확인할 때는 본문·사진 지문으로 다시 계산해 비교한다. **행동 체인 검증만으로 본문까지 검증했다고 보지 않는다.** 내용 대상이 없는 행동만 NULL이며, 어떤 행동에 어떤 판을 연결하는지는 해시 계산 구현에서 입력 형식과 함께 테스트로 고정한다. DB는 지문의 길이만 검사하며 계산·내용 대상 행동의 필수 여부는 앱이 보장한다. 지문은 암호화나 익명화가 아니므로 개인정보 위험이 없어지는 것은 아니다.
+내용 지문과 행동 해시는 나눠 계산한다. `content_digest`는 당시 본 판의 내용과 그 판에 포함된 사진 지문을 정해진 입력 형식으로 묶은 SHA-256이고, `action.hash`는 이전 해시·행동 정보·요청 ID(`request_id`)·대상 ID·판 번호·`content_digest`를 포함해 계산한다. 같은 판의 내용 지문은 재사용할 수 있지만, 실제 내용을 확인할 때는 본문·사진 지문으로 다시 계산해 비교한다. **행동 체인 검증만으로 본문까지 검증했다고 보지 않는다.** 내용 대상이 없는 행동만 NULL이며, 어떤 행동에 어떤 판을 연결하는지는 해시 계산 구현에서 입력 형식과 함께 테스트로 고정한다. DB는 지문의 길이만 검사하며 계산·내용 대상 행동의 필수 여부는 앱이 보장한다. 지문은 암호화나 익명화가 아니므로 개인정보 위험이 없어지는 것은 아니다.
 
 `type` **전체 목록**(이 목록은 여기에만 있다). `apply`의 분기와 API 끝 단어가 이 목록을 따른다. 새 행동은 이 표와 새 V 파일의 `ck_action_type`을 같은 PR에서 고치고, 그 행동을 쓰는 기능의 06 2장 추적표 ERD 칸에도 이름을 적는다.
 
@@ -320,7 +320,6 @@ erDiagram
 
 | 항목 | 어디서 |
 |---|---|
-| 칸 이름·타입 다듬기, 인덱스 목록 | 첫 마이그레이션을 쓰면서 |
 | 2026-11-16 설계 반영 | V1에 수신 거부 C 분류·탈퇴 전용 삭제 함수·부모 삭제 보호·링크 제약·원인 설명 수정 분기 제한·불필요 칼럼 제거를 반영한다. 운영 역할·GRANT 적용과 서비스의 인증·권한·감사 트랜잭션 연결은 후속 구현이다 |
 | 하루 한 번 어긋남 검사 | 여유가 있을 때(선택) |
 
