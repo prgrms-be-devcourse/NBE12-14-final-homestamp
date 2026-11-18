@@ -34,6 +34,7 @@ class JsonColumnEntityTest extends SchemaTestSupport {
             "server",
             "AUTOCLOSE",
             "json-test",
+            UUID.randomUUID(),
             null,
             null,
             "{\"answer\":\"DISPUTE\"}",
