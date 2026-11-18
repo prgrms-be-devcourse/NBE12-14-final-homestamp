@@ -20,7 +20,7 @@
 - `runbooks/`: 운영 절차(유출 대응).
 - `setup.md`: AI 하네스(Claude·Codex), IDE 코드 서식, 로컬 실행 처음 설정.
 - `failure-memory.md`: AI가 반복한 실수 기록. 기록은 사람이 승인한 것만 더해요.
-- 그림은 문서 안의 Mermaid 코드예요. GitHub에서 바로 그려져요.
+- 그림은 문서 안의 Mermaid 코드예요. GitHub에서 바로 그려져요. AWS 자원·역할 그림만 `images/`의 draw.io 원본이에요(04 16장, 노션에는 PNG 사본).
 
 ## 개발할 때는
 
