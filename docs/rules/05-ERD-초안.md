@@ -30,7 +30,7 @@ V1은 테이블·FK·트리거·함수에 스키마를 명시한다. JPA 엔티�
 
 | 칸 | 내용 |
 |---|---|
-| `id` | UUID v7(일반 엔티티는 Hibernate가 저장할 때 생성, 앱·화면은 넣지 않음. 탈퇴 함수의 감사·아웃박스는 DB `uuidv7()`로 생성) |
+| `id` | UUID v7(일반 엔티티는 Hibernate가 저장할 때 생성, 앱·화면은 넣지 않음. 탈퇴 함수의 감사·아웃박스는 DB `uuidv7()`로 생성). **예외: 서로를 가리키는 머리·판 네 쌍**(`repair_case`↔`repair_content`, `inspection_item`↔`inspection_item_version`, `settlement_transfer`↔`settlement_transfer_version`, `payment`↔`payment_version`)은 앱이 UUID v7을 먼저 만들어 생성자로 넣는다. 머리의 `current_*_id`가 NOT NULL이고 판은 머리 ID가 필요해, 머리와 첫 판을 한 트랜잭션에 만들려면 두 ID를 저장 전에 알아야 한다(지연 FK는 참조 검사만 커밋까지 미룬다) |
 | `room_record_id` | 호실 기록. 계정·템플릿·법정동(`region`)·삭제 기록·아웃박스·횟수 세기(`rate_counter`)를 뺀 모든 테이블. 보관 삭제와 탈퇴를 호실 기록 하나 기준으로 처리하려고. `in_app_notification`은 호실과 무관한 서비스 안내(번호 인증 해제 등)면 NULL |
 | `created_at` | 서버 시각(`timestamptz`). 고정 데이터(`part_template`, `region`)와 `rate_counter`에는 없음 |
 | `version` | C 테이블만. 낙관적 잠금. `rate_counter`와 `sms_opt_out`은 예외: 각각 원자적 증감과 행의 존재 여부로 상태를 관리한다 |
