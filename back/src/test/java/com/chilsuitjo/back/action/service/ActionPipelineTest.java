@@ -62,7 +62,7 @@ class ActionPipelineTest {
 
   @Test
   void 행동이_순서대로_쌓이고_재계산과_같다() {
-    PipelineResult<Sample> registered = pipeline.execute(register("k1"), store, rules);
+    PipelineResult<Sample> registered = pipeline.create(register("k1"), store, rules);
     ActionTarget target = registered.action().target();
     assertThat(target.kind()).isEqualTo(TargetKind.REPAIR_CASE);
 
@@ -77,15 +77,15 @@ class ActionPipelineTest {
 
   @Test
   void 회원의_측은_잠근_뒤_읽은_RoomGate에서_채운다() {
-    pipeline.execute(register("k1"), store, rules);
+    pipeline.create(register("k1"), store, rules);
 
     assertThat(writer.findByRoom(room).getFirst().actorSide()).isEqualTo(PartySide.TENANT);
   }
 
   @Test
   void 같은_키로_다시_오면_새로_남기지_않고_처음_결과와_지금_상태를_돌려준다() {
-    PipelineResult<Sample> first = pipeline.execute(register("k1"), store, rules);
-    PipelineResult<Sample> again = pipeline.execute(register("k1"), store, rules);
+    PipelineResult<Sample> first = pipeline.create(register("k1"), store, rules);
+    PipelineResult<Sample> again = pipeline.create(register("k1"), store, rules);
 
     assertThat(again.action().replayed()).isTrue();
     assertThat(again.action().actionId()).isEqualTo(first.action().actionId());
@@ -96,7 +96,7 @@ class ActionPipelineTest {
 
   @Test
   void 같은_키에_다른_행동이면_IDEMPOTENCY_KEY_REUSED() {
-    PipelineResult<Sample> registered = pipeline.execute(register("k1"), store, rules);
+    PipelineResult<Sample> registered = pipeline.create(register("k1"), store, rules);
 
     assertThatThrownBy(() ->
             pipeline.execute(
@@ -109,7 +109,7 @@ class ActionPipelineTest {
 
   @Test
   void 규칙_위반이면_저장도_기록도_하지_않는다() {
-    ActionTarget target = pipeline.execute(register("k1"), store, rules).action().target();
+    ActionTarget target = pipeline.create(register("k1"), store, rules).action().target();
 
     assertThatThrownBy(() ->
             pipeline.execute(
@@ -125,7 +125,7 @@ class ActionPipelineTest {
         pipeline.executeAll(
             ActionBatch.of(room, Actor.member(tenantId), "k1")
                 .record(ActionType.SHARE_CONSENT, Map.of("consentVersion", 3))
-                .step(ActionType.REGISTER, done -> null, store, rules)
+                .creating(ActionType.REGISTER, store, rules)
                 .step(ActionType.START_REPAIR, done -> done.get(1).target(), store, rules));
 
     assertThat(result.actions()).extracting(ActionResult::roomSeq).containsExactly(1L, 2L, 3L);
@@ -141,7 +141,7 @@ class ActionPipelineTest {
     assertThatThrownBy(() ->
             pipeline.executeAll(
                 ActionBatch.of(room, Actor.member(tenantId), "k1")
-                    .step(ActionType.REGISTER, done -> null, store, rules)
+                    .creating(ActionType.REGISTER, store, rules)
                     .step(ActionType.REQUEST_CLOSE, done -> done.get(0).target(), store, rules)))
         .isInstanceOf(BusinessException.class);
 
@@ -151,7 +151,7 @@ class ActionPipelineTest {
   @Test
   void 당사자가_아니면_NOT_FOUND() {
     assertThatThrownBy(() ->
-            pipeline.execute(
+            pipeline.create(
                 command(UUID.randomUUID(), ActionType.REGISTER, "k1", null), store, rules))
         .isInstanceOf(BusinessException.class)
         .hasMessage(ErrorCode.NOT_FOUND.name());
@@ -161,7 +161,7 @@ class ActionPipelineTest {
   void 정산_완료된_호실은_SETTLED이고_사진_지우기만_된다() {
     gates.put(tenantId, new RoomGate(room, PartySide.TENANT, true, false, false));
 
-    assertThatThrownBy(() -> pipeline.execute(register("k1"), store, rules))
+    assertThatThrownBy(() -> pipeline.create(register("k1"), store, rules))
         .hasMessage(ErrorCode.SETTLED.name());
     pipeline.executeAll(
         ActionBatch.of(room, Actor.member(tenantId), "k2")
@@ -175,13 +175,13 @@ class ActionPipelineTest {
   void 합류_전_기록은_JOINED_RECORD() {
     gates.put(tenantId, new RoomGate(room, PartySide.TENANT, false, true, false));
 
-    assertThatThrownBy(() -> pipeline.execute(register("k1"), store, rules))
+    assertThatThrownBy(() -> pipeline.create(register("k1"), store, rules))
         .hasMessage(ErrorCode.JOINED_RECORD.name());
   }
 
   @Test
   void 공유를_그만둔_사람은_응답할_수_없고_내_기록은_남긴다() {
-    ActionTarget target = pipeline.execute(register("k1"), store, rules).action().target();
+    ActionTarget target = pipeline.create(register("k1"), store, rules).action().target();
     gates.put(landlordId, new RoomGate(room, PartySide.LANDLORD, false, false, true));
 
     assertThatThrownBy(
@@ -210,7 +210,7 @@ class ActionPipelineTest {
     BatchResult result =
         pipeline.executeAll(
             ActionBatch.of(room, Actor.member(tenantId), "k1")
-                .step(ActionType.REGISTER, done -> null, store, rules)
+                .creating(ActionType.REGISTER, store, rules)
                 .step(
                     ActionStep.of(
                             ActionType.START_REPAIR, done -> done.get(0).target(), store, rules)
@@ -231,7 +231,7 @@ class ActionPipelineTest {
     BatchResult result =
         pipeline.executeAll(
             ActionBatch.of(room, Actor.member(tenantId), "k1")
-                .step(ActionType.REGISTER, done -> null, store, rules));
+                .creating(ActionType.REGISTER, store, rules));
 
     assertThat(result.actions()).hasSize(2);
     List<ActionEntry> entries = writer.findByRoom(room);
@@ -275,7 +275,7 @@ class ActionPipelineTest {
     TransactionTemplate outer = new TransactionTemplate(transactionManager);
 
     assertThatThrownBy(
-            () -> outer.executeWithoutResult(s -> pipeline.execute(register("k1"), store, rules)))
+            () -> outer.executeWithoutResult(s -> pipeline.create(register("k1"), store, rules)))
         .isInstanceOf(IllegalStateException.class);
   }
 
@@ -284,9 +284,9 @@ class ActionPipelineTest {
     RacingWriter racing = new RacingWriter(writer);
     ActionPipeline racingPipeline =
         new ActionPipeline(gates, racing, followUps, transactionManager, clock);
-    PipelineResult<Sample> winner = pipeline.execute(register("k1"), store, rules);
+    PipelineResult<Sample> winner = pipeline.create(register("k1"), store, rules);
 
-    PipelineResult<Sample> loser = racingPipeline.execute(register("k1"), store, rules);
+    PipelineResult<Sample> loser = racingPipeline.create(register("k1"), store, rules);
 
     assertThat(loser.action().replayed()).isTrue();
     assertThat(loser.action().actionId()).isEqualTo(winner.action().actionId());
@@ -328,14 +328,14 @@ class ActionPipelineTest {
         };
     ActionBatch batch =
         ActionBatch.of(room, Actor.member(tenantId), "k1")
-            .step(ActionType.REGISTER, done -> null, store, rules)
+            .creating(ActionType.REGISTER, store, rules)
             .step(ActionType.START_REPAIR, done -> done.get(0).target(), store, rules);
 
     BatchResult first = pipeline.executeAll(batch);
     BatchResult again =
         pipeline.executeAll(
             ActionBatch.of(room, Actor.member(tenantId), "k1")
-                .step(ActionType.REGISTER, done -> null, store, rules)
+                .creating(ActionType.REGISTER, store, rules)
                 .step(ActionType.START_REPAIR, done -> done.get(0).target(), store, rules));
 
     assertThat(first.actions()).extracting(ActionResult::roomSeq).containsExactly(1L, 2L, 3L);
@@ -352,7 +352,7 @@ class ActionPipelineTest {
   void 가운데_단계를_건너뛰어도_뒤_단계_키가_이어지고_다시_오면_같은_결과() {
     ActionBatch batch =
         ActionBatch.of(room, Actor.member(tenantId), "k1")
-            .step(ActionType.REGISTER, done -> null, store, rules)
+            .creating(ActionType.REGISTER, store, rules)
             .step(
                 ActionStep.of(ActionType.START_REPAIR, done -> done.get(0).target(), store, rules)
                     .when(now -> false))
@@ -362,7 +362,7 @@ class ActionPipelineTest {
     BatchResult again =
         pipeline.executeAll(
             ActionBatch.of(room, Actor.member(tenantId), "k1")
-                .step(ActionType.REGISTER, done -> null, store, rules)
+                .creating(ActionType.REGISTER, store, rules)
                 .step(
                     ActionStep.of(
                             ActionType.START_REPAIR, done -> done.get(0).target(), store, rules)
@@ -379,7 +379,7 @@ class ActionPipelineTest {
 
   @Test
   void 모든_단계를_건너뛰면_아무것도_남기지_않고_끝난다() {
-    ActionTarget target = pipeline.execute(register("k1"), store, rules).action().target();
+    ActionTarget target = pipeline.create(register("k1"), store, rules).action().target();
 
     BatchResult result =
         pipeline.executeAll(
@@ -400,8 +400,7 @@ class ActionPipelineTest {
             pipeline.executeAll(
                 ActionBatch.of(room, Actor.member(tenantId), "k1")
                     .step(
-                        ActionStep.of(ActionType.REGISTER, done -> null, store, rules)
-                            .when(now -> false))))
+                        ActionStep.creating(ActionType.REGISTER, store, rules).when(now -> false))))
         .hasMessage(ErrorCode.SETTLED.name());
   }
 
@@ -452,7 +451,8 @@ class ActionPipelineTest {
                         null,
                         null,
                         null,
-                        null)));
+                        null,
+                        false)));
 
     assertThat(writer.findByRoom(room).getFirst().target()).isNull();
     assertThat(result.first().target()).isEqualTo(ActionTarget.roomRecord(room));
@@ -538,12 +538,12 @@ class ActionPipelineTest {
     pipeline.executeAll(
         ActionBatch.of(room, Actor.member(tenantId), "k1")
             .record(ActionType.SHARE_CONSENT, Map.of())
-            .step(ActionType.REGISTER, done -> null, store, rules));
+            .creating(ActionType.REGISTER, store, rules));
 
     assertThatThrownBy(() ->
             pipeline.executeAll(
                 ActionBatch.of(room, Actor.member(tenantId), "k1")
-                    .step(ActionType.REGISTER, done -> null, store, rules)
+                    .creating(ActionType.REGISTER, store, rules)
                     .record(ActionType.SHARE_CONSENT, Map.of())))
         .isInstanceOf(BusinessException.class)
         .hasMessage(ErrorCode.IDEMPOTENCY_KEY_REUSED.name());
@@ -554,7 +554,7 @@ class ActionPipelineTest {
     pipeline.executeAll(
         ActionBatch.of(room, Actor.member(tenantId), "k1")
             .record(ActionType.SHARE_CONSENT, Map.of())
-            .step(ActionType.REGISTER, done -> null, store, rules));
+            .creating(ActionType.REGISTER, store, rules));
 
     assertThatThrownBy(() ->
             pipeline.executeAll(
@@ -566,8 +566,8 @@ class ActionPipelineTest {
 
   @Test
   void 첫_단계를_건너뛴_묶음도_다음_단계의_대상이_다르면_IDEMPOTENCY_KEY_REUSED() {
-    ActionTarget first = pipeline.execute(register("r1"), store, rules).action().target();
-    ActionTarget second = pipeline.execute(register("r2"), store, rules).action().target();
+    ActionTarget first = pipeline.create(register("r1"), store, rules).action().target();
+    ActionTarget second = pipeline.create(register("r2"), store, rules).action().target();
     pipeline.executeAll(skippedThenStart(first));
 
     assertThat(pipeline.executeAll(skippedThenStart(first)).replayed()).isTrue();
@@ -599,11 +599,11 @@ class ActionPipelineTest {
     BatchResult tenant =
         pipeline.executeAll(
             ActionBatch.of(room, Actor.member(tenantId), "k1")
-                .step(ActionType.REGISTER, done -> null, store, rules));
+                .creating(ActionType.REGISTER, store, rules));
     BatchResult landlord =
         pipeline.executeAll(
             ActionBatch.of(room, Actor.member(landlordId), "k1")
-                .step(ActionType.REGISTER, done -> null, store, rules));
+                .creating(ActionType.REGISTER, store, rules));
 
     assertThat(landlord.replayed()).isFalse();
     assertThat(writer.findByRoom(room)).hasSize(4);
@@ -627,7 +627,7 @@ class ActionPipelineTest {
 
     pipeline.executeAll(
         ActionBatch.of(room, Actor.member(tenantId), "k1")
-            .step(ActionType.REGISTER, done -> null, store, rules));
+            .creating(ActionType.REGISTER, store, rules));
 
     List<ActionEntry> entries = writer.findRequest(Actor.member(tenantId).key(), "k1");
     UUID requestId = entries.getFirst().requestId();
@@ -636,6 +636,89 @@ class ActionPipelineTest {
     assertThat(entries)
         .extracting(ActionEntry::idempotencyKey)
         .containsExactly("k1", requestId + "#2");
+  }
+
+  @Test
+  void 다시_온_요청의_대상을_정하다_실패하면_IDEMPOTENCY_KEY_REUSED() {
+    ActionTarget target = pipeline.create(register("r1"), store, rules).action().target();
+    pipeline.executeAll(
+        ActionBatch.of(room, Actor.member(tenantId), "k1")
+            .step(ActionType.START_REPAIR, done -> target, store, rules));
+
+    assertThatThrownBy(() ->
+            pipeline.executeAll(
+                ActionBatch.of(room, Actor.member(tenantId), "k1")
+                    .step(
+                        ActionType.START_REPAIR,
+                        done -> ActionTarget.repairCase(null), // 수리 건 ID가 빠진 요청
+                        store,
+                        rules)))
+        .isInstanceOf(BusinessException.class)
+        .hasMessage(ErrorCode.IDEMPOTENCY_KEY_REUSED.name());
+  }
+
+  @Test
+  void 대상이_있던_행동에_대상_없이_다시_오면_IDEMPOTENCY_KEY_REUSED() {
+    ActionTarget target = pipeline.create(register("r1"), store, rules).action().target();
+    pipeline.execute(command(tenantId, ActionType.START_REPAIR, "k1", target), store, rules);
+
+    assertThatThrownBy(() ->
+            pipeline.execute(command(tenantId, ActionType.START_REPAIR, "k1", null), store, rules))
+        .isInstanceOf(BusinessException.class)
+        .hasMessage(ErrorCode.IDEMPOTENCY_KEY_REUSED.name());
+  }
+
+  @Test
+  void 새_기록을_만드는_행동은_creating으로_열지_않으면_남기지_않는다() {
+    assertThatThrownBy(() -> pipeline.execute(register("k1"), store, rules))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() ->
+            pipeline.executeAll(
+                ActionBatch.of(room, Actor.member(tenantId), "k2")
+                    .step(ActionType.REGISTER, done -> null, store, rules)))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(writer.findByRoom(room)).isEmpty();
+  }
+
+  @Test
+  void 새_기록을_만드는_단계인데_save가_기록을_돌려주지_않으면_남기지_않는다() {
+    StateStore<Sample> forgetful =
+        new StateStore<>() {
+          @Override
+          public Sample load(ActionCommand command) {
+            return rules.initial();
+          }
+
+          @Override
+          public SavedState save(ActionCommand command, Sample next) {
+            return SavedState.unchanged();
+          }
+        };
+
+    assertThatThrownBy(() -> pipeline.create(register("k1"), forgetful, rules))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(writer.findByRoom(room)).isEmpty();
+  }
+
+  /** 한계(ActionPipeline.replay Javadoc): 처음에 건너뛴 단계는 기록이 없어, 조건부 단계만큼 구성이 다른 묶음은 같은 요청으로 본다. */
+  @Test
+  void 조건부_단계만큼_구성이_다른_묶음은_같은_요청으로_본다() {
+    ActionTarget target = pipeline.create(register("r1"), store, rules).action().target();
+    BatchResult first =
+        pipeline.executeAll(
+            ActionBatch.of(room, Actor.member(tenantId), "k1")
+                .step(ActionType.START_REPAIR, done -> target, store, rules));
+
+    BatchResult other =
+        pipeline.executeAll(
+            ActionBatch.of(room, Actor.member(tenantId), "k1")
+                .step(
+                    ActionStep.of(ActionType.REQUEST_CLOSE, done -> target, store, rules)
+                        .when(now -> now.status().equals("IN_PROGRESS")))
+                .step(ActionType.START_REPAIR, done -> target, store, rules));
+
+    assertThat(other.replayed()).isTrue();
+    assertThat(ids(other)).containsExactlyElementsOf(ids(first));
   }
 
   private ActionBatch skippedThenStart(ActionTarget target) {
@@ -648,7 +731,7 @@ class ActionPipelineTest {
 
   private ActionBatch registerThenStart(UUID memberId) {
     return ActionBatch.of(room, Actor.member(memberId), "k1")
-        .step(ActionType.REGISTER, done -> null, store, rules)
+        .creating(ActionType.REGISTER, store, rules)
         .step(ActionType.START_REPAIR, done -> done.get(0).target(), store, rules);
   }
 

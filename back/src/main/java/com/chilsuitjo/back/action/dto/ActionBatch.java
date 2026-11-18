@@ -63,14 +63,26 @@ public final class ActionBatch {
    */
   public static <S> ActionBatch single(
       ActionCommand command, StateStore<S> store, Transitions<S> rules) {
+    ActionTarget target = command.target();
+    return single(command, ActionStep.of(command.type(), done -> target, store, rules));
+  }
+
+  /** 새 기록을 만드는 행동 하나짜리({@code ActionPipeline.create}). {@code command.target()}은 비어 있어야 한다. */
+  public static <S> ActionBatch singleCreating(
+      ActionCommand command, StateStore<S> store, Transitions<S> rules) {
+    if (command.target() != null) {
+      throw new IllegalArgumentException("새 기록을 만드는 행동에는 대상을 주지 않아요");
+    }
+    return single(command, ActionStep.creating(command.type(), store, rules));
+  }
+
+  private static ActionBatch single(ActionCommand command, ActionStep<?> step) {
     if (command.roomRecordId() == null) {
       throw new IllegalArgumentException("호실 ID가 없어요. 호실을 만드는 요청은 ActionBatch.newRoom으로 열어 주세요");
     }
     ActionBatch batch = of(command.roomRecordId(), command.actor(), command.idempotencyKey());
-    ActionTarget target = command.target();
     return batch.step(
-        ActionStep.of(command.type(), done -> target, store, rules)
-            .withSeenVersionNo(command.seenVersionNo())
+        step.withSeenVersionNo(command.seenVersionNo())
             .withContent(command.content())
             .withReason(command.reason())
             .withPayload(command.payload()));
@@ -83,6 +95,11 @@ public final class ActionBatch {
       StateStore<S> store,
       Transitions<S> rules) {
     return step(ActionStep.of(type, target, store, rules));
+  }
+
+  /** 새 기록을 만드는 행동({@code REGISTER} 등). 대상은 {@code save}가 돌려준다. */
+  public <S> ActionBatch creating(ActionType type, StateStore<S> store, Transitions<S> rules) {
+    return step(ActionStep.creating(type, store, rules));
   }
 
   /** {@code seenVersionNo}·{@code content}·{@code reason}·{@code payload}·{@code when}까지 줄 때. */

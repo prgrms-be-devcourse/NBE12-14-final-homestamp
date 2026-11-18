@@ -81,6 +81,14 @@ public class ActionPipeline {
     return new PipelineResult<>((S) outcome.lastState(), outcome.result().first());
   }
 
+  /** 새 기록을 만드는 행동 하나짜리({@code REGISTER} 등). 대상은 {@code save}가 돌려주고, 결과의 대상이 새 기록이다. */
+  @SuppressWarnings("unchecked")
+  public <S> PipelineResult<S> create(
+      ActionCommand command, StateStore<S> store, Transitions<S> rules) {
+    Outcome outcome = runInBoundary(ActionBatch.singleCreating(command, store, rules));
+    return new PipelineResult<>((S) outcome.lastState(), outcome.result().first());
+  }
+
   private Outcome runInBoundary(ActionBatch batch) {
     if (batch.steps().isEmpty()) {
       throw new IllegalArgumentException("행동이 하나도 없는 요청이에요");
@@ -180,6 +188,7 @@ public class ActionPipeline {
     try {
       S next = step.rules().apply(now, preview(command)); // 6
       SavedState saved = step.store().save(command, next); // 7
+      checkCreated(step, command, saved);
 
       ActionCommand toWrite = command;
       ActionTarget resultTarget = null;
@@ -247,6 +256,10 @@ public class ActionPipeline {
    *
    * <p>같은 요청이란: 같은 호실이고, 요청 주체가 남긴 행동({@code <키>}, {@code <키>#n})이 이번 단계들과 <b>순서대로</b> 짝이 맞는 것이다.
    * {@code when}으로 건너뛸 수 있는 단계는 짝이 없어도 되고, 짝이 맞은 단계는 대상도 같아야 한다. 딸린 행동은 그 단계에서 생긴 것이라 비교하지 않는다.
+   *
+   * <p>한계: 처음 요청에서 건너뛴 단계는 기록이 없어서, 단계 구성이 조건부 단계만큼 다른 요청은 가리지 못한다. 예를 들어 {@code [INVITE]}로 끝난 키에
+   * {@code [SHARE_CONSENT(when), INVITE]}가 오면 같은 요청으로 본다. 단계 구성은 클라이언트가 아니라 서버 코드가 버튼마다 정하므로 다른 버튼이
+   * 같은 키를 쓴 경우(화면 버그)에만 생기고, 그때도 돌려주는 결과는 저장된 행동과 종류·대상·순서가 같다.
    */
   private Outcome replay(ActionBatch batch, List<ActionEntry> done) {
     ActionStep<?> firstStep = batch.steps().getFirst();
@@ -314,11 +327,22 @@ public class ActionPipeline {
     return step.optional() && matches(steps, i + 1, done, own, j);
   }
 
-  /** 단계와 남은 행동이 같은 종류·같은 대상인지. 대상은 처음 실행 때처럼 그 행동 앞의 결과로 다시 정해 본다. */
+  /**
+   * 단계와 남은 행동이 같은 종류·같은 대상인지. 대상은 처음 실행 때처럼 그 행동 앞의 결과로 다시 정해 본다.
+   *
+   * <ul>
+   *   <li>새 기록을 만드는 단계({@link ActionStep#creates()}): 물은 대상이 없고, 저장된 대상은 그때 만든 기록이라 종류만 본다
+   *   <li>그 밖의 단계: 다시 정한 대상이 저장된 대상과 같아야 한다. 호실 자체가 대상이면 둘 다 없다
+   *   <li>대상을 다시 정하다 실패하면 다른 요청이다. 같은 요청이면 처음과 같은 앞 결과로 정하므로 실패할 수 없다
+   * </ul>
+   */
   private static boolean sameAction(ActionStep<?> step, List<ActionEntry> done, int index) {
     ActionEntry entry = done.get(index);
     if (step.type() != entry.type()) {
       return false;
+    }
+    if (step.creates()) {
+      return true;
     }
     List<ActionResult> before =
         done.subList(0, index).stream().map(e -> resultOf(e, true)).toList();
@@ -326,10 +350,25 @@ public class ActionPipeline {
     try {
       asked = withoutRoomTarget(step.target().apply(before));
     } catch (RuntimeException cannotResolve) {
-      return true; // 대상을 다시 정할 수 없으면 종류만 본다
+      return false;
     }
-    // 새로 만드는 행동·호실 자체가 대상인 행동은 물은 대상이 없다
-    return asked == null || asked.equals(entry.target());
+    return Objects.equals(asked, entry.target());
+  }
+
+  /**
+   * 새 기록을 만드는 단계인지 아닌지가 {@code save} 결과와 맞는지. 이 표시가 맞아야 다시 온 요청에서 "물은 대상이 없음"을 바르게 가린다. 호실을 만드는 첫
+   * 단계({@code CREATE_ROOM})는 새 호실을 {@code ROOM_RECORD}로 돌려주므로 여기서 보지 않는다.
+   */
+  private static void checkCreated(ActionStep<?> step, ActionCommand command, SavedState saved) {
+    ActionTarget created = saved.target();
+    boolean madeRecord = created != null && created.kind() != TargetKind.ROOM_RECORD;
+    if (step.creates() && !madeRecord) {
+      throw new IllegalStateException(step.type() + ": 새 기록을 만드는 단계인데 save가 만든 기록을 돌려주지 않았어요");
+    }
+    if (!step.creates() && command.target() == null && madeRecord) {
+      throw new IllegalStateException(
+          step.type() + ": 새 기록을 만드는 행동은 ActionStep.creating·ActionPipeline.create로 열어 주세요");
+    }
   }
 
   /** apply에 넘기는 저장 전 행동. id·roomSeq·지문은 저장할 때 정해진다. */
