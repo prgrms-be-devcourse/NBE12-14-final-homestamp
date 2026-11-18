@@ -28,6 +28,11 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter-webmvc'
     implementation 'org.flywaydb:flyway-database-postgresql'
+    // API 문서(Swagger UI): local·test 프로필에서만 켠다(docs/rules/04 API 문서, 버전은 04 고정 버전)
+    implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.2.0'
+    // 롬복: 허용 목록과 금지는 lombok.config·docs/rules/09. 버전은 Spring Boot가 관리한다
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
     // 로컬 개발: bootRun이 compose.yml의 DB를 띄우고 연결 정보를 넣는다(운영 이미지·테스트에는 들어가지 않음)
     developmentOnly 'org.springframework.boot:spring-boot-docker-compose'
     runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
@@ -42,7 +47,14 @@ dependencies {
     testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
     testImplementation 'org.testcontainers:testcontainers-postgresql'
     testImplementation 'com.tngtech.archunit:archunit-junit5:1.4.1'
+    testCompileOnly 'org.projectlombok:lombok'
+    testAnnotationProcessor 'org.projectlombok:lombok'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+// 로컬 실행(bootRun)만 local 프로필로 띄운다. Swagger UI가 local·test에서만 켜지기 때문(docs/rules/04 API 문서). 운영 jar에는 영향 없음
+tasks.named('bootRun') {
+    systemProperty 'spring.profiles.active', 'local'
 }
 
 tasks.named('test') {
