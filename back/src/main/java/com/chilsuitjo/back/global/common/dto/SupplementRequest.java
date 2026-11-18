@@ -15,7 +15,12 @@ public record SupplementRequest(String description, List<String> uploadTickets) 
     uploadTickets = uploadTickets == null ? List.of() : uploadTickets;
   }
 
-  /** 사진이나 설명이 하나라도 있는지. false면 부르는 쪽이 {@code EVIDENCE_REQUIRED}로 거절한다. */
+  /**
+   * 사진이나 설명이 하나라도 있는지. false면 부르는 쪽이 {@code EVIDENCE_REQUIRED}로 거절한다.
+   *
+   * <p>값이 있는지만 본다. 업로드 표의 서명·회원·호실·만료 확인과 사진 붙이기 성공은 사진을 붙이는 단계({@code PhotoService.attach}, 06 4-0
+   * 업로드)가 맡는다.
+   */
   public boolean hasEvidence() {
     return (description != null && !description.isBlank()) || !uploadTickets.isEmpty();
   }
