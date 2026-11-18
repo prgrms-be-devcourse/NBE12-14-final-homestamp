@@ -158,9 +158,10 @@ public class ActionRecord {
       Instant createdAt) {
     this.roomRecordId = roomRecordId;
     this.roomSeq = roomSeq;
-    this.prevHash = prevHash;
-    this.hash = hash;
-    this.contentDigest = contentDigest;
+    // 밖에서 원래 배열을 바꿔도 기록이 바뀌지 않게 복사해 둔다(getter도 복사본을 돌려준다).
+    this.prevHash = prevHash == null ? null : prevHash.clone();
+    this.hash = hash == null ? null : hash.clone();
+    this.contentDigest = contentDigest == null ? null : contentDigest.clone();
     this.actorMemberId = actorMemberId;
     this.actorSide = actorSide;
     this.actorKey = actorKey;
