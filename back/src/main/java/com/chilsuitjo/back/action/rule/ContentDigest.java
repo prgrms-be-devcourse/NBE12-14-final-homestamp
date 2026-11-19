@@ -1,7 +1,8 @@
 package com.chilsuitjo.back.action.rule;
 
+import com.chilsuitjo.back.action.dto.DigestField;
+import com.chilsuitjo.back.action.dto.DigestInput;
 import java.util.List;
-import java.util.UUID;
 
 /**
  * 내용 지문({@code action.content_digest}) 계산(05 2-3 "내용 지문과 행동 해시는 나눠 계산한다", #72). 당시 본 판의 내용과 그 판에
@@ -17,19 +18,20 @@ public final class ContentDigest {
 
   private ContentDigest() {}
 
-  /**
-   * @param kind 판 테이블 이름. 예: {@code "repair_content"}
-   * @param fields 칸 이름 순서대로. 값이 없으면 value를 null로 둔다(빈 글자와 다르다)
-   * @param photoSha256s 그 판에 포함된 사진의 {@code original_sha256}(각 32바이트), {@code sort_order} 순
-   */
-  public static byte[] compute(
-      String kind, UUID versionId, int versionNo, List<Field> fields, List<byte[]> photoSha256s) {
-    if (kind == null || versionId == null) {
+  /** 각 도메인이 {@link DigestInput}으로 담아 보낸 판의 지문. */
+  public static byte[] compute(DigestInput input) {
+    if (input == null || input.kind() == null || input.versionId() == null) {
       throw new IllegalArgumentException("판 종류와 판 ID가 있어야 해요");
     }
+    List<DigestField> fields = input.fields() == null ? List.of() : input.fields();
+    List<byte[]> photoSha256s = input.photoSha256s() == null ? List.of() : input.photoSha256s();
     HashEncoder e = new HashEncoder();
-    e.int64(VERSION).string(kind).uuid(versionId).int64(versionNo).int64(fields.size());
-    for (Field field : fields) {
+    e.int64(VERSION)
+        .string(input.kind())
+        .uuid(input.versionId())
+        .int64(input.versionNo())
+        .int64(fields.size());
+    for (DigestField field : fields) {
       if (field.name() == null) {
         throw new IllegalArgumentException("칸 이름이 비었어요");
       }
@@ -42,7 +44,4 @@ public final class ContentDigest {
     }
     return e.sha256();
   }
-
-  /** 지문에 들어가는 칸 하나. */
-  public record Field(String name, String value) {}
 }
