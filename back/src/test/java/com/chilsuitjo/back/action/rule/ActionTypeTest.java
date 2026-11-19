@@ -40,15 +40,19 @@ class ActionTypeTest {
   }
 
   @Test
-  void 정산_뒤에는_사진_지우기와_다시_공유만_된다() {
+  void 정산_뒤에는_사진_지우기와_다시_공유와_문자_그만_받기만_된다() {
     assertThat(allowed(Allow.AFTER_SETTLED))
         .containsExactlyInAnyOrder(
-            ActionType.ERASE_PHOTO, ActionType.RESUME_SHARING, ActionType.SHARE_CONSENT);
+            ActionType.ERASE_PHOTO,
+            ActionType.RESUME_SHARING,
+            ActionType.SHARE_CONSENT,
+            ActionType.OPT_OUT);
   }
 
   @Test
-  void 합류_전_기록에서는_사진_지우기만_된다() {
-    assertThat(allowed(Allow.ON_JOINED)).containsExactly(ActionType.ERASE_PHOTO);
+  void 합류_전_기록에서는_사진_지우기와_문자_그만_받기만_된다() {
+    assertThat(allowed(Allow.ON_JOINED))
+        .containsExactlyInAnyOrder(ActionType.ERASE_PHOTO, ActionType.OPT_OUT);
   }
 
   @Test
