@@ -377,6 +377,40 @@ class ActionPipelineTest {
   }
 
   @Test
+  void 상태_없는_행동에도_대상을_남기고_다시_온_요청은_대상으로_맞춘다() {
+    UUID linkId = UUID.randomUUID();
+    Actor viewer = Actor.link(linkId, PartySide.LANDLORD);
+    ActionTarget link = ActionTarget.of(TargetKind.LINK, linkId);
+
+    BatchResult first =
+        pipeline.executeAll(
+            ActionBatch.of(room, viewer, "view")
+                .record(ActionType.LINK_VIEW, done -> link, Map.of()));
+    BatchResult again =
+        pipeline.executeAll(
+            ActionBatch.of(room, viewer, "view")
+                .record(ActionType.LINK_VIEW, done -> link, Map.of()));
+
+    assertThat(writer.findByTarget(link))
+        .singleElement()
+        .extracting(ActionEntry::type)
+        .isEqualTo(ActionType.LINK_VIEW);
+    assertThat(first.first().target()).isEqualTo(link);
+    assertThat(again.replayed()).isTrue();
+    // 같은 키로 다른 대상이면 다른 요청이다.
+    assertThatThrownBy(() ->
+            pipeline.executeAll(
+                ActionBatch.of(room, viewer, "view")
+                    .record(
+                        ActionType.LINK_VIEW,
+                        done -> ActionTarget.of(TargetKind.LINK, UUID.randomUUID()),
+                        Map.of())))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            e -> assertThat(e.errorCode()).isEqualTo(ErrorCode.IDEMPOTENCY_KEY_REUSED));
+  }
+
+  @Test
   void 가운데_단계를_건너뛰어도_뒤_단계_키가_이어지고_다시_오면_같은_결과() {
     ActionBatch batch =
         ActionBatch.of(room, Actor.member(tenantId), "k1")

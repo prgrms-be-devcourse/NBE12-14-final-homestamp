@@ -129,6 +129,17 @@ public final class ActionBatch {
     return step(ActionStep.record(type, payload));
   }
 
+  /**
+   * 상태 칸이 없지만 대상이 있는 행동. 예: {@code .record(LINK_VIEW, done -> ActionTarget.of(TargetKind.LINK,
+   * linkId), Map.of())}. 대상은 같은 호실이어야 한다(행동 기록의 복합 FK, 05 0장).
+   */
+  public ActionBatch record(
+      ActionType type,
+      Function<List<ActionResult>, ActionTarget> target,
+      Map<String, Object> payload) {
+    return step(ActionStep.record(type, target, payload));
+  }
+
   public UUID roomRecordId() {
     return roomRecordId;
   }
