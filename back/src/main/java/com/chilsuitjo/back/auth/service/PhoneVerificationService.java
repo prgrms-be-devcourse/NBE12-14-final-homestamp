@@ -20,6 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
@@ -49,12 +50,17 @@ public class PhoneVerificationService {
    *
    * <p>잠금을 기다리는 동안 시간이 지나도 한 날짜·한 시각으로 처리한다. 번호 잠금과 같은 진행의 이전 행 잠금을 먼저 잡고 시각을 읽는다. 그 뒤 {@code
    * sms-total} 줄은 다른 번호의 요청과 같이 쓰여 또 기다릴 수 있어서, 센 뒤 시각을 다시 읽어 한국 날짜가 바뀌었으면 이 트랜잭션을 통째로 되돌리고(센 한도도
-   * 함께) 새 날짜로 다시 한다. 새 행의 생성·만료 시각과 이전 행의 만료 시각은 다시 읽은 시각 하나로 정한다. 그래서 트랜잭션 밖에서 부른다.
+   * 함께) 새 날짜로 다시 한다. 전날 한도에 이미 닿았어도 날짜부터 다시 본다. 새 행의 생성·만료 시각과 이전 행의 만료 시각은 다시 읽은 시각 하나로 정한다. 그래서
+   * 트랜잭션 밖에서만 부를 수 있고, 안에서 부르면 {@code IllegalStateException}이다.
    *
    * @throws BusinessException {@code RATE_LIMITED}(다시 받기 간격, 남은 시간을 {@code Retry-After}로), {@code
    *     DAILY_LIMIT}(하루 인증 횟수·전체 문자 한도), {@code VALIDATION_FAILED}(번호 모양)
    */
   public IssuedCode issue(String rawPhone, VerificationPurpose purpose) {
+    // 날짜가 바뀌면 되돌리고 다시 하고, 인증 행을 커밋한 뒤 문자를 보내야 해서 바깥 트랜잭션 안에서는 부를 수 없다
+    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new IllegalStateException("인증번호 발급은 트랜잭션 밖에서 부른다");
+    }
     String phone = PhoneNumber.normalize(rawPhone);
     for (int attempt = 0; attempt < 3; attempt++) {
       IssuedCode issued = transaction.execute(status -> issueOnSameDay(phone, purpose, status));
@@ -88,16 +94,19 @@ public class PhoneVerificationService {
         >= settings.dailyPhone()) {
       throw new BusinessException(ErrorCode.DAILY_LIMIT);
     }
-    if (settings.smsDailyTotal() < 1
-        || verifications.countSmsTotal(today, settings.smsDailyTotal()) == 0) {
+    if (settings.smsDailyTotal() < 1) {
       throw new BusinessException(ErrorCode.DAILY_LIMIT);
     }
+    boolean counted = verifications.countSmsTotal(today, settings.smsDailyTotal()) > 0;
 
-    // sms-total 줄을 기다렸을 수 있다. 날짜가 바뀌었으면 센 한도까지 되돌리고 새 날짜로 다시 한다
+    // sms-total 줄을 기다렸을 수 있다. 한도에 닿았든 아니든 날짜부터 다시 본다. 바뀌었으면 센 한도까지 되돌리고 새 날짜로 다시 한다
     Instant issuedAt = clock.instant();
     if (!LocalDate.ofInstant(issuedAt, settings.zone()).equals(today)) {
       status.setRollbackOnly();
       return null;
+    }
+    if (!counted) {
+      throw new BusinessException(ErrorCode.DAILY_LIMIT);
     }
     verifications.expirePending(phone, purpose, issuedAt);
     UUID id = Uuids.v7();

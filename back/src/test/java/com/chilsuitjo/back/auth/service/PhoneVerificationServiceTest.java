@@ -547,6 +547,42 @@ class PhoneVerificationServiceTest {
   }
 
   @Test
+  void 전날_전체_한도가_다_찬_채_기다리다_한국_날짜가_바뀌면_새_날짜로_받는다() throws Exception {
+    LocalDate oldDay = LocalDate.of(2026, 11, 19);
+    LocalDate newDay = LocalDate.of(2026, 11, 20);
+    clock.set(Instant.parse("2026-11-19T14:59:59Z")); // 한국 23:59:59
+    jdbc.update(
+        "INSERT INTO state.rate_counter (counter_key, window_date, count) VALUES ('sms-total', ?, 40)",
+        java.sql.Date.valueOf(oldDay));
+    CountDownLatch release =
+        holdLock(() ->
+            jdbc.queryForList(
+                "SELECT count FROM state.rate_counter"
+                    + " WHERE counter_key = 'sms-total' AND window_date = ? FOR UPDATE",
+                java.sql.Date.valueOf(oldDay)));
+
+    Future<Object> waiting = pool.submit(() -> outcome(() -> service.issue(PHONE, SIGNUP)));
+    awaitLockWaiter();
+    Instant afterLock = Instant.parse("2026-11-19T15:00:30Z"); // 한국 다음 날 00:00:30
+    clock.set(afterLock);
+    release.countDown();
+
+    Object result = waiting.get(10, TimeUnit.SECONDS);
+    assertThat(result).isInstanceOf(IssuedCode.class);
+    assertThat(row((IssuedCode) result).getCreatedAt()).isEqualTo(afterLock);
+    assertThat(smsTotalOn(oldDay)).isEqualTo(40);
+    assertThat(smsTotalOn(newDay)).isEqualTo(1);
+  }
+
+  @Test
+  void 바깥_트랜잭션_안에서_발급하면_코드_실수다() {
+    assertThatThrownBy(() -> inTransaction(() -> service.issue(PHONE, SIGNUP)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("트랜잭션 밖");
+    assertThat(verifications.count()).isZero();
+  }
+
+  @Test
   void 이전_번호_행_잠금을_기다리면_새_행과_이전_행의_시각을_잠금_뒤_한_시각으로_정한다() throws Exception {
     IssuedCode first = service.issue(PHONE, SIGNUP);
     clock.advance(RESEND);
