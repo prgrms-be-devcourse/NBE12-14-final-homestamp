@@ -44,7 +44,7 @@ public class FakeRoomGateReader implements RoomGateReader {
         actor.side(),
         room.settled(),
         room.joinedAway(),
-        room.mySharingStopped(),
+        false, // 공유 중단은 회원 기준이라 링크·서버·운영 주체면 거짓(09 3-1 RoomGate)
         room.ended());
   }
 
