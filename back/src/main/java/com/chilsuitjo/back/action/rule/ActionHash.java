@@ -109,7 +109,9 @@ public final class ActionHash {
    * 행동 해시의 입력. 칸은 {@code record.action}과 같은 뜻이다.
    *
    * @param payload jsonb 값. {@code Map}·{@code List}·글자·정수·참거짓·null로 이뤄진다. DB에서 읽은 값도 같은 해시가 나온다(객체
-   *     키 순서와 상관없음)
+   *     키 순서와 상관없음). 저장할 때는 도메인이 넘긴 {@code Map}을 그대로 주지 않고, <b>JSON으로 바꿨다가 다시 읽은 값</b>을 준다. {@code
+   *     UUID}·날짜·enum처럼 JSON에서 글자가 되는 값을 jsonb에 저장되는 모양과 같게 맞추고, 검증할 때 DB에서 읽은 값과도 같은 입력이 되게 하려는
+   *     것이다(05 2-3 「해시 입력 형식」 payload)
    * @param targetColumn 채운 대상 칸 이름({@link #TARGET_COLUMNS}). 호실 기록 자체가 대상이면 null
    * @param createdAt 마이크로초로 자른 시각. 같은 값을 DB에 저장해야 한다
    */
