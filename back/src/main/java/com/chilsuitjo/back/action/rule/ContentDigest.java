@@ -23,8 +23,12 @@ public final class ContentDigest {
     if (input == null || input.kind() == null || input.versionId() == null) {
       throw new IllegalArgumentException("판 종류와 판 ID가 있어야 해요");
     }
-    List<DigestField> fields = input.fields() == null ? List.of() : input.fields();
-    List<byte[]> photoSha256s = input.photoSha256s() == null ? List.of() : input.photoSha256s();
+    // 없음과 빈 것은 다른 입력이다. 목록이 null이면 부르는 쪽 실수라 빈 목록으로 바꾸지 않고 거절한다.
+    if (input.fields() == null || input.photoSha256s() == null) {
+      throw new IllegalArgumentException("칸 목록과 사진 목록은 비어 있어도 null이 아니어야 해요");
+    }
+    List<DigestField> fields = input.fields();
+    List<byte[]> photoSha256s = input.photoSha256s();
     HashEncoder e = new HashEncoder();
     e.int64(VERSION)
         .string(input.kind())

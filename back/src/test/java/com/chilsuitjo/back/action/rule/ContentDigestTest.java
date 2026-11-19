@@ -72,5 +72,9 @@ class ContentDigestTest {
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> digest(null, VERSION_ID, 1, fields(), List.of()))
         .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> digest("repair_content", VERSION_ID, 1, null, List.of()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> digest("repair_content", VERSION_ID, 1, fields(), null))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 }
