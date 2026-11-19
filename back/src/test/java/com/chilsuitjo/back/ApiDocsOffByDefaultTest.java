@@ -5,10 +5,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import org.junit.jupiter.api.Test;
 import org.springdoc.webmvc.api.OpenApiWebMvcResource;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
+import org.springframework.context.annotation.Import;
 
 /** 프로필이 없으면(운영과 같음) API 문서를 만들지 않는다(docs/rules/04 API 문서: 내부 API 구조 노출 방지). */
-class ApiDocsOffByDefaultTest extends SchemaTestSupport {
+@Import(TestcontainersConfiguration.class)
+@SpringBootTest
+class ApiDocsOffByDefaultTest {
 
   @Autowired private ApplicationContext context;
 
