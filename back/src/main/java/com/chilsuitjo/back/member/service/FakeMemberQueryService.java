@@ -3,6 +3,8 @@ package com.chilsuitjo.back.member.service;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.member.rule.NameMask;
+import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -27,6 +29,15 @@ public class FakeMemberQueryService implements MemberQueryService {
       throw new BusinessException(ErrorCode.NOT_FOUND);
     }
     return name.map(NameMask::mask);
+  }
+
+  @Override
+  public Map<UUID, Optional<String>> maskedNames(Collection<UUID> memberIds) {
+    Map<UUID, Optional<String>> masked = new LinkedHashMap<>();
+    for (UUID memberId : memberIds) {
+      masked.computeIfAbsent(memberId, this::maskedName);
+    }
+    return masked;
   }
 
   /** 이 이름의 회원으로 적어 둔다. */
