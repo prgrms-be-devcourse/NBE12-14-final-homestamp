@@ -69,6 +69,9 @@ public class LinkViewService {
     try {
       return viewFound(link);
     } catch (BusinessException e) {
+      // 링크를 찾았는데 못 열었다. 05 link.failed_view_count는 "링크를 식별할 수 있는 요청의 실패"를 모두 센다
+      // (무효 링크·호실 상태·내용 없음·pipeline 거절). 이 횟수만으로 링크를 무효로 하지는 않는다.
+      links.countFailedView(link.getId());
       if (e.errorCode() != ErrorCode.LINK_INVALID) {
         // 원래 이유는 운영만 본다. 토큰·번호는 남기지 않고 ID는 앞 8자리만(04 11장 "로그")
         log.info(
@@ -80,10 +83,9 @@ public class LinkViewService {
     }
   }
 
-  /** 토큰으로 링크를 찾은 뒤. 여기서 나온 업무 오류는 {@link #view}가 모두 {@code LINK_INVALID}로 덮는다. */
+  /** 토큰으로 링크를 찾은 뒤. 여기서 나온 업무 오류는 {@link #view}가 모두 {@code LINK_INVALID}로 덮고 실패 횟수를 센다. */
   private LinkViewResponse viewFound(Link link) {
     if (link.isInvalidated()) {
-      links.countFailedView(link.getId());
       throw invalid();
     }
     LinkRoom room =

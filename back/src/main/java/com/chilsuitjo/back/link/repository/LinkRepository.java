@@ -14,8 +14,9 @@ public interface LinkRepository extends JpaRepository<Link, UUID> {
   Optional<Link> findByTokenHash(String tokenHash);
 
   /**
-   * 무효 링크로 열람하려 한 횟수를 하나 올린다(05 {@code link.failed_view_count}: 링크를 식별할 수 있는 실패만 센다). 이 횟수만으로 링크를
-   * 무효로 하지 않는다.
+   * 링크를 찾았는데 열지 못한 횟수를 하나 올린다(무효 링크, 호실 상태로 막힘, 내용을 못 읽음, pipeline 거절. 05 {@code
+   * link.failed_view_count}: 링크를 식별할 수 있는 실패만 센다). 이 횟수만으로 링크를 무효로 하지 않는다. 자기 트랜잭션으로 돌아 열람이 되돌려져도
+   * 남는다.
    */
   @Transactional
   @Modifying

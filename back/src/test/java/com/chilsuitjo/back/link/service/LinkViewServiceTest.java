@@ -115,6 +115,8 @@ class LinkViewServiceTest {
     assertLinkInvalid(() -> service.view(new LinkViewRequest("없는토큰")));
     assertLinkInvalid(() -> service.view(new LinkViewRequest(" ")));
     assertLinkInvalid(() -> service.view(new LinkViewRequest(null)));
+    // 링크를 특정할 수 없어 셀 행이 없다. 반복 조회는 nginx IP 제한이 막는다(05 link.failed_view_count, 04 4-3)
+    verify(links, never()).countFailedView(any());
   }
 
   @Test
@@ -131,47 +133,66 @@ class LinkViewServiceTest {
 
   @Test
   void 합류_전_기록인_호실은_같은_LINK_INVALID이고_열람이_남지_않는다() {
-    String token = issue(LinkKind.INVITE, repairCaseId);
+    Link link = newLink(LinkKind.INVITE, repairCaseId);
+    String token = stub(link);
     content.seedRoom(
         roomRecordId,
         partyId,
         new LinkRoom(PartySide.LANDLORD, "서울특별시", "강남구", "역삼동", false, true));
 
     assertLinkInvalid(() -> service.view(new LinkViewRequest(token)));
-    verify(links, never()).countFailedView(any());
+    // 링크를 식별한 실패라 센다(05 link.failed_view_count)
+    verify(links).countFailedView(link.getId());
     assertThat(viewActions()).isEmpty();
   }
 
   @Test
-  void 정산_완료_호실은_같은_LINK_INVALID다() {
-    String token = issue(LinkKind.INVITE, repairCaseId);
+  void 정산_완료_호실은_같은_LINK_INVALID이고_실패_횟수를_센다() {
+    Link link = newLink(LinkKind.INVITE, repairCaseId);
+    String token = stub(link);
     content.seedRoom(
         roomRecordId,
         partyId,
         new LinkRoom(PartySide.LANDLORD, "서울특별시", "강남구", "역삼동", true, false));
 
     assertLinkInvalid(() -> service.view(new LinkViewRequest(token)));
+    verify(links).countFailedView(link.getId());
     assertThat(viewActions()).isEmpty();
   }
 
   @Test
-  void 미리_거른_뒤_호실이_정산_완료로_바뀌어도_LINK_INVALID다() {
-    String token = issue(LinkKind.INVITE, repairCaseId);
+  void 미리_거른_뒤_호실이_정산_완료로_바뀌어도_LINK_INVALID이고_실패_횟수를_센다() {
+    Link link = newLink(LinkKind.INVITE, repairCaseId);
+    String token = stub(link);
     openRoom();
     content.seedRecord(roomRecordId, repairCaseId, repairRecord(), false);
     fx.gates().putRoom(new RoomGate(roomRecordId, null, true, false, false, true));
 
     assertLinkInvalid(() -> service.view(new LinkViewRequest(token)));
+    verify(links).countFailedView(link.getId());
     assertThat(viewActions()).isEmpty();
   }
 
   @Test
-  void 공유한_기록이_그_호실에_없으면_LINK_INVALID다() {
-    String token = issue(LinkKind.INVITE, repairCaseId);
+  void 공유한_기록이_그_호실에_없으면_LINK_INVALID이고_실패_횟수를_센다() {
+    Link link = newLink(LinkKind.INVITE, repairCaseId);
+    String token = stub(link);
     openRoom();
 
     assertLinkInvalid(() -> service.view(new LinkViewRequest(token)));
+    verify(links).countFailedView(link.getId());
     assertThat(viewActions()).isEmpty();
+  }
+
+  @Test
+  void 열람에_성공하면_실패_횟수를_세지_않는다() {
+    String token = issue(LinkKind.INVITE, repairCaseId);
+    openRoom();
+    content.seedRecord(roomRecordId, repairCaseId, repairRecord(), false);
+
+    service.view(new LinkViewRequest(token));
+
+    verify(links, never()).countFailedView(any());
   }
 
   // ---- 링크를 연 사람에게 실패 이유를 드러내지 않는다(06 LINK-2, 원칙 8) ----
