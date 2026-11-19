@@ -18,6 +18,24 @@ spring:
     default-schema: public
     schemas: public, record, state, log
 
+# API 문서(Swagger UI)는 기본으로 끈다. local·test 프로필에서만 아래 문서가 켠다(docs/rules/04 API 문서: 운영에서 내부 API 구조 노출 방지)
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
 app:
   # 한국 시간으로 정해진 규칙(문자 보류 21~08시, 하루 한도의 "하루")만 이 위치로 계산한다
   zone: Asia/Seoul
+
+---
+spring:
+  config:
+    activate:
+      on-profile: local | test
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
