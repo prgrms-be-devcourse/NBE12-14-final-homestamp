@@ -13,6 +13,10 @@ import java.util.UUID;
  *
  * <p>{@code action}에 칸을 더하는 PR은 그 칸을 이 입력에 넣을지 정하고, 넣으면 {@link #VERSION}을 올린다(decisions
  * 2026-11-18).
+ *
+ * <p>형식 버전을 올리는 PR은 옛 번호의 계산을 지우지 않고 남겨, 저장된 {@code hash_version}마다 그 규칙으로 다시 계산할 수 있게 한다. 지금은 1뿐이라
+ * 갈래가 없다. 내용 지문({@link ContentDigest})은 따로 버전을 두지 않고 이 번호를 따른다: 지문 형식을 바꿀 때도 이 번호를 올린다 (decisions
+ * 2026-11-19).
  */
 public final class ActionHash {
 
