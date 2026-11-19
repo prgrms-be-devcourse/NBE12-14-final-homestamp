@@ -14,6 +14,9 @@ import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 import java.time.Instant;
 import java.util.UUID;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
 
 /**
  * 수리 건 머리({@code state.repair_case}, 05 2-5, C 테이블). 하자 인정({@code defectAck})과 수리 진행({@code
@@ -24,6 +27,8 @@ import java.util.UUID;
  */
 @Entity
 @Table(schema = "state", name = "repair_case")
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class RepairCase {
 
   /** 앱이 저장 전에 만든다({@code Uuids.v7()}). 첫 판과 서로를 가리켜서다(05 0장 {@code id}). */
@@ -84,8 +89,6 @@ public class RepairCase {
 
   @Version private Long version;
 
-  protected RepairCase() {}
-
   /**
    * 하자 등록. 처음 상태는 시작 전·확인 기다림·부담 미정. {@code id}와 {@code currentContentId}는 첫 판과 함께 {@code
    * Uuids.v7()}로 미리 만든다. {@code @Version}이 비어 있어 저장할 때 새 행으로 들어간다.
@@ -106,69 +109,5 @@ public class RepairCase {
     this.status = RepairStatus.NOT_STARTED;
     this.defectAck = AckState.PENDING;
     this.moneyStatus = MoneyStatus.UNDECIDED;
-  }
-
-  public UUID getId() {
-    return id;
-  }
-
-  public UUID getRoomRecordId() {
-    return roomRecordId;
-  }
-
-  public UUID getCurrentContentId() {
-    return currentContentId;
-  }
-
-  public UUID getConfirmedContentId() {
-    return confirmedContentId;
-  }
-
-  public RepairStatus getStatus() {
-    return status;
-  }
-
-  public ClosedBy getClosedBy() {
-    return closedBy;
-  }
-
-  public AckState getDefectAck() {
-    return defectAck;
-  }
-
-  public MoneyStatus getMoneyStatus() {
-    return moneyStatus;
-  }
-
-  public UUID getCurrentProposalId() {
-    return currentProposalId;
-  }
-
-  public UUID getAgreedProposalId() {
-    return agreedProposalId;
-  }
-
-  public UUID getPreviousCaseId() {
-    return previousCaseId;
-  }
-
-  public PartySide getCreatedBySide() {
-    return createdBySide;
-  }
-
-  public boolean isSolo() {
-    return solo;
-  }
-
-  public Instant getFirstShownAt() {
-    return firstShownAt;
-  }
-
-  public Instant getCreatedAt() {
-    return createdAt;
-  }
-
-  public Long getVersion() {
-    return version;
   }
 }

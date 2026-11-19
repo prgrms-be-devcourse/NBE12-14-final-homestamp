@@ -29,10 +29,11 @@ class ArchitectureTest {
     return result;
   }
 
-  /** 09 3장의 [도메인] 층 가운데 action·notification이 몰라야 하는 것. */
+  /** 09 3장의 [도메인] 층. 아래층(action·correction·notification)이 몰라야 하는 것. */
   private static final String[] 도메인 =
       packages(
           "member",
+          "auth",
           "room",
           "inspection",
           "repair",
@@ -64,6 +65,7 @@ class ArchitectureTest {
   static final ArchRule 고리_없음 =
       slices().matching("com.chilsuitjo.back.(*)..").should().beFreeOfCycles();
 
+  /** 아래층끼리는 notification·correction → action 한쪽만 허용한다(09 3장 "아래층끼리"). */
   @ArchTest
   static final ArchRule action은_도메인을_모른다 =
       noClasses()
@@ -71,7 +73,27 @@ class ArchitectureTest {
           .resideInAPackage(ROOT + "action..")
           .should()
           .dependOnClassesThat()
-          .resideInAnyPackage(도메인);
+          .resideInAnyPackage(concat(도메인, packages("notification", "correction")));
+
+  /** correction은 Correctable 인터페이스만 두고 각 도메인이 구현한다(09 3장 "고치기"). 그래서 도메인을 import하지 않는다. */
+  @ArchTest
+  static final ArchRule correction은_도메인을_모른다 =
+      noClasses()
+          .that()
+          .resideInAPackage(ROOT + "correction..")
+          .should()
+          .dependOnClassesThat()
+          .resideInAnyPackage(concat(도메인, packages("respond")));
+
+  /** correction → notification만 허용하고 반대는 막는다(09 3장 "아래층끼리"). */
+  @ArchTest
+  static final ArchRule notification은_correction을_모른다 =
+      noClasses()
+          .that()
+          .resideInAPackage(ROOT + "notification..")
+          .should()
+          .dependOnClassesThat()
+          .resideInAPackage(ROOT + "correction..");
 
   @ArchTest
   static final ArchRule notification은_도메인을_부르지_않는다 =

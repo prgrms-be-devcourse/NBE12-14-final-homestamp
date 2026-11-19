@@ -10,6 +10,9 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.Instant;
 import java.util.UUID;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
 import org.hibernate.annotations.Immutable;
 import org.hibernate.annotations.UuidGenerator;
 
@@ -22,6 +25,8 @@ import org.hibernate.annotations.UuidGenerator;
 @Entity
 @Immutable
 @Table(schema = "record", name = "progress_note")
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class ProgressNote {
 
   @Id
@@ -52,8 +57,6 @@ public class ProgressNote {
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
 
-  protected ProgressNote() {}
-
   public ProgressNote(
       UUID roomRecordId,
       UUID repairCaseId,
@@ -69,37 +72,5 @@ public class ProgressNote {
     this.answersRequestId = answersRequestId;
     this.asksCheck = asksCheck;
     this.createdAt = createdAt;
-  }
-
-  public UUID getId() {
-    return id;
-  }
-
-  public UUID getRoomRecordId() {
-    return roomRecordId;
-  }
-
-  public UUID getRepairCaseId() {
-    return repairCaseId;
-  }
-
-  public PartySide getSide() {
-    return side;
-  }
-
-  public String getText() {
-    return text;
-  }
-
-  public UUID getAnswersRequestId() {
-    return answersRequestId;
-  }
-
-  public boolean isAsksCheck() {
-    return asksCheck;
-  }
-
-  public Instant getCreatedAt() {
-    return createdAt;
   }
 }
