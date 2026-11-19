@@ -20,6 +20,14 @@ public interface PhoneVerificationRepository extends JpaRepository<PhoneVerifica
   @Query(value = "SELECT 1 FROM pg_advisory_xact_lock(:key)", nativeQuery = true)
   Integer lockPhone(@Param("key") long key);
 
+  /** 같은 진행의 인증 전 행을 잠근다. 인증번호를 확인하는 요청이 그 행을 잡고 있으면 여기서 기다리므로, 발급은 이 잠금까지 얻은 뒤 시각을 읽는다. */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      "SELECT v FROM PhoneVerification v"
+          + " WHERE v.phone = :phone AND v.purpose = :purpose AND v.verifiedAt IS NULL")
+  List<PhoneVerification> lockPending(
+      @Param("phone") String phone, @Param("purpose") VerificationPurpose purpose);
+
   /** 다시 받기 간격은 같은 번호·목적의 마지막 행으로 센다(05). */
   Optional<PhoneVerification> findFirstByPhoneAndPurposeOrderByCreatedAtDesc(
       String phone, VerificationPurpose purpose);

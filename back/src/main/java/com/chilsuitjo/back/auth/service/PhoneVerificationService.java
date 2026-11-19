@@ -17,6 +17,7 @@ import java.time.LocalDate;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -46,13 +47,29 @@ public class PhoneVerificationService {
    * 서비스 전체 문자 한도({@code sms-total})를 차례로 보고, 같은 진행의 이전 번호를 만료시킨 뒤 새 행을 만든다(05). 원문 번호는 돌려주기만 하고
    * 저장하지 않는다.
    *
+   * <p>잠금을 기다리는 동안 시간이 지나도 한 날짜·한 시각으로 처리한다. 번호 잠금과 같은 진행의 이전 행 잠금을 먼저 잡고 시각을 읽는다. 그 뒤 {@code
+   * sms-total} 줄은 다른 번호의 요청과 같이 쓰여 또 기다릴 수 있어서, 센 뒤 시각을 다시 읽어 한국 날짜가 바뀌었으면 이 트랜잭션을 통째로 되돌리고(센 한도도
+   * 함께) 새 날짜로 다시 한다. 새 행의 생성·만료 시각과 이전 행의 만료 시각은 다시 읽은 시각 하나로 정한다. 그래서 트랜잭션 밖에서 부른다.
+   *
    * @throws BusinessException {@code RATE_LIMITED}(다시 받기 간격, 남은 시간을 {@code Retry-After}로), {@code
    *     DAILY_LIMIT}(하루 인증 횟수·전체 문자 한도), {@code VALIDATION_FAILED}(번호 모양)
    */
-  @Transactional
   public IssuedCode issue(String rawPhone, VerificationPurpose purpose) {
     String phone = PhoneNumber.normalize(rawPhone);
+    for (int attempt = 0; attempt < 3; attempt++) {
+      IssuedCode issued = transaction.execute(status -> issueOnSameDay(phone, purpose, status));
+      if (issued != null) {
+        return issued;
+      }
+    }
+    throw new IllegalStateException("인증번호를 만드는 동안 날짜가 계속 바뀌었다");
+  }
+
+  /** 처리 중 한국 날짜가 바뀌면 되돌리고 비어 있다. */
+  private IssuedCode issueOnSameDay(
+      String phone, VerificationPurpose purpose, TransactionStatus status) {
     verifications.lockPhone(keys.phoneLockKey(phone));
+    verifications.lockPending(phone, purpose);
     // 잠금을 기다리는 동안 시간이 지나거나 한국 날짜가 바뀔 수 있어, 시각은 잠금을 얻은 뒤 읽는다
     Instant now = clock.instant();
 
@@ -76,12 +93,23 @@ public class PhoneVerificationService {
       throw new BusinessException(ErrorCode.DAILY_LIMIT);
     }
 
-    verifications.expirePending(phone, purpose, now);
+    // sms-total 줄을 기다렸을 수 있다. 날짜가 바뀌었으면 센 한도까지 되돌리고 새 날짜로 다시 한다
+    Instant issuedAt = clock.instant();
+    if (!LocalDate.ofInstant(issuedAt, settings.zone()).equals(today)) {
+      status.setRollbackOnly();
+      return null;
+    }
+    verifications.expirePending(phone, purpose, issuedAt);
     UUID id = Uuids.v7();
     String code = "%06d".formatted(RANDOM.nextInt(1_000_000));
     verifications.save(
         new PhoneVerification(
-            id, phone, purpose, keys.codeHash(id, code), now, now.plus(settings.codeTtl())));
+            id,
+            phone,
+            purpose,
+            keys.codeHash(id, code),
+            issuedAt,
+            issuedAt.plus(settings.codeTtl())));
     return new IssuedCode(id, phone, code);
   }
 

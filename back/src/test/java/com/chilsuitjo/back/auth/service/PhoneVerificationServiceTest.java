@@ -360,7 +360,7 @@ class PhoneVerificationServiceTest {
     await(firstUsed);
     Future<Object> second =
         pool.submit(() -> outcome(() -> inTransaction(() -> service.useTicket(ticket, SIGNUP))));
-    Thread.sleep(300); // 두 번째 요청이 같은 행에서 기다리게 둔다
+    awaitLockWaiter(); // 두 번째 요청이 같은 행에서 기다리는지 DB로 확인한다
     release.countDown();
 
     assertThat(first.get(10, TimeUnit.SECONDS)).isEqualTo(PHONE);
@@ -453,7 +453,7 @@ class PhoneVerificationServiceTest {
 
     Future<Object> waiting =
         pool.submit(() -> outcome(() -> service.verify(code.verificationId(), code.code())));
-    Thread.sleep(300); // 잠금을 기다리게 둔다
+    awaitLockWaiter();
     clock.advance(Duration.ofSeconds(1));
     release.countDown();
 
@@ -478,7 +478,7 @@ class PhoneVerificationServiceTest {
                 "SELECT 1 FROM pg_advisory_xact_lock(?)", Integer.class, keys.phoneLockKey(PHONE)));
 
     Future<Object> waiting = pool.submit(() -> outcome(() -> service.issue(PHONE, SIGNUP)));
-    Thread.sleep(300); // 잠금을 기다리게 둔다
+    awaitLockWaiter();
     Instant afterLock = Instant.parse("2026-11-19T15:00:30Z"); // 한국 다음 날 00:00:30
     clock.set(afterLock);
     release.countDown();
@@ -500,7 +500,7 @@ class PhoneVerificationServiceTest {
 
     Future<Object> waiting =
         pool.submit(() -> outcome(() -> inTransaction(() -> service.useTicket(ticket, SIGNUP))));
-    Thread.sleep(300); // 잠금을 기다리게 둔다
+    awaitLockWaiter();
     clock.advance(Duration.ofSeconds(1));
     release.countDown();
 
@@ -511,7 +511,78 @@ class PhoneVerificationServiceTest {
     assertThat(verifications.findById(id).orElseThrow().getConsumedAt()).isNull();
   }
 
+  @Test
+  void 전체_한도_줄을_기다리는_동안_한국_날짜가_바뀌면_바뀐_날짜로_다시_센다() throws Exception {
+    LocalDate oldDay = LocalDate.of(2026, 11, 19);
+    LocalDate newDay = LocalDate.of(2026, 11, 20);
+    clock.set(Instant.parse("2026-11-19T14:50:00Z")); // 한국 23:50
+    for (int i = 0; i < 4; i++) {
+      service.issue(PHONE, SIGNUP);
+      clock.advance(RESEND);
+    }
+    clock.set(Instant.parse("2026-11-19T14:59:59Z")); // 한국 23:59:59
+    // 다른 번호의 요청이 오늘 sms-total 줄을 잡고 있다
+    CountDownLatch release =
+        holdLock(() ->
+            jdbc.queryForList(
+                "SELECT count FROM state.rate_counter"
+                    + " WHERE counter_key = 'sms-total' AND window_date = ? FOR UPDATE",
+                java.sql.Date.valueOf(oldDay)));
+
+    Future<Object> waiting = pool.submit(() -> outcome(() -> service.issue(PHONE, SIGNUP)));
+    awaitLockWaiter();
+    Instant afterLock = Instant.parse("2026-11-19T15:00:30Z"); // 한국 다음 날 00:00:30
+    clock.set(afterLock);
+    release.countDown();
+
+    Object result = waiting.get(10, TimeUnit.SECONDS);
+    assertThat(result).isInstanceOf(IssuedCode.class);
+    PhoneVerification created = row((IssuedCode) result);
+    assertThat(created.getCreatedAt()).isEqualTo(afterLock);
+    assertThat(created.getExpiresAt()).isEqualTo(afterLock.plus(Duration.ofMinutes(5)));
+    // 전날 센 한도는 되돌아가고, 새 날짜에 한 번만 센다
+    assertThat(smsTotalOn(oldDay)).isEqualTo(4);
+    assertThat(smsTotalOn(newDay)).isEqualTo(1);
+    assertThat(verifications.count()).isEqualTo(5);
+  }
+
+  @Test
+  void 이전_번호_행_잠금을_기다리면_새_행과_이전_행의_시각을_잠금_뒤_한_시각으로_정한다() throws Exception {
+    IssuedCode first = service.issue(PHONE, SIGNUP);
+    clock.advance(RESEND);
+    // 이전 번호를 확인하는 요청이 그 행을 잡고 있다
+    CountDownLatch release = holdLock(() -> lockRow(first.verificationId()));
+
+    Future<Object> waiting = pool.submit(() -> outcome(() -> service.issue(PHONE, SIGNUP)));
+    awaitLockWaiter();
+    Instant afterLock = START.plus(Duration.ofMinutes(2));
+    clock.set(afterLock);
+    release.countDown();
+
+    Object result = waiting.get(10, TimeUnit.SECONDS);
+    assertThat(result).isInstanceOf(IssuedCode.class);
+    assertThat(row((IssuedCode) result).getCreatedAt()).isEqualTo(afterLock);
+    assertThat(row((IssuedCode) result).getExpiresAt())
+        .isEqualTo(afterLock.plus(Duration.ofMinutes(5)));
+    assertThat(row(first).getExpiresAt()).isEqualTo(afterLock);
+  }
+
   // 도우미
+
+  /**
+   * 다른 요청이 DB 잠금을 실제로 기다리고 있을 때까지 기다린다({@code pg_locks}에 받지 못한 잠금이 생김). 잠을 자는 시간으로 가정하지 않고, 대기에 들어간
+   * 것을 확인한 뒤 시계를 옮긴다.
+   */
+  private void awaitLockWaiter() throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+    while (jdbc.queryForObject("SELECT count(*) FROM pg_locks WHERE NOT granted", Integer.class)
+        == 0) {
+      if (System.nanoTime() > deadline) {
+        throw new IllegalStateException("요청이 잠금 대기에 들어가지 않았다");
+      }
+      Thread.sleep(10);
+    }
+  }
 
   /** 다른 트랜잭션에서 잠금을 잡고 둔다. 돌려준 래치를 내리면 커밋해 잠금을 푼다. */
   private CountDownLatch holdLock(Runnable lock) {
