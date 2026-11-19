@@ -28,6 +28,9 @@ springdoc:
 app:
   # 한국 시간으로 정해진 규칙(문자 보류 21~08시, 하루 한도의 "하루")만 이 위치로 계산한다
   zone: Asia/Seoul
+  link:
+    # 같은 링크 열람을 한 줄로 남기는 구간(06 0-1 link.view.dedupe)
+    view-dedupe: 10m
 
 ---
 spring:
