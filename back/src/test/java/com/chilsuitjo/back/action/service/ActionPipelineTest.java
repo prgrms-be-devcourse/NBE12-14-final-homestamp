@@ -158,7 +158,7 @@ class ActionPipelineTest {
   }
 
   @Test
-  void 정산_완료된_호실은_SETTLED이고_사진_지우기만_된다() {
+  void 정산_완료된_호실은_SETTLED이고_사진_지우기는_된다() {
     gates.put(tenantId, new RoomGate(room, PartySide.TENANT, true, false, false, true));
 
     assertThatThrownBy(() -> pipeline.create(register("k1"), store, rules))
@@ -435,6 +435,42 @@ class ActionPipelineTest {
         ActionBatch.of(room, Actor.ops("홍길동"), "ops-1").record(ActionType.HIDE_PHOTO, Map.of()));
 
     assertThat(writer.findByRoom(room).getFirst().actorKey()).isEqualTo("ops:홍길동");
+  }
+
+  @Test
+  void 정산_완료된_호실에서도_공유를_그만둔_사람은_다시_공유할_수_있다() {
+    gates.put(tenantId, new RoomGate(room, PartySide.TENANT, true, false, true, true));
+
+    pipeline.executeAll(
+        ActionBatch.of(room, Actor.member(tenantId), "k1")
+            .record(ActionType.RESUME_SHARING, Map.of())
+            .record(ActionType.SHARE_CONSENT, Map.of()));
+
+    assertThat(writer.findByRoom(room))
+        .extracting(ActionEntry::type)
+        .containsExactly(ActionType.RESUME_SHARING, ActionType.SHARE_CONSENT);
+  }
+
+  @Test
+  void 공유를_그만둔_사람도_거주_종료_요청에는_답할_수_있다() {
+    gates.put(tenantId, new RoomGate(room, PartySide.TENANT, false, false, true, false));
+
+    pipeline.executeAll(
+        ActionBatch.of(room, Actor.member(tenantId), "k1")
+            .record(ActionType.CONFIRM_END, Map.of()));
+
+    assertThat(writer.findByRoom(room)).hasSize(1);
+  }
+
+  @Test
+  void 공유를_그만둔_사람은_허용_목록_밖의_내_기록도_남길_수_없다() {
+    gates.put(tenantId, new RoomGate(room, PartySide.TENANT, false, false, true, false));
+
+    assertThatThrownBy(() ->
+            pipeline.executeAll(
+                ActionBatch.of(room, Actor.member(tenantId), "k1")
+                    .record(ActionType.START_REPAIR, Map.of())))
+        .hasMessage(ErrorCode.SHARING_STOPPED.name());
   }
 
   @Test

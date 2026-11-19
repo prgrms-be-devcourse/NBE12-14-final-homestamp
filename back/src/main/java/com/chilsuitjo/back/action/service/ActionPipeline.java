@@ -252,7 +252,7 @@ public class ActionPipeline {
     if (gate.joinedAway() && !type.allows(Allow.ON_JOINED)) {
       throw new BusinessException(ErrorCode.JOINED_RECORD);
     }
-    if (gate.mySharingStopped() && type.blockedWhileSharingStopped()) {
+    if (gate.mySharingStopped() && !type.allows(Allow.WHILE_SHARING_STOPPED)) {
       throw new BusinessException(ErrorCode.SHARING_STOPPED);
     }
   }

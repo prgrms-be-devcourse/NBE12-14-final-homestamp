@@ -3,11 +3,11 @@ package com.chilsuitjo.back.action.rule;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.chilsuitjo.back.action.rule.ActionType.Allow;
-import com.chilsuitjo.back.action.rule.ActionType.Kind;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -40,11 +40,32 @@ class ActionTypeTest {
   }
 
   @Test
-  void 정산_뒤와_합류_전_기록에서는_사진_지우기만_된다() {
-    assertThat(Arrays.stream(ActionType.values()).filter(t -> t.allows(Allow.AFTER_SETTLED)))
-        .containsExactly(ActionType.ERASE_PHOTO);
-    assertThat(Arrays.stream(ActionType.values()).filter(t -> t.allows(Allow.ON_JOINED)))
-        .containsExactly(ActionType.ERASE_PHOTO);
+  void 정산_뒤에는_사진_지우기와_다시_공유만_된다() {
+    assertThat(allowed(Allow.AFTER_SETTLED))
+        .containsExactlyInAnyOrder(
+            ActionType.ERASE_PHOTO, ActionType.RESUME_SHARING, ActionType.SHARE_CONSENT);
+  }
+
+  @Test
+  void 합류_전_기록에서는_사진_지우기만_된다() {
+    assertThat(allowed(Allow.ON_JOINED)).containsExactly(ActionType.ERASE_PHOTO);
+  }
+
+  @Test
+  void 공유를_그만둔_사람은_허용_목록의_행동만_할_수_있다() {
+    assertThat(allowed(Allow.WHILE_SHARING_STOPPED))
+        .containsExactlyInAnyOrder(
+            ActionType.NOTE_PROGRESS,
+            ActionType.REGISTER,
+            ActionType.ADD_PHOTO,
+            ActionType.ERASE_PHOTO,
+            ActionType.MOVE_OUT,
+            ActionType.REQUEST_END,
+            ActionType.CONFIRM_END,
+            ActionType.REJECT_END,
+            ActionType.CONFIRM_LIVING,
+            ActionType.RESUME_SHARING,
+            ActionType.SHARE_CONSENT);
   }
 
   @Test
@@ -53,11 +74,7 @@ class ActionTypeTest {
         .containsExactly(ActionType.REGISTER);
   }
 
-  @Test
-  void 공유를_그만둔_사람은_응답과_초대를_할_수_없다() {
-    assertThat(ActionType.RESPOND_DEFECT.kind()).isEqualTo(Kind.RESPONSE);
-    assertThat(ActionType.RESPOND_DEFECT.blockedWhileSharingStopped()).isTrue();
-    assertThat(ActionType.INVITE.blockedWhileSharingStopped()).isTrue();
-    assertThat(ActionType.NOTE_PROGRESS.blockedWhileSharingStopped()).isFalse();
+  private static List<ActionType> allowed(Allow allow) {
+    return Arrays.stream(ActionType.values()).filter(t -> t.allows(allow)).toList();
   }
 }

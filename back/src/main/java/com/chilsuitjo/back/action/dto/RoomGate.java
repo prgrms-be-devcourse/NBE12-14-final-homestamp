@@ -13,7 +13,7 @@ import java.util.UUID;
  * @param side 회원·링크 행동이면 그 측, 서버·운영이면 null
  * @param settled 정산 완료(읽기 전용)
  * @param joinedAway 합류 전 기록(새 행동을 받지 않음)
- * @param mySharingStopped 행동하는 회원이 공유를 그만둔 상태
+ * @param mySharingStopped 행동하는 회원이 공유를 그만뒀고 상대가 탈퇴하지 않음. 상대가 탈퇴하면 제한이 풀려 거짓이다(03 B, 06 CONS-3p)
  * @param ended 거주 종료(거주 종료·정산 완료). 새 수리 건을 받지 않음(03 불변식 9, 06 REP-1c)
  */
 public record RoomGate(
