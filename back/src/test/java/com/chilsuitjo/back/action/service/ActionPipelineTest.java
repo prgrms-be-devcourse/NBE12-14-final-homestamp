@@ -34,9 +34,6 @@ import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.transaction.TransactionDefinition;
-import org.springframework.transaction.support.AbstractPlatformTransactionManager;
-import org.springframework.transaction.support.DefaultTransactionStatus;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /** 09 3-1 순서·계약을 가짜 부품으로 확인한다. Spring·DB 없이 돈다. */
@@ -46,7 +43,8 @@ class ActionPipelineTest {
   private final FakeActionWriter writer = new FakeActionWriter();
   private final FakeRoomGateReader gates = new FakeRoomGateReader();
   private final ActionFollowUps followUps = new ActionFollowUps();
-  private final NoOpTransactionManager transactionManager = new NoOpTransactionManager();
+  private final ActionPipelineFixture.NoOpTransactionManager transactionManager =
+      new ActionPipelineFixture.NoOpTransactionManager();
   private final ActionPipeline pipeline =
       new ActionPipeline(gates, writer, followUps, transactionManager, clock);
 
@@ -973,27 +971,6 @@ class ActionPipelineTest {
         return List.of();
       }
       return delegate.findRequest(actorKey, idempotencyKey);
-    }
-  }
-
-  /** DB 없이 트랜잭션 경계만 흉내 낸다(동기화 콜백은 실제처럼 돈다). */
-  static final class NoOpTransactionManager extends AbstractPlatformTransactionManager {
-    int rollbacks;
-
-    @Override
-    protected Object doGetTransaction() {
-      return new Object();
-    }
-
-    @Override
-    protected void doBegin(Object transaction, TransactionDefinition definition) {}
-
-    @Override
-    protected void doCommit(DefaultTransactionStatus status) {}
-
-    @Override
-    protected void doRollback(DefaultTransactionStatus status) {
-      rollbacks++;
     }
   }
 }
