@@ -19,6 +19,7 @@ import com.chilsuitjo.back.global.error.ErrorCode;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -442,7 +443,102 @@ class PhoneVerificationServiceTest {
         () -> inTransaction(() -> service.useTicket(ticket, SIGNUP)), ErrorCode.CODE_EXPIRED);
   }
 
+  // 잠금을 기다리는 동안 시간이 지나면 잠금을 얻은 뒤의 시각으로 판단한다(PR #91 리뷰)
+
+  @Test
+  void 행_잠금을_기다리는_동안_인증번호가_만료되면_CODE_EXPIRED() throws Exception {
+    IssuedCode code = service.issue(PHONE, SIGNUP);
+    clock.advance(Duration.ofMinutes(5).minusSeconds(1));
+    CountDownLatch release = holdLock(() -> lockRow(code.verificationId()));
+
+    Future<Object> waiting =
+        pool.submit(() -> outcome(() -> service.verify(code.verificationId(), code.code())));
+    Thread.sleep(300); // 잠금을 기다리게 둔다
+    clock.advance(Duration.ofSeconds(1));
+    release.countDown();
+
+    assertThat(waiting.get(10, TimeUnit.SECONDS))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            e -> assertThat(e.errorCode()).isEqualTo(ErrorCode.CODE_EXPIRED));
+    assertThat(row(code).getVerifiedAt()).isNull();
+  }
+
+  @Test
+  void 번호_잠금을_기다리는_동안_한국_날짜가_바뀌면_바뀐_날짜로_센다() throws Exception {
+    clock.set(Instant.parse("2026-11-19T14:50:00Z")); // 한국 23:50
+    for (int i = 0; i < 5; i++) {
+      service.issue(PHONE, SIGNUP);
+      clock.advance(RESEND);
+    }
+    clock.set(Instant.parse("2026-11-19T14:59:59Z")); // 한국 23:59:59, 오늘 5번을 다 씀
+    CountDownLatch release =
+        holdLock(() ->
+            jdbc.queryForObject(
+                "SELECT 1 FROM pg_advisory_xact_lock(?)", Integer.class, keys.phoneLockKey(PHONE)));
+
+    Future<Object> waiting = pool.submit(() -> outcome(() -> service.issue(PHONE, SIGNUP)));
+    Thread.sleep(300); // 잠금을 기다리게 둔다
+    Instant afterLock = Instant.parse("2026-11-19T15:00:30Z"); // 한국 다음 날 00:00:30
+    clock.set(afterLock);
+    release.countDown();
+
+    Object result = waiting.get(10, TimeUnit.SECONDS);
+    assertThat(result).isInstanceOf(IssuedCode.class);
+    PhoneVerification created = row((IssuedCode) result);
+    assertThat(created.getCreatedAt()).isEqualTo(afterLock);
+    assertThat(created.getExpiresAt()).isEqualTo(afterLock.plus(Duration.ofMinutes(5)));
+    assertThat(smsTotalOn(LocalDate.of(2026, 11, 20))).isEqualTo(1);
+  }
+
+  @Test
+  void 표_행_잠금을_기다리는_동안_만료되면_쓸_수_없다() throws Exception {
+    String ticket = ticket(SIGNUP);
+    UUID id = UUID.fromString(ticket.substring(0, ticket.indexOf('.')));
+    clock.advance(Duration.ofMinutes(15).minusSeconds(1));
+    CountDownLatch release = holdLock(() -> lockRow(id));
+
+    Future<Object> waiting =
+        pool.submit(() -> outcome(() -> inTransaction(() -> service.useTicket(ticket, SIGNUP))));
+    Thread.sleep(300); // 잠금을 기다리게 둔다
+    clock.advance(Duration.ofSeconds(1));
+    release.countDown();
+
+    assertThat(waiting.get(10, TimeUnit.SECONDS))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            e -> assertThat(e.errorCode()).isEqualTo(ErrorCode.CODE_EXPIRED));
+    assertThat(verifications.findById(id).orElseThrow().getConsumedAt()).isNull();
+  }
+
   // 도우미
+
+  /** 다른 트랜잭션에서 잠금을 잡고 둔다. 돌려준 래치를 내리면 커밋해 잠금을 푼다. */
+  private CountDownLatch holdLock(Runnable lock) {
+    CountDownLatch locked = new CountDownLatch(1);
+    CountDownLatch release = new CountDownLatch(1);
+    pool.submit(() ->
+        transaction.executeWithoutResult(status -> {
+          lock.run();
+          locked.countDown();
+          await(release);
+        }));
+    await(locked);
+    return release;
+  }
+
+  private void lockRow(UUID id) {
+    jdbc.queryForList("SELECT id FROM state.phone_verification WHERE id = ? FOR UPDATE", id);
+  }
+
+  private int smsTotalOn(LocalDate day) {
+    List<Integer> counts =
+        jdbc.queryForList(
+            "SELECT count FROM state.rate_counter WHERE counter_key = 'sms-total' AND window_date = ?",
+            Integer.class,
+            java.sql.Date.valueOf(day));
+    return counts.isEmpty() ? 0 : counts.get(0);
+  }
 
   private String ticket(VerificationPurpose purpose) {
     IssuedCode code = service.issue(PHONE, purpose);

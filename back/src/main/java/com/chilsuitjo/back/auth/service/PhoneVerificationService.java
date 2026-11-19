@@ -52,8 +52,9 @@ public class PhoneVerificationService {
   @Transactional
   public IssuedCode issue(String rawPhone, VerificationPurpose purpose) {
     String phone = PhoneNumber.normalize(rawPhone);
-    Instant now = clock.instant();
     verifications.lockPhone(keys.phoneLockKey(phone));
+    // 잠금을 기다리는 동안 시간이 지나거나 한국 날짜가 바뀔 수 있어, 시각은 잠금을 얻은 뒤 읽는다
+    Instant now = clock.instant();
 
     verifications
         .findFirstByPhoneAndPurposeOrderByCreatedAtDesc(phone, purpose)
@@ -118,8 +119,9 @@ public class PhoneVerificationService {
   }
 
   private VerifyResult check(UUID verificationId, String code) {
-    Instant now = clock.instant();
     PhoneVerification row = verifications.findForUpdate(verificationId).orElse(null);
+    // 행 잠금을 기다리는 동안 만료될 수 있어, 시각은 잠금을 얻은 뒤 읽는다
+    Instant now = clock.instant();
     if (row == null || row.getVerifiedAt() != null) {
       return VerifyResult.failed(ErrorCode.CODE_EXPIRED);
     }
@@ -156,7 +158,8 @@ public class PhoneVerificationService {
 
   /**
    * 바꾸는 일(가입·비밀번호 재설정·번호 변경)에 인증 표를 한 번 쓰고 인증한 번호를 돌려준다(06 ACC-1f·1l). 그 작업이 성공하는 트랜잭션 안에서 불러야 하고,
-   * 작업이 실패해 롤백되면 표는 그대로 남는다. 서명·목적·인증 여부·유효 시간·쓴 적 없음을 한 문장으로 확인해, 같은 표로 두 요청이 동시에 와도 하나만 성공한다.
+   * 작업이 실패해 롤백되면 표는 그대로 남는다. 행을 잠근 뒤 서명·목적·인증 여부·유효 시간·쓴 적 없음을 한 문장으로 확인해, 같은 표로 두 요청이 동시에 와도 하나만
+   * 성공한다.
    *
    * @throws BusinessException 쓸 수 없는 표면 {@code CODE_EXPIRED}
    * @throws IllegalArgumentException 아이디 찾기({@link #readTicket}을 쓴다)
@@ -167,7 +170,9 @@ public class PhoneVerificationService {
       throw new IllegalArgumentException(purpose + " 인증 표는 쓴 것으로 바꾸지 않는다. readTicket을 쓴다");
     }
     UUID id = keys.readTicket(ticket).orElseThrow(() -> expired());
-    if (verifications.consume(id, purpose, clock.instant()) == 0) {
+    // 먼저 행을 잠그고 잠금을 얻은 뒤의 시각으로 확인한다. 조건부 UPDATE에 시각을 넘긴 채 잠금을 기다리면 기다리는 동안 만료된 표가 통과한다
+    if (verifications.findForUpdate(id).isEmpty()
+        || verifications.consume(id, purpose, clock.instant()) == 0) {
       throw expired();
     }
     return verifications.findById(id).orElseThrow(() -> expired()).getPhone();
