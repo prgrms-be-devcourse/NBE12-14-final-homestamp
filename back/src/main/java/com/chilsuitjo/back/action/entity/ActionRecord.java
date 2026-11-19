@@ -170,6 +170,9 @@ public class ActionRecord {
       String reason,
       String payload,
       Instant createdAt) {
+    if (hashVersion < 1 || hashVersion > Short.MAX_VALUE) {
+      throw new IllegalArgumentException("hash_version은 1부터 smallint 범위예요: " + hashVersion);
+    }
     this.hashVersion = (short) hashVersion;
     this.roomRecordId = roomRecordId;
     this.roomSeq = roomSeq;
