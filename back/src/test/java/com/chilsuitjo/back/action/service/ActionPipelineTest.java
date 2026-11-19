@@ -45,10 +45,11 @@ class ActionPipelineTest {
   private final FakeActionWriter writer = new FakeActionWriter();
   private final FakeRoomGateReader gates = new FakeRoomGateReader();
   private final ActionFollowUps followUps = new ActionFollowUps();
+  private final ActionRequestContext requestContext = new ActionRequestContext();
   private final ActionPipelineFixture.NoOpTransactionManager transactionManager =
       new ActionPipelineFixture.NoOpTransactionManager();
   private final ActionPipeline pipeline =
-      new ActionPipeline(gates, writer, followUps, transactionManager, clock);
+      new ActionPipeline(gates, writer, followUps, requestContext, transactionManager, clock);
 
   private final SampleStore store = new SampleStore();
   private final SampleTransitions rules = new SampleTransitions();
@@ -310,7 +311,7 @@ class ActionPipelineTest {
   void 같은_키가_동시에_와서_제약에_걸리면_새_트랜잭션에서_처음_결과를_돌려준다() {
     RacingWriter racing = new RacingWriter(writer);
     ActionPipeline racingPipeline =
-        new ActionPipeline(gates, racing, followUps, transactionManager, clock);
+        new ActionPipeline(gates, racing, followUps, requestContext, transactionManager, clock);
     PipelineResult<Sample> winner = pipeline.create(register("k1"), store, rules);
 
     PipelineResult<Sample> loser = racingPipeline.create(register("k1"), store, rules);
@@ -468,7 +469,8 @@ class ActionPipelineTest {
   void apply가_받은_시각과_저장된_시각은_요청마다_하나이고_마이크로초로_자른다() {
     FakeActionWriter saved = new FakeActionWriter();
     ActionPipeline advancing =
-        new ActionPipeline(gates, saved, followUps, transactionManager, advancingClock());
+        new ActionPipeline(
+            gates, saved, followUps, requestContext, transactionManager, advancingClock());
     List<Instant> seen = new ArrayList<>();
     Transitions<Sample> capturing =
         new Transitions<>() {
@@ -492,6 +494,42 @@ class ActionPipelineTest {
     Instant at = seen.getFirst();
     assertThat(at).isEqualTo(at.truncatedTo(ChronoUnit.MICROS));
     assertThat(saved.findByRoom(room)).extracting(ActionEntry::createdAt).containsOnly(at);
+  }
+
+  @Test
+  void save에서_읽은_시각과_requestId는_행동_기록과_같다() {
+    List<Instant> seenAt = new ArrayList<>();
+    List<UUID> seenRequest = new ArrayList<>();
+    store.afterSave =
+        () -> {
+          seenAt.add(requestContext.at());
+          seenRequest.add(requestContext.requestId());
+        };
+    ActionPipeline advancing =
+        new ActionPipeline(
+            gates, writer, followUps, requestContext, transactionManager, advancingClock());
+
+    advancing.create(register("k1"), store, rules);
+
+    ActionEntry recorded = writer.findByRoom(room).getFirst();
+    assertThat(seenAt).containsExactly(recorded.createdAt());
+    assertThat(seenRequest).containsExactly(recorded.requestId());
+  }
+
+  @Test
+  void 요청_시각은_pipeline_밖에서_읽을_수_없고_실패해도_닫힌다() {
+    assertThatThrownBy(requestContext::at).isInstanceOf(IllegalStateException.class);
+
+    pipeline.create(register("ok"), store, rules);
+    assertThatThrownBy(requestContext::requestId).isInstanceOf(IllegalStateException.class);
+
+    store.afterSave =
+        () -> {
+          throw new BusinessException(ErrorCode.INVALID_STATE);
+        };
+    assertThatThrownBy(() -> pipeline.create(register("fail"), store, rules))
+        .isInstanceOf(BusinessException.class);
+    assertThatThrownBy(requestContext::at).isInstanceOf(IllegalStateException.class);
   }
 
   /** 부를 때마다 1.001마이크로초씩 가는 시계. 시각을 두 번 읽거나 자르지 않으면 값이 어긋난다. */
