@@ -497,6 +497,22 @@ class ActionPipelineTest {
   }
 
   @Test
+  void 잘못된_멱등_키는_400_VALIDATION_FAILED() {
+    for (String key :
+        new String[] {null, "", "  ", "a#b", "k".repeat(ActionBatch.MAX_KEY_LENGTH + 1)}) {
+      assertThatThrownBy(() -> ActionBatch.of(room, Actor.member(tenantId), key))
+          .as(String.valueOf(key))
+          .isInstanceOfSatisfying(
+              BusinessException.class,
+              e -> assertThat(e.errorCode()).isEqualTo(ErrorCode.VALIDATION_FAILED));
+    }
+    assertThat(ErrorCode.VALIDATION_FAILED.status().value()).isEqualTo(400);
+    // 화면의 키(UUID)와 한도 길이는 받는다.
+    ActionBatch.of(room, Actor.member(tenantId), UUID.randomUUID().toString());
+    ActionBatch.of(room, Actor.member(tenantId), "k".repeat(ActionBatch.MAX_KEY_LENGTH));
+  }
+
+  @Test
   void save에서_읽은_시각과_requestId는_행동_기록과_같다() {
     List<Instant> seenAt = new ArrayList<>();
     List<UUID> seenRequest = new ArrayList<>();
@@ -710,8 +726,6 @@ class ActionPipelineTest {
 
   @Test
   void 잘못_부른_요청은_벨트에_들어가지_않는다() {
-    assertThatThrownBy(() -> ActionBatch.of(room, Actor.member(tenantId), "a#b"))
-        .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> pipeline.executeAll(ActionBatch.of(room, Actor.member(tenantId), "k")))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() ->

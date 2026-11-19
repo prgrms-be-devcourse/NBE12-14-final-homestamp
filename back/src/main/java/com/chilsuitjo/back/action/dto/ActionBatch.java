@@ -3,6 +3,8 @@ package com.chilsuitjo.back.action.dto;
 import com.chilsuitjo.back.action.rule.ActionType;
 import com.chilsuitjo.back.action.rule.Transitions;
 import com.chilsuitjo.back.action.service.StateStore;
+import com.chilsuitjo.back.global.error.BusinessException;
+import com.chilsuitjo.back.global.error.ErrorCode;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -32,12 +34,26 @@ public final class ActionBatch {
   private ActionBatch(UUID roomRecordId, Actor actor, String idempotencyKey, boolean newRoom) {
     this.roomRecordId = roomRecordId;
     this.actor = Objects.requireNonNull(actor, "actor");
-    this.idempotencyKey = Objects.requireNonNull(idempotencyKey, "idempotencyKey");
-    if (idempotencyKey.isBlank() || idempotencyKey.indexOf('#') >= 0) {
-      // <키>#2 …는 pipeline이 붙인다. 화면의 키는 UUID(06 4-0)라 #가 없다.
-      throw new IllegalArgumentException("Idempotency-Key가 비었거나 #가 들어 있어요");
-    }
+    this.idempotencyKey = checkKey(idempotencyKey);
     this.newRoom = newRoom;
+  }
+
+  /**
+   * 화면 키 길이 한도. 화면의 키는 UUID(36자)이고, pipeline이 {@code #2} …를 붙여도 V1 {@code varchar(100)}을 넘지 않게 여유를
+   * 둔다.
+   */
+  public static final int MAX_KEY_LENGTH = 64;
+
+  /**
+   * 화면이 보낸 {@code Idempotency-Key}를 확인한다(06 4-0). 비었거나 {@code #}가 들었거나({@code <키>#2} …는 pipeline이
+   * 붙임) {@link #MAX_KEY_LENGTH}를 넘으면 {@code VALIDATION_FAILED}(400). 서비스가 batch를 만들 때 걸리므로 트랜잭션·잠금
+   * 전에 끝난다.
+   */
+  private static String checkKey(String key) {
+    if (key == null || key.isBlank() || key.indexOf('#') >= 0 || key.length() > MAX_KEY_LENGTH) {
+      throw new BusinessException(ErrorCode.VALIDATION_FAILED);
+    }
+    return key;
   }
 
   public static ActionBatch of(UUID roomRecordId, Actor actor, String idempotencyKey) {
