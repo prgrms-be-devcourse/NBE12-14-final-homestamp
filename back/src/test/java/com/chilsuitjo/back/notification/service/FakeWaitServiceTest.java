@@ -100,15 +100,152 @@ class FakeWaitServiceTest {
   }
 
   @Test
-  void 다시_요청하면_같은_요청이_기다림으로_돌아간다() {
+  void 답한_요청에_다시_요청하면_새_요청을_연다() {
     RequestHandle first = waits.open(defectConfirm());
     waits.answered(repairCase, RequestKind.DEFECT_CONFIRM, PartySide.LANDLORD);
 
     RequestHandle again = waits.restart(defectConfirm());
 
+    assertThat(again.created()).isTrue();
+    assertThat(again.requestId()).isNotEqualTo(first.requestId());
+    assertThat(waits.statusOf(repairCase, RequestKind.DEFECT_CONFIRM))
+        .contains(RequestStatus.WAITING);
+  }
+
+  @Test
+  void 닫힌_요청은_다시_요청해도_되살리지_않고_새로_연다() {
+    RequestHandle first = waits.open(defectConfirm());
+    waits.close(repairCase, RequestKind.DEFECT_CONFIRM, ClosedReason.SHARING_STOPPED);
+
+    RequestHandle again = waits.restart(defectConfirm());
+
+    assertThat(again.created()).isTrue();
+    assertThat(again.requestId()).isNotEqualTo(first.requestId());
+    assertThat(waits.statusOf(repairCase, RequestKind.DEFECT_CONFIRM))
+        .contains(RequestStatus.WAITING);
+    assertThat(waits.closedReasonOf(repairCase, RequestKind.DEFECT_CONFIRM)).isEmpty();
+  }
+
+  @Test
+  void 기다리는_요청에_다시_요청하면_같은_요청에_묶는다() {
+    RequestHandle first = waits.open(defectConfirm());
+
+    RequestHandle again = waits.restart(defectConfirm());
+
+    assertThat(again.created()).isFalse();
     assertThat(again.requestId()).isEqualTo(first.requestId());
     assertThat(waits.statusOf(repairCase, RequestKind.DEFECT_CONFIRM))
         .contains(RequestStatus.WAITING);
+  }
+
+  @Test
+  void 미확인인_점검_확인에_다시_요청해도_미확인과_혼자_진행이_그대로다() {
+    RequestTarget inspection = RequestTarget.of(TargetKind.INSPECTION, UUID.randomUUID());
+    OpenRequestCommand confirm =
+        new OpenRequestCommand(
+            roomRecordId, RequestKind.INSPECTION_CONFIRM, inspection, PartySide.TENANT);
+    SoloQuery solo =
+        new SoloQuery(roomRecordId, RequestKind.INSPECTION_CONFIRM, inspection, PartySide.TENANT);
+    RequestHandle first = waits.open(confirm);
+    waits.markUnconfirmed(inspection, RequestKind.INSPECTION_CONFIRM, PartySide.TENANT);
+
+    RequestHandle again = waits.restart(confirm);
+
+    assertThat(again.created()).isFalse();
+    assertThat(again.requestId()).isEqualTo(first.requestId());
+    assertThat(waits.statusOf(inspection, RequestKind.INSPECTION_CONFIRM, PartySide.TENANT))
+        .contains(RequestStatus.UNCONFIRMED);
+    assertThat(waits.canGoSolo(solo)).isEqualTo(SoloCheck.allowedBecause(SoloReason.UNCONFIRMED));
+  }
+
+  // ---- 점검 확인은 점검 × 요청한 측마다 하나(03 H, V1 ux_inspection_confirm_waiting) ----
+
+  @Test
+  void 점검_확인은_요청한_측마다_따로_연다() {
+    RequestHandle fromTenant = waits.open(inspectionConfirm(PartySide.TENANT));
+    RequestHandle fromLandlord = waits.open(inspectionConfirm(PartySide.LANDLORD));
+
+    assertThat(fromTenant.created()).isTrue();
+    assertThat(fromLandlord.created()).isTrue();
+    assertThat(fromLandlord.requestId()).isNotEqualTo(fromTenant.requestId());
+  }
+
+  @Test
+  void 점검_확인에_답하면_답한_측에게_온_요청만_닫힌다() {
+    waits.open(inspectionConfirm(PartySide.TENANT));
+    waits.open(inspectionConfirm(PartySide.LANDLORD));
+
+    // 세입자가 집주인이 적은 항목에 모두 답함 = 집주인이 보낸 요청에 답함
+    waits.answered(inspection, RequestKind.INSPECTION_CONFIRM, PartySide.TENANT);
+
+    assertThat(waits.statusOf(inspection, RequestKind.INSPECTION_CONFIRM, PartySide.LANDLORD))
+        .contains(RequestStatus.ANSWERED);
+    assertThat(waits.statusOf(inspection, RequestKind.INSPECTION_CONFIRM, PartySide.TENANT))
+        .contains(RequestStatus.WAITING);
+  }
+
+  @Test
+  void 점검_확인을_닫으면_두_방향_모두_닫힌다() {
+    waits.open(inspectionConfirm(PartySide.TENANT));
+    waits.open(inspectionConfirm(PartySide.LANDLORD));
+
+    waits.close(inspection, RequestKind.INSPECTION_CONFIRM, ClosedReason.SHARING_STOPPED);
+
+    for (PartySide side : PartySide.values()) {
+      assertThat(waits.statusOf(inspection, RequestKind.INSPECTION_CONFIRM, side))
+          .contains(RequestStatus.CLOSED);
+      assertThat(waits.closedReasonOf(inspection, RequestKind.INSPECTION_CONFIRM, side))
+          .contains(ClosedReason.SHARING_STOPPED);
+    }
+  }
+
+  @Test
+  void 점검_확인의_혼자_진행은_요청한_측마다_따로_본다() {
+    waits.open(inspectionConfirm(PartySide.TENANT));
+    waits.open(inspectionConfirm(PartySide.LANDLORD));
+
+    waits.markUnconfirmed(inspection, RequestKind.INSPECTION_CONFIRM, PartySide.TENANT);
+
+    assertThat(waits.canGoSolo(inspectionSolo(PartySide.TENANT)).allowed()).isTrue();
+    assertThat(waits.canGoSolo(inspectionSolo(PartySide.LANDLORD)).allowed()).isFalse();
+  }
+
+  @Test
+  void 방향_없이_점검_확인을_물으면_거절한다() {
+    waits.open(inspectionConfirm(PartySide.TENANT));
+
+    assertThatThrownBy(() -> waits.statusOf(inspection, RequestKind.INSPECTION_CONFIRM))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> waits.markUnconfirmed(inspection, RequestKind.INSPECTION_CONFIRM))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void 제안은_역제안이_와도_같은_요청이다() {
+    RequestTarget agenda = RequestTarget.of(TargetKind.REPAIR_CASE, UUID.randomUUID());
+    RequestHandle proposal =
+        waits.open(
+            new OpenRequestCommand(roomRecordId, RequestKind.PROPOSAL, agenda, PartySide.LANDLORD));
+
+    RequestHandle counter =
+        waits.open(
+            new OpenRequestCommand(roomRecordId, RequestKind.PROPOSAL, agenda, PartySide.TENANT));
+
+    // 05: PROPOSAL은 안건을 가리키고 기다리는 안이 바뀌어도 같은 요청(ux_proposal_waiting)
+    assertThat(counter.created()).isFalse();
+    assertThat(counter.requestId()).isEqualTo(proposal.requestId());
+  }
+
+  private final RequestTarget inspection =
+      RequestTarget.of(TargetKind.INSPECTION, UUID.randomUUID());
+
+  private OpenRequestCommand inspectionConfirm(PartySide requestedBySide) {
+    return new OpenRequestCommand(
+        roomRecordId, RequestKind.INSPECTION_CONFIRM, inspection, requestedBySide);
+  }
+
+  private SoloQuery inspectionSolo(PartySide requestedBySide) {
+    return new SoloQuery(roomRecordId, RequestKind.INSPECTION_CONFIRM, inspection, requestedBySide);
   }
 
   @Test
