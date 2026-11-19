@@ -1,5 +1,6 @@
 package com.chilsuitjo.back.action.entity;
 
+import com.chilsuitjo.back.action.rule.ActionHash;
 import com.chilsuitjo.back.global.common.PartySide;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -220,32 +221,52 @@ public class ActionRecord {
     return this;
   }
 
-  private boolean hasTarget() {
-    for (UUID value :
-        new UUID[] {
-          partyId,
-          linkId,
-          roomPartId,
-          noticeId,
-          repairCaseId,
-          paymentId,
-          inspectionId,
-          inspectionItemId,
-          settlementId,
-          settlementItemId,
-          settlementTransferId,
-          proposalId,
-          responseRequestId,
-          correctionRequestId,
-          causeNoteId,
-          progressNoteId,
-          photoId
-        }) {
-      if (value != null) {
-        return true;
+  /** 채운 대상 칸 이름({@code ActionHash.TARGET_COLUMNS} 중 하나). 호실 기록 자체가 대상이면 null. */
+  public String targetColumn() {
+    UUID[] values = targetValues();
+    for (int i = 0; i < values.length; i++) {
+      if (values[i] != null) {
+        return ActionHash.TARGET_COLUMNS.get(i);
       }
     }
-    return false;
+    return null;
+  }
+
+  /** 채운 대상 칸의 ID. 호실 기록 자체가 대상이면 null. */
+  public UUID targetId() {
+    for (UUID value : targetValues()) {
+      if (value != null) {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  private boolean hasTarget() {
+    return targetId() != null;
+  }
+
+  /** 대상 칸 값. 순서는 {@code ActionHash.TARGET_COLUMNS}(V1 칸 순서)와 같다. */
+  private UUID[] targetValues() {
+    return new UUID[] {
+      partyId,
+      linkId,
+      roomPartId,
+      noticeId,
+      repairCaseId,
+      paymentId,
+      inspectionId,
+      inspectionItemId,
+      settlementId,
+      settlementItemId,
+      settlementTransferId,
+      proposalId,
+      responseRequestId,
+      correctionRequestId,
+      causeNoteId,
+      progressNoteId,
+      photoId
+    };
   }
 
   public UUID getId() {
