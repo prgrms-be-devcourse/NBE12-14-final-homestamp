@@ -30,9 +30,34 @@ public record LinkRecordResponse(
     history = List.copyOf(history);
   }
 
-  /** 사진 하나. 지운 사진은 주소 없이 "지운 사진"으로만 보인다(03 6-6). */
+  /**
+   * 사진 하나. 지운 사진은 주소 없이 "올린 사람이 개인정보 때문에 지운 사진 · 시각"으로만 보인다(03 6-1, 6-6).
+   *
+   * @param erased 개인정보 때문에 지운 사진인지. 화면이 이미 쓰는 칸이라 그대로 두고 {@code erasedAt}과 함께 채운다
+   * @param erasedAt 지운 시각. 지우지 않았으면 null
+   */
   public record Photo(
-      UUID id, String thumbUrl, String originalUrl, Instant expiresAt, boolean erased) {}
+      UUID id,
+      String thumbUrl,
+      String originalUrl,
+      Instant expiresAt,
+      boolean erased,
+      Instant erasedAt) {
+
+    public Photo {
+      if (erased != (erasedAt != null)) {
+        throw new IllegalArgumentException("지운 사진이면 지운 시각이 있어야 하고, 아니면 없어야 해요");
+      }
+      if (erased && (thumbUrl != null || originalUrl != null)) {
+        throw new IllegalArgumentException("지운 사진은 파일이 없어 주소를 담지 않아요");
+      }
+    }
+
+    /** 개인정보 때문에 지운 사진. 주소 없이 지운 시각만 담는다. */
+    public static Photo erased(UUID id, Instant erasedAt) {
+      return new Photo(id, null, null, null, true, erasedAt);
+    }
+  }
 
   /** 경과 한 줄. */
   public record HistoryItem(String label, PartySide side, Instant at) {}
