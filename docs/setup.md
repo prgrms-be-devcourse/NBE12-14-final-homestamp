@@ -98,8 +98,8 @@ npm run dev                # http://localhost:5173, /api는 백엔드(8080)로 �
 ### 지금 알아 둘 것
 
 - **프로필은 기본 `local`이다.** 다른 프로필로 띄우려면 환경 변수 `SPRING_PROFILES_ACTIVE`를 주거나(`SPRING_PROFILES_ACTIVE=test ./gradlew bootRun`) `--args='--spring.profiles.active=test'`를 붙인다.
-- **API 문서(Swagger UI)는 로컬에서만 켜진다.** `bootRun`이 local 프로필로 떠서 http://localhost:8080/swagger-ui/index.html 에 열린다(운영에서는 꺼짐, `docs/rules/04` API 문서). 보안 뼈대 전에는 아래처럼 로그인을 요구한다.
-- **API는 401이 정상이다.** 보안 뼈대(A 담당, 1주차 2일차) 전에는 Spring Security 기본값이라 `/api/**`가 모두 401이고, 로그에 `Using generated security password`가 찍힌다. `/actuator/health`는 열려 있어 앱이 떴는지 확인할 수 있다.
+- **API 문서(Swagger UI)는 로컬에서만 켜진다.** `bootRun`이 local 프로필로 떠서 http://localhost:8080/swagger-ui/index.html 에 열린다(운영에서는 꺼짐, `docs/rules/04` API 문서). 문서 주소는 local·test 프로필에서만 로그인 없이 열리고, `prod`가 켜지면 열리지 않는다.
+- **로그인이 필요한 API는 가짜 토큰으로 부른다.** 실제 로그인(JWT) 전에는 local·test 프로필에서 가짜 검증기가 켜져, 요청 머리에 `Authorization: Bearer <회원 UUID>`를 넣으면 그 회원으로 로그인한 것이 된다(예: `curl -H "Authorization: Bearer 0190b6c6-0000-7000-8000-000000000001" http://localhost:8080/api/...`). 토큰이 없거나 맞지 않으면 `401 LOGIN_REQUIRED`다. 가입·로그인 같은 공개 API(06 4-1)와 가입 전 링크(`POST /api/public/**`), `/actuator/health`는 토큰 없이 열린다.
 - **테이블은 아직 없다.** V1 마이그레이션(1일차) 전에는 Flyway 기록 테이블만 생긴다.
 
 ## 문제가 생기면
