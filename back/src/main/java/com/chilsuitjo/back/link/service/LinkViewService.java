@@ -16,7 +16,6 @@ import com.chilsuitjo.back.link.entity.Link;
 import com.chilsuitjo.back.link.repository.LinkRepository;
 import com.chilsuitjo.back.link.rule.LinkKind;
 import com.chilsuitjo.back.link.rule.LinkToken;
-import com.chilsuitjo.back.member.service.MemberQueryService;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.Map;
@@ -42,7 +41,6 @@ public class LinkViewService {
 
   private final LinkRepository links;
   private final LinkContentSource content;
-  private final MemberQueryService members;
   private final ActionPipeline pipeline;
   private final Clock clock;
   private final Duration viewDedupe;
@@ -50,13 +48,11 @@ public class LinkViewService {
   public LinkViewService(
       LinkRepository links,
       LinkContentSource content,
-      MemberQueryService members,
       ActionPipeline pipeline,
       Clock clock,
       @Value("${app.link.view-dedupe:10m}") Duration viewDedupe) {
     this.links = links;
     this.content = content;
-    this.members = members;
     this.pipeline = pipeline;
     this.clock = clock;
     this.viewDedupe = viewDedupe;
@@ -106,17 +102,10 @@ public class LinkViewService {
   }
 
   private LinkViewResponse response(Link link, LinkRoom room) {
-    String inviter = members.maskedName(link.getIssuedByMemberId()).orElse(null);
     if (link.getKind() == LinkKind.SETTLEMENT_INVITE) {
+      // "퇴거 정산 확인 요청이 있어요"와 가입 버튼만(LINK-3a). 위치·측·금액·항목은 주지 않는다.
       return new LinkViewResponse(
-          LinkViewKind.SETTLEMENT_INVITE,
-          room.sido(),
-          room.sigungu(),
-          room.dong(),
-          inviter,
-          room.recipientSide(),
-          null,
-          false);
+          LinkViewKind.SETTLEMENT_INVITE, null, null, null, null, null, false);
     }
     TargetKind kind = targetKind(link);
     if (kind == null) {
@@ -125,7 +114,6 @@ public class LinkViewService {
           room.sido(),
           room.sigungu(),
           room.dong(),
-          inviter,
           room.recipientSide(),
           null,
           false);
@@ -141,7 +129,6 @@ public class LinkViewService {
         room.sido(),
         room.sigungu(),
         room.dong(),
-        inviter,
         room.recipientSide(),
         record,
         content.hasMoney(link.getRoomRecordId(), kind, recordId));

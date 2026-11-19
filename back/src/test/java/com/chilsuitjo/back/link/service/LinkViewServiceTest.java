@@ -26,7 +26,6 @@ import com.chilsuitjo.back.link.repository.LinkRepository;
 import com.chilsuitjo.back.link.rule.LinkInvalidReason;
 import com.chilsuitjo.back.link.rule.LinkKind;
 import com.chilsuitjo.back.link.rule.LinkToken;
-import com.chilsuitjo.back.member.service.FakeMemberQueryService;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -45,19 +44,14 @@ class LinkViewServiceTest {
       new ActionPipelineFixture(Clock.fixed(NOW, ZoneOffset.UTC));
   private final LinkRepository links = mock(LinkRepository.class);
   private final FakeLinkContentSource content = new FakeLinkContentSource();
-  private final FakeMemberQueryService members = new FakeMemberQueryService();
   private final MutableClock clock = new MutableClock(NOW);
   private final LinkViewService service =
-      new LinkViewService(links, content, members, fx.pipeline(), clock, Duration.ofMinutes(10));
+      new LinkViewService(links, content, fx.pipeline(), clock, Duration.ofMinutes(10));
 
   private final UUID roomRecordId = UUID.randomUUID();
   private final UUID partyId = UUID.randomUUID();
   private final UUID inviterId = UUID.randomUUID();
   private final UUID repairCaseId = UUID.randomUUID();
-
-  {
-    members.seed(inviterId, "정서윤");
-  }
 
   @Test
   void 기록_링크는_그_기록과_돈이_있다는_것만_보이고_열람이_남는다() {
@@ -69,7 +63,6 @@ class LinkViewServiceTest {
 
     assertThat(response.kind()).isEqualTo(LinkViewKind.RECORD);
     assertThat(response.dong()).isEqualTo("역삼동");
-    assertThat(response.inviterMaskedName()).isEqualTo("정*윤");
     assertThat(response.yourSide()).isEqualTo(PartySide.LANDLORD);
     assertThat(response.record().title()).isEqualTo("욕실 천장 누수");
     assertThat(response.hasMoney()).isTrue();
@@ -110,6 +103,8 @@ class LinkViewServiceTest {
 
     assertThat(response.kind()).isEqualTo(LinkViewKind.SETTLEMENT_INVITE);
     assertThat(response.record()).isNull();
+    assertThat(response.dong()).isNull();
+    assertThat(response.yourSide()).isNull();
   }
 
   @Test
