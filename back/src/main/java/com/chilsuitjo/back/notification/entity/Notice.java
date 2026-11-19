@@ -127,7 +127,7 @@ public class Notice {
     this.nextPollAt = at.plus(FIRST_POLL);
   }
 
-  /** 보내지 못했다(업체가 거절, 보낼 번호 없음, 다시 시도 끝). 보낸 측이 한 번 다시 보낼 수 있다(05 {@code notice}). */
+  /** 최종 실패(업체가 거절, 업체에 닿지 못한 채 3일). 보낸 측이 한 번 다시 보낼 수 있다(05 {@code notice}, 03 1-1). */
   public void markFailed(Instant at) {
     if (status != NoticeStatus.REQUESTED) {
       return;

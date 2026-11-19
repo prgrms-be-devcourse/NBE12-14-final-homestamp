@@ -110,6 +110,12 @@ class OutboxWorkerTest {
             "sms:" + noticeId);
 
     assertThat(payload).contains(noticeId.toString()).doesNotContain("01012345678");
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT payload->>'noticeId' FROM outbox WHERE dedupe_key = ?",
+                String.class,
+                "sms:" + noticeId))
+        .isEqualTo(noticeId.toString());
   }
 
   @Test
@@ -186,7 +192,21 @@ class OutboxWorkerTest {
   }
 
   @Test
-  void 보낼_번호가_없으면_보내지_않고_통지는_FAILED다() {
+  void 업체에_닿지_못한_채_3일이_지나면_최종_실패다() {
+    gateway.respondWith(SmsSendResult.Outcome.RETRY);
+    UUID noticeId = enqueue();
+    jdbc.update(
+        "UPDATE outbox SET created_at = CURRENT_TIMESTAMP - INTERVAL '3 days' WHERE dedupe_key = ?",
+        "sms:" + noticeId);
+
+    worker.runOnce();
+
+    assertThat(outboxStatus(noticeId)).isEqualTo("FAILED");
+    assertThat(notice(noticeId).get("status")).isEqualTo("FAILED");
+  }
+
+  @Test
+  void 보낼_번호가_없으면_보내지_않고_통지를_최종_실패로_두지_않는다() {
     UUID noticeId =
         transaction.execute(status ->
             noticeOutbox.enqueueSms(
@@ -194,8 +214,8 @@ class OutboxWorkerTest {
 
     worker.runOnce();
 
-    assertThat(notice(noticeId).get("status")).isEqualTo("FAILED");
-    assertThat(outboxStatus(noticeId)).isEqualTo("DONE");
+    assertThat(notice(noticeId).get("status")).isEqualTo("REQUESTED");
+    assertThat(outboxStatus(noticeId)).isEqualTo("FAILED");
     assertThat(gateway.sentBatchIds()).doesNotContain(noticeId);
   }
 
