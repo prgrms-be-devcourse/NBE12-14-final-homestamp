@@ -41,7 +41,7 @@ public class SecurityConfig {
     "/api/auth/reset-password",
   };
 
-  /** 06 4-4 가입 전 링크. 링크 토큰은 요청 본문으로 받아 링크 도메인이 확인한다. */
+  /** 06 4-4 가입 전 링크(모두 POST). 링크 토큰은 요청 본문으로 받아 링크 도메인이 확인한다. */
   private static final String PUBLIC_LINKS = "/api/public/**";
 
   /** 배포 스크립트가 앱이 떴는지 확인한다(04 블루/그린 전환). */
@@ -75,7 +75,7 @@ public class SecurityConfig {
         .exceptionHandling(e -> e.authenticationEntryPoint(loginRequired(exceptionResolver)))
         .authorizeHttpRequests(auth -> {
           auth.requestMatchers(HttpMethod.POST, PUBLIC_POSTS).permitAll();
-          auth.requestMatchers(PUBLIC_LINKS).permitAll();
+          auth.requestMatchers(HttpMethod.POST, PUBLIC_LINKS).permitAll();
           auth.requestMatchers(HttpMethod.GET, HEALTH).permitAll();
           if (devProfile) {
             auth.requestMatchers(HttpMethod.GET, API_DOCS).permitAll();

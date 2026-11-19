@@ -75,6 +75,13 @@ class SecurityTestProfileTest {
   }
 
   @Test
+  void 가입_전_링크_주소도_POST가_아니면_401() throws Exception {
+    mvc.perform(get("/api/public/links/view"))
+        .andExpect(status().isUnauthorized())
+        .andExpect(jsonPath("$.code").value("LOGIN_REQUIRED"));
+  }
+
+  @Test
   void 공개_API에서_LoginMember를_쓰면_로그인_없이는_LOGIN_REQUIRED() throws Exception {
     mvc.perform(post("/api/auth/signup"))
         .andExpect(status().isUnauthorized())
