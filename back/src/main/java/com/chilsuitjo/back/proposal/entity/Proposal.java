@@ -127,6 +127,9 @@ public class Proposal {
       int round,
       boolean noCost,
       Instant createdAt) {
+    if (repairCaseId == null) {
+      throw new NullPointerException("수리 건 부담 제안에는 수리 건이 있어야 해요");
+    }
     return new Proposal(
         roomRecordId,
         repairCaseId,
@@ -153,6 +156,9 @@ public class Proposal {
       boolean exclude,
       String reason,
       Instant createdAt) {
+    if (settlementItemId == null) {
+      throw new NullPointerException("정산 항목 제안에는 정산 항목이 있어야 해요");
+    }
     return new Proposal(
         roomRecordId,
         null,
@@ -177,6 +183,9 @@ public class Proposal {
       UUID replacesId,
       int round,
       Instant createdAt) {
+    if (settlementId == null) {
+      throw new NullPointerException("보증금 제안에는 정산이 있어야 해요");
+    }
     return new Proposal(
         roomRecordId,
         null,
