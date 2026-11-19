@@ -1,6 +1,7 @@
 package com.chilsuitjo.back;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.chilsuitjo.back.action.entity.ActionRecord;
 import com.chilsuitjo.back.action.rule.ActionHash;
@@ -93,26 +94,83 @@ class ActionHashRoundTripTest extends SchemaTestSupport {
     assertThat(stored).isNotEqualTo(withNanos);
   }
 
+  @Test
+  void payload_최상위_JSON_null과_목록은_DB가_막고_SQL_NULL은_같은_해시() {
+    // 최상위 'null'::jsonb를 받으면 SQL NULL과 같은 해시 입력이 되어 구별할 수 없다(V4 ck_action_payload_object).
+    UUID badRoom = room();
+    for (String top : new String[] {"null", "[]", "\"a\"", "1"}) {
+      // 실패한 INSERT가 테스트 트랜잭션을 끊지 않게 저장점으로 되돌린다.
+      jdbc.execute("SAVEPOINT top_payload");
+      assertThatThrownBy(() ->
+              jdbc.update(
+                  """
+                  INSERT INTO action (id, room_record_id, room_seq, prev_hash, hash, actor_key,
+                    type, idempotency_key, request_id, created_at, hash_version, payload)
+                  VALUES (gen_random_uuid(), ?, 1, ?, ?, 'server', 'AUTOCLOSE', ?,
+                    gen_random_uuid(), CURRENT_TIMESTAMP, 1, ?::jsonb)
+                  """,
+                  badRoom,
+                  new byte[32],
+                  new byte[32],
+                  "top-" + top,
+                  top))
+          .as(top)
+          .hasMessageContaining("ck_action_payload_object");
+      jdbc.execute("ROLLBACK TO SAVEPOINT top_payload");
+    }
+
+    UUID room = room();
+    ActionHash.Input input =
+        new ActionHash.Input(
+            ActionHash.VERSION,
+            room,
+            1,
+            ActionHash.start(),
+            null,
+            null,
+            null,
+            "server",
+            "AUTOCLOSE",
+            "sql-null",
+            null,
+            null,
+            null,
+            null,
+            null,
+            Instant.now().truncatedTo(ChronoUnit.MICROS),
+            UUID.randomUUID());
+    byte[] hash = ActionHash.compute(input);
+    UUID id = save(input, hash, null).getId();
+    entityManager.flush();
+    entityManager.clear();
+
+    ActionRecord stored = entityManager.find(ActionRecord.class, id);
+    assertThat(stored.getPayload()).isNull();
+    assertThat(ActionHash.compute(readBack(stored))).isEqualTo(hash);
+  }
+
   private ActionRecord save(ActionHash.Input in, byte[] hash, String payloadJson) {
     ActionRecord action =
         new ActionRecord(
-                in.hashVersion(),
-                in.roomRecordId(),
-                in.roomSeq(),
-                in.prevHash(),
-                hash,
-                in.contentDigest(),
-                in.actorMemberId(),
-                in.actorSide(),
-                in.actorKey(),
-                in.type(),
-                in.idempotencyKey(),
-                in.requestId(),
-                in.seenVersionNo(),
-                in.reason(),
-                payloadJson,
-                in.createdAt())
-            .target(in.targetColumn(), in.targetId());
+            in.hashVersion(),
+            in.roomRecordId(),
+            in.roomSeq(),
+            in.prevHash(),
+            hash,
+            in.contentDigest(),
+            in.actorMemberId(),
+            in.actorSide(),
+            in.actorKey(),
+            in.type(),
+            in.idempotencyKey(),
+            in.requestId(),
+            in.seenVersionNo(),
+            in.reason(),
+            payloadJson,
+            in.createdAt());
+    if (in.targetColumn() != null) {
+      action.target(in.targetColumn(), in.targetId());
+    }
     entityManager.persist(action);
     return action;
   }

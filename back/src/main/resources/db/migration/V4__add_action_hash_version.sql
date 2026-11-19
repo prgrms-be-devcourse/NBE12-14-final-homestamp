@@ -9,3 +9,8 @@
 ALTER TABLE record.action
     ADD COLUMN hash_version smallint NOT NULL
         CONSTRAINT ck_action_hash_version CHECK (hash_version >= 1);
+
+-- payload 최상위는 SQL NULL(부가 값 없음)이거나 JSON 객체만 받는다. 최상위 JSON null('null'::jsonb)·목록·글자를 받으면
+-- 행동 해시에서 SQL NULL과 'null'::jsonb가 같은 입력이 되어 구별할 수 없다(#87 리뷰). 안쪽의 JSON null은 그대로 쓸 수 있다.
+ALTER TABLE record.action
+    ADD CONSTRAINT ck_action_payload_object CHECK (payload IS NULL OR jsonb_typeof(payload) = 'object');
