@@ -23,8 +23,8 @@ import java.util.Set;
  * <p>사진을 어디에 붙이는지처럼 대상으로 갈리는 것은 표시로 정하지 않고 도메인 {@code Transitions}가 본다(예: 그만둔 동안 {@code ADD_PHOTO}는
  * 진행 상황과 그동안 만든 새 수리 건에만).
  *
- * <p>문자 그만 받기({@code OPT_OUT})는 번호 주인의 수신 거부라 호실 기록에 대한 행동이 아니다. 호실 상태로 거절하지 않도록 정산 완료·합류 전 기록에서도
- * 둔다(decisions 2026-11-19). 공유 중단·거주 종료로는 원래 막히지 않는다.
+ * <p>문자 그만 받기({@code OPT_OUT})는 번호 주인의 수신 거부라 호실 기록에 대한 행동이 아니다. 호실 상태로 거절하지 않도록 정산 완료·합류 전 기록·공유
+ * 중단 표시를 모두 둔다(decisions 2026-11-19). 03 B "그만둔 사람이 할 수 있는 것"에는 없지만 이 이유로 예외다. 거주 종료로는 원래 막히지 않는다.
  */
 public enum ActionType {
   // 호실·참여
@@ -48,7 +48,7 @@ public enum ActionType {
   CONFIRM_LIVING(Area.ROOM, Allow.WHILE_SHARING_STOPPED),
   // 링크·통지
   LINK_VIEW(Area.LINK_NOTICE),
-  OPT_OUT(Area.LINK_NOTICE, Allow.AFTER_SETTLED, Allow.ON_JOINED),
+  OPT_OUT(Area.LINK_NOTICE, Allow.AFTER_SETTLED, Allow.ON_JOINED, Allow.WHILE_SHARING_STOPPED),
   RESEND_NOTICE(Area.LINK_NOTICE),
   RENOTIFY(Area.LINK_NOTICE),
   MARK_UNCONFIRMED(Area.LINK_NOTICE),

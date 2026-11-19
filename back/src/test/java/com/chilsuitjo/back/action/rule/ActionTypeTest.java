@@ -69,7 +69,8 @@ class ActionTypeTest {
             ActionType.REJECT_END,
             ActionType.CONFIRM_LIVING,
             ActionType.RESUME_SHARING,
-            ActionType.SHARE_CONSENT);
+            ActionType.SHARE_CONSENT,
+            ActionType.OPT_OUT);
   }
 
   @Test

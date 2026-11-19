@@ -553,6 +553,19 @@ class ActionPipelineTest {
   }
 
   @Test
+  void 문자_그만_받기는_호실_상태와_관계없이_남는다() {
+    gates.putRoom(new RoomGate(room, null, true, true, true, true)); // 정산 완료·합류 전·공유 중단·거주 종료
+
+    pipeline.executeAll(
+        ActionBatch.of(room, Actor.link(UUID.randomUUID(), PartySide.LANDLORD), "k1")
+            .record(ActionType.OPT_OUT, Map.of()));
+
+    assertThat(writer.findByRoom(room))
+        .extracting(ActionEntry::type)
+        .containsExactly(ActionType.OPT_OUT);
+  }
+
+  @Test
   void 공유를_그만둔_사람은_초대할_수_없다() {
     gates.put(tenantId, new RoomGate(room, PartySide.TENANT, false, false, true, false));
 
