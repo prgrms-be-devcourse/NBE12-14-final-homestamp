@@ -13,6 +13,9 @@ import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 import java.time.Instant;
 import java.util.UUID;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UuidGenerator;
 import org.hibernate.type.SqlTypes;
@@ -29,6 +32,8 @@ import org.hibernate.type.SqlTypes;
  */
 @Entity
 @Table(schema = "state", name = "correction_request")
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class CorrectionRequest {
 
   @Id
@@ -94,8 +99,6 @@ public class CorrectionRequest {
 
   @Version private Long version;
 
-  protected CorrectionRequest() {}
-
   /** 대상 칸은 최대 하나만 넘긴다(나머지 null). 처음 상태는 WAITING. */
   public CorrectionRequest(
       UUID roomRecordId,
@@ -125,77 +128,5 @@ public class CorrectionRequest {
     this.reason = reason;
     this.createdAt = createdAt;
     this.status = CorrectionStatus.WAITING;
-  }
-
-  public UUID getId() {
-    return id;
-  }
-
-  public UUID getRoomRecordId() {
-    return roomRecordId;
-  }
-
-  public String getField() {
-    return field;
-  }
-
-  public String getNewValue() {
-    return newValue;
-  }
-
-  public UUID getBaseVersionId() {
-    return baseVersionId;
-  }
-
-  public UUID getRepairCaseId() {
-    return repairCaseId;
-  }
-
-  public UUID getPaymentId() {
-    return paymentId;
-  }
-
-  public UUID getInspectionItemId() {
-    return inspectionItemId;
-  }
-
-  public UUID getSettlementTransferId() {
-    return settlementTransferId;
-  }
-
-  public String getTargetKey() {
-    return targetKey;
-  }
-
-  public UUID getRetryOfId() {
-    return retryOfId;
-  }
-
-  public PartySide getRequestedBySide() {
-    return requestedBySide;
-  }
-
-  public String getReason() {
-    return reason;
-  }
-
-  public CorrectionStatus getStatus() {
-    return status;
-  }
-
-  public ClosedReason getClosedReason() {
-    return closedReason;
-  }
-
-  public Instant getClosedAt() {
-    return closedAt;
-  }
-
-  public Instant getCreatedAt() {
-    return createdAt;
-  }
-
-  public Long getVersion() {
-    return version;
   }
 }

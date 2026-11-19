@@ -44,6 +44,7 @@ public enum ErrorCode {
   PHONE_OPTED_OUT(HttpStatus.CONFLICT, "이 번호는 문자를 그만 받기로 했어요. 혼자 기록할 수 있어요"),
   JOIN_NOT_ALLOWED(HttpStatus.CONFLICT, "이 두 기록은 하나로 모을 수 없어요. 따로 남겨 둘게요"),
   SHARING_STOPPED(HttpStatus.CONFLICT, "공유를 그만둔 호실이에요. [다시 공유하기]로 이어 쓸 수 있어요"),
+  JOINED_RECORD(HttpStatus.CONFLICT, "합치기 전 내 기록이라 읽기만 할 수 있어요. 합친 호실 기록에서 이어서 남겨 주세요"),
   SOLO_NOT_ALLOWED(HttpStatus.CONFLICT, "아직 상대의 답을 기다리는 중이에요"),
   CLOSED_BY_BOTH(HttpStatus.CONFLICT, "둘 다 확인해 끝난 건이에요. 다시 생기면 새 수리 건으로 남겨 주세요"),
   NOT_CURRENT_PROPOSAL(HttpStatus.CONFLICT, "더 새로운 안이 있어요. 다시 불러올게요"),

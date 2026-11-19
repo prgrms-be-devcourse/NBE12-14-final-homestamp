@@ -12,6 +12,9 @@ import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 import java.time.Instant;
 import java.util.UUID;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
 import org.hibernate.annotations.UuidGenerator;
 
 /**
@@ -22,6 +25,8 @@ import org.hibernate.annotations.UuidGenerator;
  */
 @Entity
 @Table(schema = "state", name = "progress_note_response")
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class ProgressNoteResponse {
 
   @Id
@@ -51,8 +56,6 @@ public class ProgressNoteResponse {
 
   @Version private Long version;
 
-  protected ProgressNoteResponse() {}
-
   public ProgressNoteResponse(
       UUID roomRecordId,
       UUID progressNoteId,
@@ -66,37 +69,5 @@ public class ProgressNoteResponse {
     this.answer = answer;
     this.reason = reason;
     this.createdAt = createdAt;
-  }
-
-  public UUID getId() {
-    return id;
-  }
-
-  public UUID getRoomRecordId() {
-    return roomRecordId;
-  }
-
-  public UUID getProgressNoteId() {
-    return progressNoteId;
-  }
-
-  public PartySide getSide() {
-    return side;
-  }
-
-  public Answer getAnswer() {
-    return answer;
-  }
-
-  public String getReason() {
-    return reason;
-  }
-
-  public Instant getCreatedAt() {
-    return createdAt;
-  }
-
-  public Long getVersion() {
-    return version;
   }
 }
