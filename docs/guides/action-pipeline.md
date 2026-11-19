@@ -187,6 +187,7 @@ public ResponseEntity<CreatedResponse> register(
 
 - `Actor.member(id)`의 측(TENANT/LANDLORD)은 넣지 않아요. pipeline이 `RoomGate`에서 채워요(호실 만들기만 예외).
 - `server`·`ops`는 호실 단위 거절을 건너뛰어요.
+- `link`는 호실 단위 거절을 거쳐요. 링크 열람(`LINK_VIEW`)에서 `SETTLED`·`JOINED_RECORD`를 받으면 link가 `LINK_INVALID`로 바꿔 응답해요(호실 상태를 드러내지 않게, 06 LINK-2). 문자 그만 받기(`OPT_OUT`)는 호실 상태로 막히지 않아요.
 - 결과: `create`·`execute`는 `PipelineResult`(`state()` 저장 뒤 상태, `action()` 행동 결과), `executeAll`은 `BatchResult`(`actions()` 행동마다, `first()` 첫 행동). 다시 온 요청이면 `replayed()`가 참이고 `target()`에 처음 만든 ID가 있어요.
 
 ## 5. 테스트 쓰기
