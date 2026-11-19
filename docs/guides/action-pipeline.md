@@ -88,7 +88,7 @@ public class RepairTransitions implements Transitions<RepairState> {
 }
 ```
 
-`apply`에서 **보지 않는 것**: 정산 완료·거주 종료·합류 전 기록·내 공유 중단. pipeline이 3단계에서 먼저 막아요(09 3-1 순서 3).
+`apply`에서 **보지 않는 것**: 정산 완료·합류 전 기록·내 공유 중단, 거주 종료 뒤 새 수리 건(`REGISTER`). pipeline이 3단계에서 먼저 막아요(09 3-1 순서 3). **그 밖의 "거주 중에만" 규칙**(거주 종료 뒤 하자 응답·종료 요청, 진행 상황 묻기 등)은 pipeline이 막지 않으니 `load`가 호실 단계를 상태에 담고 `apply`에서 막아요.
 `apply`에서 **보는 것**: 기록 단위 규칙(`NOT_COUNTERPART_SIDE`, `ACK_FINAL` …), 그리고 행동마다 결과가 다른 호실 사실(예: 상대 공유 중단에 따른 정산 끝내기 막기). 뒤의 것은 `load`가 상태 값에 담아 줘요(09 3-1 "계약").
 
 ### 3-2. 저장
@@ -275,3 +275,86 @@ pipeline은 진짜이고, 안쪽 부품 두 개만 가짜예요. 진짜로 바�
 | 호실 잠금·읽기 `RoomGateReader` | `FakeRoomGateReader`(테스트가 넣은 값) | `room_record`를 `FOR UPDATE`로 잠그고 읽음 | A (ROOM-2) |
 
 배포 서버에서 기능을 확인하려면(07 6장 끝 기준) 두 부품이 진짜여야 해요.
+
+## 8. 응답 공통 처리 (`AnswerSupport`)
+
+맞아요·보류·이견(응답하기)과 [보충하고 다시 확인 요청]·[사진 더해서 다시 요청](다시 요청)은 모든 도메인이 `action/rule/AnswerSupport`로 같은 규칙을 써요(#86). 순수 함수라 `apply` 안에서 불러요.
+
+| 메서드 | 하는 일 | 거절 |
+|---|---|---|
+| `answer(기록, 답하는 측, 답, 사유, 본 판 번호)` | 다음 응답 값(`AckState`) | `NOT_COUNTERPART_SIDE`(기록한 측), `VERSION_CONFLICT`, `ACK_FINAL`, `INVALID_STATE`(보류·이견에서 맞아요가 아닌 답), `REASON_REQUIRED` |
+| `rerequest(기록, 부르는 측, 근거 있음, 요청을 열 수 있음, 지금, 간격)` | `PENDING`(상대가 새로 고름) + 저장할 다시 요청 시각 | `NOT_COUNTERPART_SIDE`(기록한 측이 아님), `INVALID_STATE`(보류·이견이 아님, 지금 열 수 없는 요청), `ASKED_RECENTLY`, `EVIDENCE_REQUIRED` |
+| `canAnswer` · `canRerequest` | 화면 `availableActions`·확인 카드 버튼. 위 두 메서드와 같은 결과 | — |
+| `nextRerequestAt` | "○월 ○일부터 다시 요청할 수 있어요"의 날짜. 다시 요청한 적이 없으면 null | — |
+| `requireEvidence` · `checkInterval` | [상황이 바뀌었어요]처럼 조건이 다른 버튼이 근거·7일만 가져다 써요 | `EVIDENCE_REQUIRED`, `ASKED_RECENTLY` |
+
+### 8-1. 내 상태에서 `Answerable` 만들기
+
+```java
+// repair/rule/RepairState.java
+public record RepairState(
+    RepairStatus status, AckState defectAck, PartySide registeredBy, int contentNo,
+    Instant lastRerequestAt, boolean living, boolean canOpenDefectConfirm) {
+
+  Answerable defect() {
+    return new Answerable(registeredBy, defectAck, contentNo, lastRerequestAt);
+  }
+}
+```
+
+- **기록한 측**은 도메인이 정해요. 송금은 보낸 쪽이 기록했으면 받은 쪽이, [받았어요(혼자)]면 보낸 쪽이 답해요(SET-4).
+- **판 번호**가 없는 기록이면 `null`. 그러면 본 판 번호를 비교하지 않아요.
+- **마지막 다시 요청 시각**은 행동 기록이 원본이에요. `load`가 읽어 담아요. 첫 요청은 세지 않아요(7일은 다시 요청끼리만).
+- **요청을 열 수 있음**은 `load`가 `waitService.canOpen(호실, 종류)`로 채워요(거주 종료 뒤 닫힌 요청을 다시 열지 않게, 03 K).
+
+### 8-2. `apply`에서 부르기
+
+```java
+case RESPOND_DEFECT -> {
+  if (!now.living()) throw new BusinessException(ErrorCode.INVALID_STATE); // 도메인이 먼저 막는 것
+  AnswerPayload in = action.payloadAs(AnswerPayload.class);
+  AckState next = AnswerSupport.answer(
+      now.defect(), action.actorSide(), in.answer(), in.reason(), action.seenVersionNo());
+  yield now.withDefectAck(next);
+}
+case SUPPLEMENT -> {
+  if (!now.living()) throw new BusinessException(ErrorCode.INVALID_STATE);
+  AnswerSupport.Rerequested r = AnswerSupport.rerequest(
+      now.defect(), action.actorSide(), true /* 서비스가 근거를 확인 */, now.canOpenDefectConfirm(),
+      action.createdAt(), interval);
+  yield now.withDefectAck(r.state()).withLastRerequestAt(r.rerequestedAt());
+}
+```
+
+- 시각은 `action.createdAt()`, 간격(`rerequest.interval`, 7d)은 `Transitions`가 설정에서 받아 넘겨요. `Clock`을 부르지 않아요.
+- 근거(`SupplementRequest.hasEvidence()`)는 서비스가 pipeline 전에 `AnswerSupport.requireEvidence`로 보거나, payload에 담아 `apply`에서 넘겨요. 어느 쪽이든 같은 메서드를 써요.
+- 서비스는 payload를 `Map.of("answer", req.answer(), "reason", req.reason())`로 남겨요. 사유가 없으면 `"reason"` 키를 빼요(`Map.of`는 null을 받지 않아요).
+
+### 8-3. 도메인이 먼저 막는 것 (`AnswerSupport`는 모름)
+
+| 무엇 | 예 | 어디서 |
+|---|---|---|
+| 상대가 아직 볼 수 없는 기록 | 작성 중 점검의 항목(06 INSP-1a) | `apply`에서 `INVALID_STATE`, `canAnswer`도 `false`. 확인 카드도 같은 기준 |
+| 그 단계에서 할 수 없는 행동 | 거주 종료 뒤 하자 응답·보충(03 A 상태별 표) | `load`가 담은 호실 단계로 `apply`에서 |
+| 규칙이 다른 응답 | 정산 끝내기(`AnswerResult` Javadoc), 돈 안건의 제안·동의(`ProposalService`, `OWN_PROPOSAL`) | 그 도메인 |
+
+### 8-4. 응답 요청(notification)과 잇기
+
+`save`에서 notification의 `waitService`를 불러요(#88).
+
+| 일 | `save`에서 부를 것 |
+|---|---|
+| 응답(늦은 답 포함) | `waitService.answered(대상, 요청 종류, 답한 측)`. 열린 요청이 있으면 "답함"으로 닫고, 없거나 닫혀 있으면 아무것도 하지 않아요 |
+| 다시 요청 | `waitService.restart(new OpenRequestCommand(호실, 종류, 대상, 요청한 측))`. 있으면 다시 열고 없으면 새로 열어요(기한을 다시 셀지는 notification이 종류를 보고 정해요) |
+| [상황이 바뀌었어요] | 진행 상황마다 새 상황 확인이라 `restart`가 아니라 `open` |
+
+**요청 하나에 기록이 여럿이면**(점검 확인: 점검 × 방향마다 요청 하나, 응답은 항목마다) `answered`는 그 방향에 답하지 않은 항목이 0개가 될 때만 불러요. 항목마다 부르면 첫 답에서 요청이 닫혀 나머지 항목의 재통지·혼자 잠금이 돌지 않아요. 고친 내용 확인도 같아요.
+
+**한 번에 여러 기록에 답하기**(점검 [남은 항목 모두 확인]): 한 요청으로 묶음 표시 하나와 항목마다 응답을 남겨요. 항목 상태는 늘 응답 행동으로만 바뀌어요.
+
+```java
+ActionBatch.of(room, actor, key)
+    .record(CONFIRM_ALL, Map.of())            // 버튼을 눌렀다는 표시(상태를 바꾸지 않음)
+    .step(RESPOND_ITEM, done -> item1, ...)   // 항목마다
+    .step(RESPOND_ITEM, done -> item2, ...);
+```
