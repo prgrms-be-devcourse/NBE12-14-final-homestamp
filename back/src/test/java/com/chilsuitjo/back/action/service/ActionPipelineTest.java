@@ -528,6 +528,31 @@ class ActionPipelineTest {
   }
 
   @Test
+  void 물어본_대상과_다른_대상을_save가_돌려주면_막는다() {
+    ActionTarget repairCase = pipeline.create(register("k1"), store, rules).action().target();
+    StateStore<Sample> photoStore =
+        new StateStore<>() {
+          @Override
+          public Sample load(ActionCommand command) {
+            return store.load(command);
+          }
+
+          @Override
+          public SavedState save(ActionCommand command, Sample next) {
+            return SavedState.created(ActionTarget.photo(UUID.randomUUID())); // 부모를 물었는데 새 사진을 돌려줌
+          }
+        };
+
+    assertThatThrownBy(() ->
+            pipeline.executeAll(
+                ActionBatch.of(room, Actor.member(tenantId), "k2")
+                    .step(ActionType.START_REPAIR, done -> repairCase, photoStore, rules)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("ActionStep.creating");
+    assertThat(writer.findByRoom(room)).hasSize(1);
+  }
+
+  @Test
   void 공유를_그만둔_사람은_초대할_수_없다() {
     gates.put(tenantId, new RoomGate(room, PartySide.TENANT, false, false, true, false));
 

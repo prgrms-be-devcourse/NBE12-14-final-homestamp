@@ -254,6 +254,7 @@ assertThat(fx.actions().findByRoom(roomId))
 | 서비스에 `@Transactional` | 실행할 때 `IllegalStateException` "pipeline 바깥에 트랜잭션을 두지 않아요" | 지우기. 트랜잭션은 pipeline이 열어요 |
 | 새 기록인데 `execute`로 열고 `save`가 새 대상을 돌려줌 | `IllegalStateException` "새 기록을 만드는 행동은 ActionStep.creating·ActionPipeline.create로" | `create` 또는 `.creating(...)` |
 | `create`에 대상을 줌 | `IllegalArgumentException` "새 기록을 만드는 행동에는 대상을 주지 않아요" | `target`을 `null`로 |
+| 부모 대상을 주고(`step(종류, done -> 부모, …)`) `save`가 새 자식 기록을 돌려줌 | `IllegalStateException` "save가 물어본 대상과 다른 기록을 돌려줬어요". 그냥 두면 같은 요청이 다시 올 때 `IDEMPOTENCY_KEY_REUSED`가 돼요 | 새 기록은 `.creating(...)`으로. 부모 ID는 `payload`에 |
 | `creating` 단계인데 `save`가 `SavedState.unchanged()` | `IllegalStateException` "save가 만든 기록을 돌려주지 않았어요" | `SavedState.created(ActionTarget.xxx(id))` |
 | `apply`에서 Repository·`Clock.now()` 부르기 | 다시 계산할 때(REP-10) 결과가 달라져요 | 시각은 `action.createdAt()`, 필요한 값은 `load`가 상태에 담기 |
 | `apply`에서 정산 완료·공유 중단 다시 검사 | 같은 검사가 두 군데 생겨 어긋나요 | pipeline에 맡기기(09 3-1 순서 3) |

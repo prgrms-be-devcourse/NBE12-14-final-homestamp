@@ -385,6 +385,15 @@ public class ActionPipeline {
       throw new IllegalStateException(
           step.type() + ": 새 기록을 만드는 행동은 ActionStep.creating·ActionPipeline.create로 열어 주세요");
     }
+    // 물어본 대상이 있는데 다른 기록을 돌려주면, 행동 기록의 대상이 바뀌어 같은 요청이 다시 올 때
+    // 물어본 대상과 비교가 어긋난다(정상 재시도가 IDEMPOTENCY_KEY_REUSED). 부모를 주고 자식을 만드는 모양을 막는다.
+    if (command.target() != null && madeRecord && !created.equals(command.target())) {
+      throw new IllegalStateException(
+          step.type()
+              + ": save가 물어본 대상("
+              + command.target()
+              + ")과 다른 기록을 돌려줬어요. 새 기록은 ActionStep.creating으로 열어 주세요");
+    }
   }
 
   /** apply에 넘기는 저장 전 행동. id·roomSeq·지문은 저장할 때 정해지고, 시각은 저장할 값과 같은 {@code at}이다. */
