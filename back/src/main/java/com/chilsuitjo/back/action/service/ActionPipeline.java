@@ -20,6 +20,8 @@ import com.chilsuitjo.back.global.common.Uuids;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import java.time.Clock;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -131,6 +133,8 @@ public class ActionPipeline {
             : batch.actor();
     // 한 요청의 행동을 묶는 값(#66). 시간순으로 정렬되도록 UUID v7을 쓴다.
     UUID requestId = Uuids.v7();
+    // 한 요청의 서버 시각은 하나다. apply에 넘긴 값 그대로 저장·해시에 쓴다(05 2-3 「해시 입력 형식」 ④, DB 정밀도에 맞춰 마이크로초).
+    Instant at = clock.instant().truncatedTo(ChronoUnit.MICROS);
     List<ActionResult> results = new ArrayList<>();
     Object lastState = null;
     int written = 0;
@@ -155,13 +159,14 @@ public class ActionPipeline {
             resultOf(
                 actionWriter.write(
                     requireRoom(command.withTarget(withoutRoomTarget(command.target()))),
-                    requestId),
+                    requestId,
+                    at),
                 false)); // 8
         written++;
         continue;
       }
 
-      StepOutcome stepOutcome = runStep(step, command, gate, requestId, written);
+      StepOutcome stepOutcome = runStep(step, command, gate, requestId, at, written);
       if (stepOutcome == null) {
         continue; // when이 거짓: 기록 없이 건너뜀
       }
@@ -179,14 +184,19 @@ public class ActionPipeline {
 
   /** 5~9. {@code when}이 거짓이면 null. */
   private <S> StepOutcome runStep(
-      ActionStep<S> step, ActionCommand command, RoomGate gate, UUID requestId, int written) {
+      ActionStep<S> step,
+      ActionCommand command,
+      RoomGate gate,
+      UUID requestId,
+      Instant at,
+      int written) {
     S now = step.store().load(command); // 5
     if (!step.condition().test(now)) {
       return null;
     }
     followUps.begin();
     try {
-      S next = step.rules().apply(now, preview(command)); // 6
+      S next = step.rules().apply(now, preview(command, at)); // 6
       SavedState saved = step.store().save(command, next); // 7
       checkCreated(step, command, saved);
 
@@ -209,7 +219,7 @@ public class ActionPipeline {
       ActionCommand recorded = requireRoom(toWrite.withTarget(withoutRoomTarget(toWrite.target())));
 
       List<ActionResult> results = new ArrayList<>();
-      ActionResult main = resultOf(actionWriter.write(recorded, requestId), false); // 8
+      ActionResult main = resultOf(actionWriter.write(recorded, requestId, at), false); // 8
       results.add(resultTarget == null ? main : withTarget(main, resultTarget));
 
       int n = written + 1;
@@ -227,7 +237,7 @@ public class ActionPipeline {
                 null,
                 null,
                 followUp.payload());
-        results.add(resultOf(actionWriter.write(extra, requestId), false));
+        results.add(resultOf(actionWriter.write(extra, requestId, at), false));
       }
       return new StepOutcome(results, next, recorded.roomRecordId());
     } finally {
@@ -377,8 +387,8 @@ public class ActionPipeline {
     }
   }
 
-  /** apply에 넘기는 저장 전 행동. id·roomSeq·지문은 저장할 때 정해진다. */
-  private ActionEntry preview(ActionCommand c) {
+  /** apply에 넘기는 저장 전 행동. id·roomSeq·지문은 저장할 때 정해지고, 시각은 저장할 값과 같은 {@code at}이다. */
+  private static ActionEntry preview(ActionCommand c, Instant at) {
     return new ActionEntry(
         null,
         c.roomRecordId(),
@@ -393,7 +403,7 @@ public class ActionPipeline {
         null,
         c.reason(),
         c.payload(),
-        clock.instant());
+        at);
   }
 
   /** 호실 기록 자체가 대상인 행동은 결과에서 ROOM_RECORD로 돌려준다(다시 온 요청에서도 만든 호실 ID를 알 수 있게). */

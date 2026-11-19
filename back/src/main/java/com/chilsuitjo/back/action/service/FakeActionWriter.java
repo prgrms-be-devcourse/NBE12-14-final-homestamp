@@ -3,7 +3,7 @@ package com.chilsuitjo.back.action.service;
 import com.chilsuitjo.back.action.dto.ActionCommand;
 import com.chilsuitjo.back.action.dto.ActionEntry;
 import com.chilsuitjo.back.action.dto.ActionTarget;
-import java.time.Clock;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -30,14 +30,9 @@ class FakeActionWriter implements ActionWriter, ActionReader {
   private final Map<String, ActionEntry> byFullKey = new HashMap<>();
   private final Map<UUID, List<ActionEntry>> byRequest = new HashMap<>();
   private final Map<UUID, Long> lastSeq = new HashMap<>();
-  private final Clock clock;
-
-  FakeActionWriter(Clock clock) {
-    this.clock = clock;
-  }
 
   @Override
-  public synchronized ActionEntry write(ActionCommand c, UUID requestId) {
+  public synchronized ActionEntry write(ActionCommand c, UUID requestId, Instant at) {
     String fullKey = c.actor().key() + "|" + c.idempotencyKey();
     if (byFullKey.containsKey(fullKey)) {
       throw new DataIntegrityViolationException("uq_action_idempotency: " + fullKey);
@@ -58,7 +53,7 @@ class FakeActionWriter implements ActionWriter, ActionReader {
             null,
             c.reason(),
             c.payload(),
-            clock.instant());
+            at);
     entries.add(entry);
     byFullKey.put(fullKey, entry);
     byRequest.computeIfAbsent(requestId, id -> new ArrayList<>()).add(entry);

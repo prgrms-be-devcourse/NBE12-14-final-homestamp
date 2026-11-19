@@ -2,6 +2,7 @@ package com.chilsuitjo.back.action.service;
 
 import com.chilsuitjo.back.action.dto.ActionCommand;
 import com.chilsuitjo.back.action.dto.ActionEntry;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -16,8 +17,14 @@ import java.util.UUID;
  */
 interface ActionWriter {
 
-  /** 한 줄 쓰고 저장된 모습을 돌려준다. {@code requestId}는 pipeline이 요청마다 하나 만들어 그 요청의 모든 행동에 넣는다(#66). */
-  ActionEntry write(ActionCommand command, UUID requestId);
+  /**
+   * 한 줄 쓰고 저장된 모습을 돌려준다. {@code requestId}는 pipeline이 요청마다 하나 만들어 그 요청의 모든 행동에 넣는다(#66).
+   *
+   * <p>{@code at}은 pipeline이 요청마다 한 번 정한 서버 시각(마이크로초로 자름)이고 {@code apply}가 받은 값과 같다. 구현은 시계를 따로 읽지
+   * 않고 이 값을 {@code created_at}과 해시 입력에 그대로 쓴다(05 2-3 「해시 입력 형식」 ④). 그래야 저장된 행동으로 다시 계산해도 같은 상태가
+   * 나온다(REP-10).
+   */
+  ActionEntry write(ActionCommand command, UUID requestId, Instant at);
 
   /**
    * 이 요청으로 이미 남긴 행동, {@code room_seq} 순. 없으면 빈 목록. 첫 행동은 (주체, {@code <키>})로 찾고, 나머지는 그 행동의 {@code

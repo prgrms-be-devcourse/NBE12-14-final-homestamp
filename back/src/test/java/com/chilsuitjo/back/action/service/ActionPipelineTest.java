@@ -24,7 +24,9 @@ import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -41,7 +43,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 class ActionPipelineTest {
 
   private final Clock clock = Clock.fixed(Instant.parse("2026-11-17T00:00:00Z"), ZoneOffset.UTC);
-  private final FakeActionWriter writer = new FakeActionWriter(clock);
+  private final FakeActionWriter writer = new FakeActionWriter();
   private final FakeRoomGateReader gates = new FakeRoomGateReader();
   private final ActionFollowUps followUps = new ActionFollowUps();
   private final NoOpTransactionManager transactionManager = new NoOpTransactionManager();
@@ -435,6 +437,60 @@ class ActionPipelineTest {
         ActionBatch.of(room, Actor.ops("홍길동"), "ops-1").record(ActionType.HIDE_PHOTO, Map.of()));
 
     assertThat(writer.findByRoom(room).getFirst().actorKey()).isEqualTo("ops:홍길동");
+  }
+
+  @Test
+  void apply가_받은_시각과_저장된_시각은_요청마다_하나이고_마이크로초로_자른다() {
+    FakeActionWriter saved = new FakeActionWriter();
+    ActionPipeline advancing =
+        new ActionPipeline(gates, saved, followUps, transactionManager, advancingClock());
+    List<Instant> seen = new ArrayList<>();
+    Transitions<Sample> capturing =
+        new Transitions<>() {
+          @Override
+          public Sample initial() {
+            return rules.initial();
+          }
+
+          @Override
+          public Sample apply(Sample now, ActionEntry action) {
+            seen.add(action.createdAt());
+            return rules.apply(now, action);
+          }
+        };
+
+    advancing.executeAll(
+        ActionBatch.of(room, Actor.member(tenantId), "k1")
+            .creating(ActionType.REGISTER, store, capturing)
+            .record(ActionType.SHARE_CONSENT, Map.of()));
+
+    Instant at = seen.getFirst();
+    assertThat(at).isEqualTo(at.truncatedTo(ChronoUnit.MICROS));
+    assertThat(saved.findByRoom(room)).extracting(ActionEntry::createdAt).containsOnly(at);
+  }
+
+  /** 부를 때마다 1.001마이크로초씩 가는 시계. 시각을 두 번 읽거나 자르지 않으면 값이 어긋난다. */
+  private static Clock advancingClock() {
+    return new Clock() {
+      private Instant next = Instant.parse("2026-11-17T00:00:00.000000123Z");
+
+      @Override
+      public ZoneId getZone() {
+        return ZoneOffset.UTC;
+      }
+
+      @Override
+      public Clock withZone(ZoneId zone) {
+        return this;
+      }
+
+      @Override
+      public Instant instant() {
+        Instant now = next;
+        next = next.plusNanos(1_001);
+        return now;
+      }
+    };
   }
 
   @Test
@@ -906,7 +962,7 @@ class ActionPipelineTest {
     }
 
     @Override
-    public ActionEntry write(ActionCommand command, UUID requestId) {
+    public ActionEntry write(ActionCommand command, UUID requestId, Instant at) {
       throw new DataIntegrityViolationException("uq_action_idempotency");
     }
 
