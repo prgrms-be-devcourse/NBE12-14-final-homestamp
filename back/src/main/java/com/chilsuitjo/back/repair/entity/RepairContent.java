@@ -12,6 +12,9 @@ import jakarta.persistence.Table;
 import jakarta.persistence.Transient;
 import java.time.Instant;
 import java.util.UUID;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
 import org.hibernate.annotations.Immutable;
 import org.springframework.data.domain.Persistable;
 
@@ -28,6 +31,8 @@ import org.springframework.data.domain.Persistable;
 @Entity
 @Immutable
 @Table(schema = "record", name = "repair_content")
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class RepairContent implements Persistable<UUID> {
 
   @Id private UUID id;
@@ -64,9 +69,9 @@ public class RepairContent implements Persistable<UUID> {
   private Instant createdAt;
 
   /** 저장하거나 읽어 온 뒤에는 false. */
-  @Transient private boolean newRow = true;
-
-  protected RepairContent() {}
+  @Transient
+  @Getter(AccessLevel.NONE)
+  private boolean newRow = true;
 
   public RepairContent(
       UUID id,
@@ -92,11 +97,6 @@ public class RepairContent implements Persistable<UUID> {
   }
 
   @Override
-  public UUID getId() {
-    return id;
-  }
-
-  @Override
   public boolean isNew() {
     return newRow;
   }
@@ -105,41 +105,5 @@ public class RepairContent implements Persistable<UUID> {
   @PostLoad
   void markStored() {
     newRow = false;
-  }
-
-  public UUID getRoomRecordId() {
-    return roomRecordId;
-  }
-
-  public UUID getRepairCaseId() {
-    return repairCaseId;
-  }
-
-  public int getNo() {
-    return no;
-  }
-
-  public UUID getRoomPartId() {
-    return roomPartId;
-  }
-
-  public String getTitle() {
-    return title;
-  }
-
-  public String getDescription() {
-    return description;
-  }
-
-  public UUID getPreviousId() {
-    return previousId;
-  }
-
-  public PartySide getCreatedBySide() {
-    return createdBySide;
-  }
-
-  public Instant getCreatedAt() {
-    return createdAt;
   }
 }

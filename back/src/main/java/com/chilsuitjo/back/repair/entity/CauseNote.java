@@ -11,6 +11,9 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.Instant;
 import java.util.UUID;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
 import org.hibernate.annotations.Immutable;
 import org.hibernate.annotations.UuidGenerator;
 
@@ -21,6 +24,8 @@ import org.hibernate.annotations.UuidGenerator;
 @Entity
 @Immutable
 @Table(schema = "record", name = "cause_note")
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class CauseNote {
 
   @Id
@@ -56,8 +61,6 @@ public class CauseNote {
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
 
-  protected CauseNote() {}
-
   public CauseNote(
       UUID roomRecordId,
       UUID repairCaseId,
@@ -75,41 +78,5 @@ public class CauseNote {
     this.expertName = expertName;
     this.previousId = previousId;
     this.createdAt = createdAt;
-  }
-
-  public UUID getId() {
-    return id;
-  }
-
-  public UUID getRoomRecordId() {
-    return roomRecordId;
-  }
-
-  public UUID getRepairCaseId() {
-    return repairCaseId;
-  }
-
-  public PartySide getSide() {
-    return side;
-  }
-
-  public String getText() {
-    return text;
-  }
-
-  public CauseBasis getBasis() {
-    return basis;
-  }
-
-  public String getExpertName() {
-    return expertName;
-  }
-
-  public UUID getPreviousId() {
-    return previousId;
-  }
-
-  public Instant getCreatedAt() {
-    return createdAt;
   }
 }
