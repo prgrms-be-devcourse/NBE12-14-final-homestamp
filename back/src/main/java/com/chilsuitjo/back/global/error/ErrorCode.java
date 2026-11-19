@@ -33,6 +33,10 @@ public enum ErrorCode {
   ROOM_ENDED(HttpStatus.CONFLICT, "거주가 끝난 호실이라 새 수리 건을 만들 수 없어요"),
   CODE_INVALID(HttpStatus.BAD_REQUEST, "인증번호가 맞지 않거나 시간이 지났어요. [다시 받기]"),
   CODE_EXPIRED(HttpStatus.BAD_REQUEST, "인증번호가 맞지 않거나 시간이 지났어요. [다시 받기]"),
+  CODE_REPLACED(
+      HttpStatus.BAD_REQUEST, "새 인증번호를 보냈어요. 가장 최근 문자의 번호를 넣어 주세요. 다른 기기에서 받았다면 그 기기에서 넣어 주세요"),
+  DAILY_LIMIT(HttpStatus.TOO_MANY_REQUESTS, "오늘은 더 받을 수 없어요. 내일 다시 해 주세요"),
+  SMS_SEND_FAILED(HttpStatus.SERVICE_UNAVAILABLE, "문자를 보내지 못했어요. 잠시 뒤 다시 받아 주세요"),
   EMAIL_TAKEN(HttpStatus.CONFLICT, "이미 가입한 이메일이에요. 로그인해 주세요"),
   TERMS_REQUIRED(HttpStatus.BAD_REQUEST, "이용약관과 처리 안내를 확인해 주세요"),
   PASSWORD_MISMATCH(HttpStatus.BAD_REQUEST, "지금 비밀번호가 맞지 않아요"),
