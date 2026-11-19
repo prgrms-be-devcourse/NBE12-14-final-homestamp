@@ -100,15 +100,62 @@ class FakeWaitServiceTest {
   }
 
   @Test
-  void 다시_요청하면_같은_요청이_기다림으로_돌아간다() {
+  void 답한_요청에_다시_요청하면_새_요청을_연다() {
     RequestHandle first = waits.open(defectConfirm());
     waits.answered(repairCase, RequestKind.DEFECT_CONFIRM, PartySide.LANDLORD);
 
     RequestHandle again = waits.restart(defectConfirm());
 
+    assertThat(again.created()).isTrue();
+    assertThat(again.requestId()).isNotEqualTo(first.requestId());
+    assertThat(waits.statusOf(repairCase, RequestKind.DEFECT_CONFIRM))
+        .contains(RequestStatus.WAITING);
+  }
+
+  @Test
+  void 닫힌_요청은_다시_요청해도_되살리지_않고_새로_연다() {
+    RequestHandle first = waits.open(defectConfirm());
+    waits.close(repairCase, RequestKind.DEFECT_CONFIRM, ClosedReason.SHARING_STOPPED);
+
+    RequestHandle again = waits.restart(defectConfirm());
+
+    assertThat(again.created()).isTrue();
+    assertThat(again.requestId()).isNotEqualTo(first.requestId());
+    assertThat(waits.statusOf(repairCase, RequestKind.DEFECT_CONFIRM))
+        .contains(RequestStatus.WAITING);
+    assertThat(waits.closedReasonOf(repairCase, RequestKind.DEFECT_CONFIRM)).isEmpty();
+  }
+
+  @Test
+  void 기다리는_요청에_다시_요청하면_같은_요청에_묶는다() {
+    RequestHandle first = waits.open(defectConfirm());
+
+    RequestHandle again = waits.restart(defectConfirm());
+
+    assertThat(again.created()).isFalse();
     assertThat(again.requestId()).isEqualTo(first.requestId());
     assertThat(waits.statusOf(repairCase, RequestKind.DEFECT_CONFIRM))
         .contains(RequestStatus.WAITING);
+  }
+
+  @Test
+  void 미확인인_점검_확인에_다시_요청해도_미확인과_혼자_진행이_그대로다() {
+    RequestTarget inspection = RequestTarget.of(TargetKind.INSPECTION, UUID.randomUUID());
+    OpenRequestCommand confirm =
+        new OpenRequestCommand(
+            roomRecordId, RequestKind.INSPECTION_CONFIRM, inspection, PartySide.TENANT);
+    SoloQuery solo =
+        new SoloQuery(roomRecordId, RequestKind.INSPECTION_CONFIRM, inspection, PartySide.TENANT);
+    RequestHandle first = waits.open(confirm);
+    waits.markUnconfirmed(inspection, RequestKind.INSPECTION_CONFIRM);
+
+    RequestHandle again = waits.restart(confirm);
+
+    assertThat(again.created()).isFalse();
+    assertThat(again.requestId()).isEqualTo(first.requestId());
+    assertThat(waits.statusOf(inspection, RequestKind.INSPECTION_CONFIRM))
+        .contains(RequestStatus.UNCONFIRMED);
+    assertThat(waits.canGoSolo(solo)).isEqualTo(SoloCheck.allowedBecause(SoloReason.UNCONFIRMED));
   }
 
   @Test

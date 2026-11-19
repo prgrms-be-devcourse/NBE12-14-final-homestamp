@@ -66,10 +66,12 @@ public class FakeWaitService implements WaitService {
       throw new IllegalStateException(command.kind() + "는 지금 호실 단계에서 열 수 없어요. canOpen으로 먼저 막아 주세요");
     }
     Request existing = requests.get(key);
-    if (existing == null) {
+    if (existing == null || !existing.status().isOpen()) {
+      // 요청이 없거나 닫혔으면(답함·닫힘·거둠) 되살리지 않고 새로 연다(03 1-4 "닫힌 요청을 자동으로 되살리지 않는다")
       return open(command);
     }
-    requests.put(key, existing.with(RequestStatus.WAITING, null));
+    // 열린 요청(기다림·미확인)은 상태를 그대로 두고 묶는다. 미확인이면 혼자 진행도 그대로다(03 1-4 "열리는 요청의 기한은 보낸 뒤 고정").
+    // 가짜에는 시각이 없어서 고친 내용 확인처럼 기한을 다시 세는 종류도 상태만 그대로 둔다.
     return new RequestHandle(existing.id(), false);
   }
 
