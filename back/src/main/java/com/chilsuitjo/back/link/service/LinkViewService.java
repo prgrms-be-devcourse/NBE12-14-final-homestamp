@@ -19,25 +19,27 @@ import com.chilsuitjo.back.link.rule.LinkToken;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
  * 가입 전 링크 열람({@code POST /api/public/links/view}, 06 4-4, LINK-1·2·3).
  *
- * <p>어떤 이유로 못 열든(없는 토큰, 무효 링크, 정산 완료·합류 전 기록인 호실) 모두 같은 {@code LINK_INVALID}다. 이유를 다르게 답하면 링크를 가진
- * 사람에게 호실 상태가 드러난다(LINK-2, decisions 2026-11-19). 호실 상태로 막힐 때는 pipeline을 부르지 않아 열람 기록도 남지 않는다.
+ * <p>어떤 이유로 못 열든(없는 토큰, 무효 링크, 정산 완료·합류 전 기록인 호실, 다른 도메인 조회나 pipeline의 거절) 모두 같은 {@code
+ * LINK_INVALID}다. 이유를 다르게 답하면 링크를 가진 사람에게 호실 상태가 드러난다(LINK-2, decisions 2026-11-19, 원칙 8 "실패하면 막히는
+ * 쪽으로"). 그래서 링크를 찾은 뒤의 업무 오류({@link BusinessException})는 모두 한 곳({@link #view})에서 덮고, 원래 코드는 로그에만
+ * 남긴다. 예상하지 못한 서버 오류(500)는 덮지 않는다(호실 상태를 드러내지 않고, 덮으면 5xx 장애 알림이 숨는다, 04 11장).
  *
- * <p>pipeline이 트랜잭션을 맡아서 이 서비스에는 {@code @Transactional}을 두지 않는다(09 3-1).
+ * <p>호실 상태로 막힐 때는 pipeline을 부르지 않아 열람 기록도 남지 않는다. pipeline이 트랜잭션을 맡아서 이 서비스에는
+ * {@code @Transactional}을 두지 않는다(09 3-1).
  */
 @Service
 public class LinkViewService {
 
-  /** 호실 상태 때문에 pipeline이 거절했을 때. 미리 거르지만 그사이 상태가 바뀐 경우를 같은 응답으로 덮는다. */
-  private static final Set<ErrorCode> HIDDEN_ROOM_ERRORS =
-      Set.of(ErrorCode.SETTLED, ErrorCode.JOINED_RECORD);
+  private static final Logger log = LoggerFactory.getLogger(LinkViewService.class);
 
   private final LinkRepository links;
   private final LinkContentSource content;
@@ -64,6 +66,22 @@ public class LinkViewService {
       throw invalid();
     }
     Link link = links.findByTokenHash(LinkToken.hash(token)).orElseThrow(LinkViewService::invalid);
+    try {
+      return viewFound(link);
+    } catch (BusinessException e) {
+      if (e.errorCode() != ErrorCode.LINK_INVALID) {
+        // 원래 이유는 운영만 본다. 토큰·번호는 남기지 않고 ID는 앞 8자리만(04 11장 "로그")
+        log.info(
+            "링크 열람 실패를 LINK_INVALID로 덮음: link={}, code={}",
+            link.getId().toString().substring(0, 8),
+            e.errorCode());
+      }
+      throw invalid();
+    }
+  }
+
+  /** 토큰으로 링크를 찾은 뒤. 여기서 나온 업무 오류는 {@link #view}가 모두 {@code LINK_INVALID}로 덮는다. */
+  private LinkViewResponse viewFound(Link link) {
     if (link.isInvalidated()) {
       links.countFailedView(link.getId());
       throw invalid();
@@ -83,22 +101,15 @@ public class LinkViewService {
 
   /**
    * 링크 열람 행동. 같은 링크는 {@code link.view.dedupe}(10분) 안에서 한 줄이다(06 4-4, 멱등 키 {@code
-   * link-view:<링크>:<구간>}).
+   * link-view:<링크>:<구간>}). 미리 거른 뒤 그사이 호실이 정산 완료로 바뀌면 pipeline이 잠근 뒤 거절하고, 그 오류도 {@link #view}가
+   * 덮는다.
    */
   private void recordView(Link link, LinkRoom room) {
     long window = clock.instant().getEpochSecond() / viewDedupe.toSeconds();
     String key = "link-view:" + link.getId() + ":" + window;
-    try {
-      pipeline.executeAll(
-          ActionBatch.of(
-                  link.getRoomRecordId(), Actor.link(link.getId(), room.recipientSide()), key)
-              .record(ActionType.LINK_VIEW, Map.of()));
-    } catch (BusinessException e) {
-      if (HIDDEN_ROOM_ERRORS.contains(e.errorCode())) {
-        throw invalid();
-      }
-      throw e;
-    }
+    pipeline.executeAll(
+        ActionBatch.of(link.getRoomRecordId(), Actor.link(link.getId(), room.recipientSide()), key)
+            .record(ActionType.LINK_VIEW, Map.of()));
   }
 
   private LinkViewResponse response(Link link, LinkRoom room) {

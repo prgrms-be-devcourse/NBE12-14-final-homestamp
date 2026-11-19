@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 import com.chilsuitjo.back.action.dto.ActionEntry;
 import com.chilsuitjo.back.action.dto.RoomGate;
 import com.chilsuitjo.back.action.rule.ActionType;
+import com.chilsuitjo.back.action.service.ActionPipeline;
 import com.chilsuitjo.back.action.service.ActionPipelineFixture;
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.common.TargetKind;
@@ -171,6 +172,45 @@ class LinkViewServiceTest {
 
     assertLinkInvalid(() -> service.view(new LinkViewRequest(token)));
     assertThat(viewActions()).isEmpty();
+  }
+
+  // ---- 링크를 연 사람에게 실패 이유를 드러내지 않는다(06 LINK-2, 원칙 8) ----
+
+  @Test
+  void 다른_도메인_조회가_오류를_던져도_LINK_INVALID다() {
+    LinkContentSource failing = mock(LinkContentSource.class);
+    when(failing.room(any(), any())).thenThrow(new BusinessException(ErrorCode.NOT_FOUND));
+    LinkViewService withFailingContent =
+        new LinkViewService(links, failing, fx.pipeline(), clock, Duration.ofMinutes(10));
+    String token = issue(LinkKind.INVITE, repairCaseId);
+
+    assertLinkInvalid(() -> withFailingContent.view(new LinkViewRequest(token)));
+  }
+
+  @Test
+  void pipeline이_정산_완료_합류_말고_다른_이유로_거절해도_LINK_INVALID다() {
+    ActionPipeline rejecting = mock(ActionPipeline.class);
+    when(rejecting.executeAll(any())).thenThrow(new BusinessException(ErrorCode.NOT_FOUND));
+    LinkViewService withRejectingPipeline =
+        new LinkViewService(links, content, rejecting, clock, Duration.ofMinutes(10));
+    String token = issue(LinkKind.INVITE, repairCaseId);
+    openRoom();
+    content.seedRecord(roomRecordId, repairCaseId, repairRecord(), false);
+
+    assertLinkInvalid(() -> withRejectingPipeline.view(new LinkViewRequest(token)));
+  }
+
+  @Test
+  void 예상하지_못한_서버_오류는_LINK_INVALID로_덮지_않는다() {
+    // 500은 호실 상태를 드러내지 않고, 덮으면 5xx 장애 알림(04 11장)이 숨는다
+    LinkContentSource broken = mock(LinkContentSource.class);
+    when(broken.room(any(), any())).thenThrow(new IllegalStateException("고장"));
+    LinkViewService withBrokenContent =
+        new LinkViewService(links, broken, fx.pipeline(), clock, Duration.ofMinutes(10));
+    String token = issue(LinkKind.INVITE, repairCaseId);
+
+    assertThatThrownBy(() -> withBrokenContent.view(new LinkViewRequest(token)))
+        .isInstanceOf(IllegalStateException.class);
   }
 
   @Test
