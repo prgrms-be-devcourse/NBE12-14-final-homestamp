@@ -52,9 +52,10 @@ dependencies {
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
-// 로컬 실행(bootRun)만 local 프로필로 띄운다. Swagger UI가 local·test에서만 켜지기 때문(docs/rules/04 API 문서). 운영 jar에는 영향 없음
+// 로컬 실행(bootRun)은 기본으로 local 프로필로 띄운다. Swagger UI가 local·test에서만 켜지기 때문(docs/rules/04 API 문서). 운영 jar에는 영향 없음
+// SPRING_PROFILES_ACTIVE 환경 변수가 있으면 그 값을 쓴다(docs/setup.md 7장)
 tasks.named('bootRun') {
-    systemProperty 'spring.profiles.active', 'local'
+    systemProperty 'spring.profiles.active', System.getenv('SPRING_PROFILES_ACTIVE') ?: 'local'
 }
 
 tasks.named('test') {

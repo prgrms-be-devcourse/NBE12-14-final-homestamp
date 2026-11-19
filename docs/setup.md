@@ -97,6 +97,7 @@ npm run dev                # http://localhost:5173, /api는 백엔드(8080)로 �
 
 ### 지금 알아 둘 것
 
+- **프로필은 기본 `local`이다.** 다른 프로필로 띄우려면 환경 변수 `SPRING_PROFILES_ACTIVE`를 주거나(`SPRING_PROFILES_ACTIVE=test ./gradlew bootRun`) `--args='--spring.profiles.active=test'`를 붙인다.
 - **API 문서(Swagger UI)는 로컬에서만 켜진다.** `bootRun`이 local 프로필로 떠서 http://localhost:8080/swagger-ui/index.html 에 열린다(운영에서는 꺼짐, `docs/rules/04` API 문서). 보안 뼈대 전에는 아래처럼 로그인을 요구한다.
 - **API는 401이 정상이다.** 보안 뼈대(A 담당, 1주차 2일차) 전에는 Spring Security 기본값이라 `/api/**`가 모두 401이고, 로그에 `Using generated security password`가 찍힌다. `/actuator/health`는 열려 있어 앱이 떴는지 확인할 수 있다.
 - **테이블은 아직 없다.** V1 마이그레이션(1일차) 전에는 Flyway 기록 테이블만 생긴다.
