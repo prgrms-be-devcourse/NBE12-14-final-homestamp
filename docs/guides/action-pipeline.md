@@ -254,7 +254,7 @@ assertThat(fx.actions().findByRoom(roomId))
 
 ### 5-3. DB까지 보는 테스트
 
-엔티티 매핑·제약을 보려면 `@SpringBootTest` + Testcontainers예요(Docker 필요). 이때 `FakeRoomGateReader`는 빈이라 주입받아 `member(...)`·`put(...)`으로 호실 상태를 넣어요.
+엔티티 매핑·제약을 보려면 `@SpringBootTest` + Testcontainers예요(Docker 필요). 이때 `FakeRoomGateReader`는 빈이라 주입받아 `member(...)`·`put(...)`으로 호실 상태를 넣어요. 행동 기록은 진짜(`JpaActionWriter`)라 행동이 가리키는 회원·호실·대상 행을 먼저 넣어 두세요(7장). 예시는 `JpaActionWriterTest`예요.
 
 ## 6. 자주 하는 실수
 
@@ -275,11 +275,13 @@ assertThat(fx.actions().findByRoom(roomId))
 
 ## 7. 지금 가짜인 것
 
-pipeline은 진짜이고, 안쪽 부품 두 개만 가짜예요. 진짜로 바뀌어도 **내 도메인 코드는 바뀌지 않아요**.
+pipeline은 진짜이고, 안쪽 부품 중 잠금·읽기만 아직 가짜예요. 진짜로 바뀌어도 **내 도메인 코드는 바뀌지 않아요**.
 
 | 부품 | 지금 | 진짜로 바뀌면 | 누가 |
 |---|---|---|---|
-| 행동 기록 저장 `ActionWriter` | `FakeActionWriter`(메모리, 서버를 다시 켜면 사라짐) | `record.action`에 저장, `room_seq`·해시 체인 | B |
+| 행동 기록 저장 `ActionWriter` | **진짜** `JpaActionWriter`: `record.action`에 저장, `room_seq`·해시 체인. 메모리 가짜 `FakeActionWriter`는 테스트 코드에만 있고 `ActionPipelineFixture`가 써요 | — | B |
 | 호실 잠금·읽기 `RoomGateReader` | `FakeRoomGateReader`(테스트가 넣은 값) | `room_record`를 `FOR UPDATE`로 잠그고 읽음 | A (ROOM-2) |
 
 배포 서버에서 기능을 확인하려면(07 6장 끝 기준) 두 부품이 진짜여야 해요.
+
+**`@SpringBootTest`로 pipeline을 부르면 행동이 실제 DB에 저장돼요.** 그래서 행동이 가리키는 행이 DB에 있어야 해요(회원 행동이면 `member`, 호실 `room_record`, 대상 행, 대상은 같은 호실이어야 함: 05 0장 복합 FK). DB 없이 규칙만 보려면 `ActionPipelineFixture`를 쓰세요(5-2).
