@@ -11,6 +11,7 @@ public enum ErrorCode {
   AGE_CONFIRM_REQUIRED(HttpStatus.BAD_REQUEST, "만 14세 이상만 가입할 수 있어요"),
   RESIDENT_ID_BLOCKED(HttpStatus.BAD_REQUEST, "주민등록번호 형태는 적을 수 없어요"),
   LOGIN_FAILED(HttpStatus.UNAUTHORIZED, "이메일이나 비밀번호가 맞지 않아요"),
+  LOGIN_REQUIRED(HttpStatus.UNAUTHORIZED, "로그인이 필요해요. 다시 로그인해 주세요"),
   NOT_FOUND(HttpStatus.NOT_FOUND, "찾을 수 없는 기록이에요"),
   LINK_INVALID(HttpStatus.NOT_FOUND, "더 이상 열 수 없는 링크예요"),
   INVALID_STATE(HttpStatus.CONFLICT, "이미 상태가 바뀌었어요. 다시 불러올게요"),
