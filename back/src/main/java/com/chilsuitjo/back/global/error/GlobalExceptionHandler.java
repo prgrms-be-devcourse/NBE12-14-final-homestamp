@@ -1,5 +1,6 @@
 package com.chilsuitjo.back.global.error;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
@@ -26,7 +27,16 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
   @ExceptionHandler(BusinessException.class)
   ResponseEntity<ProblemDetail> handleBusiness(BusinessException e) {
     ErrorCode code = e.errorCode();
-    return ResponseEntity.status(code.status()).body(problem(code, code.status(), null));
+    ResponseEntity.BodyBuilder response = ResponseEntity.status(code.status());
+    e.retryAfter()
+        .ifPresent(wait -> response.header(HttpHeaders.RETRY_AFTER, String.valueOf(seconds(wait))));
+    return response.body(problem(code, code.status(), null));
+  }
+
+  /** 초 단위로 올림하고, 0초 이하는 1초로 둔다(바로 다시 눌러 같은 오류가 나지 않게). */
+  static long seconds(Duration wait) {
+    long seconds = wait.toSeconds() + (wait.toNanosPart() > 0 ? 1 : 0);
+    return Math.max(1, seconds);
   }
 
   @ExceptionHandler(Exception.class)
