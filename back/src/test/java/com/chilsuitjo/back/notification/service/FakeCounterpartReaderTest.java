@@ -9,6 +9,7 @@ import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.notification.dto.PartyFacts;
 import com.chilsuitjo.back.notification.dto.RoomParties;
 import com.chilsuitjo.back.notification.rule.PartyPresence;
+import com.chilsuitjo.back.notification.rule.RoomPhase;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
@@ -34,6 +35,17 @@ class FakeCounterpartReaderTest {
 
     assertThat(fromLandlord.counterpart()).isEqualTo(tenant);
     assertThat(fromLandlord.mine().presence()).isEqualTo(PartyPresence.EMPTY);
+  }
+
+  @Test
+  void 단계를_정하지_않으면_거주_중이고_정하면_그_단계다() {
+    reader.seed(roomRecordId, PartySide.TENANT, PartyFacts.empty());
+
+    assertThat(reader.read(roomRecordId, PartySide.TENANT).phase()).isEqualTo(RoomPhase.LIVING);
+
+    reader.seedPhase(roomRecordId, RoomPhase.ENDED);
+
+    assertThat(reader.read(roomRecordId, PartySide.TENANT).phase()).isEqualTo(RoomPhase.ENDED);
   }
 
   @Test

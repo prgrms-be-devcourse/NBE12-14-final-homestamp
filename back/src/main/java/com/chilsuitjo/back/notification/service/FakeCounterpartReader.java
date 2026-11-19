@@ -5,6 +5,7 @@ import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.notification.dto.PartyFacts;
 import com.chilsuitjo.back.notification.dto.RoomParties;
+import com.chilsuitjo.back.notification.rule.RoomPhase;
 import java.util.EnumMap;
 import java.util.Map;
 import java.util.UUID;
@@ -21,6 +22,7 @@ import org.springframework.stereotype.Service;
 public class FakeCounterpartReader implements CounterpartReader {
 
   private final Map<UUID, Map<PartySide, PartyFacts>> rooms = new ConcurrentHashMap<>();
+  private final Map<UUID, RoomPhase> phases = new ConcurrentHashMap<>();
 
   @Override
   public RoomParties read(UUID roomRecordId, PartySide mySide) {
@@ -30,6 +32,7 @@ public class FakeCounterpartReader implements CounterpartReader {
     }
     PartySide other = mySide == PartySide.TENANT ? PartySide.LANDLORD : PartySide.TENANT;
     return new RoomParties(
+        phases.getOrDefault(roomRecordId, RoomPhase.LIVING),
         sides.getOrDefault(mySide, PartyFacts.empty()),
         sides.getOrDefault(other, PartyFacts.empty()));
   }
@@ -37,5 +40,11 @@ public class FakeCounterpartReader implements CounterpartReader {
   /** 이 호실의 한 자리를 적어 둔다. 적지 않은 자리는 빈 자리(초대 전)다. */
   public void seed(UUID roomRecordId, PartySide side, PartyFacts facts) {
     rooms.computeIfAbsent(roomRecordId, id -> new EnumMap<>(PartySide.class)).put(side, facts);
+  }
+
+  /** 호실 단계를 정해 둔다. 정하지 않으면 거주 중이다. */
+  public void seedPhase(UUID roomRecordId, RoomPhase phase) {
+    rooms.computeIfAbsent(roomRecordId, id -> new EnumMap<>(PartySide.class));
+    phases.put(roomRecordId, phase);
   }
 }

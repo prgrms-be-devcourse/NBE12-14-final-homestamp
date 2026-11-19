@@ -48,7 +48,8 @@ public interface WaitService {
 
   /**
    * 지금 호실 단계에서 이 종류의 요청을 열 수 있나(03 K "거주 종료 뒤", decisions 2026-11-18 다시 공유 규칙). 도메인 {@code load}가
-   * State에 담아 {@code AnswerSupport.canRerequest}·화면 버튼에 쓴다(#86).
+   * State에 담아 {@code AnswerSupport}의 {@code canOpenRequest}·화면 버튼에 쓴다(#86). 판단은 {@code
+   * RequestOpening}이고 호실 단계는 {@code CounterpartReader}가 돌려준다. 재통지·미확인 작업도 같은 판단을 쓴다.
    */
   boolean canOpen(UUID roomRecordId, RequestKind kind);
 

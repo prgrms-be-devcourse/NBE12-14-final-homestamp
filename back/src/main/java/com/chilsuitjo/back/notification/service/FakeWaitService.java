@@ -137,7 +137,10 @@ public class FakeWaitService implements WaitService {
                 : request);
   }
 
-  /** 이 호실에서 이 종류를 열 수 없게 만든다(예: 거주 종료 뒤 하자 확인). */
+  /**
+   * 이 호실에서 이 종류를 열 수 없게 만든다(예: 거주 종료 뒤 하자 확인). 가짜는 호실 단계를 읽지 않아 기본은 모두 열 수 있다. 실제 구현은 {@code
+   * CounterpartReader}의 단계와 {@code RequestOpening}으로 판단한다.
+   */
   public void blockOpening(UUID roomRecordId, RequestKind kind) {
     blocked.add(new Key(kind, null, roomRecordId));
   }
