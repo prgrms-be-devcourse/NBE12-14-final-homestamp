@@ -90,7 +90,7 @@ class SecurityTestProfileTest {
 
   @Test
   void test_프로필에서는_API_문서_주소를_막지_않는다() throws Exception {
-    // springdoc이 없는 지금은 없는 주소(404)지만, 401이 아니라 Security를 통과했다는 뜻이다
+    // @WebMvcTest 범위에서는 springdoc이 문서 주소를 등록하지 않아 404가 난다. 401이 아니라 Security를 통과했다는 뜻이다
     mvc.perform(get("/v3/api-docs")).andExpect(status().isNotFound());
     mvc.perform(get("/swagger-ui/index.html")).andExpect(status().isNotFound());
   }

@@ -19,7 +19,7 @@ import org.springframework.web.servlet.HandlerExceptionResolver;
 
 /**
  * 보안 뼈대. 세션 없이 {@code Authorization: Bearer} 토큰만 본다(06 4-0 인증, 04 4-1). 폼 로그인·HTTP Basic·CSRF는 쓰지
- * 않는다 (쿠키 대신 헤더라 CSRF와 무관하고, 쿠키를 쓰는 재발급은 Origin 확인으로 막는다, 04 4-1).
+ * 않는다 (쿠키 대신 헤더라 CSRF와 무관하다. 쿠키를 쓰는 재발급의 Origin 확인은 아직 구현 전이며 ACC-2에서 구현할 예정이다, 04 4-1).
  *
  * <p>로그인 없이 여는 것은 06 4장에서 "누가"가 회원이 아닌 API와 아래 운영 확인 주소뿐이다. 나머지는 모두 로그인이 필요하고, 없거나 틀린 토큰은 {@code
  * LOGIN_REQUIRED}(401)로 다른 오류와 같은 모양(06 4-10)으로 돌려준다.
