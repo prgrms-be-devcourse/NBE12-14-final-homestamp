@@ -34,6 +34,8 @@ import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /** 09 3-1 순서·계약을 가짜 부품으로 확인한다. Spring·DB 없이 돈다. */
@@ -246,6 +248,31 @@ class ActionPipelineTest {
     assertThatThrownBy(
             () -> followUps.add(Actor.server(), ActionType.CLOSE_FINISH_REQUEST, null, Map.of()))
         .isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
+  void 커밋_직전_리스너에서는_딸린_행동을_남길_수_없고_요청이_모두_되돌려진다() {
+    // @TransactionalEventListener(BEFORE_COMMIT)와 같은 때: 단계가 끝나 창구가 닫힌 뒤 커밋 직전에 불린다
+    ActionTarget settlement = ActionTarget.settlement(UUID.randomUUID());
+    store.afterSave =
+        () ->
+            TransactionSynchronizationManager.registerSynchronization(
+                new TransactionSynchronization() {
+                  @Override
+                  public void beforeCommit(boolean readOnly) {
+                    followUps.add(
+                        Actor.server(), ActionType.CLOSE_FINISH_REQUEST, settlement, Map.of());
+                  }
+                });
+
+    assertThatThrownBy(() ->
+            pipeline.executeAll(
+                ActionBatch.of(room, Actor.member(tenantId), "k1")
+                    .creating(ActionType.REGISTER, store, rules)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("@EventListener");
+    assertThat(writer.findByRoom(room)).isEmpty();
+    assertThat(transactionManager.rollbacks).isEqualTo(1);
   }
 
   @Test

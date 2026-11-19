@@ -259,7 +259,7 @@ assertThat(fx.actions().findByRoom(roomId))
 | `apply`에서 Repository·`Clock.now()` 부르기 | 다시 계산할 때(REP-10) 결과가 달라져요 | 시각은 `action.createdAt()`, 필요한 값은 `load`가 상태에 담기 |
 | `apply`에서 정산 완료·공유 중단 다시 검사 | 같은 검사가 두 군데 생겨 어긋나요 | pipeline에 맡기기(09 3-1 순서 3) |
 | 도메인이 `RoomGate`를 만들어 넘기기 | 잠그기 전 옛 값으로 판단해요 | 만들지 않아요. 조회 화면의 당사자 확인은 `roomAccessService.require(...)` |
-| pipeline 밖에서 `ActionFollowUps.add` | `IllegalStateException` "딸린 행동은 pipeline 단계 안에서만" | `save`나 같은 트랜잭션의 이벤트 리스너에서 |
+| pipeline 밖이나 단계가 끝난 뒤(`@TransactionalEventListener`·커밋 직전 `BEFORE_COMMIT`·비동기 리스너)에서 `ActionFollowUps.add` | `IllegalStateException` "딸린 행동은 pipeline 단계 안에서만". 요청 전체가 되돌려져요(500) | `save`나 `save` 안에서 동기로 도는 `@EventListener`에서만 |
 | `save` 안에서 pipeline을 다시 부름 | `IllegalStateException` "pipeline 안에서 pipeline을 다시 부르지 않아요" | 같은 요청이면 `executeAll` 단계로, 서버 기록이면 `ActionFollowUps.add` |
 | 화면 키에 `#`를 넣음 | `IllegalArgumentException` | 화면 키는 UUID. `<키>#2`는 pipeline이 붙여요 |
 | 같은 키로 다른 행동·대상 | `IDEMPOTENCY_KEY_REUSED`(422) | 버튼마다 새 키 |

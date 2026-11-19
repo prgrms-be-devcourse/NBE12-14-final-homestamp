@@ -10,11 +10,14 @@ import java.util.Objects;
 import org.springframework.stereotype.Component;
 
 /**
- * 단계 도중에 생기는 <b>딸린 행동</b>을 남기는 창구(09 3-1, decisions 2026-11-17). 그 단계의 {@code StateStore.save}나 같은
- * 트랜잭션의 이벤트 리스너에서 부른다. pipeline이 그 단계를 기록한 뒤 이어서 기록한다.
+ * 단계 도중에 생기는 <b>딸린 행동</b>을 남기는 창구(09 3-1, decisions 2026-11-17). 그 단계의 {@code StateStore.save}나
+ * {@code save} 안에서 동기로 도는 {@code @EventListener}에서만 부른다. pipeline이 그 단계를 기록한 뒤 이어서 기록한다.
+ *
+ * <p>창구는 단계가 끝날 때 닫힌다. 그래서 {@code @TransactionalEventListener}(커밋 직전 {@code BEFORE_COMMIT} 포함)나 비동기
+ * 리스너에서 부르면 {@link IllegalStateException}이 나고 요청 전체가 되돌려진다.
  *
  * <pre>{@code
- * // 정산이 바뀌어 기다리던 끝내기 요청을 닫을 때(정산 쪽 save나 PaymentAmountConfirmed 리스너)
+ * // 정산이 바뀌어 기다리던 끝내기 요청을 닫을 때(정산 쪽 save, 또는 save 안에서 낸 PaymentAmountConfirmed를 받는 @EventListener)
  * followUps.add(Actor.server(), ActionType.CLOSE_FINISH_REQUEST, ActionTarget.settlement(id), Map.of());
  * }</pre>
  *
@@ -39,7 +42,8 @@ public class ActionFollowUps {
   public void add(Actor actor, ActionType type, ActionTarget target, Map<String, Object> payload) {
     List<FollowUp> list = current.get();
     if (list == null) {
-      throw new IllegalStateException("딸린 행동은 pipeline 단계 안(save·이벤트 리스너)에서만 남길 수 있어요");
+      throw new IllegalStateException(
+          "딸린 행동은 pipeline 단계 안(save나 save 안에서 동기로 도는 @EventListener)에서만 남길 수 있어요. @TransactionalEventListener·비동기 리스너에서는 안 돼요");
     }
     list.add(new FollowUp(actor, type, target, payload));
   }
