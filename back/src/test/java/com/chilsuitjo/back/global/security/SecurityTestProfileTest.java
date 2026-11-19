@@ -19,8 +19,8 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
 /** test 프로필: 가짜 검증기로 {@code Bearer <회원 UUID>}가 로그인이 된다(06 4-0 인증, 4-10). */
-@WebMvcTest(SecurityTestController.class)
-@Import({SecurityConfig.class, FakeAccessTokenVerifier.class})
+@WebMvcTest(SecurityTestControllerConfig.SecurityTestController.class)
+@Import({SecurityTestControllerConfig.class, SecurityConfig.class, FakeAccessTokenVerifier.class})
 @ActiveProfiles("test")
 class SecurityTestProfileTest {
 

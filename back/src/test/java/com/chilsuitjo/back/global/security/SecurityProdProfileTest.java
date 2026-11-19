@@ -39,13 +39,23 @@ abstract class SecurityProdProfileTest {
     }
   }
 
-  @WebMvcTest(SecurityTestController.class)
-  @Import({SecurityConfig.class, FakeAccessTokenVerifier.class, 받지_않는_검증기.class})
+  @WebMvcTest(SecurityTestControllerConfig.SecurityTestController.class)
+  @Import({
+    SecurityTestControllerConfig.class,
+    SecurityConfig.class,
+    FakeAccessTokenVerifier.class,
+    받지_않는_검증기.class
+  })
   @ActiveProfiles("prod")
   static class Prod extends SecurityProdProfileTest {}
 
-  @WebMvcTest(SecurityTestController.class)
-  @Import({SecurityConfig.class, FakeAccessTokenVerifier.class, 받지_않는_검증기.class})
+  @WebMvcTest(SecurityTestControllerConfig.SecurityTestController.class)
+  @Import({
+    SecurityTestControllerConfig.class,
+    SecurityConfig.class,
+    FakeAccessTokenVerifier.class,
+    받지_않는_검증기.class
+  })
   @ActiveProfiles({"local", "prod"})
   static class LocalProd extends SecurityProdProfileTest {}
 }

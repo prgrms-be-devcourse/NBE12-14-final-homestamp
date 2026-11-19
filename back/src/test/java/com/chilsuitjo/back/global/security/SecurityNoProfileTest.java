@@ -17,8 +17,8 @@ import org.springframework.test.web.servlet.MockMvc;
  * 프로필이 없으면 가짜 검증기가 켜지지 않는다. 서버는 뜨지만 {@code Bearer <회원 UUID>}로도 로그인할 수 없고, API 문서 주소도 열지 않는다. {@link
  * FakeAccessTokenVerifier}를 일부러 가져와도 프로필 조건이 막는지 본다.
  */
-@WebMvcTest(SecurityTestController.class)
-@Import({SecurityConfig.class, FakeAccessTokenVerifier.class})
+@WebMvcTest(SecurityTestControllerConfig.SecurityTestController.class)
+@Import({SecurityTestControllerConfig.class, SecurityConfig.class, FakeAccessTokenVerifier.class})
 class SecurityNoProfileTest {
 
   @Autowired private MockMvc mvc;
