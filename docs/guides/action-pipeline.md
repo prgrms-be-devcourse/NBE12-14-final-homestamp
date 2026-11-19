@@ -142,7 +142,7 @@ public class RepairService {
         new ActionCommand(roomRecordId, Actor.member(memberId), ActionType.REGISTER, idempotencyKey,
             null,              // 대상: 새로 만드는 행동이라 비워요
             null,              // seenVersionNo
-            content(req),      // DigestInput, 행동 기록의 내용 지문 재료
+            content(req),      // DigestInput, 행동 기록의 내용 지문 재료(아래 "어느 판을 넣나")
             null,              // reason
             Map.of()),         // payload
         store, rules);
@@ -150,6 +150,14 @@ public class RepairService {
   }
 }
 ```
+
+**어느 판을 내용 지문(`content`)에 넣나**(05 2-3, #87 리뷰): 행동이 **무엇을 보고 했나**로 정해요. 잘못 넣어도 해시 체인은 그대로 이어지니(체인 검증만으로 본문까지 검증되지 않음), 도메인 테스트로 고정해요.
+
+| 행동 | 넣는 판 | 예 |
+|---|---|---|
+| 새 판을 만드는 행동 | 그 새 판(`save`가 `SavedState`의 `content`로 돌려줌) | 하자 등록, 고치기, 지불 기록, 점검 항목 더하기 |
+| 본 판에 대고 하는 행동 | **본 판**(`seenVersionNo`의 판). 지금 판이 아니에요 | 응답하기(맞아요·보류·이견), 확인, 동의 |
+| 판을 보지 않는 행동 | 없음(`null`) | 링크 열람, 재통지, 확인 없음 표시 |
 
 ### 3-4. 컨트롤러
 

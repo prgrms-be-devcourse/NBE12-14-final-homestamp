@@ -152,8 +152,8 @@ class ActionHashTest {
 
     assertThat(ActionHash.compute(with(sample(), "payload", ab)))
         .isEqualTo(ActionHash.compute(with(sample(), "payload", ba)));
-    assertThat(ActionHash.compute(with(sample(), "payload", List.of(1, 2))))
-        .isNotEqualTo(ActionHash.compute(with(sample(), "payload", List.of(2, 1))));
+    assertThat(ActionHash.compute(with(sample(), "payload", Map.of("l", List.of(1, 2)))))
+        .isNotEqualTo(ActionHash.compute(with(sample(), "payload", Map.of("l", List.of(2, 1)))));
   }
 
   @Test
@@ -168,6 +168,15 @@ class ActionHashTest {
   void payload_enum은_이름_글자와_같다() {
     assertThat(ActionHash.compute(with(sample(), "payload", Map.of("side", PartySide.TENANT))))
         .isEqualTo(ActionHash.compute(with(sample(), "payload", Map.of("side", "TENANT"))));
+  }
+
+  @Test
+  void payload_최상위는_없음이거나_객체만() {
+    for (Object top : new Object[] {List.of(1), "a", 1, true}) {
+      assertThatThrownBy(() -> ActionHash.compute(with(sample(), "payload", top)))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("최상위");
+    }
   }
 
   @Test
