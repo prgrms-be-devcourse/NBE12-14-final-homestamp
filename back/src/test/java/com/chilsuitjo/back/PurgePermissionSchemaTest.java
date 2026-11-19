@@ -119,8 +119,8 @@ class PurgePermissionSchemaTest extends SchemaTestSupport {
     jdbc.update(
         """
         INSERT INTO action (id, room_record_id, room_seq, prev_hash, hash, actor_key,
-          type, idempotency_key, request_id, created_at)
-        VALUES (?, ?, 1, ?, ?, 'server', 'CREATE_ROOM', ?, gen_random_uuid(), CURRENT_TIMESTAMP)
+          type, idempotency_key, request_id, hash_version, created_at)
+        VALUES (?, ?, 1, ?, ?, 'server', 'CREATE_ROOM', ?, gen_random_uuid(), 1, CURRENT_TIMESTAMP)
         """,
         id,
         room,
