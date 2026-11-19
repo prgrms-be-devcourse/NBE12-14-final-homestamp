@@ -11,8 +11,8 @@ import java.util.UUID;
  * 부른다 (09 3-1 "가짜").
  *
  * <p>지금은 {@link FakeActionWriter}. 실제 구현은 {@code room_seq} = 마지막 + 1, {@code prev_hash} = 마지막 hash,
- * {@code content_digest}·{@code hash}를 계산해 {@code record.action}에 쓴다(입력 형식은 그때 테스트로 고정, 04 4-0). 같은
- * (주체, 키)가 이미 있으면 {@code UNIQUE(actor_key, idempotency_key)}에 걸려 {@code
+ * {@code content_digest}·{@code hash}를 계산해 {@code record.action}에 쓴다(입력 형식은 05 2-3 「해시 입력 형식」, 04
+ * 4-0). 같은 (주체, 키)가 이미 있으면 {@code UNIQUE(actor_key, idempotency_key)}에 걸려 {@code
  * DataIntegrityViolationException}이 난다.
  */
 interface ActionWriter {
