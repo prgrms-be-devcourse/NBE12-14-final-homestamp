@@ -172,7 +172,7 @@ class ActionHashTest {
 
   @Test
   void payload_소수는_거절한다() {
-    for (Object decimal : List.of(1.5, 2.0, 1.5f, new BigDecimal("1.5"))) {
+    for (Object decimal : List.of(1.5, 2.0, 1.5f, new BigDecimal("1.5"), new BigDecimal("2.0"))) {
       assertThatThrownBy(() -> ActionHash.compute(with(sample(), "payload", Map.of("n", decimal))))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("소수 금지");

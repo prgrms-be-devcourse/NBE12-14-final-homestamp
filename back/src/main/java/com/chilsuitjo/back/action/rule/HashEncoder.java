@@ -127,6 +127,8 @@ final class HashEncoder {
       case Short s -> tagged('I').int64((long) s);
       case Byte b -> tagged('I').int64((long) b);
       case BigInteger big -> tagged('I').int64(exactLong(new BigDecimal(big)));
+      // 2.0처럼 정수 모양이어도 소수 자리가 있으면 거절한다. jsonb는 2.0을 그대로 두어, 읽는 쪽이 Double로 읽으면 어긋난다.
+      case BigDecimal decimal when decimal.scale() > 0 -> throw decimal(decimal);
       case BigDecimal decimal -> tagged('I').int64(exactLong(decimal));
       case Double d -> throw decimal(d);
       case Float f -> throw decimal(f);
