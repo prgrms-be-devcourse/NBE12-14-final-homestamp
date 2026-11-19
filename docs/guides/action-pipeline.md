@@ -88,7 +88,7 @@ public class RepairTransitions implements Transitions<RepairState> {
 }
 ```
 
-`apply`에서 **보지 않는 것**: 정산 완료·합류 전 기록·내 공유 중단, 거주 종료 뒤 새 수리 건(`REGISTER`). pipeline이 3단계에서 먼저 막아요(09 3-1 순서 3). **그 밖의 "거주 중에만" 규칙**(거주 종료 뒤 하자 응답·종료 요청, 진행 상황 묻기 등)은 pipeline이 막지 않으니 `load`가 호실 단계를 상태에 담고 `apply`에서 막아요.
+`apply`에서 **보지 않는 것**: 정산 완료·합류 전 기록·내 공유 중단, 거주 종료 뒤 새 수리 건(`REGISTER`). pipeline이 3단계에서 먼저 막아요(09 3-1 순서 3). **그 밖의 "거주 중에만" 규칙**(거주 종료 뒤 수리 시작·종료 요청·종료 확인, 진행 상황 묻기 등)은 pipeline이 막지 않으니 `load`가 호실 단계를 상태에 담고 `apply`에서 막아요.
 `apply`에서 **보는 것**: 기록 단위 규칙(`NOT_COUNTERPART_SIDE`, `ACK_FINAL` …), 그리고 행동마다 결과가 다른 호실 사실(예: 상대 공유 중단에 따른 정산 끝내기 막기). 뒤의 것은 `load`가 상태 값에 담아 줘요(09 3-1 "계약").
 
 ### 3-2. 저장
@@ -311,14 +311,14 @@ public record RepairState(
 
 ```java
 case RESPOND_DEFECT -> {
-  if (!now.living()) throw new BusinessException(ErrorCode.INVALID_STATE); // 도메인이 먼저 막는 것
+  // 거주 종료 뒤에도 정산 완료 전까지 답할 수 있다(늦은 답, 03 3장 권한 표). 정산 완료는 pipeline이 막는다
   AnswerPayload in = action.payloadAs(AnswerPayload.class);
   AckState next = AnswerSupport.answer(
       now.defect(), action.actorSide(), in.answer(), in.reason(), action.seenVersionNo());
   yield now.withDefectAck(next);
 }
 case SUPPLEMENT -> {
-  if (!now.living()) throw new BusinessException(ErrorCode.INVALID_STATE);
+  // 거주 종료 뒤에는 하자 확인 요청을 열 수 없어(03 K) canOpenDefectConfirm이 false → INVALID_STATE
   AnswerSupport.Rerequested r = AnswerSupport.rerequest(
       now.defect(), action.actorSide(), true /* 서비스가 근거를 확인 */, now.canOpenDefectConfirm(),
       action.createdAt(), interval);
@@ -335,7 +335,7 @@ case SUPPLEMENT -> {
 | 무엇 | 예 | 어디서 |
 |---|---|---|
 | 상대가 아직 볼 수 없는 기록 | 작성 중 점검의 항목(06 INSP-1a) | `apply`에서 `INVALID_STATE`, `canAnswer`도 `false`. 확인 카드도 같은 기준 |
-| 그 단계에서 할 수 없는 행동 | 거주 종료 뒤 하자 응답·보충(03 A 상태별 표) | `load`가 담은 호실 단계로 `apply`에서 |
+| 그 단계에서 할 수 없는 행동 | 거주 종료 뒤 열린 수리 건의 [종료 확인](03 A 상태별 표 "열린 수리 건의 수리 행동") | `load`가 담은 호실 단계로 `apply`에서 |
 | 규칙이 다른 응답 | 정산 끝내기(`AnswerResult` Javadoc), 돈 안건의 제안·동의(`ProposalService`, `OWN_PROPOSAL`) | 그 도메인 |
 
 ### 8-4. 응답 요청(notification)과 잇기

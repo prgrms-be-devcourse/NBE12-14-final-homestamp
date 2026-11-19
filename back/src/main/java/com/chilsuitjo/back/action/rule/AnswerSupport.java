@@ -16,8 +16,8 @@ import java.util.Objects;
  * <p>순수 함수다: Repository·{@code Clock}·호실 단계를 모른다. 지금 시각은 {@code apply}가 받은 {@code
  * entry.createdAt()}을, 간격({@code rerequest.interval})은 각 {@code Transitions}가 설정에서 받아 넘긴다.
  *
- * <p><b>도메인이 먼저 막는 것</b>(여기서 보지 않음): 상대가 아직 볼 수 없는 기록(작성 중 점검 등), 그 단계에서 할 수 없는 행동(거주 종료 뒤 하자 응답
- * 등), 정산 끝내기(규칙이 다름, {@code AnswerResult}), 돈 안건 장치의 제안·동의({@code ProposalService}, {@code
+ * <p><b>도메인이 먼저 막는 것</b>(여기서 보지 않음): 상대가 아직 볼 수 없는 기록(작성 중 점검 등), 그 단계에서 할 수 없는 행동(거주 종료 뒤 열린 수리 건의
+ * 종료 확인 등), 정산 끝내기(규칙이 다름, {@code AnswerResult}), 돈 안건 장치의 제안·동의({@code ProposalService}, {@code
  * OWN_PROPOSAL}). 정산 완료 뒤 막기는 pipeline({@code SETTLED})이 한다.
  *
  * <p>[상황이 바뀌었어요]는 보충과 조건이 달라(하자를 둘 다 확인한 뒤 누구든, 06 REP-6d) {@link #rerequest}를 쓰지 않고 {@link
