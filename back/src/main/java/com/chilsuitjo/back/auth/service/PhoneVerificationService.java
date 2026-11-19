@@ -46,9 +46,8 @@ public class PhoneVerificationService {
    * 서비스 전체 문자 한도({@code sms-total})를 차례로 보고, 같은 진행의 이전 번호를 만료시킨 뒤 새 행을 만든다(05). 원문 번호는 돌려주기만 하고
    * 저장하지 않는다.
    *
-   * @throws ResendTooSoonException 다시 받기 간격이 남았다({@code RATE_LIMITED})
-   * @throws BusinessException {@code DAILY_LIMIT}(하루 인증 횟수·전체 문자 한도), {@code VALIDATION_FAILED}(번호
-   *     모양)
+   * @throws BusinessException {@code RATE_LIMITED}(다시 받기 간격, 남은 시간을 {@code Retry-After}로), {@code
+   *     DAILY_LIMIT}(하루 인증 횟수·전체 문자 한도), {@code VALIDATION_FAILED}(번호 모양)
    */
   @Transactional
   public IssuedCode issue(String rawPhone, VerificationPurpose purpose) {
@@ -61,7 +60,7 @@ public class PhoneVerificationService {
         .ifPresent(last -> {
           Instant next = last.getCreatedAt().plus(settings.resendInterval());
           if (now.isBefore(next)) {
-            throw new ResendTooSoonException(Duration.between(now, next));
+            throw new BusinessException(ErrorCode.RATE_LIMITED, Duration.between(now, next));
           }
         });
 

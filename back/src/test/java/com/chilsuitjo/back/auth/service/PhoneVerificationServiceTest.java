@@ -204,7 +204,10 @@ class PhoneVerificationServiceTest {
         together(() -> service.issue(PHONE, SIGNUP), () -> service.issue(PHONE, SIGNUP));
 
     assertThat(results).filteredOn(IssuedCode.class::isInstance).hasSize(1);
-    assertThat(results).filteredOn(ResendTooSoonException.class::isInstance).hasSize(1);
+    assertThat(results)
+        .filteredOn(BusinessException.class::isInstance)
+        .extracting(e -> ((BusinessException) e).errorCode())
+        .containsExactly(ErrorCode.RATE_LIMITED);
     assertThat(verifications.count()).isEqualTo(1);
     assertThat(smsTotalToday()).isEqualTo(1);
   }
@@ -237,10 +240,10 @@ class PhoneVerificationServiceTest {
 
     assertThatThrownBy(() -> service.issue(PHONE, SIGNUP))
         .isInstanceOfSatisfying(
-            ResendTooSoonException.class,
+            BusinessException.class,
             e -> {
               assertThat(e.errorCode()).isEqualTo(ErrorCode.RATE_LIMITED);
-              assertThat(e.retryAfter()).isEqualTo(Duration.ofSeconds(40));
+              assertThat(e.retryAfter()).contains(Duration.ofSeconds(40));
             });
   }
 
