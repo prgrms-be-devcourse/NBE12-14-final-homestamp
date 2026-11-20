@@ -28,6 +28,29 @@ springdoc:
 app:
   # 한국 시간으로 정해진 규칙(문자 보류 21~08시, 하루 한도의 "하루")만 이 위치로 계산한다
   zone: Asia/Seoul
+  # 비밀 키(docs/rules/04 비밀값). 여기에는 값을 두지 않는다. 운영은 Parameter Store에서 받고, 값이 없으면 앱이 시작하지 않는다.
+  # local·test는 아래 고정 값을 쓴다. verify-code: 인증번호 해시, verify-ticket: 인증 표 서명, phone-hmac: 번호 HMAC(번호 잠금 키)
+  keys:
+    verify-code:
+    verify-ticket:
+    phone-hmac:
+
+# 휴대폰 인증 설정값(06 0-1). 이름은 06 표와 같다
+verify:
+  code:
+    ttl: 5m
+  attempts:
+    max: 5
+  daily:
+    phone: 5
+  ticket:
+    ttl: 15m
+  resend:
+    interval: 60s
+
+sms:
+  daily:
+    total: 40
 
 ---
 spring:
@@ -39,3 +62,15 @@ springdoc:
     enabled: true
   swagger-ui:
     enabled: true
+
+---
+# local·test 전용 고정 비밀 키. prod가 함께 켜지면 쓰지 않는다(값이 없어 시작하지 않음)
+spring:
+  config:
+    activate:
+      on-profile: (local | test) & !prod
+app:
+  keys:
+    verify-code: local-test-only-verify-code-key
+    verify-ticket: local-test-only-verify-ticket-key
+    phone-hmac: local-test-only-phone-hmac-key

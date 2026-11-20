@@ -1,0 +1,107 @@
+package com.chilsuitjo.back.auth.service;
+
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
+import java.security.MessageDigest;
+import java.util.Base64;
+import java.util.HexFormat;
+import java.util.Optional;
+import java.util.UUID;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
+/**
+ * 휴대폰 인증이 쓰는 비밀 키 세 개(04 비밀값). 인증번호 해시, 인증 표 서명, 번호 HMAC 키를 따로 두고 모두 HMAC-SHA256으로 쓴다.
+ *
+ * <p>키는 {@code app.keys.*} 설정으로 받는다. local·test만 {@code application.yml}에 고정 값이 있고, 그 밖의 환경에서 값이
+ * 없거나 두 키가 같으면 앱이 시작하지 않는다.
+ */
+@Component
+class VerificationKeys {
+
+  private static final String HMAC = "HmacSHA256";
+  private static final Base64.Encoder TICKET_ENCODER = Base64.getUrlEncoder().withoutPadding();
+
+  private final byte[] codeKey;
+  private final byte[] ticketKey;
+  private final byte[] phoneKey;
+
+  VerificationKeys(
+      @Value("${app.keys.verify-code:}") String codeKey,
+      @Value("${app.keys.verify-ticket:}") String ticketKey,
+      @Value("${app.keys.phone-hmac:}") String phoneKey) {
+    require("app.keys.verify-code", codeKey);
+    require("app.keys.verify-ticket", ticketKey);
+    require("app.keys.phone-hmac", phoneKey);
+    if (codeKey.equals(ticketKey) || codeKey.equals(phoneKey) || ticketKey.equals(phoneKey)) {
+      throw new IllegalStateException("app.keys의 비밀 키는 서로 달라야 한다");
+    }
+    this.codeKey = codeKey.getBytes(StandardCharsets.UTF_8);
+    this.ticketKey = ticketKey.getBytes(StandardCharsets.UTF_8);
+    this.phoneKey = phoneKey.getBytes(StandardCharsets.UTF_8);
+  }
+
+  private static void require(String name, String value) {
+    if (value == null || value.isBlank()) {
+      throw new IllegalStateException(name + " 비밀 키가 없다. local·test가 아니면 설정으로 넣어야 시작한다");
+    }
+  }
+
+  /** 인증번호 해시. 행 ID를 함께 넣어 같은 번호라도 행마다 값이 다르다. */
+  String codeHash(UUID verificationId, String code) {
+    return HexFormat.of().formatHex(hmac(codeKey, verificationId + ":" + code));
+  }
+
+  /** 두 해시가 같은지 시간 차이 없이 비교한다. */
+  static boolean sameHash(String a, String b) {
+    return MessageDigest.isEqual(
+        a.getBytes(StandardCharsets.UTF_8), b.getBytes(StandardCharsets.UTF_8));
+  }
+
+  /** 번호 잠금 키(05 {@code pg_advisory_xact_lock}, 번호 HMAC으로 만든 키, 목적과 상관없음). */
+  long phoneLockKey(String phone) {
+    return ByteBuffer.wrap(hmac(phoneKey, phone)).getLong();
+  }
+
+  /** 인증 표: 행 ID + "." + 행 ID의 서명. 행 ID는 verify 주소에 드러나므로 서명 없이는 표로 쓸 수 없다. */
+  String signTicket(UUID verificationId) {
+    return verificationId + "." + TICKET_ENCODER.encodeToString(ticketSignature(verificationId));
+  }
+
+  /** 서명이 맞으면 행 ID. 모양이 틀리거나 서명이 다르면 비어 있다. */
+  Optional<UUID> readTicket(String ticket) {
+    if (ticket == null) {
+      return Optional.empty();
+    }
+    int dot = ticket.indexOf('.');
+    if (dot < 0) {
+      return Optional.empty();
+    }
+    try {
+      UUID id = UUID.fromString(ticket.substring(0, dot));
+      byte[] signature = Base64.getUrlDecoder().decode(ticket.substring(dot + 1));
+      return MessageDigest.isEqual(signature, ticketSignature(id))
+          ? Optional.of(id)
+          : Optional.empty();
+    } catch (IllegalArgumentException malformed) {
+      return Optional.empty();
+    }
+  }
+
+  private byte[] ticketSignature(UUID verificationId) {
+    return hmac(ticketKey, "verify-ticket:" + verificationId);
+  }
+
+  private static byte[] hmac(byte[] key, String text) {
+    try {
+      Mac mac = Mac.getInstance(HMAC);
+      mac.init(new SecretKeySpec(key, HMAC));
+      return mac.doFinal(text.getBytes(StandardCharsets.UTF_8));
+    } catch (GeneralSecurityException e) {
+      throw new IllegalStateException("HMAC-SHA256을 쓸 수 없다", e);
+    }
+  }
+}
