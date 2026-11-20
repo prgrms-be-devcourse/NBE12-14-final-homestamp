@@ -81,8 +81,19 @@ public class FakeWaitService implements WaitService {
       // 요청이 없거나 닫혔으면(답함·닫힘·거둠) 되살리지 않고 새로 연다(03 1-4 "닫힌 요청을 자동으로 되살리지 않는다")
       return open(command);
     }
-    // 열린 요청(기다림·미확인)은 상태를 그대로 두고 묶는다. 미확인이면 혼자 진행도 그대로다(03 1-4 "열리는 요청의 기한은 보낸 뒤 고정").
-    // 가짜에는 시각이 없어서 고친 내용 확인처럼 기한을 다시 세는 종류도 상태만 그대로 둔다.
+    if (command.kind() == RequestKind.PROPOSAL) {
+      if (existing.requestedBySide() != command.requestedBySide()) {
+        // 상대 안에 대한 새 안은 바꾸기(②)가 아니라 역제안(③): answered 다음 open(05 proposal)
+        throw new IllegalStateException(
+            "상대 쪽 제안 요청이 열려 있어요. 역제안이면 answered 다음 open을 불러 주세요(05 proposal ③)");
+      }
+      // 낸 쪽이 바꾸면 같은 요청이 다시 기다림이 된다(05 proposal ②, 03 E). 안건마다 기다리는 요청이 하나라 새로 열 수 없다
+      requests.put(key, existing.with(RequestStatus.WAITING, null));
+      return new RequestHandle(existing.id(), false);
+    }
+    // 그 밖의 열린 요청(기다림·미확인)은 상태를 그대로 두고 묶는다. 혼자 진행이 열리는 종류는 미확인이면 혼자 진행도 그대로다(03 1-4
+    // "열리는 요청의 기한은 보낸 뒤 고정"). 고친 내용 확인이 미확인일 때 다시 고치는 경우(03 1-4 "미확인 뒤 다시 고침")는 B와 확인 중이라 지금 동작을
+    // 둔다.
     return new RequestHandle(existing.id(), false);
   }
 
