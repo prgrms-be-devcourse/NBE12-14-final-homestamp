@@ -38,11 +38,16 @@ app:
     # 둘 다 없으면 토큰 기능이 꺼지고 보호된 API는 모두 401이다. prod는 이때 시작하지 않는다
     access-token:
     refresh-token:
+  # 화면의 Origin(scheme://host[:port]). 쿠키로 받는 재발급 요청은 이 값과 같은 Origin만 받는다(04 4-1 재발급 요청 보호)
+  origin:
 
 # 로그인 토큰 설정값(06 0-1). 이름은 06 표와 같다
 auth:
   access:
     ttl: 15m
+  refresh:
+    ttl: 14d
+    grace: 10s
 
 # 휴대폰 인증 설정값(06 0-1). 이름은 06 표와 같다
 verify:
@@ -86,3 +91,5 @@ app:
     # SecurityTestSupport.loginAs가 같은 값으로 테스트 토큰을 만든다. 바꾸면 그쪽도 함께 바꾼다
     access-token: local-test-only-access-token-signing-key
     refresh-token: local-test-only-refresh-token-rotation-key
+  # Vite 개발 서버
+  origin: http://localhost:5173
