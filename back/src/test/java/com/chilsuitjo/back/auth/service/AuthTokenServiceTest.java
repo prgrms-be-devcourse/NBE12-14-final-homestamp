@@ -39,7 +39,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.support.TransactionTemplate;
 
-/** 06 ACC-2a~c, 불변식 12. 실제 PostgreSQL에서 로테이션·유예·재사용 감지와 같은 토큰의 동시 재발급을 본다. 시각은 바꿀 수 있는 시계로 옮긴다. */
+/**
+ * 06 ACC-2a~c, 불변식 12. 실제 PostgreSQL에서 로테이션·유예·재사용 감지·로그아웃과 같은 토큰의 동시 재발급을 본다. 시각은 바꿀 수 있는 시계로 옮긴다.
+ */
 @Import({TestcontainersConfiguration.class, AuthTokenServiceTest.TestClock.class})
 @SpringBootTest
 @ActiveProfiles("test")
@@ -179,6 +181,28 @@ class AuthTokenServiceTest {
   }
 
   @Test
+  void 로그아웃하면_그_묶음만_폐기되고_그_토큰은_다시_쓸_수_없다() {
+    IssuedTokens login = service.issue(memberId);
+    IssuedTokens next = service.refresh(login.refreshToken());
+    IssuedTokens otherDevice = service.issue(memberId);
+
+    service.logout(memberId, familyOf(next));
+
+    assertThat(revokedAtInDb(next.refreshToken())).isNotNull();
+    assertThat(revokedAtInDb(otherDevice.refreshToken())).isNull();
+    expectError(() -> service.refresh(next.refreshToken()), ErrorCode.REFRESH_REUSED);
+  }
+
+  @Test
+  void 남의_묶음으로_로그아웃하면_아무것도_바꾸지_않는다() {
+    IssuedTokens login = service.issue(memberId);
+
+    service.logout(newMember(), familyOf(login));
+
+    assertThat(revokedAtInDb(login.refreshToken())).isNull();
+  }
+
+  @Test
   void 같은_R로_동시에_재발급해도_한_번만_바꾸고_둘_다_같은_R프라임을_받는다() throws Exception {
     IssuedTokens login = service.issue(memberId);
     String r = login.refreshToken();
@@ -243,6 +267,10 @@ class AuthTokenServiceTest {
         "SELECT revoked_at FROM state.refresh_token WHERE token_hash = ?",
         Timestamp.class,
         RefreshTokenKeys.hash(token));
+  }
+
+  private UUID familyOf(IssuedTokens issued) {
+    return accessTokens.read(issued.accessToken()).orElseThrow().familyId();
   }
 
   /** 행 잠금을 기다리는 연결이 {@code count}개가 될 때까지 기다린다. */

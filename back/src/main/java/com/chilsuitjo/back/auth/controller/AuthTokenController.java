@@ -5,8 +5,11 @@ import com.chilsuitjo.back.auth.dto.IssuedTokens;
 import com.chilsuitjo.back.auth.service.AuthTokenService;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
+import com.chilsuitjo.back.global.security.AccessTokens;
 import com.chilsuitjo.back.global.security.ConditionalOnLoginTokenKeys;
+import com.chilsuitjo.back.global.security.LoginMember;
 import java.time.Duration;
+import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
@@ -18,7 +21,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 재발급 API(06 4-1, ACC-2). 리프레시 토큰은 HttpOnly·Secure·SameSite=Strict 쿠키({@code
+ * 재발급·로그아웃 API(06 4-1, ACC-2). 리프레시 토큰은 HttpOnly·Secure·SameSite=Strict 쿠키({@code
  * Path=/api/auth/refresh})로만 주고받는다(04 4-1 브라우저 보관).
  *
  * <p>재발급은 쿠키로 인증하므로 Origin이 화면의 Origin({@code app.origin})과 같을 때만 받는다(04 4-1 재발급 요청 보호). 쿠키가 없거나
@@ -31,15 +34,19 @@ public class AuthTokenController {
 
   static final String REFRESH_COOKIE = "refresh_token";
   static final String REFRESH_PATH = "/api/auth/refresh";
+  private static final String BEARER = "Bearer ";
 
   private final AuthTokenService service;
+  private final AccessTokens accessTokens;
   private final String origin;
 
-  AuthTokenController(AuthTokenService service, @Value("${app.origin:}") String origin) {
+  AuthTokenController(
+      AuthTokenService service, AccessTokens accessTokens, @Value("${app.origin:}") String origin) {
     if (origin == null || origin.isBlank()) {
       throw new IllegalStateException("app.origin이 없다. 재발급 요청의 Origin을 확인하려면 화면의 Origin을 넣어야 시작한다");
     }
     this.service = service;
+    this.accessTokens = accessTokens;
     this.origin = origin;
   }
 
@@ -57,6 +64,20 @@ public class AuthTokenController {
             HttpHeaders.SET_COOKIE,
             refreshCookie(issued.refreshToken(), issued.refreshMaxAge()).toString())
         .body(new AccessTokenResponse(issued.accessToken()));
+  }
+
+  /** 그 기기의 리프레시 토큰 묶음을 폐기하고 쿠키를 지운다. 묶음은 액세스 토큰에 담긴 것을 쓴다(쿠키는 이 주소로 오지 않음). 이미 로그아웃했어도 204다. */
+  @PostMapping("/logout")
+  public ResponseEntity<Void> logout(
+      @LoginMember UUID memberId, @RequestHeader(HttpHeaders.AUTHORIZATION) String authorization) {
+    String token = authorization.startsWith(BEARER) ? authorization.substring(BEARER.length()) : "";
+    accessTokens
+        .read(token.strip())
+        .filter(claims -> claims.memberId().equals(memberId))
+        .ifPresent(claims -> service.logout(memberId, claims.familyId()));
+    return ResponseEntity.noContent()
+        .header(HttpHeaders.SET_COOKIE, refreshCookie("", Duration.ZERO).toString())
+        .build();
   }
 
   /** 리프레시 쿠키. 지울 때도 같은 이름·Path·속성으로 수명 0을 보낸다. */

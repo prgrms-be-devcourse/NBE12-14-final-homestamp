@@ -18,7 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 로그인 토큰 발급·재발급(06 ACC-2, 04 4-1). 액세스 토큰은 서버에 남기지 않고, 리프레시 토큰은 해시만 {@code refresh_token}에 둔다.
+ * 로그인 토큰 발급·재발급·로그아웃(06 ACC-2, 04 4-1). 액세스 토큰은 서버에 남기지 않고, 리프레시 토큰은 해시만 {@code refresh_token}에 둔다.
  *
  * <p>재발급 규칙(불변식 12):
  *
@@ -89,6 +89,16 @@ public class AuthTokenService {
     }
     tokens.revokeFamily(current.getMemberId(), current.getFamilyId(), now);
     throw new BusinessException(ErrorCode.REFRESH_REUSED);
+  }
+
+  /**
+   * 그 기기(액세스 토큰의 묶음)의 리프레시 토큰을 모두 폐기한다. 이미 폐기됐거나 남의 묶음이면 아무것도 바꾸지 않는다. 이미 낸 액세스 토큰은 만료까지 쓸 수 있다(서버에
+   * 저장하지 않음, 04 4-1).
+   */
+  @Transactional
+  public void logout(UUID memberId, UUID familyId) {
+    tokens.revokeFamily(
+        Objects.requireNonNull(memberId), Objects.requireNonNull(familyId), clock.instant());
   }
 
   private IssuedTokens rotate(RefreshToken current, String refreshToken, Instant now) {

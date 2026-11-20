@@ -3,6 +3,7 @@ package com.chilsuitjo.back.auth.controller;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -33,8 +34,9 @@ import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 /**
- * 06 4-1 {@code POST /api/auth/refresh}. 보안 설정까지 실제로 띄워 쿠키 속성(04 4-1 브라우저 보관), Origin 확인(04 4-1 재발급
- * 요청 보호), 오류 모양(06 4-10)을 본다. 회원 확인이 필요한 로그인 API는 회원가입(#106) 뒤에 더하므로 첫 토큰은 서비스로 만든다.
+ * 06 4-1 {@code POST /api/auth/refresh}·{@code /logout}. 보안 설정까지 실제로 띄워 쿠키 속성(04 4-1 브라우저 보관),
+ * Origin 확인(04 4-1 재발급 요청 보호), 오류 모양(06 4-10)을 본다. 회원 확인이 필요한 로그인 API는 회원가입(#106) 뒤에 더하므로 첫 토큰은
+ * 서비스로 만든다.
  */
 @Import(TestcontainersConfiguration.class)
 @SpringBootTest
@@ -126,6 +128,57 @@ class AuthTokenControllerTest {
         mvc.perform(post("/api/auth/refresh").header(HttpHeaders.ORIGIN, ORIGIN)),
         ErrorCode.LOGIN_REQUIRED);
     expectProblem(mvc.perform(refresh("모르는-토큰")), ErrorCode.LOGIN_REQUIRED);
+  }
+
+  @Test
+  void 로그아웃하면_204와_같은_Path로_쿠키를_지우고_그_리프레시_토큰은_거절된다() throws Exception {
+    IssuedTokens login = service.issue(memberId);
+
+    String cleared =
+        mvc.perform(
+                post("/api/auth/logout")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + login.accessToken()))
+            .andExpect(status().isNoContent())
+            .andReturn()
+            .getResponse()
+            .getHeader(HttpHeaders.SET_COOKIE);
+
+    assertThat(cleared)
+        .startsWith("refresh_token=;")
+        .contains("Path=/api/auth/refresh")
+        .contains("Max-Age=0")
+        .contains("HttpOnly")
+        .contains("Secure")
+        .contains("SameSite=Strict");
+    expectProblem(mvc.perform(refresh(login.refreshToken())), ErrorCode.REFRESH_REUSED);
+  }
+
+  @Test
+  void 재발급으로_받은_액세스_토큰으로도_로그아웃된다() throws Exception {
+    IssuedTokens login = service.issue(memberId);
+    MvcResult refreshed = mvc.perform(refresh(login.refreshToken())).andReturn();
+    String accessToken =
+        JsonPath.read(refreshed.getResponse().getContentAsString(), "$.accessToken");
+    String nextRefresh = refreshCookieValue(refreshed);
+
+    mvc.perform(post("/api/auth/logout").header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken))
+        .andExpect(status().isNoContent());
+
+    expectProblem(mvc.perform(refresh(nextRefresh)), ErrorCode.REFRESH_REUSED);
+  }
+
+  @Test
+  void 로그아웃은_로그인이_필요하다() throws Exception {
+    expectProblem(mvc.perform(post("/api/auth/logout")), ErrorCode.LOGIN_REQUIRED);
+  }
+
+  @Test
+  void 재사용이면_REFRESH_REUSED_모양으로_답한다() throws Exception {
+    IssuedTokens login = service.issue(memberId);
+    service.logout(memberId, accessTokens.read(login.accessToken()).orElseThrow().familyId());
+
+    expectProblem(mvc.perform(refresh(login.refreshToken())), ErrorCode.REFRESH_REUSED)
+        .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
   }
 
   private static MockHttpServletRequestBuilder refresh(String refreshToken) {
