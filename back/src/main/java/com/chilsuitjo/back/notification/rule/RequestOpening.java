@@ -15,9 +15,9 @@ import java.util.Set;
  *
  * <p>거주 종료 뒤 수리 종료 확인({@code CLOSE_CONFIRM})은 열 수 없다(#86, 수리 담당 동의).
  *
- * <p>거주 종료 뒤 수리비 나누기 안건({@code PROPOSAL})과 지불 금액 확인({@code AMOUNT_CONFIRM})을 여는 것은 아직 제안이다. 정산 후보가
- * 되려면 확인돼야 해서 열어 두었지만, decisions 2026-11-18의 목록(정산 항목·보증금·송금, 두 점검, 고친 내용 확인)에는 없어 돈 담당 확인을
- * 기다린다(#86). {@code PROPOSAL}은 수리비 안건과 정산 항목·보증금 안건이 같은 종류라 호실 단계만으로는 둘을 나눌 수 없다. 정해지면 이 목록만 고친다.
+ * <p>거주 종료 뒤에도 수리비 나누기 안건({@code PROPOSAL})과 지불 금액 확인({@code AMOUNT_CONFIRM})은 연다. 확인돼야 정산 후보가 되기
+ * 때문이다(decisions 2026-11-19, 2026-11-18 목록을 바꿈, #88 돈 담당 확인). {@code PROPOSAL}은 수리비 안건과 정산 항목·보증금
+ * 안건이 같은 종류라 호실 단계만으로는 둘을 나누지 않는다.
  */
 public final class RequestOpening {
 

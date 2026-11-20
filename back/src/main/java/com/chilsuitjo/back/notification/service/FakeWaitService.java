@@ -92,8 +92,8 @@ public class FakeWaitService implements WaitService {
       return new RequestHandle(existing.id(), false);
     }
     // 그 밖의 열린 요청(기다림·미확인)은 상태를 그대로 두고 묶는다. 혼자 진행이 열리는 종류는 미확인이면 혼자 진행도 그대로다(03 1-4
-    // "열리는 요청의 기한은 보낸 뒤 고정"). 고친 내용 확인이 미확인일 때 다시 고치는 경우(03 1-4 "미확인 뒤 다시 고침")는 B와 확인 중이라 지금 동작을
-    // 둔다.
+    // "열리는 요청의 기한은 보낸 뒤 고정"). 고친 내용 확인이 미확인일 때 다시 고치는 경우(03 1-4 "미확인 뒤 다시 고침")는 아직 정하지 않아 지금 동작을
+    // 둔다(#104).
     return new RequestHandle(existing.id(), false);
   }
 
