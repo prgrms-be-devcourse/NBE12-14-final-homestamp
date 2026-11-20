@@ -78,22 +78,31 @@ public class OutboxWorker {
 
   /** 한 번 돌고 처리한 줄 수를 돌려준다. 한 줄에서 예외가 나도 나머지 줄은 처리한다. */
   public int runOnce() {
-    List<UUID> claimed = claim();
-    for (UUID outboxId : claimed) {
+    int processed = 0;
+    while (processed < batchSize) {
+      UUID outboxId = claim();
+      if (outboxId == null) {
+        break;
+      }
+      processed++;
       try {
         process(outboxId);
       } catch (RuntimeException e) {
         log.error("아웃박스 줄 처리 실패: outbox={}, error={}", outboxId, e.getClass().getName());
       }
     }
-    return claimed.size();
+    return processed;
   }
 
-  private List<UUID> claim() {
+  private UUID claim() {
     return transaction.execute(status -> {
-      List<Outbox> rows = outbox.lockDueSms(clock.instant(), batchSize);
-      rows.forEach(Outbox::markSending);
-      return rows.stream().map(Outbox::getId).toList();
+      List<Outbox> rows = outbox.lockDueSms(clock.instant(), 1);
+      if (rows.isEmpty()) {
+        return null;
+      }
+      Outbox row = rows.getFirst();
+      row.markSending();
+      return row.getId();
     });
   }
 
@@ -177,6 +186,16 @@ public class OutboxWorker {
         case RETRY -> {
           Instant next = now.plus(retryDelay(row.getAttempts()));
           if (next.isAfter(row.getCreatedAt().plus(giveUpAfter))) {
+            if (noticeId == null) {
+              UUID savedNoticeId =
+                  row.noticeId().orElseThrow(() -> new IllegalStateException("문자 작업에 통지 ID가 없어요"));
+              notice = notices.findForUpdate(savedNoticeId).orElse(null);
+              if (notice == null) {
+                // 호실 삭제로 통지가 사라졌으면 보낼 대상도 없다.
+                row.markDone();
+                return;
+              }
+            }
             row.markFailed();
             if (notice != null) {
               notice.markFailed(now);
