@@ -19,8 +19,8 @@ import lombok.NoArgsConstructor;
  * 담는다. 사진 카드({@link Photo})는 고칠 수 없어서 바뀌는 칸을 여기에 둔다.
  *
  * <p>행동으로만 바뀐다: {@code HIDE_PHOTO}·{@code SHOW_PHOTO}(06 PHO-3), {@code MARK_PHOTO_WRONG}·{@code
- * UNMARK_PHOTO_WRONG}(PHO-9), {@code ERASE_PHOTO}(PHO-5·7). 바꾸는 메서드는 각 기능 PR에서 더한다. 그래서 새 행은 숨김 말고는
- * 빈 상태로 시작한다.
+ * UNMARK_PHOTO_WRONG}(PHO-9), {@code ERASE_PHOTO}(PHO-5·7). 바꾸는 메서드는 각 기능 PR에서 더한다. 그래서 새 행은 숨기지 않고
+ * 표시·지움도 없는 빈 상태로 시작한다. 숨김은 올린 뒤 {@code hide-on-link}로만 한다(06 API 표).
  */
 @Entity
 @Getter
@@ -61,14 +61,13 @@ public class PhotoVisibility {
   @Column(nullable = false)
   private Long version;
 
-  public PhotoVisibility(UUID photoId, UUID roomRecordId, boolean hiddenOnLink, Instant createdAt) {
+  public PhotoVisibility(UUID photoId, UUID roomRecordId, Instant createdAt) {
     if (photoId == null || roomRecordId == null || createdAt == null) {
       throw new IllegalArgumentException("필수 값이 누락되었습니다");
     }
 
     this.photoId = photoId;
     this.roomRecordId = roomRecordId;
-    this.hiddenOnLink = hiddenOnLink;
     this.createdAt = createdAt;
   }
 }
