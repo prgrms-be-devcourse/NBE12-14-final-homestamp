@@ -22,7 +22,8 @@ import org.springframework.stereotype.Service;
  * 요청은 다시 열지 않는다" 규칙은 진짜와 같다.
  *
  * <p>요청을 찾는 키는 V1의 "기다리는 요청은 하나" 제약과 같다. 대부분은 대상 + 종류이고, 점검 확인만 요청한 측까지 본다(점검 × 방향마다 하나, 03 H,
- * {@code ux_inspection_confirm_waiting}). 제안은 안건마다 하나라 누가 냈든 같은 요청이다(05 {@code response_request}).
+ * {@code ux_inspection_confirm_waiting}). 제안은 안건마다 기다리는 요청이 하나다({@code ux_proposal_waiting}). 상대의
+ * 안에 낸 역제안은 이전 요청을 {@code answered}로 닫은 뒤 새로 연다(05 {@code proposal} ③). 닫지 않고 상대 쪽이 열면 거절한다.
  *
  * <p>실제 구현(NOTI-1·5, 기다림 타이머)이 들어오면 이 클래스를 지운다. 다른 도메인은 {@link WaitService}만 쓰므로 바뀌지 않는다.
  */
@@ -38,6 +39,12 @@ public class FakeWaitService implements WaitService {
     Key key = Key.of(command.target(), command.kind(), command.requestedBySide());
     Request existing = requests.get(key);
     if (existing != null && existing.status().isOpen()) {
+      if (command.kind() == RequestKind.PROPOSAL
+          && existing.requestedBySide() != command.requestedBySide()) {
+        // 상대 안이 기다리는 중에 낸 안은 역제안이다. 이전 요청을 닫지 않고 열면 그 요청이 남아 기다림이 끝나지 않는다
+        throw new IllegalStateException(
+            "상대 쪽 제안 요청이 열려 있어요. 역제안이면 먼저 answered로 닫아 주세요(05 proposal ③)");
+      }
       return new RequestHandle(existing.id(), false);
     }
     Request created =

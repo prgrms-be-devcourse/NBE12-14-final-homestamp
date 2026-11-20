@@ -19,7 +19,14 @@ import java.util.UUID;
  */
 public interface WaitService {
 
-  /** 확인 요청을 연다. 같은 대상·종류에 열린 요청이 있으면 새로 만들지 않고 그것을 돌려준다(기록당 확인 요청은 하나). */
+  /**
+   * 확인 요청을 연다. 같은 대상·종류에 열린 요청이 있으면 새로 만들지 않고 그것을 돌려준다(기록당 확인 요청은 하나).
+   *
+   * <p><b>제안의 역제안</b>(상대의 안이 기다리는 중에 낸 안, 05 {@code proposal} ③): 이전 안의 요청은 답함, 다른 안에 새 요청이다. 그래서
+   * 역제안을 남기는 {@code save}는 먼저 {@link #answered}(안건, {@code PROPOSAL}, 역제안한 측)로 이전 요청을 닫고 이 메서드를
+   * 부른다. 안건마다 기다리는 요청이 하나라서({@code ux_proposal_waiting}) 이 순서여야 한다. 상대 쪽 제안 요청이 열린 채로 부르면 {@code
+   * IllegalStateException}(그대로 두면 이전 요청이 남아 기다림이 끝나지 않음). 같은 쪽이 자기 안을 바꾸는 것(②)은 {@link #restart}다.
+   */
   RequestHandle open(OpenRequestCommand command);
 
   /**
