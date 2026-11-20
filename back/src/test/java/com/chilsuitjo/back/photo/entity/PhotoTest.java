@@ -4,8 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
 import com.chilsuitjo.back.global.common.PartySide;
+import com.chilsuitjo.back.photo.rule.PhotoStage;
 import com.chilsuitjo.back.photo.rule.PhotoTargetType;
-import com.chilsuitjo.back.photo.rule.Stage;
 import java.time.Instant;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -72,7 +72,7 @@ class PhotoTest {
         PhotoTargetType.REPAIR_CASE,
         TARGET_ID,
         null,
-        "stage".equals(missingField) ? null : Stage.BEFORE,
+        "stage".equals(missingField) ? null : PhotoStage.BEFORE,
         "uploadedBySide".equals(missingField) ? null : PartySide.TENANT,
         null,
         "originalKey".equals(missingField) ? null : "photos/original.jpg",
@@ -90,7 +90,7 @@ class PhotoTest {
         inspectionId,
         roomPartId,
         null,
-        Stage.MOVE_IN,
+        PhotoStage.MOVE_IN,
         PartySide.TENANT,
         null,
         "photos/original.jpg",
