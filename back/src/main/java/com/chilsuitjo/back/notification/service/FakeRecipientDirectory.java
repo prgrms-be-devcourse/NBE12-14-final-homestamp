@@ -27,6 +27,12 @@ public class FakeRecipientDirectory implements RecipientDirectory {
     return Optional.ofNullable(memberPhones.get(memberId));
   }
 
+  /** 가짜는 자리에 정해 둔 번호를 그대로 쓴다. */
+  @Override
+  public Optional<String> phoneOfRecipient(UUID partyId) {
+    return phoneOfParty(partyId);
+  }
+
   public void seedParty(UUID partyId, String phone) {
     partyPhones.put(partyId, phone);
   }
