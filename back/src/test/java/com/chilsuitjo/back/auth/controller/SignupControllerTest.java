@@ -3,6 +3,9 @@ package com.chilsuitjo.back.auth.controller;
 import static com.chilsuitjo.back.auth.rule.VerificationPurpose.RESET;
 import static com.chilsuitjo.back.auth.rule.VerificationPurpose.SIGNUP;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -48,6 +51,7 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 
@@ -68,7 +72,7 @@ class SignupControllerTest {
   @Autowired private MockMvc mvc;
   @Autowired private PhoneVerificationService verifications;
   @Autowired private SignupService signups;
-  @Autowired private PasswordEncoder passwordEncoder;
+  @MockitoSpyBean private PasswordEncoder passwordEncoder;
   @Autowired private JdbcTemplate jdbc;
   @Autowired private MutableClock clock;
 
@@ -217,6 +221,27 @@ class SignupControllerTest {
   void ACC_1f_비밀번호_재설정_표나_모양이_틀린_표로는_가입할_수_없다() throws Exception {
     expectProblem(signUp(body(newEmail(), ticket(newPhone(), RESET))), ErrorCode.CODE_EXPIRED);
     expectProblem(signUp(body(newEmail(), "not-a-ticket")), ErrorCode.CODE_EXPIRED);
+  }
+
+  @Test
+  void 쓸_수_없는_표면_이미_쓰는_이메일이어도_EMAIL_TAKEN이_아니라_CODE_EXPIRED() throws Exception {
+    String taken = newEmail();
+    String used = ticket(newPhone(), SIGNUP);
+    signUp(body(taken, used)).andExpect(status().isCreated());
+    String reset = ticket(newPhone(), RESET);
+    String expiring = ticket(newPhone(), SIGNUP);
+    clock.advance(Duration.ofMinutes(15));
+
+    for (String ticket : List.of("not-a-ticket", used, reset, expiring)) {
+      expectProblem(signUp(body(taken, ticket)), ErrorCode.CODE_EXPIRED);
+    }
+  }
+
+  @Test
+  void 쓸_수_없는_표면_비밀번호를_해시하지_않는다() throws Exception {
+    expectProblem(signUp(body(newEmail(), "not-a-ticket")), ErrorCode.CODE_EXPIRED);
+
+    verify(passwordEncoder, never()).encode(any());
   }
 
   @Test

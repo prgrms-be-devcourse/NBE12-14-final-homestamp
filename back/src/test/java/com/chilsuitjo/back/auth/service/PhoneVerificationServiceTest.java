@@ -401,6 +401,52 @@ class PhoneVerificationServiceTest {
   }
 
   @Test
+  void 미리_확인은_표를_쓰지_않아_그_뒤에_한_번_쓸_수_있다() {
+    String ticket = ticket(SIGNUP);
+
+    service.checkTicket(ticket, SIGNUP);
+    service.checkTicket(ticket, SIGNUP);
+    assertThat(inTransaction(() -> service.useTicket(ticket, SIGNUP))).isEqualTo(PHONE);
+
+    assertCode(() -> service.checkTicket(ticket, SIGNUP), ErrorCode.CODE_EXPIRED);
+  }
+
+  @Test
+  void 미리_확인도_서명_목적_인증_여부_유효_시간을_본다() {
+    IssuedCode unverifiedCode = service.issue(PHONE, SIGNUP);
+    String unverified = keys.signTicket(unverifiedCode.verificationId());
+    String rowIdOnly = unverifiedCode.verificationId().toString();
+    clock.advance(RESEND);
+    String reset = ticket(RESET);
+    String signup = ticket(SIGNUP);
+
+    for (String bad : List.of("not-a-ticket", rowIdOnly, rowIdOnly + ".AAAA", unverified, reset)) {
+      assertCode(() -> service.checkTicket(bad, SIGNUP), ErrorCode.CODE_EXPIRED);
+    }
+    clock.advance(Duration.ofMinutes(15));
+    assertCode(() -> service.checkTicket(signup, SIGNUP), ErrorCode.CODE_EXPIRED);
+  }
+
+  @Test
+  void 미리_확인은_표_행을_잠그지_않는다() throws Exception {
+    String ticket = ticket(SIGNUP);
+    UUID id = UUID.fromString(ticket.substring(0, ticket.indexOf('.')));
+    CountDownLatch release = holdLock(() -> lockRow(id));
+    try {
+      Future<Object> check =
+          pool.submit(() ->
+              outcome(() -> {
+                service.checkTicket(ticket, SIGNUP);
+                return "checked";
+              }));
+
+      assertThat(check.get(5, TimeUnit.SECONDS)).isEqualTo("checked");
+    } finally {
+      release.countDown();
+    }
+  }
+
+  @Test
   void 아이디_찾기_표는_보기만_해서_유효_시간_안에_다시_쓸_수_있다() {
     String ticket = ticket(FIND_ID);
 
@@ -416,6 +462,8 @@ class PhoneVerificationServiceTest {
     assertThatThrownBy(() -> inTransaction(() -> service.useTicket("t", FIND_ID)))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> service.readTicket("t", SIGNUP))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> service.checkTicket("t", FIND_ID))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> service.useTicket("t", SIGNUP))
         .isInstanceOf(IllegalTransactionStateException.class);
