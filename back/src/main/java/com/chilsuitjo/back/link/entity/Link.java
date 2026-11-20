@@ -14,6 +14,7 @@ import java.util.UUID;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.DynamicUpdate;
 
 /**
  * 링크({@code state.link}, 05 2-2, C 테이블). 토큰 원문은 두지 않고 해시만 둔다(03 C).
@@ -21,6 +22,7 @@ import lombok.NoArgsConstructor;
  * <p>처음 무효가 된 뒤에는 시각과 이유를 바꾸지 않는다(불변식 7). 다른 도메인에는 이 엔티티를 넘기지 않는다(09 2장 {@code dto/}).
  */
 @Entity
+@DynamicUpdate
 @Table(schema = "state", name = "link")
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
