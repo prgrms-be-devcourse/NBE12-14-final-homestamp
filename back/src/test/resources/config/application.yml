@@ -1,0 +1,7 @@
+# 테스트 클래스패스 전용. 프로필 없이 띄우는 테스트(스키마 테스트 등)도 앱이 시작하도록 비밀 키를 넣는다.
+# 운영 jar에는 들어가지 않는다. 프로필이 없을 때 키가 없으면 시작하지 않는 것은 VerificationKeysTest가 본다.
+app:
+  keys:
+    verify-code: test-only-verify-code-key
+    verify-ticket: test-only-verify-ticket-key
+    phone-hmac: test-only-phone-hmac-key

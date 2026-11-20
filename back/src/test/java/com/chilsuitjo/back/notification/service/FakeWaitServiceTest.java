@@ -220,20 +220,79 @@ class FakeWaitServiceTest {
         .isInstanceOf(IllegalArgumentException.class);
   }
 
+  // ---- 제안은 안건마다 기다리는 요청 하나(V1 ux_proposal_waiting). 역제안은 05 proposal ③ ----
+
   @Test
-  void 제안은_역제안이_와도_같은_요청이다() {
-    RequestTarget agenda = RequestTarget.of(TargetKind.REPAIR_CASE, UUID.randomUUID());
-    RequestHandle proposal =
-        waits.open(
-            new OpenRequestCommand(roomRecordId, RequestKind.PROPOSAL, agenda, PartySide.LANDLORD));
+  void 역제안이면_이전_제안_요청은_답함이고_새_요청을_연다() {
+    RequestHandle proposal = waits.open(proposal(PartySide.LANDLORD));
 
-    RequestHandle counter =
-        waits.open(
-            new OpenRequestCommand(roomRecordId, RequestKind.PROPOSAL, agenda, PartySide.TENANT));
+    // 역제안 = 이전 안에 대한 이견 + 새 안. 05 ③ "이전 안의 요청은 ANSWERED, 다른 안에 새 요청"
+    waits.answered(agenda, RequestKind.PROPOSAL, PartySide.TENANT);
+    assertThat(waits.statusOf(agenda, RequestKind.PROPOSAL)).contains(RequestStatus.ANSWERED);
+    RequestHandle counter = waits.open(proposal(PartySide.TENANT));
 
-    // 05: PROPOSAL은 안건을 가리키고 기다리는 안이 바뀌어도 같은 요청(ux_proposal_waiting)
-    assertThat(counter.created()).isFalse();
-    assertThat(counter.requestId()).isEqualTo(proposal.requestId());
+    assertThat(counter.created()).isTrue();
+    assertThat(counter.requestId()).isNotEqualTo(proposal.requestId());
+    assertThat(waits.statusOf(agenda, RequestKind.PROPOSAL)).contains(RequestStatus.WAITING);
+  }
+
+  @Test
+  void 역제안_뒤_처음_낸_쪽이_답하면_역제안_요청이_닫힌다() {
+    waits.open(proposal(PartySide.LANDLORD));
+    waits.answered(agenda, RequestKind.PROPOSAL, PartySide.TENANT);
+    waits.open(proposal(PartySide.TENANT));
+
+    waits.answered(agenda, RequestKind.PROPOSAL, PartySide.LANDLORD);
+
+    // 역제안 요청은 세입자가 보냈으니 집주인의 답으로 닫힌다(기다림에는 끝이 있다)
+    assertThat(waits.statusOf(agenda, RequestKind.PROPOSAL)).contains(RequestStatus.ANSWERED);
+  }
+
+  @Test
+  void 이전_제안_요청을_닫지_않고_상대가_열면_거절한다() {
+    waits.open(proposal(PartySide.LANDLORD));
+
+    // answered 없이 open만 부르면 이전 요청이 남아 역제안 기다림이 끝나지 않는다
+    assertThatThrownBy(() -> waits.open(proposal(PartySide.TENANT)))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
+  void 같은_쪽이_다시_열면_같은_제안_요청이다() {
+    RequestHandle first = waits.open(proposal(PartySide.LANDLORD));
+
+    RequestHandle again = waits.open(proposal(PartySide.LANDLORD));
+
+    assertThat(again.created()).isFalse();
+    assertThat(again.requestId()).isEqualTo(first.requestId());
+  }
+
+  @Test
+  void 제안을_바꾸면_확인_없음이던_요청이_다시_기다림이다() {
+    RequestHandle first = waits.open(proposal(PartySide.LANDLORD));
+    waits.markUnconfirmed(agenda, RequestKind.PROPOSAL);
+
+    // 05 proposal ② "미확인이었으면 WAITING으로 돌아감", 03 E "낸 쪽이 바꾸면 같은 요청이 다시 기다림"
+    RequestHandle changed = waits.restart(proposal(PartySide.LANDLORD));
+
+    assertThat(changed.created()).isFalse();
+    assertThat(changed.requestId()).isEqualTo(first.requestId());
+    assertThat(waits.statusOf(agenda, RequestKind.PROPOSAL)).contains(RequestStatus.WAITING);
+  }
+
+  @Test
+  void 상대_쪽_제안_요청이_열려_있으면_바꾸기로_다시_요청할_수_없다() {
+    waits.open(proposal(PartySide.LANDLORD));
+
+    // 상대 안에 대한 새 안은 바꾸기(②)가 아니라 역제안(③): answered 다음 open
+    assertThatThrownBy(() -> waits.restart(proposal(PartySide.TENANT)))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
+  private final RequestTarget agenda = RequestTarget.of(TargetKind.REPAIR_CASE, UUID.randomUUID());
+
+  private OpenRequestCommand proposal(PartySide requestedBySide) {
+    return new OpenRequestCommand(roomRecordId, RequestKind.PROPOSAL, agenda, requestedBySide);
   }
 
   private final RequestTarget inspection =
