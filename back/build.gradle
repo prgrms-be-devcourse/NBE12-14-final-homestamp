@@ -28,6 +28,8 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter-webmvc'
     implementation 'org.flywaydb:flyway-database-postgresql'
+    // 액세스 JWT 발급·검증(Nimbus, HS256). 리소스 서버 자동 설정은 쓰지 않는다. 버전은 Spring Boot가 관리한다(04 고정 버전)
+    implementation 'org.springframework.security:spring-security-oauth2-jose'
     // API 문서(Swagger UI): local·test 프로필에서만 켠다(docs/rules/04 API 문서, 버전은 04 고정 버전)
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.2.0'
     // 롬복: 허용 목록과 금지는 lombok.config·docs/rules/09. 버전은 Spring Boot가 관리한다
