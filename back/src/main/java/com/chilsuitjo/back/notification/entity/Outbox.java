@@ -14,14 +14,15 @@ import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UuidGenerator;
 import org.hibernate.type.SqlTypes;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * 아웃박스 줄({@code state.outbox}, 05 2-9, C 테이블). 행동과 같은 트랜잭션에 저장하고, 커밋된 뒤 작업자가 꺼내 보낸다(04 4-2).
@@ -34,8 +35,7 @@ import org.hibernate.type.SqlTypes;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Outbox {
 
-  private static final Pattern NOTICE_ID =
-      Pattern.compile("\"noticeId\"\\s*:\\s*\"([0-9a-fA-F-]{36})\"");
+  private static final JsonMapper JSON = new JsonMapper();
 
   @Id
   @GeneratedValue
@@ -87,8 +87,21 @@ public class Outbox {
 
   /** 문자 줄이 가리키는 통지. */
   public Optional<UUID> noticeId() {
-    Matcher matcher = NOTICE_ID.matcher(payload);
-    return matcher.find() ? Optional.of(UUID.fromString(matcher.group(1))) : Optional.empty();
+    try {
+      JsonNode object = JSON.readTree(payload);
+      if (object == null || !object.isObject() || object.size() != 1) {
+        return Optional.empty();
+      }
+      JsonNode value = object.get("noticeId");
+      if (value == null || !value.isString()) {
+        return Optional.empty();
+      }
+      String text = value.asString();
+      UUID id = UUID.fromString(text);
+      return id.toString().equalsIgnoreCase(text) ? Optional.of(id) : Optional.empty();
+    } catch (JacksonException | IllegalArgumentException e) {
+      return Optional.empty();
+    }
   }
 
   /** 업체에 보내기 직전. 이 상태를 먼저 커밋해서 앱이 멈춰도 자동으로 두 번 보내지 않는다(04 4-2). */

@@ -118,7 +118,14 @@ public class OutboxWorker {
       if (row == null) {
         return;
       }
-      notice = row.noticeId().flatMap(notices::findById);
+      Optional<UUID> savedNoticeId = row.noticeId();
+      if (savedNoticeId.isEmpty() || !("sms:" + savedNoticeId.get()).equals(row.getDedupeKey())) {
+        transaction.executeWithoutResult(
+            status -> outbox.findById(outboxId).ifPresent(Outbox::markFailed));
+        log.error("문자 작업의 payload 또는 중복 방지 키가 올바르지 않음: outbox={}", outboxId);
+        return;
+      }
+      notice = notices.findById(savedNoticeId.get());
       if (notice.isEmpty()) {
         // 호실이 지워져 통지도 함께 지워졌다(통지는 호실 CASCADE, 아웃박스는 FK 없음). 보낼 것이 없다.
         transaction.executeWithoutResult(

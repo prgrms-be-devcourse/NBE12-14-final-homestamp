@@ -29,6 +29,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
@@ -312,6 +314,50 @@ class OutboxWorkerTest {
 
     assertThat(outboxStatus(noticeId)).isEqualTo("DONE");
     assertThat(gateway.sentBatchIds()).doesNotContain(noticeId);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "{}",
+        "{\"noticeId\":null}",
+        "{\"noticeId\":123}",
+        "{\"noticeId\":\"invalid\"}",
+        "{\"noticeId\":\"------------------------------------\"}",
+        "{\"nested\":{\"noticeId\":\"00000000-0000-0000-0000-000000000001\"}}",
+        "[]"
+      })
+  void 잘못된_문자_payload는_실패하고_발송하지_않는다(String payload) {
+    UUID noticeId = enqueue();
+    jdbc.update(
+        "UPDATE state.outbox SET payload = CAST(? AS jsonb) WHERE dedupe_key = ?",
+        payload,
+        "sms:" + noticeId);
+
+    worker.runOnce();
+    worker.runOnce();
+
+    assertThat(outboxStatus(noticeId)).isEqualTo("FAILED");
+    assertThat(notice(noticeId).get("status")).isEqualTo("REQUESTED");
+    assertThat(gateway.sentBatchIds()).doesNotContain(noticeId);
+  }
+
+  @Test
+  void 다른_통지를_가리키는_payload는_발송하지_않는다() {
+    UUID original = enqueue();
+    UUID other = enqueue();
+    jdbc.update("UPDATE state.outbox SET status = 'DONE' WHERE dedupe_key = ?", "sms:" + other);
+    jdbc.update(
+        "UPDATE state.outbox SET payload = CAST(? AS jsonb) WHERE dedupe_key = ?",
+        "{\"noticeId\":\"" + other + "\"}",
+        "sms:" + original);
+
+    worker.runOnce();
+
+    assertThat(outboxStatus(original)).isEqualTo("FAILED");
+    assertThat(notice(original).get("status")).isEqualTo("REQUESTED");
+    assertThat(notice(other).get("status")).isEqualTo("REQUESTED");
+    assertThat(gateway.sentBatchIds()).isEmpty();
   }
 
   private OutboxWorker workerWith(RecipientDirectory directory, NoticeRepository repository) {
