@@ -67,8 +67,8 @@ public interface WaitService {
    * <p>점검 확인은 점검 × 요청한 측마다 요청이 있어(03 H) 그 점검의 두 방향을 모두 닫는다. 대상 하나를 닫는 경우(제안·정산 끝내기·고친 내용)에는 방향이
    * 하나뿐이다.
    *
-   * <p>호실 전체에 걸리는 닫기(공유 중단·정산 완료·거주 종료)는 {@link #closeAll}을 쓴다. 방향이 있는 규칙은 탈퇴(03 L "탈퇴자에게 온 확인 요청은
-   * 상대 탈퇴로 닫힌다")뿐이고, 탈퇴자가 보낸 요청까지 호실 단위로 함께 닫는 방향을 A와 확인 중이다(#88). 이 메서드로 처리하지 않는다.
+   * <p>호실 전체에 걸리는 닫기(공유 중단·정산 완료·거주 종료·탈퇴)는 {@link #closeAll}을 쓴다. 탈퇴는 그 호실의 열린 요청을 양방향 모두 {@code
+   * COUNTERPART_WITHDRAWN}으로 닫는다(03 L, decisions 2026-11-20). 이 메서드로 처리하지 않는다.
    */
   void close(RequestTarget target, RequestKind kind, ClosedReason reason);
 
