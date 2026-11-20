@@ -60,7 +60,8 @@ public class AuthTokenService {
   }
 
   /**
-   * 리프레시 토큰으로 새 액세스 토큰과 다음 리프레시 토큰을 준다. 같은 토큰으로 동시에 와도 행을 잠가 한 번만 바꾸고, 뒤의 요청은 유예로 같은 R'를 받는다.
+   * 리프레시 토큰으로 새 액세스 토큰과 다음 리프레시 토큰을 준다. 묶음 → 토큰 행 순서로 잠가, 같은 토큰으로 동시에 와도 한 번만 바꾸고 뒤의 요청은 유예로 같은 R'를
+   * 받는다.
    *
    * <p>재사용으로 묶음을 폐기한 것은 {@code REFRESH_REUSED}를 던져도 되돌리지 않는다({@code noRollbackFor}). 이 메서드는 그 밖의
    * 경우에 {@link BusinessException}을 던지기 전에 아무것도 바꾸지 않는다.
@@ -73,11 +74,13 @@ public class AuthTokenService {
     if (refreshToken == null || refreshToken.isBlank()) {
       throw loginRequired();
     }
+    String hash = RefreshTokenKeys.hash(refreshToken);
+    UUID familyId =
+        tokens.findFamilyIdByTokenHash(hash).orElseThrow(AuthTokenService::loginRequired);
+    lockFamily(familyId);
     Instant now = clock.instant();
     RefreshToken current =
-        tokens
-            .findByTokenHashForUpdate(RefreshTokenKeys.hash(refreshToken))
-            .orElseThrow(AuthTokenService::loginRequired);
+        tokens.findByTokenHashForUpdate(hash).orElseThrow(AuthTokenService::loginRequired);
     if (current.isExpiredAt(now)) {
       throw loginRequired();
     }
@@ -97,8 +100,17 @@ public class AuthTokenService {
    */
   @Transactional
   public void logout(UUID memberId, UUID familyId) {
-    tokens.revokeFamily(
-        Objects.requireNonNull(memberId), Objects.requireNonNull(familyId), clock.instant());
+    Objects.requireNonNull(memberId);
+    lockFamily(Objects.requireNonNull(familyId));
+    tokens.revokeFamily(memberId, familyId, clock.instant());
+  }
+
+  /**
+   * 묶음 잠금을 먼저 잡는다(묶음 → 토큰 행 순서). 같은 묶음의 재발급·재사용 폐기·로그아웃은 하나씩 처리되어, 묶음 폐기가 진행 중인 재발급이 만든 새 토큰을 놓치지
+   * 않는다. 시각은 잠금을 얻은 뒤 읽는다.
+   */
+  private void lockFamily(UUID familyId) {
+    tokens.lockFamily(RefreshTokenKeys.familyLockKey(familyId));
   }
 
   private IssuedTokens rotate(RefreshToken current, String refreshToken, Instant now) {

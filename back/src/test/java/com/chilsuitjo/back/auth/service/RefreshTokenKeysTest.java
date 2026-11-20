@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.HashSet;
 import java.util.Set;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 /** 리프레시 토큰 만들기(04 4-1): 재발급 토큰은 받은 토큰과 키로 다시 계산되고, DB에는 해시만 둔다(06 ACC-2b). */
@@ -50,6 +51,15 @@ class RefreshTokenKeysTest {
     assertThat(hash).hasSize(64).matches("[0-9a-f]+").isNotEqualTo(token);
     assertThat(RefreshTokenKeys.sameHash(hash, RefreshTokenKeys.hash(token))).isTrue();
     assertThat(RefreshTokenKeys.sameHash(hash, RefreshTokenKeys.hash(keys.newToken()))).isFalse();
+  }
+
+  @Test
+  void 묶음_잠금_키는_같은_묶음이면_같고_다른_묶음이면_다르다() {
+    UUID family = UUID.randomUUID();
+
+    assertThat(RefreshTokenKeys.familyLockKey(family))
+        .isEqualTo(RefreshTokenKeys.familyLockKey(UUID.fromString(family.toString())))
+        .isNotEqualTo(RefreshTokenKeys.familyLockKey(UUID.randomUUID()));
   }
 
   @Test

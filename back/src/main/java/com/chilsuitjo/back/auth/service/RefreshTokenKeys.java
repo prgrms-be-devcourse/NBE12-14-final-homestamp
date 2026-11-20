@@ -8,6 +8,7 @@ import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.HexFormat;
+import java.util.UUID;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import org.springframework.beans.factory.annotation.Value;
@@ -95,5 +96,14 @@ class RefreshTokenKeys {
   static boolean sameHash(String a, String b) {
     return MessageDigest.isEqual(
         a.getBytes(StandardCharsets.UTF_8), b.getBytes(StandardCharsets.UTF_8));
+  }
+
+  /**
+   * 묶음 잠금 키({@code pg_advisory_xact_lock(bigint)}). 번호 잠금({@code VerificationKeys.phoneLockKey})처럼
+   * 앱이 64비트 키를 만들어 넘긴다. 묶음 ID는 무작위 UUID라 위·아래 64비트를 XOR해도 고르게 퍼진다. 다른 잠금 키와 우연히 겹치면 잠시 기다릴 뿐 결과는
+   * 같다.
+   */
+  static long familyLockKey(UUID familyId) {
+    return familyId.getMostSignificantBits() ^ familyId.getLeastSignificantBits();
   }
 }

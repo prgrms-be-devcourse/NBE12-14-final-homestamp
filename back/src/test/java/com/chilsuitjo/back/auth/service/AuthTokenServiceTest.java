@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -209,7 +210,7 @@ class AuthTokenServiceTest {
     CountDownLatch locked = new CountDownLatch(1);
     CountDownLatch release = new CountDownLatch(1);
 
-    // 테스트가 R 행을 먼저 잠가 두 요청이 모두 같은 잠금을 기다리게 한 뒤 놓는다
+    // 테스트가 R 행을 먼저 잠가 두 요청이 모두 기다리게 한 뒤 놓는다(한쪽은 R 행, 다른 쪽은 묶음 잠금에서)
     Future<?> holder =
         pool.submit(() ->
             transaction.executeWithoutResult(status -> {
@@ -237,6 +238,126 @@ class AuthTokenServiceTest {
                 Integer.class))
         .isEqualTo(1);
     assertThat(revokedAtInDb(resultA.refreshToken())).isNull();
+  }
+
+  @Test
+  void 재발급이_R프라임을_저장하는_중에_로그아웃해도_R프라임까지_폐기된다() throws Exception {
+    IssuedTokens login = service.issue(memberId);
+    UUID family = familyOf(login);
+    CountDownLatch release = new CountDownLatch(1);
+    Future<?> holder = holdMemberRow(release);
+
+    // 재발급: R을 잠그고 R'를 저장하다가 회원 행 잠금(외래 키 확인)에서 멈춘다
+    Future<IssuedTokens> refreshing = pool.submit(() -> service.refresh(login.refreshToken()));
+    waitForLockWaiters(1);
+    // 로그아웃: 재발급이 끝나기 전에 시작한다
+    Future<?> loggingOut = pool.submit(() -> service.logout(memberId, family));
+    waitForLockWaiters(2);
+    release.countDown();
+    holder.get(10, TimeUnit.SECONDS);
+
+    IssuedTokens next = refreshing.get(10, TimeUnit.SECONDS);
+    loggingOut.get(10, TimeUnit.SECONDS);
+
+    assertThat(revokedAtInDb(next.refreshToken())).isNotNull();
+    expectError(() -> service.refresh(next.refreshToken()), ErrorCode.REFRESH_REUSED);
+  }
+
+  @Test
+  void 재사용_감지와_R프라임_재발급이_겹쳐도_새로_만든_토큰까지_묶음이_모두_폐기된다() throws Exception {
+    IssuedTokens login = service.issue(memberId);
+    IssuedTokens first = service.refresh(login.refreshToken());
+    clock.advance(GRACE.plusMillis(1));
+    CountDownLatch release = new CountDownLatch(1);
+    Future<?> holder = holdMemberRow(release);
+
+    // 한쪽은 R'로 R''를 받다가 R'' 저장에서 멈추고, 다른 쪽은 유예가 지난 R을 다시 쓴다
+    Future<IssuedTokens> rotating = pool.submit(() -> service.refresh(first.refreshToken()));
+    waitForLockWaiters(1);
+    Future<IssuedTokens> reusing = pool.submit(() -> service.refresh(login.refreshToken()));
+    waitForLockWaiters(2);
+    release.countDown();
+    holder.get(10, TimeUnit.SECONDS);
+
+    IssuedTokens second = rotating.get(10, TimeUnit.SECONDS);
+    expectError(() -> resultOf(reusing), ErrorCode.REFRESH_REUSED);
+
+    assertThat(revokedAtInDb(second.refreshToken())).isNotNull();
+    expectError(() -> service.refresh(second.refreshToken()), ErrorCode.REFRESH_REUSED);
+  }
+
+  @Test
+  void 재발급과_로그아웃은_묶음_잠금을_얻기_전에는_토큰_행을_잠그지_않는다() throws Exception {
+    IssuedTokens login = service.issue(memberId);
+    UUID family = familyOf(login);
+
+    CountDownLatch releaseForRefresh = new CountDownLatch(1);
+    Future<?> holder = holdFamilyLock(family, releaseForRefresh);
+    Future<IssuedTokens> refreshing = pool.submit(() -> service.refresh(login.refreshToken()));
+    waitForLockWaiters(1);
+    lockRowNoWait(login.refreshToken());
+    releaseForRefresh.countDown();
+    holder.get(10, TimeUnit.SECONDS);
+    IssuedTokens next = refreshing.get(10, TimeUnit.SECONDS);
+
+    CountDownLatch releaseForLogout = new CountDownLatch(1);
+    holder = holdFamilyLock(family, releaseForLogout);
+    Future<?> loggingOut = pool.submit(() -> service.logout(memberId, family));
+    waitForLockWaiters(1);
+    lockRowNoWait(next.refreshToken());
+    releaseForLogout.countDown();
+    holder.get(10, TimeUnit.SECONDS);
+    loggingOut.get(10, TimeUnit.SECONDS);
+
+    assertThat(revokedAtInDb(next.refreshToken())).isNotNull();
+  }
+
+  /**
+   * 회원 행을 잠가 둔다. 재발급이 새 토큰 행을 저장하면 외래 키 확인({@code FOR KEY SHARE})이 이 잠금을 기다리므로, 재발급은 묶음과 이전 토큰 행을
+   * 잠근 채 커밋 직전에 멈춘다. {@code release}가 오면 놓는다.
+   */
+  private Future<?> holdMemberRow(CountDownLatch release) throws InterruptedException {
+    return holdLock("SELECT id FROM state.member WHERE id = ? FOR UPDATE", memberId, release);
+  }
+
+  /** 서비스와 같은 키로 묶음 잠금을 잡아 둔다. */
+  private Future<?> holdFamilyLock(UUID familyId, CountDownLatch release)
+      throws InterruptedException {
+    return holdLock(
+        "SELECT 1 FROM pg_advisory_xact_lock(?)",
+        RefreshTokenKeys.familyLockKey(familyId),
+        release);
+  }
+
+  private Future<?> holdLock(String sql, Object arg, CountDownLatch release)
+      throws InterruptedException {
+    CountDownLatch locked = new CountDownLatch(1);
+    Future<?> holder =
+        pool.submit(() ->
+            transaction.executeWithoutResult(status -> {
+              jdbc.queryForList(sql, arg);
+              locked.countDown();
+              await(release);
+            }));
+    assertThat(locked.await(10, TimeUnit.SECONDS)).isTrue();
+    return holder;
+  }
+
+  /** 그 토큰 행을 기다리지 않고 잠갔다가 바로 놓는다. 누가 잠그고 있으면 실패한다. */
+  private void lockRowNoWait(String token) {
+    transaction.executeWithoutResult(status ->
+        jdbc.queryForList(
+            "SELECT id FROM state.refresh_token WHERE token_hash = ? FOR UPDATE NOWAIT",
+            RefreshTokenKeys.hash(token)));
+  }
+
+  /** 다른 스레드에서 던진 예외를 그대로 꺼낸다. */
+  private static <T> T resultOf(Future<T> future) throws Throwable {
+    try {
+      return future.get(10, TimeUnit.SECONDS);
+    } catch (ExecutionException e) {
+      throw e.getCause();
+    }
   }
 
   private UUID newMember() {
@@ -273,7 +394,7 @@ class AuthTokenServiceTest {
     return accessTokens.read(issued.accessToken()).orElseThrow().familyId();
   }
 
-  /** 행 잠금을 기다리는 연결이 {@code count}개가 될 때까지 기다린다. */
+  /** 잠금(행·묶음)을 기다리는 연결이 {@code count}개가 될 때까지 기다린다. */
   private void waitForLockWaiters(int count) throws InterruptedException {
     long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
     while (System.nanoTime() < deadline) {
@@ -286,7 +407,7 @@ class AuthTokenServiceTest {
       }
       Thread.sleep(20);
     }
-    throw new AssertionError("재발급 요청 " + count + "개가 잠금을 기다리지 않았다");
+    throw new AssertionError("요청 " + count + "개가 잠금을 기다리지 않았다");
   }
 
   private static void await(CountDownLatch latch) {
