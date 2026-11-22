@@ -2,6 +2,8 @@ package com.chilsuitjo.back.notification.repository;
 
 import com.chilsuitjo.back.notification.entity.Notice;
 import jakarta.persistence.LockModeType;
+import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -15,4 +17,20 @@ public interface NoticeRepository extends JpaRepository<Notice, UUID> {
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("SELECT n FROM Notice n WHERE n.id = :id")
   Optional<Notice> findForUpdate(@Param("id") UUID id);
+
+  /**
+   * 전달 결과를 물을 시각이 된 보낸 문자를 잠가 가져온다(V1 {@code ix_notice_poll}). {@code SKIP LOCKED}라서 작업자 둘이 같은 통지를
+   * 가져가지 않는다({@link OutboxRepository#lockDueSms}와 같은 방식). 트랜잭션 안에서만 부른다.
+   */
+  @Query(
+      value =
+          """
+          SELECT * FROM state.notice
+          WHERE status = 'SENT' AND next_poll_at <= :now
+          ORDER BY next_poll_at
+          LIMIT :limit
+          FOR UPDATE SKIP LOCKED
+          """,
+      nativeQuery = true)
+  List<Notice> lockDuePolls(@Param("now") Instant now, @Param("limit") int limit);
 }

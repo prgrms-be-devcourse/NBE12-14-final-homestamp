@@ -1,5 +1,6 @@
 package com.chilsuitjo.back.notification.entity;
 
+import com.chilsuitjo.back.notification.rule.DeliveryPollSchedule;
 import com.chilsuitjo.back.notification.rule.NoticeChannel;
 import com.chilsuitjo.back.notification.rule.NoticeKind;
 import com.chilsuitjo.back.notification.rule.NoticeStatus;
@@ -32,7 +33,7 @@ import org.hibernate.annotations.UuidGenerator;
 public class Notice {
 
   /** 보내고 처음 전달 결과를 물을 때까지(04 4-2 "보내고 1분·5분 뒤"). */
-  static final Duration FIRST_POLL = Duration.ofMinutes(1);
+  static final Duration FIRST_POLL = DeliveryPollSchedule.FIRST_POLL;
 
   @Id
   @GeneratedValue
@@ -134,5 +135,47 @@ public class Notice {
     }
     this.status = NoticeStatus.FAILED;
     this.failedAt = at;
+  }
+
+  /**
+   * 전달 결과 조회 대상으로 가져가면서 다음에 물을 시각을 옮긴다(#120). 잠근 트랜잭션 안에서 부르고, 커밋하면 다른 작업자는 그 시각까지 이 통지를 가져가지 않는다.
+   * 보낸(SENT) 통지만 바뀌고, 이미 끝난 통지는 그대로 둔다.
+   */
+  public void scheduleNextPoll(Instant at) {
+    Objects.requireNonNull(at, "at");
+    if (status != NoticeStatus.SENT) {
+      return;
+    }
+    this.nextPollAt = at;
+  }
+
+  /**
+   * 업체가 전달됐다고 답했다(결과 4000, 04 4-2). 보낸(SENT) 통지만 바뀌고, 그 밖의 상태(아직 보내기 전, 이미 전달·열람·실패)는 그대로 둔다(상태는
+   * 앞으로만). 더 묻지 않으므로 다음 조회 시각을 지운다.
+   *
+   * @param at 전달로 기록할 시각. 서버가 결과를 확인한 시각인지 업체가 알려 준 시각인지는 정해지지 않아(#120 결정 후보) 부르는 쪽이 넘긴다
+   */
+  public void markDelivered(Instant at) {
+    Objects.requireNonNull(at, "at");
+    if (status != NoticeStatus.SENT) {
+      return;
+    }
+    this.status = NoticeStatus.DELIVERED;
+    this.deliveredAt = at;
+    this.nextPollAt = null;
+  }
+
+  /**
+   * 보낸 문자가 전달되지 않았다고 끝났다(업체의 최종 실패 결과, 또는 보내고 3일 동안 결과 없음, 04 4-2·05 {@code notice}). 보낸(SENT) 통지만
+   * 바뀌고 그 밖의 상태는 그대로 둔다. 보내기 전 실패는 {@link #markFailed}다. 더 묻지 않으므로 다음 조회 시각을 지운다.
+   */
+  public void markDeliveryFailed(Instant at) {
+    Objects.requireNonNull(at, "at");
+    if (status != NoticeStatus.SENT) {
+      return;
+    }
+    this.status = NoticeStatus.FAILED;
+    this.failedAt = at;
+    this.nextPollAt = null;
   }
 }
