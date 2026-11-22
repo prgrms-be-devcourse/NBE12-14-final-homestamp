@@ -7,14 +7,21 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import jakarta.persistence.OptimisticLockException;
 import java.time.Duration;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.MediaType;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.transaction.TransactionSystemException;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -22,14 +29,29 @@ import org.springframework.web.bind.annotation.RestController;
 /** 명세 4-10: 모든 오류 응답에 code가 있고, detail은 코드의 문구다. */
 class GlobalExceptionHandlerTest {
 
+  private static final String SYNTHETIC_DETAIL =
+      "email=person@example.invalid address=가상로 123 token=fake-token SQL=INSERT INTO secret VALUES ('input')";
+
   private MockMvc mvc;
+  private Logger handlerLogger;
+  private ListAppender<ILoggingEvent> logs;
 
   @BeforeEach
   void setUp() {
+    handlerLogger = (Logger) LoggerFactory.getLogger(GlobalExceptionHandler.class);
+    logs = new ListAppender<>();
+    logs.start();
+    handlerLogger.addAppender(logs);
     mvc =
         MockMvcBuilders.standaloneSetup(new 시험용_컨트롤러())
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();
+  }
+
+  @AfterEach
+  void tearDown() {
+    handlerLogger.detachAppender(logs);
+    logs.stop();
   }
 
   @Test
@@ -69,6 +91,66 @@ class GlobalExceptionHandlerTest {
         .andExpect(status().isInternalServerError())
         .andExpect(jsonPath("$.code").value("INTERNAL_ERROR"))
         .andExpect(jsonPath("$.detail").value(ErrorCode.INTERNAL_ERROR.message()));
+    assertThat(logs.list).hasSize(1);
+    assertThat(logs.list.getFirst().getFormattedMessage()).isEqualTo("처리하지 못한 예외");
+    assertThat(logs.list.getFirst().getThrowableProxy()).isNotNull();
+  }
+
+  @Test
+  void DB_제약_오류는_원본_메시지와_스택을_로그에_남기지_않는다() throws Exception {
+    mvc.perform(post("/시험/DB-제약"))
+        .andExpect(status().isInternalServerError())
+        .andExpect(jsonPath("$.code").value("INTERNAL_ERROR"))
+        .andExpect(jsonPath("$.detail").value(ErrorCode.INTERNAL_ERROR.message()));
+    assertSafeDbLog();
+  }
+
+  @Test
+  void 트랜잭션_포장_예외도_원인에_DB_제약_오류가_있을_때만_보호한다() throws Exception {
+    mvc.perform(post("/시험/포장된-DB-제약"))
+        .andExpect(status().isInternalServerError())
+        .andExpect(jsonPath("$.code").value("INTERNAL_ERROR"))
+        .andExpect(jsonPath("$.detail").value(ErrorCode.INTERNAL_ERROR.message()));
+    assertSafeDbLog();
+  }
+
+  @Test
+  void 원인_순환_참조가_있어도_DB_제약_오류를_안전하게_기록한다() throws Exception {
+    DataIntegrityViolationException constraint =
+        new DataIntegrityViolationException(SYNTHETIC_DETAIL);
+    RuntimeException wrapper = new RuntimeException("합성 래퍼");
+    constraint.initCause(wrapper);
+    wrapper.initCause(constraint);
+
+    var response =
+        new GlobalExceptionHandler()
+            .handleUnexpected(new TransactionSystemException("합성 순환 원인", constraint));
+
+    assertThat(response.getStatusCode().value()).isEqualTo(500);
+    assertThat(response.getBody()).isNotNull();
+    assertThat(response.getBody().getProperties()).containsEntry("code", "INTERNAL_ERROR");
+    assertThat(response.getBody().getDetail()).isEqualTo(ErrorCode.INTERNAL_ERROR.message());
+    assertSafeDbLog();
+  }
+
+  @Test
+  void DB_제약이_없는_트랜잭션_예외는_일반_예외로_처리한다() throws Exception {
+    mvc.perform(post("/시험/다른-트랜잭션-오류"))
+        .andExpect(status().isInternalServerError())
+        .andExpect(jsonPath("$.code").value("INTERNAL_ERROR"));
+    assertThat(logs.list).hasSize(1);
+    assertThat(logs.list.getFirst().getFormattedMessage()).isEqualTo("처리하지 못한 예외");
+    assertThat(logs.list.getFirst().getThrowableProxy()).isNotNull();
+  }
+
+  private void assertSafeDbLog() {
+    assertThat(logs.list).hasSize(1);
+    ILoggingEvent event = logs.list.getFirst();
+    assertThat(event.getFormattedMessage()).isEqualTo("DB_CONSTRAINT_ERROR");
+    assertThat(event.getFormattedMessage()).doesNotContain(SYNTHETIC_DETAIL);
+    assertThat(event.getFormattedMessage())
+        .doesNotContain("person@example.invalid", "가상로 123", "fake-token", "INSERT INTO", "input");
+    assertThat(event.getThrowableProxy()).isNull();
   }
 
   @Test
@@ -117,6 +199,22 @@ class GlobalExceptionHandlerTest {
     @PostMapping("/시험/터짐")
     String 터짐() {
       throw new IllegalStateException("SELECT * FROM secret");
+    }
+
+    @PostMapping("/시험/DB-제약")
+    String db제약() {
+      throw new DataIntegrityViolationException(SYNTHETIC_DETAIL);
+    }
+
+    @PostMapping("/시험/포장된-DB-제약")
+    String 포장된Db제약() {
+      throw new TransactionSystemException(
+          "합성 트랜잭션 실패", new DataIntegrityViolationException(SYNTHETIC_DETAIL));
+    }
+
+    @PostMapping("/시험/다른-트랜잭션-오류")
+    String 다른트랜잭션오류() {
+      throw new TransactionSystemException("다른 실패", new IllegalStateException("원인"));
     }
 
     @PostMapping("/시험/잠시")

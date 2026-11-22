@@ -2,10 +2,14 @@ package com.chilsuitjo.back.global.error;
 
 import jakarta.persistence.OptimisticLockException;
 import java.time.Duration;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
@@ -55,7 +59,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
   @ExceptionHandler(Exception.class)
   ResponseEntity<ProblemDetail> handleUnexpected(Exception e) {
-    log.error("처리하지 못한 예외", e);
+    logUnexpected(e);
     ErrorCode code = ErrorCode.INTERNAL_ERROR;
     return ResponseEntity.status(code.status()).body(problem(code, code.status(), null));
   }
@@ -87,10 +91,28 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
   protected ResponseEntity<Object> handleExceptionInternal(
       Exception e, Object body, HttpHeaders headers, HttpStatusCode status, WebRequest request) {
     if (status.is5xxServerError()) {
-      log.error("처리하지 못한 예외", e);
+      logUnexpected(e);
     }
     ProblemDetail problem = problem(codeFor(status), status, null);
     return super.handleExceptionInternal(e, problem, headers, status, request);
+  }
+
+  private static void logUnexpected(Exception e) {
+    if (hasDataIntegrityViolation(e)) {
+      log.error("DB_CONSTRAINT_ERROR");
+    } else {
+      log.error("처리하지 못한 예외", e);
+    }
+  }
+
+  private static boolean hasDataIntegrityViolation(Throwable error) {
+    Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+    for (Throwable cause = error; cause != null && seen.add(cause); cause = cause.getCause()) {
+      if (cause instanceof DataIntegrityViolationException) {
+        return true;
+      }
+    }
+    return false;
   }
 
   static ErrorCode codeFor(HttpStatusCode status) {
