@@ -7,11 +7,15 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.chilsuitjo.back.notification.dto.DeliveryQuery;
+import com.chilsuitjo.back.notification.dto.SmsMessage;
 import com.chilsuitjo.back.notification.dto.SmsNoticeCommand;
 import com.chilsuitjo.back.notification.dto.SmsSendResult;
 import com.chilsuitjo.back.notification.repository.FakeSmsGateway;
 import com.chilsuitjo.back.notification.repository.NoticeRepository;
 import com.chilsuitjo.back.notification.repository.OutboxRepository;
+import com.chilsuitjo.back.notification.repository.SmsGateway;
+import com.chilsuitjo.back.notification.rule.DeliveryOutcome;
 import com.chilsuitjo.back.notification.rule.NoticeKind;
 import com.chilsuitjo.back.notification.service.FakeRecipientDirectory;
 import com.chilsuitjo.back.notification.service.NoticeOutbox;
@@ -398,10 +402,19 @@ class OutboxWorkerTest {
             outboxRepository,
             noticeRepository,
             recipients,
-            message -> {
-              sending.countDown();
-              awaitThen(release, () -> {});
-              return gateway.send(message);
+            new SmsGateway() {
+              @Override
+              public SmsSendResult send(SmsMessage message) {
+                sending.countDown();
+                awaitThen(release, () -> {});
+                return gateway.send(message);
+              }
+
+              // 아웃박스 작업자는 전달 결과를 묻지 않는다. 불리면 이 테스트가 모르는 경로라 바로 드러나게 한다
+              @Override
+              public Map<UUID, DeliveryOutcome> queryResults(List<DeliveryQuery> queries) {
+                throw new UnsupportedOperationException("아웃박스 작업자는 전달 결과를 묻지 않음");
+              }
             },
             clock,
             transactionManager,
