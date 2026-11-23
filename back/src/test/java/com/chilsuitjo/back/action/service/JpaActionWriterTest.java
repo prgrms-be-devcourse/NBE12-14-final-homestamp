@@ -10,6 +10,8 @@ import com.chilsuitjo.back.action.dto.ActionTarget;
 import com.chilsuitjo.back.action.dto.Actor;
 import com.chilsuitjo.back.action.dto.DigestField;
 import com.chilsuitjo.back.action.dto.DigestInput;
+import com.chilsuitjo.back.action.dto.PhotoDigest;
+import com.chilsuitjo.back.action.dto.SavedState;
 import com.chilsuitjo.back.action.entity.ActionRecord;
 import com.chilsuitjo.back.action.rule.ActionHash;
 import com.chilsuitjo.back.action.rule.ActionType;
@@ -131,6 +133,28 @@ class JpaActionWriterTest {
     assertThat(written.payload()).containsEntry("answer", "NEED_MORE");
     assertThat(written.payloadAs(Sample.class)).isEqualTo(new Sample(Answer.NEED_MORE, someone));
     assertThat(reader.findByRoom(room).getFirst().payload()).isEqualTo(written.payload());
+  }
+
+  @Test
+  void 사진_목록_payload도_DB에서_읽은_값으로_다시_계산하면_같은_해시() {
+    // #141: 사진 지문은 판 지문이 아니라 payload로 해시에 들어간다. jsonb를 거친 목록·숫자가 같은 해시 입력이어야 한다
+    SavedState saved =
+        SavedState.unchanged()
+            .withPhotos(
+                List.of(
+                    new PhotoDigest(UUID.randomUUID(), "b".repeat(64), 1),
+                    new PhotoDigest(UUID.randomUUID(), "a".repeat(64), 0)));
+    ActionEntry written =
+        writer.write(
+            command(tenant, ActionType.REGISTER, "photos", ActionTarget.repairCase(repair))
+                .withExtraPayload(saved.payload()),
+            UUID.randomUUID(),
+            at);
+
+    assertThat(written.payload().get(SavedState.PHOTOS)).isEqualTo(saved.payload().get("photos"));
+    entityManager.clear();
+    ActionRecord stored = entityManager.find(ActionRecord.class, written.id());
+    assertThat(ActionHash.compute(readBack(stored))).isEqualTo(stored.getHash());
   }
 
   record Sample(Answer answer, UUID who) {}
@@ -280,7 +304,7 @@ class JpaActionWriterTest {
 
   private DigestInput content() {
     return new DigestInput(
-        "repair_content", UUID.randomUUID(), 1, List.of(new DigestField("title", "누수")), List.of());
+        "repair_content", UUID.randomUUID(), 1, List.of(new DigestField("title", "누수")));
   }
 
   /** 읽은 행동을 해시 입력으로 되돌린다. 체인 검증도 이 모양이다. */

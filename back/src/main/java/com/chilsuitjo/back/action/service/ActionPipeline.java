@@ -227,6 +227,7 @@ public class ActionPipeline {
       if (saved.content() != null) {
         toWrite = toWrite.withContent(saved.content());
       }
+      toWrite = toWrite.withExtraPayload(saved.payload()); // 붙인 사진 목록 등(#141)
       ActionCommand recorded = requireRoom(toWrite.withTarget(withoutRoomTarget(toWrite.target())));
 
       List<ActionResult> results = new ArrayList<>();

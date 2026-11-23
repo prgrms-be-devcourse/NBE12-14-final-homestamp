@@ -136,8 +136,7 @@ public class RepairStateStore {
           List.of(
               new DigestField("room_part_id", roomPartId.toString()),
               new DigestField("title", title),
-              new DigestField("description", description)),
-          List.of());
+              new DigestField("description", description)));
     }
   }
 }
