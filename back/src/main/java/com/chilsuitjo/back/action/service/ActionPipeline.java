@@ -111,7 +111,14 @@ public class ActionPipeline {
     }
   }
 
+  /**
+   * 충돌 뒤 새 트랜잭션에서 처음 결과를 찾는다. 처음 실행과 같이 호실을 먼저 잠근다: 다시 읽는 {@code load}가 잠금 없이 돌면 그사이 바뀐 상태와 섞이고, 잠금
+   * 순서(호실 먼저)도 어긋난다(#94 리뷰, 링크 열람 경합). 호실을 만드는 요청은 아직 잠글 호실을 모른다.
+   */
   private Outcome replayIfDone(ActionBatch batch) {
+    if (!batch.isNewRoom()) {
+      roomGateReader.lockAndRead(batch.roomRecordId(), batch.actor()); // 1
+    }
     List<ActionEntry> done = actionWriter.findRequest(batch.actor().key(), batch.idempotencyKey());
     return done.isEmpty() ? null : replay(batch, done);
   }
