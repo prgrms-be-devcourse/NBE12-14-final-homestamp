@@ -33,9 +33,12 @@ public class RepairTransitions implements Transitions<RepairState> {
     };
   }
 
-  /** 하자 등록: 시작 전 · 확인 기다림 · 부담 미정(06 REP-1a, 05 2-5). 등록한 측이 기록한 측이다. */
+  /**
+   * 하자 등록: 시작 전 · 확인 기다림 · 부담 미정(06 REP-1a, 05 2-5). 등록한 측이 기록한 측이다. 측이 없는 주체(서버·운영)는 수리 건을 만들 수
+   * 없다({@code repair_case.created_by_side} NOT NULL).
+   */
   private static RepairState register(RepairState now, ActionEntry action) {
-    if (now.exists()) {
+    if (now.exists() || action.actorSide() == null) {
       throw new BusinessException(ErrorCode.INVALID_STATE);
     }
     return new RepairState(

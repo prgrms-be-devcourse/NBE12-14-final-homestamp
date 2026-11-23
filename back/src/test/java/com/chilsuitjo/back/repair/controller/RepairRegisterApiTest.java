@@ -19,6 +19,7 @@ import com.chilsuitjo.back.notification.rule.PartyPresence;
 import com.chilsuitjo.back.notification.service.FakeCounterpartReader;
 import com.chilsuitjo.back.room.service.FakeRoomQueryService;
 import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -229,6 +230,60 @@ class RepairRegisterApiTest {
   }
 
   @Test
+  void 내가_공유를_그만뒀어도_등록은_되지만_상대에게_보이지_않는다() throws Exception {
+    // 공유를 그만둔 사람도 나만 보는 기록으로 남길 수 있다(ActionType WHILE_SHARING_STOPPED, 03 B)
+    gates.put(tenant, new RoomGate(room, PartySide.TENANT, false, false, true, false));
+    parties.seed(room, PartySide.TENANT, stopped(PartyPresence.CONNECTED));
+
+    register("my-stop", body(part, "누수", null)).andExpect(status().isCreated());
+
+    assertThat(firstShownAt()).isNull();
+  }
+
+  @Test
+  void 상대가_공유를_그만뒀으면_처음_보인_시각은_비어_있다() throws Exception {
+    parties.seed(room, PartySide.LANDLORD, stopped(PartyPresence.CONNECTED));
+
+    register("their-stop", body(part, "누수", null)).andExpect(status().isCreated());
+
+    assertThat(firstShownAt()).isNull();
+  }
+
+  @Test
+  void 상대가_탈퇴했으면_처음_보인_시각은_비어_있다() throws Exception {
+    // 탈퇴하면 공유 중단 시각이 남아 있어도 보지 않는다(06 CONS-3q). 연결이 아니라 보이지 않는다
+    parties.seed(room, PartySide.LANDLORD, stopped(PartyPresence.WITHDRAWN));
+
+    register("withdrawn", body(part, "누수", null)).andExpect(status().isCreated());
+
+    assertThat(firstShownAt()).isNull();
+  }
+
+  @Test
+  void 정산이_끝난_호실에는_SETTLED() throws Exception {
+    gates.put(tenant, new RoomGate(room, PartySide.TENANT, true, false, false, false));
+
+    register("settled", body(part, "누수", null))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("SETTLED"));
+
+    assertThat(count("state.repair_case")).isZero();
+    assertThat(count("record.action")).isZero();
+  }
+
+  @Test
+  void 합치기_전_기록에는_JOINED_RECORD() throws Exception {
+    gates.put(tenant, new RoomGate(room, PartySide.TENANT, false, true, false, false));
+
+    register("joined", body(part, "누수", null))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("JOINED_RECORD"));
+
+    assertThat(count("state.repair_case")).isZero();
+    assertThat(count("record.action")).isZero();
+  }
+
+  @Test
   void 거주가_끝난_호실에는_새_수리_건이_없다() throws Exception {
     gates.put(tenant, new RoomGate(room, PartySide.TENANT, false, false, false, true));
 
@@ -342,6 +397,25 @@ class RepairRegisterApiTest {
   private long count(String table) {
     return jdbc.queryForObject(
         "SELECT count(*) FROM " + table + " WHERE room_record_id = ?", Long.class, room);
+  }
+
+  private Timestamp firstShownAt() {
+    return jdbc.queryForObject(
+        "SELECT first_shown_at FROM state.repair_case WHERE room_record_id = ?",
+        Timestamp.class,
+        room);
+  }
+
+  /** 공유를 그만둔 시각이 있는 자리. */
+  private static PartyFacts stopped(PartyPresence presence) {
+    return new PartyFacts(
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        presence,
+        Instant.parse("2026-11-01T00:00:00Z"),
+        true,
+        false,
+        "김*수");
   }
 
   private static PartyFacts connected() {
