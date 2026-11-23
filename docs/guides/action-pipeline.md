@@ -122,7 +122,8 @@ public class RepairStateStore {
       if (counterpartSeesNow(...)) head.markShown(at);       // 상대가 지금 볼 수 있으면(03 3-1)
       cases.save(head);
       contents.save(new RepairContent(contentId, room, caseId, 1, roomPartId, title, description, ...));
-      return new SavedState(ActionTarget.repairCase(caseId), digest(contentId)); // 대상 + 판 #1 지문
+      return new SavedState(ActionTarget.repairCase(caseId), digest(contentId)) // 대상 + 판 #1 지문(글만)
+          .withPhotos(photos.attach(...));             // 사진은 판 지문이 아니라 행동 payload "photos"에(#141)
     }
   }
 }
