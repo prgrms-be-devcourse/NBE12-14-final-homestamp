@@ -60,6 +60,15 @@ tasks.named('bootRun') {
     systemProperty 'spring.profiles.active', System.getenv('SPRING_PROFILES_ACTIVE') ?: 'local'
 }
 
+// 로컬 개발용 액세스 토큰: ./gradlew localAccessToken --args=<회원 UUID> (docs/setup.md 7장)
+// test 소스에 있어 운영 jar에 들어가지 않고, local·test 고정 키로 서명해 운영 서버는 받지 않는다
+tasks.register('localAccessToken', JavaExec) {
+    group = 'application'
+    description = 'local 서버에서 쓸 액세스 토큰을 만든다(--args=<회원 UUID>)'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.chilsuitjo.back.global.security.LocalAccessToken'
+}
+
 tasks.named('test') {
     useJUnitPlatform()
     finalizedBy 'jacocoTestReport'

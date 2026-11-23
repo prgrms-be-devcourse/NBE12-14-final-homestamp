@@ -99,7 +99,16 @@ npm run dev                # http://localhost:5173, /api는 백엔드(8080)로 �
 
 - **프로필은 기본 `local`이다.** 다른 프로필로 띄우려면 환경 변수 `SPRING_PROFILES_ACTIVE`를 주거나(`SPRING_PROFILES_ACTIVE=test ./gradlew bootRun`) `--args='--spring.profiles.active=test'`를 붙인다.
 - **API 문서(Swagger UI)는 로컬에서만 켜진다.** `bootRun`이 local 프로필로 떠서 http://localhost:8080/swagger-ui/index.html 에 열린다(운영에서는 꺼짐, `docs/rules/04` API 문서). 문서 주소는 local·test 프로필에서만 로그인 없이 열리고, `prod`가 켜지면 열리지 않는다.
-- **로그인이 필요한 API는 가짜 토큰으로 부른다.** 실제 로그인(JWT) 전에는 local·test 프로필에서 가짜 검증기가 켜져, 요청 머리에 `Authorization: Bearer <회원 UUID>`를 넣으면 그 회원으로 로그인한 것이 된다(예: `curl -H "Authorization: Bearer 0190b6c6-0000-7000-8000-000000000001" http://localhost:8080/api/...`). 토큰이 없거나 맞지 않으면 `401 LOGIN_REQUIRED`다. 가입·로그인 같은 공개 API(06 4-1)와 가입 전 링크(`POST /api/public/**`), `/actuator/health`는 토큰 없이 열린다.
+- **로그인이 필요한 API는 개발용 토큰으로 부른다.** 서버는 실제 액세스 JWT만 받는다(`Bearer <회원 UUID>`는 이제 401). 로그인 API(`POST /api/auth/login`)가 생기기 전에는 아래처럼 토큰을 만들어 요청 머리에 넣는다. 토큰이 없거나 맞지 않으면 `401 LOGIN_REQUIRED`다. 가입·로그인 같은 공개 API(06 4-1)와 가입 전 링크(`POST /api/public/**`), `/actuator/health`는 토큰 없이 열린다.
+  ```
+  cd back
+  ./gradlew -q localAccessToken --args=0190b6c6-0000-7000-8000-000000000001   # 토큰 한 줄이 나온다(24시간)
+  curl -H "Authorization: Bearer <위 토큰>" http://localhost:8080/api/...
+  ```
+  - 토큰은 local·test 고정 키(`application.yml`)로 서명한다. 서버가 `local`(기본)이나 `test` 프로필로 떠 있어야 받고, `prod`나 프로필 없이 띄운 서버는 받지 않는다. 이 도구는 test 소스에 있어 운영 jar에 들어가지 않는다.
+  - 회원이 DB에 있는지는 보지 않는다. 회원 정보를 읽는 API는 `state.member`에 그 UUID의 행이 있어야 한다.
+  - 테스트 코드에서는 이 도구 대신 `SecurityTestSupport.loginAs(회원 UUID)`를 쓴다(`mvc.perform(get(...).with(loginAs(id)))`, 같은 키로 만든 토큰).
+  - 리프레시 쿠키는 주지 않는다. 재발급·로그아웃까지 확인하려면 로그인 API를 기다린다.
 - **테이블은 아직 없다.** V1 마이그레이션(1일차) 전에는 Flyway 기록 테이블만 생긴다.
 
 ## 문제가 생기면
