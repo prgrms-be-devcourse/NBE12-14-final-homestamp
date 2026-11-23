@@ -14,10 +14,6 @@ import com.chilsuitjo.back.action.dto.RoomGate;
 import com.chilsuitjo.back.action.rule.ContentDigest;
 import com.chilsuitjo.back.action.service.FakeRoomGateReader;
 import com.chilsuitjo.back.global.common.PartySide;
-import com.chilsuitjo.back.notification.dto.PartyFacts;
-import com.chilsuitjo.back.notification.rule.PartyPresence;
-import com.chilsuitjo.back.notification.service.FakeCounterpartReader;
-import com.chilsuitjo.back.room.service.FakeRoomQueryService;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
@@ -38,8 +34,8 @@ import org.springframework.test.web.servlet.ResultActions;
 /**
  * 06 REP-1 하자 등록을 보안·pipeline·진짜 행동 기록 저장(PostgreSQL)까지 띄워 본다. 사진·알리기는 아직 없다(#134).
  *
- * <p>pipeline이 바깥 트랜잭션을 거절해서 {@code @Transactional}로 되돌리지 않는다. 테스트마다 새 호실을 만들어 섞이지 않게 한다. 잠금·부위·자리
- * 상태는 아직 가짜라 빈을 받아 값을 정한다(안내서 5-3).
+ * <p>pipeline이 바깥 트랜잭션을 거절해서 {@code @Transactional}로 되돌리지 않는다. 테스트마다 새 호실을 만들어 섞이지 않게 한다. 부위·자리 상태는
+ * 진짜 구현(#140)이 읽도록 행을 넣고, 잠금만 아직 가짜라 빈을 받아 값을 정한다(안내서 5-3).
  */
 @Import(TestcontainersConfiguration.class)
 @SpringBootTest
@@ -50,8 +46,8 @@ class RepairRegisterApiTest {
   @Autowired private MockMvc mvc;
   @Autowired private JdbcTemplate jdbc;
   @Autowired private FakeRoomGateReader gates;
-  @Autowired private FakeRoomQueryService roomParts;
-  @Autowired private FakeCounterpartReader parties;
+
+  private static final Instant STOPPED = Instant.parse("2026-11-01T00:00:00Z");
 
   private UUID room;
   private UUID tenant;
@@ -75,11 +71,11 @@ class RepairRegisterApiTest {
         "INSERT INTO state.member (id, status, created_at, version)"
             + " VALUES (?, 'ACTIVE', CURRENT_TIMESTAMP, 0)",
         tenant);
-    part = part(room);
-    roomParts.seedPart(room, part, "천장");
+    part = part(room, false);
     gates.member(room, tenant, PartySide.TENANT);
-    parties.seed(room, PartySide.TENANT, connected());
-    parties.seed(room, PartySide.LANDLORD, connected());
+    // 두 자리 모두 연결된 회원(JpaCounterpartReader가 party·member를 읽는다)
+    party("TENANT", tenant, "CONNECTED", null);
+    party("LANDLORD", member(), "CONNECTED", null);
   }
 
   @Test
@@ -214,10 +210,7 @@ class RepairRegisterApiTest {
 
   @Test
   void 상대가_아직_연결되지_않았으면_처음_보인_시각은_비어_있다() throws Exception {
-    parties.seed(
-        room,
-        PartySide.LANDLORD,
-        new PartyFacts(UUID.randomUUID(), null, PartyPresence.INVITED, null, false, false, null));
+    changeParty("LANDLORD", null, "INVITED", null);
 
     register("invited", body(part, "창문 틈", null)).andExpect(status().isCreated());
 
@@ -233,7 +226,7 @@ class RepairRegisterApiTest {
   void 내가_공유를_그만뒀어도_등록은_되지만_상대에게_보이지_않는다() throws Exception {
     // 공유를 그만둔 사람도 나만 보는 기록으로 남길 수 있다(ActionType WHILE_SHARING_STOPPED, 03 B)
     gates.put(tenant, new RoomGate(room, PartySide.TENANT, false, false, true, false));
-    parties.seed(room, PartySide.TENANT, stopped(PartyPresence.CONNECTED));
+    changeParty("TENANT", tenant, "SHARING_STOPPED", STOPPED);
 
     register("my-stop", body(part, "누수", null)).andExpect(status().isCreated());
 
@@ -242,7 +235,7 @@ class RepairRegisterApiTest {
 
   @Test
   void 상대가_공유를_그만뒀으면_처음_보인_시각은_비어_있다() throws Exception {
-    parties.seed(room, PartySide.LANDLORD, stopped(PartyPresence.CONNECTED));
+    changeParty("LANDLORD", member(), "SHARING_STOPPED", STOPPED);
 
     register("their-stop", body(part, "누수", null)).andExpect(status().isCreated());
 
@@ -252,7 +245,7 @@ class RepairRegisterApiTest {
   @Test
   void 상대가_탈퇴했으면_처음_보인_시각은_비어_있다() throws Exception {
     // 탈퇴하면 공유 중단 시각이 남아 있어도 보지 않는다(06 CONS-3q). 연결이 아니라 보이지 않는다
-    parties.seed(room, PartySide.LANDLORD, stopped(PartyPresence.WITHDRAWN));
+    changeParty("LANDLORD", member(), "WITHDRAWN", STOPPED);
 
     register("withdrawn", body(part, "누수", null)).andExpect(status().isCreated());
 
@@ -318,8 +311,7 @@ class RepairRegisterApiTest {
         .andExpect(status().isNotFound())
         .andExpect(jsonPath("$.code").value("NOT_FOUND"));
 
-    UUID hidden = part(room);
-    roomParts.seedHiddenPart(room, hidden, "붙박이장");
+    UUID hidden = part(room, true);
     register("hidden-part", body(hidden, "누수", null))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
@@ -382,16 +374,54 @@ class RepairRegisterApiTest {
         + "}";
   }
 
-  private UUID part(UUID roomId) {
+  private UUID part(UUID roomId, boolean hidden) {
     UUID id = UUID.randomUUID();
     jdbc.update(
         """
-        INSERT INTO state.room_part (id, room_record_id, zone, name, sort_order, created_at, version)
-        VALUES (?, ?, '안방', '천장', 0, CURRENT_TIMESTAMP, 0)
+        INSERT INTO state.room_part
+          (id, room_record_id, zone, name, sort_order, hidden_at, created_at, version)
+        VALUES (?, ?, '안방', '천장', 0, ?, CURRENT_TIMESTAMP, 0)
         """,
         id,
-        roomId);
+        roomId,
+        hidden ? Timestamp.from(STOPPED) : null);
     return id;
+  }
+
+  private UUID member() {
+    UUID id = UUID.randomUUID();
+    jdbc.update(
+        "INSERT INTO state.member (id, status, created_at, version)"
+            + " VALUES (?, 'ACTIVE', CURRENT_TIMESTAMP, 0)",
+        id);
+    return id;
+  }
+
+  private void party(String side, UUID memberId, String status, Instant sharingStoppedAt) {
+    jdbc.update(
+        """
+        INSERT INTO state.party
+          (id, room_record_id, side, member_id, status, sharing_stopped_at, created_at, version)
+        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 0)
+        """,
+        UUID.randomUUID(),
+        room,
+        side,
+        memberId,
+        status,
+        sharingStoppedAt == null ? null : Timestamp.from(sharingStoppedAt));
+  }
+
+  /** 그 측 자리의 회원·상태·공유 중단 시각을 바꾼다. */
+  private void changeParty(String side, UUID memberId, String status, Instant sharingStoppedAt) {
+    jdbc.update(
+        "UPDATE state.party SET member_id = ?, status = ?, sharing_stopped_at = ?"
+            + " WHERE room_record_id = ? AND side = ?",
+        memberId,
+        status,
+        sharingStoppedAt == null ? null : Timestamp.from(sharingStoppedAt),
+        room,
+        side);
   }
 
   private long count(String table) {
@@ -404,22 +434,5 @@ class RepairRegisterApiTest {
         "SELECT first_shown_at FROM state.repair_case WHERE room_record_id = ?",
         Timestamp.class,
         room);
-  }
-
-  /** 공유를 그만둔 시각이 있는 자리. */
-  private static PartyFacts stopped(PartyPresence presence) {
-    return new PartyFacts(
-        UUID.randomUUID(),
-        UUID.randomUUID(),
-        presence,
-        Instant.parse("2026-11-01T00:00:00Z"),
-        true,
-        false,
-        "김*수");
-  }
-
-  private static PartyFacts connected() {
-    return new PartyFacts(
-        UUID.randomUUID(), UUID.randomUUID(), PartyPresence.CONNECTED, null, true, false, "김*수");
   }
 }
