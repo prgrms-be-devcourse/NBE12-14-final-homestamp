@@ -282,6 +282,6 @@ pipeline은 진짜이고, 안쪽 부품 중 잠금·읽기만 아직 가짜예�
 | 행동 기록 저장 `ActionWriter` | **진짜** `JpaActionWriter`: `record.action`에 저장, `room_seq`·해시 체인. 메모리 가짜 `FakeActionWriter`는 테스트 코드에만 있고 `ActionPipelineFixture`가 써요 | — | B |
 | 호실 잠금·읽기 `RoomGateReader` | `FakeRoomGateReader`(테스트가 넣은 값) | `room_record`를 `FOR UPDATE`로 잠그고 읽음 | A (ROOM-2) |
 
-배포 서버에서 기능을 확인하려면(07 6장 끝 기준) 두 부품이 진짜여야 해요.
+배포 서버에서 기능을 확인하려면(07 6장 끝 기준) 남은 가짜인 잠금·읽기(`RoomGateReader`)가 진짜여야 해요.
 
 **`@SpringBootTest`로 pipeline을 부르면 행동이 실제 DB에 저장돼요.** 그래서 행동이 가리키는 행이 DB에 있어야 해요(회원 행동이면 `member`, 호실 `room_record`, 대상 행, 대상은 같은 호실이어야 함: 05 0장 복합 FK). DB 없이 규칙만 보려면 `ActionPipelineFixture`를 쓰세요(5-2).

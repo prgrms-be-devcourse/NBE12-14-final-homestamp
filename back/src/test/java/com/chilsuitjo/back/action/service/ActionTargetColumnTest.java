@@ -13,8 +13,9 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 /**
- * 대상 17칸은 세 곳에 있다: {@link TargetKind}, {@link ActionHash#TARGET_COLUMNS}(해시 입력 순서), {@link
- * ActionRecord#target}의 칸 이름. 칸을 더하거나 이름을 바꿀 때 한 곳만 고치면 여기서 떨어진다(#87 리뷰).
+ * 대상 17칸의 이름은 여러 곳에 있다: {@link TargetKind}({@link JpaActionWriter#columnOf}가 칸 이름으로 바꿈), {@link
+ * ActionHash#TARGET_COLUMNS}(해시 입력 순서), {@link ActionRecord#target}의 switch와 {@code targetValues}.
+ * 칸을 더하거나 이름을 바꿀 때 한 곳만 고치면 여기서 떨어진다(#87·#99 리뷰).
  */
 class ActionTargetColumnTest {
 
