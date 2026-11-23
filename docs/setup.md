@@ -108,6 +108,8 @@ npm run dev                # http://localhost:5173, /api는 백엔드(8080)로 �
   - 토큰은 local·test 고정 키(`application.yml`)로 서명한다. 서버가 `local`(기본)이나 `test` 프로필로 떠 있어야 받고, `prod`나 프로필 없이 띄운 서버는 받지 않는다. 이 도구는 test 소스에 있어 운영 jar에 들어가지 않는다.
   - 회원이 DB에 있는지는 보지 않는다. 회원 정보를 읽는 API는 `state.member`에 그 UUID의 행이 있어야 한다.
   - 테스트 코드에서는 이 도구 대신 `SecurityTestSupport.loginAs(회원 UUID)`를 쓴다(`mvc.perform(get(...).with(loginAs(id)))`, 같은 키로 만든 토큰).
+    - `@SpringBootTest` + `@ActiveProfiles("test")`에서는 그대로 쓴다.
+    - `@WebMvcTest`에서는 `AccessTokenConfig`와 `ClockConfig`를 `@Import`해야 한다.
   - 리프레시 쿠키는 주지 않는다. 재발급·로그아웃까지 확인하려면 로그인 API를 기다린다.
 - **테이블은 Flyway가 만든다.** 앱이 뜰 때 `back/src/main/resources/db/migration`의 V 파일을 차례로 적용한다(`state`·`record`·`log` 스키마). 브랜치를 바꿔 V 파일이 달라지면 로컬 DB와 어긋날 수 있으니, 그때는 `cd back && docker compose down -v`로 지우고 다시 띄운다(되돌릴 수 없음).
 
