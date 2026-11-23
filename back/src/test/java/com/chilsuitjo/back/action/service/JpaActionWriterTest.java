@@ -16,6 +16,7 @@ import com.chilsuitjo.back.action.rule.ActionType;
 import com.chilsuitjo.back.action.rule.ContentDigest;
 import com.chilsuitjo.back.global.common.Answer;
 import com.chilsuitjo.back.global.common.PartySide;
+import com.chilsuitjo.back.global.common.TargetKind;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.time.Instant;
@@ -205,6 +206,63 @@ class JpaActionWriterTest {
   }
 
   @Test
+  void 링크_주체의_열람은_링크를_대상으로_저장하고_다시_읽는다() {
+    // #89 LINK_VIEW: 회원 칸 없이 측과 link:<UUID> 주체로 남고, 대상은 그 링크다(#94 record(종류, 대상, payload)).
+    UUID link = link(room);
+    Actor viewer = Actor.link(link, PartySide.LANDLORD);
+    ActionTarget target = ActionTarget.of(TargetKind.LINK, link);
+
+    ActionEntry written =
+        writer.write(
+            command(viewer, ActionType.LINK_VIEW, "link-view:" + link + ":1", target),
+            UUID.randomUUID(),
+            at);
+
+    entityManager.clear();
+    ActionRecord stored = entityManager.find(ActionRecord.class, written.id());
+    assertThat(stored.getActorMemberId()).isNull();
+    assertThat(stored.getActorSide()).isEqualTo(PartySide.LANDLORD);
+    assertThat(stored.getActorKey()).isEqualTo("link:" + link);
+    assertThat(stored.targetColumn()).isEqualTo("link_id");
+    assertThat(ActionHash.compute(readBack(stored))).isEqualTo(stored.getHash());
+    assertThat(reader.findByTarget(target))
+        .singleElement()
+        .satisfies(e -> assertThat(e.type()).isEqualTo(ActionType.LINK_VIEW));
+  }
+
+  @Test
+  void 같은_호실에_같은_번호가_두_번_들어가면_DB가_막는다() {
+    // 진짜 잠금(ROOM-2) 전 마지막 방어선: 두 요청이 같은 마지막 행동을 읽고 같은 room_seq를 쓰는 경우(uq_action_room_seq).
+    writer.write(command(tenant, ActionType.MOVE_OUT, "s1", null), UUID.randomUUID(), at);
+    ActionRecord last =
+        entityManager.find(ActionRecord.class, reader.findByRoom(room).getFirst().id());
+
+    assertThatThrownBy(
+            () -> {
+              entityManager.persist(
+                  new ActionRecord(
+                      ActionHash.VERSION,
+                      room,
+                      last.getRoomSeq(),
+                      ActionHash.start(),
+                      new byte[32],
+                      null,
+                      tenant.memberId(),
+                      PartySide.TENANT,
+                      tenant.key(),
+                      "MOVE_OUT",
+                      "s2",
+                      UUID.randomUUID(),
+                      null,
+                      null,
+                      null,
+                      at));
+              entityManager.flush();
+            })
+        .hasMessageContaining("uq_action_room_seq");
+  }
+
+  @Test
   void 마이크로초로_자르지_않은_시각은_거절한다() {
     assertThatThrownBy(() ->
             writer.write(
@@ -245,6 +303,30 @@ class JpaActionWriterTest {
         a.targetId(),
         a.getCreatedAt(),
         a.getRequestId());
+  }
+
+  private UUID link(UUID roomId) {
+    UUID party = UUID.randomUUID();
+    jdbc.update(
+        """
+        INSERT INTO party (id, room_record_id, side, status, created_at, version)
+        VALUES (?, ?, 'LANDLORD', 'INVITED', CURRENT_TIMESTAMP, 0)
+        """,
+        party,
+        roomId);
+    UUID id = UUID.randomUUID();
+    jdbc.update(
+        """
+        INSERT INTO link (id, room_record_id, kind, party_id, token_hash, issued_by_member_id,
+          created_at, version)
+        VALUES (?, ?, 'INVITE', ?, ?, ?, CURRENT_TIMESTAMP, 0)
+        """,
+        id,
+        roomId,
+        party,
+        "hash-" + id,
+        tenant.memberId());
+    return id;
   }
 
   private UUID repairCase(UUID roomId) {
