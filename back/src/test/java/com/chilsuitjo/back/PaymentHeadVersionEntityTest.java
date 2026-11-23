@@ -19,6 +19,8 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.jpa.repository.support.SimpleJpaRepository;
 
@@ -108,6 +110,138 @@ class PaymentHeadVersionEntityTest extends SchemaTestSupport {
 
     entityManager.clear();
     assertThat(entityManager.find(PaymentVersion.class, versionId).isNew()).isFalse();
+  }
+
+  @Test
+  void 두_번째_판은_첫_판을_가리키고_지불의_현재_판이_된다() {
+    UUID room = room();
+    UUID paymentId = Uuids.v7();
+    UUID firstVersionId = Uuids.v7();
+    UUID secondVersionId = Uuids.v7();
+    entityManager.persist(new Payment(paymentId, room, repair(room), firstVersionId, false, NOW));
+    entityManager.persist(firstVersion(firstVersionId, room, paymentId));
+    entityManager.flush();
+
+    entityManager.persist(
+        new PaymentVersion(
+            secondVersionId,
+            room,
+            paymentId,
+            2,
+            PayerKind.LANDLORD,
+            null,
+            PayeeKind.VENDOR,
+            null,
+            90_000,
+            LocalDate.of(2026, 11, 23),
+            PartySide.LANDLORD,
+            null,
+            firstVersionId,
+            NOW.plusSeconds(1)));
+    entityManager.flush();
+    // 머리의 상태 변경 메서드는 MONEY-1~2에서 더하므로 현재 판 이동만 SQL로 준비한다.
+    jdbc.update(
+        "UPDATE payment SET current_version_id = ? WHERE id = ?", secondVersionId, paymentId);
+    assertDoesNotThrow(() -> jdbc.execute("SET CONSTRAINTS ALL IMMEDIATE"));
+
+    entityManager.clear();
+    assertThat(entityManager.find(Payment.class, paymentId).getCurrentVersionId())
+        .isEqualTo(secondVersionId);
+    PaymentVersion loaded = entityManager.find(PaymentVersion.class, secondVersionId);
+    assertThat(loaded.getPaymentId()).isEqualTo(paymentId);
+    assertThat(loaded.getRoomRecordId()).isEqualTo(room);
+    assertThat(loaded.getNo()).isEqualTo(2);
+    assertThat(loaded.getPreviousId()).isEqualTo(firstVersionId);
+    assertThat(loaded.getAmount()).isEqualTo(90_000);
+    PaymentVersion first = entityManager.find(PaymentVersion.class, firstVersionId);
+    assertThat(first.getNo()).isEqualTo(1);
+    assertThat(first.getPreviousId()).isNull();
+    assertThat(first.getAmount()).isEqualTo(82_000);
+  }
+
+  @Test
+  void 다른_호실의_수리_건을_가리키는_지불은_FK가_거절한다() {
+    UUID room = room();
+    UUID otherRepair = repair(room());
+    UUID paymentId = Uuids.v7();
+    UUID versionId = Uuids.v7();
+    entityManager.persist(new Payment(paymentId, room, otherRepair, versionId, false, NOW));
+    entityManager.persist(firstVersion(versionId, room, paymentId));
+
+    var error = assertThrows(PersistenceException.class, () -> entityManager.flush());
+    assertThat(error).hasStackTraceContaining("fk_payment_repair_case_id_room");
+  }
+
+  @ParameterizedTest
+  @CsvSource({"ONE_SIDE, NONE", "BOTH, ACK", "EVIDENCE, NEED_MORE", "ONE_SIDE, DISPUTE"})
+  void 지불의_확인_강도와_응답을_DB에서_enum으로_읽는다(ConfirmStrength strength, PaymentResponse response) {
+    UUID room = room();
+    UUID paymentId = Uuids.v7();
+    UUID versionId = Uuids.v7();
+    entityManager.persist(new Payment(paymentId, room, repair(room), versionId, false, NOW));
+    entityManager.persist(firstVersion(versionId, room, paymentId));
+    entityManager.flush();
+
+    // 응답 처리는 MONEY-2에서 구현한다. 여기서는 DB CHECK와 JPA enum 매핑을 검증한다.
+    jdbc.update(
+        """
+        UPDATE payment SET confirm_strength = ?, response = ?, confirmed_version_id = ?
+        WHERE id = ?
+        """,
+        strength.name(),
+        response.name(),
+        response == PaymentResponse.ACK ? versionId : null,
+        paymentId);
+    assertDoesNotThrow(() -> jdbc.execute("SET CONSTRAINTS ALL IMMEDIATE"));
+
+    entityManager.clear();
+    Payment loaded = entityManager.find(Payment.class, paymentId);
+    assertThat(loaded.getConfirmStrength()).isEqualTo(strength);
+    assertThat(loaded.getResponse()).isEqualTo(response);
+    assertThat(loaded.getConfirmedVersionId())
+        .isEqualTo(response == PaymentResponse.ACK ? versionId : null);
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "TENANT, VENDOR, TENANT",
+    "LANDLORD, COUNTERPART, LANDLORD",
+    "THIRD_PARTY, THIRD_PARTY, TENANT"
+  })
+  void 지불_판의_낸_사람과_받는_사람과_기록한_측을_저장하고_읽는다(
+      PayerKind payerKind, PayeeKind payeeKind, PartySide recordedBySide) {
+    UUID room = room();
+    UUID paymentId = Uuids.v7();
+    UUID versionId = Uuids.v7();
+    String payerLabel = payerKind == PayerKind.THIRD_PARTY ? "가족" : null;
+    String payeeLabel = payeeKind == PayeeKind.THIRD_PARTY ? "윗집" : null;
+    entityManager.persist(new Payment(paymentId, room, repair(room), versionId, false, NOW));
+    entityManager.persist(
+        new PaymentVersion(
+            versionId,
+            room,
+            paymentId,
+            1,
+            payerKind,
+            payerLabel,
+            payeeKind,
+            payeeLabel,
+            82_000,
+            LocalDate.of(2026, 11, 22),
+            recordedBySide,
+            null,
+            null,
+            NOW));
+    entityManager.flush();
+    assertDoesNotThrow(() -> jdbc.execute("SET CONSTRAINTS ALL IMMEDIATE"));
+
+    entityManager.clear();
+    PaymentVersion loaded = entityManager.find(PaymentVersion.class, versionId);
+    assertThat(loaded.getPayerKind()).isEqualTo(payerKind);
+    assertThat(loaded.getPayerLabel()).isEqualTo(payerLabel);
+    assertThat(loaded.getPayeeKind()).isEqualTo(payeeKind);
+    assertThat(loaded.getPayeeLabel()).isEqualTo(payeeLabel);
+    assertThat(loaded.getRecordedBySide()).isEqualTo(recordedBySide);
   }
 
   private PaymentVersion firstVersion(UUID versionId, UUID room, UUID paymentId) {
