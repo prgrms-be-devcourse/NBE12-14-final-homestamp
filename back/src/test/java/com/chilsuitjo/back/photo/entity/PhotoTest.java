@@ -19,6 +19,10 @@ class PhotoTest {
   private static final UUID TARGET_ID = UUID.randomUUID();
   private static final UUID PART_ID = UUID.randomUUID();
   private static final Instant NOW = Instant.parse("2026-11-20T00:00:00Z");
+  private static final String ORIGINAL_KEY = "photos/" + ROOM_ID + "/original.jpg";
+  private static final String THUMB_KEY = "photos/" + ROOM_ID + "/thumb.jpg";
+  private static final String ORIGINAL_SHA = "a".repeat(64);
+  private static final String THUMB_SHA = "b".repeat(64);
 
   @ParameterizedTest
   @ValueSource(
@@ -82,6 +86,59 @@ class PhotoTest {
     assertThat(photo.getThumbSha256()).isEqualTo(sha256);
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {"", " "})
+  void 원본_키가_비어_있으면_생성을_거절한다(String key) {
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> photo(key, THUMB_KEY, 0))
+        .withMessageContaining("originalKey");
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"", " "})
+  void 썸네일_키가_비어_있으면_생성을_거절한다(String key) {
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> photo(ORIGINAL_KEY, key, 0))
+        .withMessageContaining("thumbKey");
+  }
+
+  @ParameterizedTest
+  @MethodSource("keysOutsideRoomFolder")
+  void 원본_키가_그_호실_사진_폴더_아래가_아니면_생성을_거절한다(String key) {
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> photo(key, THUMB_KEY, 0))
+        .withMessageContaining("originalKey");
+  }
+
+  @ParameterizedTest
+  @MethodSource("keysOutsideRoomFolder")
+  void 썸네일_키가_그_호실_사진_폴더_아래가_아니면_생성을_거절한다(String key) {
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> photo(ORIGINAL_KEY, key, 0))
+        .withMessageContaining("thumbKey");
+  }
+
+  private static Stream<String> keysOutsideRoomFolder() {
+    return Stream.of(
+        "photos/" + UUID.randomUUID() + "/a.jpg", // 다른 호실 폴더
+        "pending/" + ROOM_ID + "/a.jpg", // 확정 전 경로
+        "photos/" + ROOM_ID + "a.jpg", // 폴더 구분자 없음
+        "photos/" + ROOM_ID + "/", // 파일 이름 없음
+        "x/photos/" + ROOM_ID + "/a.jpg", // 앞에 다른 경로
+        "a.jpg"); // 폴더 없음
+  }
+
+  @Test
+  void 그_호실_폴더의_키와_0_이상의_표시_순서는_받는다() {
+    Photo first = photo(ORIGINAL_KEY, THUMB_KEY, 0);
+    Photo second = photo("photos/" + ROOM_ID + "/sub/b.jpg", THUMB_KEY, 3);
+
+    assertThat(first.getOriginalKey()).isEqualTo(ORIGINAL_KEY);
+    assertThat(first.getThumbKey()).isEqualTo(THUMB_KEY);
+    assertThat(first.getSortOrder()).isZero();
+    assertThat(second.getSortOrder()).isEqualTo(3);
+  }
+
   @Test
   void 일반_사진은_점검_ID와_부위_ID_없이_생성한다() {
     Photo photo = repairPhoto("", 1);
@@ -113,16 +170,29 @@ class PhotoTest {
         "stage".equals(missingField) ? null : PhotoStage.BEFORE,
         "uploadedBySide".equals(missingField) ? null : PartySide.TENANT,
         null,
-        "originalKey".equals(missingField) ? null : "photos/original.jpg",
-        "thumbKey".equals(missingField) ? null : "photos/thumb.jpg",
-        "originalSha256".equals(missingField) ? null : "a".repeat(64),
-        "thumbSha256".equals(missingField) ? null : "b".repeat(64),
+        "originalKey".equals(missingField) ? null : ORIGINAL_KEY,
+        "thumbKey".equals(missingField) ? null : THUMB_KEY,
+        "originalSha256".equals(missingField) ? null : ORIGINAL_SHA,
+        "thumbSha256".equals(missingField) ? null : THUMB_SHA,
         sizeBytes,
         0,
         "createdAt".equals(missingField) ? null : NOW);
   }
 
   private Photo photoWithSha256(String originalSha256, String thumbSha256) {
+    return photo(ORIGINAL_KEY, THUMB_KEY, originalSha256, thumbSha256, 0);
+  }
+
+  private Photo photo(String originalKey, String thumbKey, int sortOrder) {
+    return photo(originalKey, thumbKey, ORIGINAL_SHA, THUMB_SHA, sortOrder);
+  }
+
+  private Photo photo(
+      String originalKey,
+      String thumbKey,
+      String originalSha256,
+      String thumbSha256,
+      int sortOrder) {
     return Photo.forTarget(
         ROOM_ID,
         PhotoTargetType.REPAIR_CASE,
@@ -131,12 +201,12 @@ class PhotoTest {
         PhotoStage.BEFORE,
         PartySide.TENANT,
         null,
-        "photos/original.jpg",
-        "photos/thumb.jpg",
+        originalKey,
+        thumbKey,
         originalSha256,
         thumbSha256,
         1,
-        0,
+        sortOrder,
         NOW);
   }
 
@@ -149,8 +219,8 @@ class PhotoTest {
         PhotoStage.MOVE_IN,
         PartySide.TENANT,
         null,
-        "photos/original.jpg",
-        "photos/thumb.jpg",
+        ORIGINAL_KEY,
+        THUMB_KEY,
         "a".repeat(64),
         "b".repeat(64),
         1,

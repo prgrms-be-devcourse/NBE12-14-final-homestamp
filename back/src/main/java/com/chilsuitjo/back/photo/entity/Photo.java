@@ -141,12 +141,8 @@ public class Photo {
     if (uploadedBySide == null) {
       throw new IllegalArgumentException("uploadedBySide는 필수입니다");
     }
-    if (originalKey == null) {
-      throw new IllegalArgumentException("originalKey는 필수입니다");
-    }
-    if (thumbKey == null) {
-      throw new IllegalArgumentException("thumbKey는 필수입니다");
-    }
+    requireRoomPhotoKey(originalKey, "originalKey", roomRecordId);
+    requireRoomPhotoKey(thumbKey, "thumbKey", roomRecordId);
     requireSha256Hex(originalSha256, "originalSha256");
     requireSha256Hex(thumbSha256, "thumbSha256");
     if (createdAt == null) {
@@ -168,6 +164,20 @@ public class Photo {
     this.sizeBytes = sizeBytes;
     this.sortOrder = sortOrder;
     this.createdAt = createdAt;
+  }
+
+  /**
+   * S3 키는 그 사진의 호실 기록 폴더({@code photos/{room_record_id}/…}) 아래의 파일이어야 한다(05 2-8, 04 "제출 처리"). 호실 단위
+   * 삭제가 이 접두어를 기준으로 하므로, 다른 호실 폴더나 {@code pending/}을 가리키면 지울 때 남거나 남의 사진이 같이 지워진다(PR #107 리뷰).
+   */
+  private static void requireRoomPhotoKey(String key, String name, UUID roomRecordId) {
+    if (key == null || key.isBlank()) {
+      throw new IllegalArgumentException(name + "는 필수입니다");
+    }
+    String prefix = "photos/" + roomRecordId + "/";
+    if (!key.startsWith(prefix) || key.length() == prefix.length()) {
+      throw new IllegalArgumentException(name + "는 " + prefix + " 아래의 파일이어야 합니다");
+    }
   }
 
   /**
