@@ -25,7 +25,7 @@ class PaymentTest {
     Payment payment = new Payment(Uuids.v7(), Uuids.v7(), Uuids.v7(), Uuids.v7(), hasEvidence, NOW);
 
     assertThat(payment.getConfirmStrength()).isEqualTo(expectedStrength);
-    assertThat(payment.getResponse()).isEqualTo(PaymentResponse.NONE);
+    assertThat(payment.getResponse()).isEqualTo(PaymentResponse.PENDING);
     assertThat(payment.getConfirmedVersionId()).isNull();
     assertThat(payment.getFirstShownAt()).isNull();
     assertThat(payment.getCreatedAt()).isEqualTo(NOW);

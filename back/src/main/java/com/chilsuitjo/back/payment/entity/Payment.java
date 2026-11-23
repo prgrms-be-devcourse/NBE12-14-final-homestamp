@@ -81,7 +81,7 @@ public class Payment {
     this.repairCaseId = repairCaseId;
     this.currentVersionId = currentVersionId;
     this.confirmStrength = hasEvidence ? ConfirmStrength.EVIDENCE : ConfirmStrength.ONE_SIDE;
-    this.response = PaymentResponse.NONE;
+    this.response = PaymentResponse.PENDING;
     this.createdAt = createdAt;
   }
 }

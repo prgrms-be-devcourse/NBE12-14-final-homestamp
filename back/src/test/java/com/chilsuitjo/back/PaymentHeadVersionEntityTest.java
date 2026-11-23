@@ -58,7 +58,7 @@ class PaymentHeadVersionEntityTest extends SchemaTestSupport {
     Payment loaded = entityManager.find(Payment.class, paymentId);
     assertThat(loaded.getCurrentVersionId()).isEqualTo(versionId);
     assertThat(loaded.getConfirmStrength()).isEqualTo(ConfirmStrength.EVIDENCE);
-    assertThat(loaded.getResponse()).isEqualTo(PaymentResponse.NONE);
+    assertThat(loaded.getResponse()).isEqualTo(PaymentResponse.PENDING);
     assertThat(loaded.getVersion()).isZero();
     PaymentVersion loadedVersion = entityManager.find(PaymentVersion.class, versionId);
     assertThat(loadedVersion.getPayerKind()).isEqualTo(PayerKind.THIRD_PARTY);
@@ -173,7 +173,7 @@ class PaymentHeadVersionEntityTest extends SchemaTestSupport {
   }
 
   @ParameterizedTest
-  @CsvSource({"ONE_SIDE, NONE", "BOTH, ACK", "EVIDENCE, NEED_MORE", "ONE_SIDE, DISPUTE"})
+  @CsvSource({"ONE_SIDE, PENDING", "BOTH, ACK", "EVIDENCE, NEED_MORE", "ONE_SIDE, DISPUTE"})
   void 지불의_확인_강도와_응답을_DB에서_enum으로_읽는다(ConfirmStrength strength, PaymentResponse response) {
     UUID room = room();
     UUID paymentId = Uuids.v7();
