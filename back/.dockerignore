@@ -1,0 +1,28 @@
+# Only the Dockerfile's build inputs enter the context.
+**
+!gradlew
+!settings.gradle
+!build.gradle
+!lombok.config
+!gradle/
+!gradle/wrapper/
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
+!src/
+!src/main/
+!src/main/**
+
+# Secrets stay out even if someone places them below src/main.
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/*.jks
+**/application-local*
+**/application-prod*
+**/application-secret*
+**/credentials
+**/credentials.*
+**/.aws/**

@@ -69,7 +69,7 @@ repair_case (C)  current_content_id ──▶ repair_content (B) 판 #3 ──pr
 
 수리 건, 지불, 점검 항목, 정산 송금이 이 모양이에요. 머리(C)는 두 곳을 가리켜요: **지금 모습**(가장 최근 판, `current_*_id`)과 **같이 확인한 모습**(상대가 확인한 판, `confirmed_*_id`). 같이 확인하기 전에 고치면 새 판을 만들고 두 가리킴을 함께 옮겨요(아직 확인 전이라 같이 확인한 모습은 비어 있음). 같이 확인한 뒤 고치면(무엇이든) 판을 바로 만들지 않고 **고친 내용(칸 + 새 값 + 기준 판)**과 확인 요청(기록당 하나)을 남겨요. 상대가 확인하면 **지금 도장 찍힌 판에 그 칸만 합쳐** 새 판을 만들고 두 가리킴을 함께 옮겨요(하나를 확인해도 다른 고친 내용이 딸려 가지 않게). 계산은 같이 확인한 모습(없으면 지금 모습)만 읽어요(03-상태 G).
 
-**② 무엇에 대한 것인가 = 종류별 외래 키 + "정확히 하나" CHECK**
+**② 무엇에 대한 것인가 = 종류별 외래 키 + "하나" CHECK**
 
 ```sql
 repair_case_id  uuid NULL REFERENCES repair_case,
@@ -79,7 +79,7 @@ inspection_id   uuid NULL REFERENCES inspection,
 CHECK (num_nonnulls(repair_case_id, payment_id, inspection_id, ...) = 1)
 ```
 
-행동 기록, 사진, 제안, 응답 요청, 고친 내용이 이 모양이에요. DB가 대상이 실제로 있는지 검사해요.
+행동 기록, 사진, 제안, 응답 요청, 고친 내용이 이 모양이에요. DB가 대상이 실제로 있는지 검사해요. 사진·제안은 **정확히 하나**(`= 1`)이고, 행동 기록·응답 요청·고친 내용은 **하나 이하**(`<= 1`)예요. 0개면 행동 기록·응답 요청은 호실 기록 자체(이사함, 정산 끝내기 등), 고친 내용은 호실 기록의 입주일이 대상이에요(V1 각 테이블의 CHECK).
 
 ---
 
@@ -168,7 +168,7 @@ erDiagram
 | 행동 해시 칸 순서 | `hash_version` → `record.action`의 칸 순서(`id`·`hash` 제외, 대상 17칸은 각각, V3 `request_id`는 맨 끝). 순서는 코드에 목록으로 고정하고 DB에서 읽지 않는다 |
 | 첫 행동 | `room_seq` 1의 `prev_hash`는 32바이트 0 |
 | 시각 | 앱이 마이크로초로 자른 값으로 계산하고 같은 값을 저장한다(timestamptz가 더 작은 자리를 반올림하므로). 입력은 1970-01-01 UTC부터의 마이크로초. 한 요청의 행동(딸린 행동 포함)은 pipeline이 한 번 정한 같은 시각을 쓴다(09 3-1 순서 8) |
-| payload | **최상위는 SQL NULL이거나 JSON 객체만**(V4 `ck_action_payload_object`. 최상위 JSON `null`을 받으면 SQL NULL과 같은 입력이 됨). 안쪽은 종류 1바이트를 붙여 재귀로 쓴다: 글자 `S`(enum은 이름), 정수 `I`(long 범위), 참거짓 `B`, 없음 `N`, 객체 `O`(키의 UTF-8 바이트 순, jsonb 키 순서와 상관없음), 목록 `L`(순서대로). **소수는 거절**한다. 해시 입력은 도메인이 넘긴 값을 그대로 쓰지 않고 **JSON으로 바꿨다가 다시 읽은 값**이다(`UUID`·날짜·enum이 jsonb와 같은 글자가 되고, 검증 때 DB에서 읽은 값과 같은 입력이 됨) |
+| payload | **최상위는 SQL NULL이거나 JSON 객체만**(V4 `ck_action_payload_object`. 최상위 JSON `null`을 받으면 SQL NULL과 같은 입력이 됨). 안쪽은 종류 1바이트를 붙여 재귀로 쓴다: 글자 `S`(enum은 이름), 정수 `I`(long 범위), 참거짓 `B`, 없음 `N`, 객체 `O`(키의 UTF-8 바이트 순, jsonb 키 순서와 상관없음), 목록 `L`(순서대로). **소수는 거절**한다. 해시 입력은 도메인이 넘긴 값을 그대로 쓰지 않고 **JSON으로 바꿨다가 다시 읽은 값**이다(`UUID`·날짜·enum이 jsonb와 같은 글자가 되고, 검증 때 DB에서 읽은 값과 같은 입력이 됨). 빈 payload는 `{}`가 아니라 NULL로 저장하고 해시 입력도 NULL이다 |
 | 내용 지문 | 형식 버전 → 판 종류(테이블 이름) → 판 ID → 판 번호 → 칸 수 → 칸마다 이름·값 → 사진 수 → 사진 `original_sha256`(`sort_order` 순) |
 | 칸을 더할 때 | `action`에 칸을 더하는 PR은 그 칸을 해시 입력에 넣을지 정하고, 넣으면 `hash_version`을 올린다 |
 
@@ -176,7 +176,7 @@ erDiagram
 
 | 영역 | 행동 종류 |
 |---|---|
-| 호실·참여 | `CREATE_ROOM`, `EDIT_ROOM_INFO`(내 쪽·주소·별칭, 처음 알리기·초대 전만), `ADD_PART`, `HIDE_PART`, `TOGGLE_PART`, `INVITE`, `CHANGE_INVITE_PHONE`, `REJECT_INVITE`, `CONNECT`, `JOIN`, `SHARE_CONSENT`, `STOP_SHARING`, `RESUME_SHARING`, `MOVE_OUT`, `REQUEST_END`, `CONFIRM_END`, `REJECT_END`("아직 살고 있어요", 사유, 06 4-3 `/move-out/reject`), `CONFIRM_LIVING` |
+| 호실·참여 | `CREATE_ROOM`, `EDIT_ROOM_INFO`(내 쪽·주소·별칭, 처음 알리기·초대 전만), `ADD_PART`, `HIDE_PART`, `SHOW_PART`(숨긴 부위 다시 보이기, V5), `TOGGLE_PART`, `INVITE`, `CHANGE_INVITE_PHONE`, `REJECT_INVITE`, `CONNECT`, `JOIN`, `SHARE_CONSENT`, `STOP_SHARING`, `RESUME_SHARING`, `MOVE_OUT`, `REQUEST_END`, `CONFIRM_END`, `REJECT_END`("아직 살고 있어요", 사유, 06 4-3 `/move-out/reject`), `CONFIRM_LIVING` |
 | 링크·통지 | `LINK_VIEW`(`link:<ID>`), `OPT_OUT`, `RESEND_NOTICE`, `RENOTIFY`(서버), `MARK_UNCONFIRMED`(서버), `MARK_UNDELIVERED`(서버) |
 | 수리 | `REGISTER`, `SUPPLEMENT`, `RESPOND_DEFECT`, `START_REPAIR`, `REQUEST_CLOSE`, `CONFIRM_CLOSE`, `NOT_YET`, `CLOSE_ALONE`, `REOPEN`, `ADD_PHOTO`, `ASK_PROGRESS`, `NOTE_PROGRESS`, `RESPOND_SITUATION`, `NOTE_CAUSE`, `RESPOND_CAUSE` |
 | 고치기 | `CORRECT`, `RESPOND_CORRECTION`, `ACCEPT_ALL_CORRECTIONS`, `RESUBMIT_CORRECTION`, `WITHDRAW_CORRECTION` |

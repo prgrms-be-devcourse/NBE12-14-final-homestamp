@@ -110,4 +110,14 @@ public class RepairCase {
     this.defectAck = AckState.PENDING;
     this.moneyStatus = MoneyStatus.UNDECIDED;
   }
+
+  /**
+   * 상대에게 실제로 보이게 된 시각을 남긴다(decisions 2026-11-18). 이미 있으면 그대로 둔다: 다시 공유해도 한 번 보인 기록은 다시 숨겨지지 않아서 처음
+   * 시각만 뜻이 있다. 시각은 그 행동의 시각({@code ActionRequestContext.at()})이다.
+   */
+  public void markShown(Instant at) {
+    if (firstShownAt == null) {
+      firstShownAt = at;
+    }
+  }
 }
