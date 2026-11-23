@@ -9,12 +9,12 @@ import com.chilsuitjo.back.global.error.ErrorCode;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import org.springframework.stereotype.Component;
 
 /**
  * {@link RoomGateReader} 가짜(07 1주차 2일차). DB 없이 메모리에 적어 둔 값으로 답하고, 잠그지는 않는다.
  *
- * <p>실제 구현(A, ROOM-2)이 들어오면 이 클래스를 지우거나 실제 구현에 {@code @Primary}를 붙인다(같은 타입 빈이 둘이면 주입이 실패한다).
+ * <p>테스트 코드다. 앱과 {@code @SpringBootTest}는 진짜 {@code JpaRoomGateReader}(room, #143)를 쓰고, DB 없는
+ * 테스트({@code ActionPipelineFixture})만 이 가짜를 {@code new}로 만들어 쓴다(빈이 아님).
  *
  * <p>실제와 다른 점: 잠그지 않는다. 링크·서버·운영 행동은 호실이 있는지 보지 않는다(실제는 없는 호실이면 {@code NOT_FOUND}일 수 있음).
  *
@@ -23,7 +23,6 @@ import org.springframework.stereotype.Component;
  * gates.put(memberId, new RoomGate(roomId, PartySide.TENANT, true, false, false, true)); // 정산 완료
  * }</pre>
  */
-@Component
 public class FakeRoomGateReader implements RoomGateReader {
 
   private final Map<Key, RoomGate> members = new ConcurrentHashMap<>();

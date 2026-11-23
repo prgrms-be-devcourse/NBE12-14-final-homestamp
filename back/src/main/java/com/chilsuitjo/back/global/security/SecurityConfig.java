@@ -19,7 +19,7 @@ import org.springframework.web.servlet.HandlerExceptionResolver;
 
 /**
  * 보안 뼈대. 세션 없이 {@code Authorization: Bearer} 토큰만 본다(06 4-0 인증, 04 4-1). 폼 로그인·HTTP Basic·CSRF는 쓰지
- * 않는다 (쿠키 대신 헤더라 CSRF와 무관하다. 쿠키를 쓰는 재발급의 Origin 확인은 아직 구현 전이며 ACC-2에서 구현할 예정이다, 04 4-1).
+ * 않는다 (쿠키 대신 헤더라 CSRF와 무관하다. 쿠키를 쓰는 재발급은 그 컨트롤러가 Origin을 확인한다, 04 4-1).
  *
  * <p>로그인 없이 여는 것은 06 4장에서 "누가"가 회원이 아닌 API와 아래 운영 확인 주소뿐이다. 나머지는 모두 로그인이 필요하고, 없거나 틀린 토큰은 {@code
  * LOGIN_REQUIRED}(401)로 다른 오류와 같은 모양(06 4-10)으로 돌려준다.
@@ -27,7 +27,7 @@ import org.springframework.web.servlet.HandlerExceptionResolver;
 @Configuration
 public class SecurityConfig {
 
-  /** 가짜 인증·API 문서를 여는 프로필. {@code prod}가 함께 켜지면 열지 않는다. */
+  /** API 문서를 여는 프로필. {@code prod}가 함께 켜지면 열지 않는다. */
   static final String DEV_PROFILES = "(local | test) & !prod";
 
   /** 06 4-1 "누구나"·"쿠키"·"인증 표". */
@@ -61,7 +61,11 @@ public class SecurityConfig {
     AccessTokenVerifier verifier = verifiers.getIfAvailable();
     if (verifier == null && environment.acceptsProfiles(Profiles.of("prod"))) {
       throw new IllegalStateException(
-          "prod에는 실제 토큰 검증기(AccessTokenVerifier)가 있어야 한다. 가짜 검증기는 local·test에서만 켜진다");
+          "prod에는 실제 토큰 검증기(AccessTokenVerifier)가 있어야 한다. "
+              + ConditionalOnLoginTokenKeys.ACCESS_KEY
+              + "·"
+              + ConditionalOnLoginTokenKeys.REFRESH_KEY
+              + "를 넣어야 켜진다");
     }
     boolean devProfile = environment.acceptsProfiles(Profiles.of(DEV_PROFILES));
 
