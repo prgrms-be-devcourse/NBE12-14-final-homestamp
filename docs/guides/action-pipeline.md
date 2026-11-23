@@ -187,6 +187,8 @@ public ResponseEntity<CreatedResponse> register(
 }
 ```
 
+만드는 API의 201 본문은 도메인마다 따로 만들지 말고 `global/response/CreatedResponse`를 써요.
+
 ## 4. 어느 메서드를 쓰나
 
 | 하려는 것 | 쓸 것 | 예 |

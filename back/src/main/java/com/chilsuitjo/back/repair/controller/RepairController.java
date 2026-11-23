@@ -1,7 +1,7 @@
 package com.chilsuitjo.back.repair.controller;
 
+import com.chilsuitjo.back.global.response.CreatedResponse;
 import com.chilsuitjo.back.global.security.LoginMember;
-import com.chilsuitjo.back.repair.dto.CreatedResponse;
 import com.chilsuitjo.back.repair.dto.RegisterRepairRequest;
 import com.chilsuitjo.back.repair.dto.RepairCaseCreated;
 import com.chilsuitjo.back.repair.service.RepairService;
@@ -29,6 +29,10 @@ public class RepairController {
   /**
    * 하자 등록(REP-1). 처음 성공과 다시 온 요청 모두 201과 만든 ID를 돌려준다. 다시 온 요청이면 {@code Idempotent-Replayed: true}를
    * 붙인다(06 4-0). {@code Idempotency-Key}가 없으면 400이다.
+   *
+   * <p><b>아직 06과 다르다</b>: 사진(업로드 표 1~10개 필수, {@code PHOTO_REQUIRED})과 알리기(응답 요청·문자)는 만들지 않았다. 지금은
+   * 사진 없이 등록되고 상대에게 알림이 가지 않는다. {@code uploadTickets}가 오면 조용히 버리지 않고 400으로 거절한다. 사진 PR·알리기 PR에서
+   * 06대로 맞춘다(#134).
    */
   @PostMapping("/api/rooms/{roomId}/repair-cases")
   public ResponseEntity<CreatedResponse> register(
