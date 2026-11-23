@@ -8,7 +8,7 @@ import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 /**
- * 가입 요청(06 4-1 {@code POST /api/auth/signup}). 06에 칸 이름이 없어 이 DTO가 처음 정한다(화면과 맞출 것).
+ * 가입 요청(06 4-1 {@code POST /api/auth/signup}). 칸 이름은 06 4-1과 같다(바꾸면 06도 함께).
  *
  * <p>여기서는 06이 정한 입력 규칙만 본다. 비밀번호는 8자 이상, 영문·숫자 포함(06 0-1 {@code password.rule}, ACC-1d)이고, BCrypt가
  * 받는 UTF-8 72바이트를 넘으면 안 된다({@link #PASSWORD_MAX_BYTES}). 이메일·이름 길이 상한은 DB 칸 크기(05 {@code member}:
