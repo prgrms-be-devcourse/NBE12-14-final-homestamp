@@ -8,6 +8,8 @@ import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.global.security.AccessTokens;
 import com.chilsuitjo.back.global.security.ConditionalOnLoginTokenKeys;
 import com.chilsuitjo.back.global.security.LoginMember;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.time.Duration;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
@@ -42,12 +44,40 @@ public class AuthTokenController {
 
   AuthTokenController(
       AuthTokenService service, AccessTokens accessTokens, @Value("${app.origin:}") String origin) {
+    this.service = service;
+    this.accessTokens = accessTokens;
+    this.origin = requireOrigin(origin);
+  }
+
+  /**
+   * 브라우저가 보내는 Origin 모양({@code http(s)://host[:port]})만 받는다. 끝의 {@code /}나 경로가 붙으면 모든 재발급이 소리 없이
+   * {@code LOGIN_REQUIRED}가 되므로 시작할 때 거절한다.
+   */
+  static String requireOrigin(String origin) {
     if (origin == null || origin.isBlank()) {
       throw new IllegalStateException("app.origin이 없다. 재발급 요청의 Origin을 확인하려면 화면의 Origin을 넣어야 시작한다");
     }
-    this.service = service;
-    this.accessTokens = accessTokens;
-    this.origin = origin;
+    URI uri;
+    try {
+      uri = new URI(origin);
+    } catch (URISyntaxException e) {
+      throw badOrigin(origin);
+    }
+    boolean web = "http".equals(uri.getScheme()) || "https".equals(uri.getScheme());
+    if (!web
+        || uri.getHost() == null
+        || uri.getRawUserInfo() != null
+        || !uri.getRawPath().isEmpty()
+        || uri.getRawQuery() != null
+        || uri.getRawFragment() != null) {
+      throw badOrigin(origin);
+    }
+    return origin;
+  }
+
+  private static IllegalStateException badOrigin(String origin) {
+    return new IllegalStateException(
+        "app.origin은 http(s)://host[:port] 모양이어야 한다(끝의 /나 경로 없이): " + origin);
   }
 
   /** 새 액세스 토큰(본문)과 다음 리프레시 토큰(쿠키). 오류는 {@code LOGIN_REQUIRED}·{@code REFRESH_REUSED}(401). */
