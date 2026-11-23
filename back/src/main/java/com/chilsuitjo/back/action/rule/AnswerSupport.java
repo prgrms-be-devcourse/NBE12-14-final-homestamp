@@ -11,7 +11,8 @@ import java.util.Objects;
 
 /**
  * 응답하기(맞아요·보류·이견)와 다시 요청([보충하고 다시 확인 요청]·[사진 더해서 다시 요청])의 공통 규칙(#86, decisions 2026-11-17·11-19, 03
- * "응답과 그 뒤", 06 4-0). 수리 건 하자·점검 항목·지불·송금·고친 내용이 각자의 {@code XxxTransitions.apply} 안에서 부른다.
+ * "응답과 그 뒤", 06 4-0). 수리 건 하자·점검 항목·지불·송금·고친 내용·원인 설명(응답만, 고치면 새 설명이라 다시 요청이 없음)이 각자의 {@code
+ * XxxTransitions.apply} 안에서 부른다.
  *
  * <p>순수 함수다: Repository·{@code Clock}·호실 단계를 모른다. 지금 시각은 {@code apply}가 받은 {@code
  * entry.createdAt()}을, 간격({@code rerequest.interval})은 각 {@code Transitions}가 설정에서 받아 넘긴다.
@@ -67,7 +68,8 @@ public final class AnswerSupport {
   }
 
   /**
-   * 다시 요청. 검사 순서: 기록한 측 → 보류·이견일 때만 → 지금 이 종류의 요청을 열 수 있나 → 간격 → 근거.
+   * 다시 요청. 검사 순서: 기록한 측 → 보류·이견일 때만 → 지금 이 종류의 요청을 열 수 있나 → 근거 → 간격(#86). 근거를 간격보다 먼저 봐서, 서비스가
+   * pipeline 전에 {@link #requireEvidence}를 먼저 불러도 도메인마다 오류 순서가 같다.
    *
    * @param hasEvidence 사진이나 설명이 하나 이상인지({@code SupplementRequest.hasEvidence()})
    * @param canOpenRequest 지금 호실 단계에서 이 종류의 응답 요청을 열 수 있는지({@code waitService.canOpen}, 03 K). 각 도메인
@@ -88,8 +90,8 @@ public final class AnswerSupport {
     if (!isObjection(record.state()) || !canOpenRequest) {
       throw new BusinessException(ErrorCode.INVALID_STATE);
     }
-    checkInterval(record.lastRerequestAt(), now, interval);
     requireEvidence(hasEvidence);
+    checkInterval(record.lastRerequestAt(), now, interval);
     return new Rerequested(AckState.PENDING, now);
   }
 

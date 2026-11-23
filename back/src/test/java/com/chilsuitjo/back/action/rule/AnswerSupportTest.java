@@ -196,6 +196,17 @@ class AnswerSupportTest {
     }
 
     @Test
+    void 근거도_없고_간격_안이면_근거를_먼저_본다() {
+      Instant last = NOW.minus(WEEK).plusSeconds(1);
+
+      assertError(
+          () ->
+              AnswerSupport.rerequest(
+                  asked(AckState.NEED_MORE, last), TENANT, false, true, NOW, WEEK),
+          ErrorCode.EVIDENCE_REQUIRED);
+    }
+
+    @Test
     void 다시_요청끼리_간격_안이면_ASKED_RECENTLY() {
       Instant last = NOW.minus(WEEK).plusSeconds(1);
 
