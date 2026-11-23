@@ -1,11 +1,13 @@
 package com.chilsuitjo.back.global.error;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.time.Duration;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -67,6 +69,29 @@ class GlobalExceptionHandlerTest {
         .andExpect(jsonPath("$.detail").value(ErrorCode.INTERNAL_ERROR.message()));
   }
 
+  @Test
+  void 남은_시간이_있으면_Retry_After에_초로_올림해_넣는다() throws Exception {
+    mvc.perform(post("/시험/잠시"))
+        .andExpect(status().isTooManyRequests())
+        .andExpect(header().string("Retry-After", "40"))
+        .andExpect(jsonPath("$.code").value("RATE_LIMITED"));
+  }
+
+  @Test
+  void 남은_시간이_없으면_Retry_After를_넣지_않는다() throws Exception {
+    mvc.perform(post("/시험/규칙"))
+        .andExpect(status().isTooManyRequests())
+        .andExpect(header().doesNotExist("Retry-After"))
+        .andExpect(jsonPath("$.code").value("DAILY_LIMIT"));
+  }
+
+  @Test
+  void 초는_올림하고_0초_이하는_1초다() {
+    assertThat(GlobalExceptionHandler.seconds(Duration.ofSeconds(40))).isEqualTo(40);
+    assertThat(GlobalExceptionHandler.seconds(Duration.ofMillis(40_001))).isEqualTo(41);
+    assertThat(GlobalExceptionHandler.seconds(Duration.ZERO)).isEqualTo(1);
+  }
+
   @RestController
   static class 시험용_컨트롤러 {
     record 요청(String 값) {}
@@ -79,6 +104,16 @@ class GlobalExceptionHandlerTest {
     @PostMapping("/시험/터짐")
     String 터짐() {
       throw new IllegalStateException("SELECT * FROM secret");
+    }
+
+    @PostMapping("/시험/잠시")
+    String 잠시() {
+      throw new BusinessException(ErrorCode.RATE_LIMITED, Duration.ofMillis(39_200));
+    }
+
+    @PostMapping("/시험/규칙")
+    String 규칙() {
+      throw new BusinessException(ErrorCode.DAILY_LIMIT);
     }
   }
 }

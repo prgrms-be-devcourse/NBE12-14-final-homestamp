@@ -24,6 +24,7 @@ class JsonColumnEntityTest extends SchemaTestSupport {
     UUID room = room();
     ActionRecord action =
         new ActionRecord(
+            1,
             room,
             1,
             new byte[32],

@@ -45,7 +45,7 @@ public class ActionRecord {
   @Column(name = "prev_hash", nullable = false, updatable = false)
   private byte[] prevHash;
 
-  /** 이 행동의 hash(해시 체인). 32바이트. 입력 형식은 실제 ActionWriter를 만들 때 테스트로 고정한다(04 4-0). */
+  /** 이 행동의 hash(해시 체인). 32바이트. 입력 형식은 {@code ActionHash}(V4 {@code hash_version}의 규칙). */
   @Column(nullable = false, updatable = false)
   private byte[] hash;
 
@@ -142,13 +142,19 @@ public class ActionRecord {
   @Column(name = "photo_id", updatable = false)
   private UUID photoId;
 
+  /** 마이크로초로 자른 값. 해시를 계산한 값과 같아야 한다(DB가 더 작은 자리를 반올림하므로). */
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
+
+  /** 행동 해시를 계산한 입력 형식 버전({@code ActionHash.VERSION}, V4). */
+  @Column(name = "hash_version", nullable = false, updatable = false)
+  private short hashVersion;
 
   protected ActionRecord() {}
 
   /** 대상 칸은 {@link #target}으로 하나만 채운다. */
   public ActionRecord(
+      int hashVersion,
       UUID roomRecordId,
       long roomSeq,
       byte[] prevHash,
@@ -164,6 +170,10 @@ public class ActionRecord {
       String reason,
       String payload,
       Instant createdAt) {
+    if (hashVersion < 1 || hashVersion > Short.MAX_VALUE) {
+      throw new IllegalArgumentException("hash_version은 1부터 smallint 범위예요: " + hashVersion);
+    }
+    this.hashVersion = (short) hashVersion;
     this.roomRecordId = roomRecordId;
     this.roomSeq = roomSeq;
     // 밖에서 원래 배열을 바꿔도 기록이 바뀌지 않게 복사해 둔다(getter도 복사본을 돌려준다).
@@ -367,6 +377,10 @@ public class ActionRecord {
 
   public UUID getPhotoId() {
     return photoId;
+  }
+
+  public int getHashVersion() {
+    return hashVersion;
   }
 
   public Instant getCreatedAt() {

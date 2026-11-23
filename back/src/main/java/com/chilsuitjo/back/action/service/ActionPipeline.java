@@ -137,7 +137,8 @@ public class ActionPipeline {
             : batch.actor();
     // 한 요청의 행동을 묶는 값(#66). 시간순으로 정렬되도록 UUID v7을 쓴다.
     UUID requestId = Uuids.v7();
-    // 한 요청의 서버 시각은 하나다. apply에 넘긴 값 그대로 저장·해시에 쓴다(09 3-1 순서 8, #72. DB 정밀도에 맞춰 마이크로초).
+    // 한 요청의 서버 시각은 하나다. apply에 넘긴 값 그대로 저장·해시에 쓴다(05 2-3 「해시 입력 형식」 시각, 09 3-1 순서 8. DB 정밀도에 맞춰
+    // 마이크로초).
     Instant at = clock.instant().truncatedTo(ChronoUnit.MICROS);
     requestContext.begin(requestId, at);
     try {
