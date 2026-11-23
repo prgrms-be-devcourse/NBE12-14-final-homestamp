@@ -9,12 +9,16 @@ import org.springframework.stereotype.Component;
  * StateStore.save}나 그 안에서 동기로 도는 {@code @EventListener}에서만 읽는다. pipeline은 {@code save}를 부르는 동안에만 이
  * 창구를 연다.
  *
- * <p>응답 요청의 기한 시작, 통지 시각처럼 행동 기록과 같은 시각이어야 하는 값은 {@code Clock}을 다시 읽지 말고 이 값을 쓴다. 그래야 행동 기록의 {@code
- * created_at}과 어긋나지 않는다(05 2-3 「해시 입력 형식」 시각, 09 3-1 순서 8).
+ * <p>응답 요청·통지를 <b>만든 시각</b>처럼 행동 기록과 같은 시각이어야 하는 값은 {@code Clock}을 다시 읽지 말고 이 값을 쓴다. 그래야 행동 기록의
+ * {@code created_at}과 어긋나지 않는다(05 2-3 「해시 입력 형식」 시각, 09 3-1 순서 8).
+ *
+ * <p><b>기다림(48시간 등)의 시작은 이 값이 아니다.</b> 기다림은 통지가 상대에게 <b>전달된 시각</b>(문자 업체 "전달됨", 링크 열람, 알림 열람 중 빠른
+ * 쪽)부터 센다(03 1-1 「타이머 시작점」, 06 NOTI-3b~3d). 문자를 끈 회원의 서비스 안 알림만 만든 시각을 전달로 본다. 그 규칙은 notification이
+ * 정한다.
  *
  * <pre>{@code
  * // notification의 save 안에서 응답 요청을 만들 때
- * Instant startedAt = requestContext.at();
+ * Instant createdAt = requestContext.at(); // 기다림 시작(전달 시각)이 아니다
  * }</pre>
  *
  * <p>{@code load}·{@code when}·{@code apply}에서는 읽을 수 없다({@link IllegalStateException}).

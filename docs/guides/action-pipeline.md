@@ -124,7 +124,8 @@ class RepairStateStore implements StateStore<RepairState> {
 - `load`는 호실을 잠근 **뒤**에 불려서, 여기서 읽은 값은 최신이에요.
 - 링크·응답 요청·문자처럼 행동이 아닌 딸린 일은 `save` 안에서 주인 서비스를 불러요(같은 트랜잭션).
 - 서버 기록이 하나 더 필요하면 `ActionFollowUps.add(Actor.server(), 종류, 대상, payload)`를 `save`에서 불러요. pipeline을 다시 부르지 않아요.
-- 이 요청의 시각이 필요하면(응답 요청의 기한 시작 등) `Clock`을 다시 읽지 말고 `save`에서 `ActionRequestContext.at()`을 써요. 행동 기록의 `created_at`과 같은 값이에요. `requestId()`도 있어요. 테스트에서는 `fx.requestContext()`를 넣어요.
+- 이 요청의 시각이 필요하면(응답 요청·통지를 만든 시각 등) `Clock`을 다시 읽지 말고 `save`에서 `ActionRequestContext.at()`을 써요. 행동 기록의 `created_at`과 같은 값이에요. `requestId()`도 있어요. 테스트에서는 `fx.requestContext()`를 넣어요.
+- 기다림(48시간)의 시작은 `at()`이 아니라 통지가 **전달된 시각**이에요(03 1-1 「타이머 시작점」). 그건 notification이 정해요.
 - `load`에서는 `at()`을 읽을 수 없어요. 같은 키로 다시 온 요청에서도 `load`가 불리는데, 그때는 새 행동이 없어 시각도 없어요. 시각으로 판단할 일(기한이 지났나 등)은 `apply`에서 `action.createdAt()`으로 해요.
 
 ### 3-3. 서비스
