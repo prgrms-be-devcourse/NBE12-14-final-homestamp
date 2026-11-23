@@ -207,6 +207,20 @@ class LoginControllerTest {
   }
 
   @Test
+  void 이메일_모양이_아니면_DB를_찾기_전에_VALIDATION_FAILED() throws Exception {
+    // PostgreSQL 문자열은 NUL을 받지 않아, 조회까지 가면 500이 된다
+    mvc.perform(
+            post("/api/auth/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"a\\u0000@example.com\",\"password\":\"wrong12345\"}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value(ErrorCode.VALIDATION_FAILED.name()));
+    mvc.perform(login("not-an-email", PASSWORD))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value(ErrorCode.VALIDATION_FAILED.name()));
+  }
+
+  @Test
   void 실패한_비밀번호는_로그에_남지_않는다(CapturedOutput output) throws Exception {
     String email = newEmail();
     activeMember(email, PASSWORD);
