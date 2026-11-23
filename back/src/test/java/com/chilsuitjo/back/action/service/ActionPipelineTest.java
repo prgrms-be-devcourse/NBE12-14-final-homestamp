@@ -16,6 +16,7 @@ import com.chilsuitjo.back.action.dto.RoomGate;
 import com.chilsuitjo.back.action.dto.SavedState;
 import com.chilsuitjo.back.action.rule.ActionType;
 import com.chilsuitjo.back.action.rule.Replay;
+import com.chilsuitjo.back.action.rule.RoomGateReader;
 import com.chilsuitjo.back.action.rule.Transitions;
 import com.chilsuitjo.back.global.common.Answer;
 import com.chilsuitjo.back.global.common.PartySide;
@@ -319,6 +320,40 @@ class ActionPipelineTest {
     assertThat(loser.action().replayed()).isTrue();
     assertThat(loser.action().actionId()).isEqualTo(winner.action().actionId());
     assertThat(transactionManager.rollbacks).isEqualTo(1);
+  }
+
+  @Test
+  void 충돌_뒤_새_트랜잭션에서도_호실을_먼저_잠그고_처음_결과를_찾는다() {
+    List<String> events = new ArrayList<>();
+    RoomGateReader lockingGates =
+        (roomRecordId, actor) -> {
+          events.add("lock");
+          return gates.lockAndRead(roomRecordId, actor);
+        };
+    RacingWriter racing = new RacingWriter(writer);
+    ActionWriter loggingWriter =
+        new ActionWriter() {
+          @Override
+          public ActionEntry write(ActionCommand command, UUID requestId, Instant at) {
+            return racing.write(command, requestId, at);
+          }
+
+          @Override
+          public List<ActionEntry> findRequest(String actorKey, String idempotencyKey) {
+            events.add("find");
+            return racing.findRequest(actorKey, idempotencyKey);
+          }
+        };
+    ActionPipeline racingPipeline =
+        new ActionPipeline(
+            lockingGates, loggingWriter, followUps, requestContext, transactionManager, clock);
+    pipeline.create(register("k1"), store, rules);
+
+    PipelineResult<Sample> loser = racingPipeline.create(register("k1"), store, rules);
+
+    assertThat(loser.action().replayed()).isTrue();
+    // 처음 실행(잠금 → 찾기 → 저장 충돌)과 새 트랜잭션(잠금 → 찾기)
+    assertThat(events).containsExactly("lock", "find", "lock", "find");
   }
 
   @Test
