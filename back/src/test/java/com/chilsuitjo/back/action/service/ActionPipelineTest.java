@@ -345,7 +345,8 @@ class ActionPipelineTest {
           }
         };
     ActionPipeline racingPipeline =
-        new ActionPipeline(lockingGates, loggingWriter, followUps, transactionManager, clock);
+        new ActionPipeline(
+            lockingGates, loggingWriter, followUps, requestContext, transactionManager, clock);
     pipeline.create(register("k1"), store, rules);
 
     PipelineResult<Sample> loser = racingPipeline.create(register("k1"), store, rules);
