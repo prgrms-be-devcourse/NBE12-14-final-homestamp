@@ -128,6 +128,14 @@ class PhotoTest {
         "a.jpg"); // 폴더 없음
   }
 
+  @ParameterizedTest
+  @ValueSource(ints = {-1, Integer.MIN_VALUE})
+  void 표시_순서가_음수면_생성을_거절한다(int sortOrder) {
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> photo(ORIGINAL_KEY, THUMB_KEY, sortOrder))
+        .withMessageContaining("sortOrder");
+  }
+
   @Test
   void 그_호실_폴더의_키와_0_이상의_표시_순서는_받는다() {
     Photo first = photo(ORIGINAL_KEY, THUMB_KEY, 0);

@@ -151,6 +151,9 @@ public class Photo {
     if (sizeBytes <= 0) {
       throw new IllegalArgumentException("sizeBytes는 0보다 커야 합니다");
     }
+    if (sortOrder < 0) {
+      throw new IllegalArgumentException("sortOrder는 0보다 크거나 같아야 합니다");
+    }
 
     this.roomRecordId = roomRecordId;
     this.redactedFromPhotoId = redactedFromPhotoId;
