@@ -369,7 +369,7 @@ case SUPPLEMENT -> {
 
 ```java
 ActionBatch.of(room, actor, key)
-    .record(CONFIRM_ALL, Map.of())            // 버튼을 눌렀다는 표시(상태를 바꾸지 않음)
+    .record(CONFIRM_ALL, done -> ActionTarget.of(TargetKind.INSPECTION, inspectionId), Map.of()) // 버튼을 눌렀다는 표시(상태를 바꾸지 않음). 어느 점검인지 대상으로 남겨요
     .step(RESPOND_ITEM, done -> item1, ...)   // 항목마다
     .step(RESPOND_ITEM, done -> item2, ...);
 ```
