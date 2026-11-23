@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicReference;
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 /**
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Component;
  * <p>실제 솔라피 구현이 들어오면 이 클래스를 지운다.
  */
 @Component
+@Profile("(local | test) & !prod")
 public class FakeSmsGateway implements SmsGateway {
 
   private final AtomicReference<SmsSendResult.Outcome> next =

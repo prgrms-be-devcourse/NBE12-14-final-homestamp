@@ -4,6 +4,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
 
 /**
@@ -12,6 +13,7 @@ import org.springframework.stereotype.Service;
  * <p>room·member의 실제 구현이 들어오면 이 클래스를 지운다(같은 타입 빈이 둘이면 주입이 실패한다).
  */
 @Service
+@Profile("(local | test) & !prod")
 public class FakeRecipientDirectory implements RecipientDirectory {
 
   private final Map<UUID, String> partyPhones = new ConcurrentHashMap<>();
