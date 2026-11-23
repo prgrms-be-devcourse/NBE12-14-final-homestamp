@@ -40,6 +40,21 @@ class AuthTokenControllerOriginTest {
         .hasMessageContaining("app.origin은 http(s)://host[:port] 모양이어야 한다");
   }
 
+  /** 브라우저는 host를 소문자로, 기본 포트는 빼고 보내므로 이렇게 적으면 재발급이 모두 실패한다. */
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "https://homestamp.cloud:443",
+        "http://localhost:80",
+        "https://HOMESTAMP.cloud",
+        "http://LocalHost:5173"
+      })
+  void 기본_포트나_대문자_host를_적은_설정은_시작하지_않는다(String origin) {
+    assertThatThrownBy(() -> AuthTokenController.requireOrigin(origin))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("app.origin은 http(s)://host[:port] 모양이어야 한다");
+  }
+
   @Test
   void 컨트롤러를_만들_때_확인해_앱이_시작하지_않는다() {
     assertThatThrownBy(() -> new AuthTokenController(null, null, "https://homestamp.cloud/"))
