@@ -2,6 +2,7 @@ package com.chilsuitjo.back.member.service;
 
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
+import com.chilsuitjo.back.member.dto.SignupRequest;
 import com.chilsuitjo.back.member.entity.Member;
 import com.chilsuitjo.back.member.entity.MemberAcknowledgement;
 import com.chilsuitjo.back.member.repository.MemberAcknowledgementRepository;
@@ -45,20 +46,31 @@ public class MemberService {
   }
 
   /**
-   * 인증을 마친 번호로 회원을 만들고 확인 기록 세 줄을 남긴다(06 ACC-1b, ACC-3a). 같은 번호를 인증한 다른 계정이 있으면 그 계정의 번호를 먼저 비운다.
-   * 인증 표를 쓰는 트랜잭션 안에서만 부르고, 부르는 쪽이 그 번호의 잠금을 잡고 있어야 한다(같은 번호로 동시에 가입해도 번호 유니크에 걸리지 않게).
+   * 가입 확인 항목 세 개가 모두 체크됐는지와 문구 판을 본다(06 ACC-1a, CONS-1a). 부르는 쪽(auth {@code SignupService})이 인증 표와
+   * 이메일보다 먼저 부른다. 아무것도 쓰지 않는다.
    *
+   * @throws BusinessException {@code AGE_CONFIRM_REQUIRED}, {@code TERMS_REQUIRED}, {@code
+   *     VALIDATION_FAILED}(문구 판이 비었거나 칸보다 김)
+   */
+  public void requireSignupAcknowledgements(SignupRequest request) {
+    request.acknowledgements();
+  }
+
+  /**
+   * 인증을 마친 번호로 회원을 만들고 확인 기록 세 줄을 남긴다(06 ACC-1b, ACC-3a). 같은 번호를 인증한 다른 계정이 있으면 그 계정의 번호를 먼저 비운다.
+   * 인증 표를 쓰는 트랜잭션 안에서만 부르고, 부르는 쪽이 그 번호의 잠금을 잡고 있어야 한다(같은 번호로 동시에 가입해도 번호 유니크에 걸리지 않게). 확인 항목은
+   * {@link #requireSignupAcknowledgements}로 먼저 본 요청이어야 한다.
+   *
+   * @param passwordHash 부르는 쪽이 트랜잭션 전에 만든 해시
    * @param phone 인증 표에서 읽은 정규화된 번호
    * @return 만든 회원 ID
    * @throws BusinessException {@code EMAIL_TAKEN}(같은 이메일 가입이 동시에 와서 유니크 인덱스에 걸림)
    */
   @Transactional(propagation = Propagation.MANDATORY)
-  public UUID register(
-      String email,
-      String passwordHash,
-      String displayName,
-      String phone,
-      SignupAcknowledgements confirmed) {
+  public UUID register(SignupRequest request, String passwordHash, String phone) {
+    SignupAcknowledgements confirmed = request.acknowledgements();
+    String email = request.email();
+    String displayName = request.displayName();
     Instant now = clock.instant();
     members.findByPhone(phone).ifPresent(Member::releasePhone);
     // Hibernate는 INSERT를 UPDATE보다 먼저 내보내므로, 번호를 비운 것을 먼저 반영해야 새 회원의 번호가 유니크에 걸리지 않는다

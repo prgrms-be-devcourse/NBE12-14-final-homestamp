@@ -6,13 +6,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
+import com.chilsuitjo.back.member.dto.SignupRequest;
 import com.chilsuitjo.back.member.entity.Member;
 import com.chilsuitjo.back.member.entity.MemberAcknowledgement;
 import com.chilsuitjo.back.member.repository.MemberAcknowledgementRepository;
 import com.chilsuitjo.back.member.repository.MemberRepository;
 import com.chilsuitjo.back.member.rule.AcknowledgementKind;
 import com.chilsuitjo.back.member.rule.MemberStatus;
-import com.chilsuitjo.back.member.rule.SignupAcknowledgements;
 import com.chilsuitjo.back.member.service.MemberService;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
@@ -83,11 +83,20 @@ class MemberSignupPersistenceTest extends SchemaTestSupport {
 
   @Test
   void ACC_1b_확인_기록_세_줄이_각각_문구_판과_함께_남는다() {
-    SignupAcknowledgements confirmed =
-        SignupAcknowledgements.confirm(true, "2026-11-12", true, "2026-11-13", true, "2026-11-14");
+    SignupRequest request =
+        new SignupRequest(
+            "seoyun@example.com",
+            "abc12345",
+            "정서윤",
+            "ticket",
+            true,
+            "2026-11-12",
+            true,
+            "2026-11-13",
+            true,
+            "2026-11-14");
 
-    UUID memberId =
-        memberService.register("seoyun@example.com", "hash", "정서윤", "01012345678", confirmed);
+    UUID memberId = memberService.register(request, "hash", "01012345678");
     entityManager.flush();
     entityManager.clear();
 
@@ -126,7 +135,7 @@ class MemberSignupPersistenceTest extends SchemaTestSupport {
         previous.getId());
 
     UUID newMember =
-        memberService.register("new@example.com", "hash", "김정호", "01012345678", allConfirmed());
+        memberService.register(allConfirmed("new@example.com", "김정호"), "hash", "01012345678");
     entityManager.flush();
     entityManager.clear();
 
@@ -151,14 +160,16 @@ class MemberSignupPersistenceTest extends SchemaTestSupport {
 
     assertThatThrownBy(() ->
             memberService.register(
-                "seoyun@example.com", "hash", "정서윤", "01012345678", allConfirmed()))
+                allConfirmed("seoyun@example.com", "정서윤"), "hash", "01012345678"))
         .isInstanceOfSatisfying(
             BusinessException.class,
             e -> assertThat(e.errorCode()).isEqualTo(ErrorCode.EMAIL_TAKEN));
   }
 
-  private static SignupAcknowledgements allConfirmed() {
-    return SignupAcknowledgements.confirm(true, "v1", true, "v1", true, "v1");
+  /** 확인 항목을 모두 체크한 가입 요청. 비밀번호와 인증 표는 이 테스트에서 쓰지 않는다(해시와 번호를 따로 넘긴다). */
+  private static SignupRequest allConfirmed(String email, String displayName) {
+    return new SignupRequest(
+        email, "abc12345", displayName, "ticket", true, "v1", true, "v1", true, "v1");
   }
 
   private Member save(String email, String phone) {

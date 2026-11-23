@@ -3,7 +3,6 @@ package com.chilsuitjo.back.auth.service;
 import com.chilsuitjo.back.auth.repository.PhoneVerificationRepository;
 import com.chilsuitjo.back.auth.rule.VerificationPurpose;
 import com.chilsuitjo.back.member.dto.SignupRequest;
-import com.chilsuitjo.back.member.rule.SignupAcknowledgements;
 import com.chilsuitjo.back.member.service.MemberService;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -39,7 +38,7 @@ public class SignupService {
    *     TERMS_REQUIRED}, {@code VALIDATION_FAILED}(문구 판), {@code EMAIL_TAKEN}, {@code CODE_EXPIRED}
    */
   public UUID signUp(SignupRequest request) {
-    SignupAcknowledgements confirmed = request.acknowledgements();
+    members.requireSignupAcknowledgements(request);
     // 인증 표가 없는 요청이 이메일 확인(가입 여부)과 해시까지 오지 않게 먼저 본다. 쓰는 것은 아래 트랜잭션에서 한다
     verifications.checkTicket(request.verificationTicket(), VerificationPurpose.SIGNUP);
     members.requireEmailAvailable(request.email());
@@ -50,8 +49,7 @@ public class SignupService {
           verifications.useTicket(request.verificationTicket(), VerificationPurpose.SIGNUP);
       // 같은 번호의 SIGNUP 표가 둘 있어 동시에 가입해도 차례로 처리한다(인증 요청과 같은 번호 잠금, 05)
       verificationRows.lockPhone(keys.phoneLockKey(phone));
-      return members.register(
-          request.email(), passwordHash, request.displayName(), phone, confirmed);
+      return members.register(request, passwordHash, phone);
     });
   }
 }
