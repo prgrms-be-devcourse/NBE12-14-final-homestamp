@@ -3,6 +3,7 @@ package com.chilsuitjo.back.action.service;
 import com.chilsuitjo.back.action.dto.ActionCommand;
 import com.chilsuitjo.back.action.dto.ActionEntry;
 import com.chilsuitjo.back.action.dto.ActionTarget;
+import com.chilsuitjo.back.global.common.TargetKind;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -10,20 +11,19 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
- * 1주차 2일차 가짜(07 1주차 B). 메모리에만 두고 해시는 계산하지 않는다. {@code room_seq}와 {@code UNIQUE(actor_key,
- * idempotency_key)}만 실제처럼 흉내 낸다.
+ * 테스트용 가짜. 메모리에만 두고 해시는 계산하지 않는다. {@code room_seq}와 {@code UNIQUE(actor_key, idempotency_key)}만
+ * 실제처럼 흉내 낸다.
  *
- * <p>실제 구현이 생기면 이 클래스를 지운다(같은 타입 빈이 둘이면 주입이 실패한다). 테스트끼리 값이 섞이지 않게, 테스트마다 다른 호실 ID와 키를 쓴다.
+ * <p>DB 없이 pipeline을 시험할 때 {@link ActionPipelineFixture}·{@code ActionPipelineTest}가 직접 만든다. 빈이
+ * 아니다(앱은 {@link JpaActionWriter}를 쓴다). 테스트끼리 값이 섞이지 않게, 테스트마다 다른 호실 ID와 키를 쓴다.
  *
  * <p>실제와 다른 점: 트랜잭션 격리가 없어(커밋 전 기록도 보임) 동시 요청 테스트에는 쓰지 않는다. 대상의 호실이 맞는지(복합 FK)도 보지 않는다. 롤백되면 그
  * 트랜잭션에서 쓴 줄은 지우지만, 도메인의 가짜 저장소까지 되돌리지는 않는다.
  */
-@Component
 class FakeActionWriter implements ActionWriter, ActionReader {
 
   private final List<ActionEntry> entries = new ArrayList<>();
@@ -99,6 +99,12 @@ class FakeActionWriter implements ActionWriter, ActionReader {
 
   @Override
   public synchronized List<ActionEntry> findByTarget(ActionTarget target) {
+    if (target.kind() == TargetKind.ROOM_RECORD) {
+      // 실제처럼: 호실 기록 자체가 대상인 행동은 대상 칸 없이 남는다.
+      return entries.stream()
+          .filter(e -> e.target() == null && target.id().equals(e.roomRecordId()))
+          .toList();
+    }
     return entries.stream().filter(e -> target.equals(e.target())).toList();
   }
 

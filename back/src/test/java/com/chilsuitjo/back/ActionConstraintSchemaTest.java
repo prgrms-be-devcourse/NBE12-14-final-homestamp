@@ -99,6 +99,14 @@ class ActionConstraintSchemaTest extends SchemaTestSupport {
   }
 
   @Test
+  void acceptsShowPartAddedByV5() {
+    // V5가 ck_action_type을 다시 만들며 SHOW_PART를 더했다(#136). 기존 종류도 그대로 받는다.
+    UUID room = room();
+    action(room, 1, "server", "show-part", "SHOW_PART");
+    action(room, 2, "server", "hide-part", "HIDE_PART");
+  }
+
+  @Test
   void rejectsUnknownActionType() {
     UUID room = room();
     var error =

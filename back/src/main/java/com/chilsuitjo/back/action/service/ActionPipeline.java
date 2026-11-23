@@ -46,7 +46,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 트랜잭션에서 처음 결과를 찾아 {@code replayed}로 돌려준다(06 4-0).
  *
  * <p>여기에 특정 행동·도메인을 위한 분기를 넣지 않는다. 조건은 부르는 쪽이 {@code ActionStep.when}으로 넘기고, 도중에 생기는 일은 {@link
- * ActionFollowUps}로 남긴다.
+ * ActionFollowUps}로 남긴다. {@code save}가 이 요청의 행동 시각을 읽을 때는 {@link ActionRequestContext}를 쓴다.
  */
 @Service
 public class ActionPipeline {
@@ -54,6 +54,7 @@ public class ActionPipeline {
   private final RoomGateReader roomGateReader;
   private final ActionWriter actionWriter;
   private final ActionFollowUps followUps;
+  private final ActionRequestContext requestContext;
   private final TransactionTemplate transaction;
   private final Clock clock;
 
@@ -61,11 +62,13 @@ public class ActionPipeline {
       RoomGateReader roomGateReader,
       ActionWriter actionWriter,
       ActionFollowUps followUps,
+      ActionRequestContext requestContext,
       PlatformTransactionManager transactionManager,
       Clock clock) {
     this.roomGateReader = roomGateReader;
     this.actionWriter = actionWriter;
     this.followUps = followUps;
+    this.requestContext = requestContext;
     this.transaction = new TransactionTemplate(transactionManager);
     this.clock = clock;
   }
@@ -205,7 +208,7 @@ public class ActionPipeline {
     followUps.begin();
     try {
       S next = step.rules().apply(now, preview(command, at)); // 6
-      SavedState saved = step.store().save(command, next); // 7
+      SavedState saved = save(step.store(), command, next, requestId, at); // 7
       checkCreated(step, command, saved);
 
       ActionCommand toWrite = command;
@@ -250,6 +253,21 @@ public class ActionPipeline {
       return new StepOutcome(results, next, recorded.roomRecordId());
     } finally {
       followUps.end();
+    }
+  }
+
+  /**
+   * 7. 요청 시각 창구({@link ActionRequestContext})는 {@code save}(와 그 안에서 동기로 도는 리스너)에서만 연다. {@code
+   * load}·{@code when}은 다시 온 요청(창구를 열지 않음)에서도 불리고, 시각에 따른 판단은 행동 기록에 남도록 {@code apply}가 {@code
+   * createdAt}으로 한다(REP-10). 그래서 그 자리에서 읽으면 처음 요청부터 바로 실패한다(#94 리뷰).
+   */
+  private <S> SavedState save(
+      StateStore<S> store, ActionCommand command, S next, UUID requestId, Instant at) {
+    requestContext.begin(requestId, at);
+    try {
+      return store.save(command, next);
+    } finally {
+      requestContext.end();
     }
   }
 

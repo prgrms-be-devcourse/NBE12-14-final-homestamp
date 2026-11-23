@@ -5,8 +5,8 @@ import java.util.EnumSet;
 import java.util.Set;
 
 /**
- * 행동 종류 전체. 기준은 05 2-3 {@code type} 목록이고, DB {@code ck_action_type}(V1)과 같다. 새 행동은 05 표와 새 V 파일을 같은
- * PR에서 고치고 여기에 한 줄 더한다(B가 성질을 정함).
+ * 행동 종류 전체. 기준은 05 2-3 {@code type} 목록이고, DB {@code ck_action_type}(가장 최근에 다시 만든 V 파일, 지금 V5)과 같다.
+ * 새 행동은 05 표와 새 V 파일을 같은 PR에서 고치고 여기에 한 줄 더한다(B가 성질을 정함).
  *
  * <p>DB의 {@code action.type}에는 {@code name()}이 글자로 저장된다. 각 도메인의 {@code Transitions}는 자기 영역({@link
  * #area()})의 행동만 받는다.
@@ -32,6 +32,8 @@ public enum ActionType {
   EDIT_ROOM_INFO(Area.ROOM),
   ADD_PART(Area.ROOM),
   HIDE_PART(Area.ROOM),
+  /** 숨긴 부위를 다시 보이게 한다(#136). 설비·가전 켜고 끔({@link #TOGGLE_PART})과는 다른 일이다. */
+  SHOW_PART(Area.ROOM),
   TOGGLE_PART(Area.ROOM),
   INVITE(Area.ROOM),
   CHANGE_INVITE_PHONE(Area.ROOM),
