@@ -266,7 +266,7 @@ assertThat(fx.actions().findByRoom(roomId))
 
 ### 5-3. DB까지 보는 테스트
 
-엔티티 매핑·제약을 보려면 `@SpringBootTest` + Testcontainers예요(Docker 필요). 이때 잠금은 진짜(`JpaRoomGateReader`, #143)라 `FakeRoomGateReader`에 값을 넣어도 쓰이지 않아요. 호실 상태는 `room_record`(`status`·`joined_into_id`)와 `party`(당사자·`status`·`sharing_stopped_at`) 행으로 넣어요(예: `RepairRegisterApiTest`의 `seat`). 행동 기록은 진짜(`JpaActionWriter`)라 행동이 가리키는 회원·호실·대상 행을 먼저 넣어 두세요(7장). 예시는 `JpaActionWriterTest`예요.
+엔티티 매핑·제약을 보려면 `@SpringBootTest` + Testcontainers예요(Docker 필요). 이때 잠금은 진짜(`JpaRoomGateReader`, #143)예요. `FakeRoomGateReader`는 테스트 코드에만 있고 빈이 아니라 주입할 수 없어요. 호실 상태는 `room_record`(`status`·`joined_into_id`)와 `party`(당사자·`status`·`sharing_stopped_at`) 행으로 넣어요(예: `RepairRegisterApiTest`의 `seat`). 행동 기록은 진짜(`JpaActionWriter`)라 행동이 가리키는 회원·호실·대상 행을 먼저 넣어 두세요(7장). 예시는 `JpaActionWriterTest`예요.
 
 ## 6. 자주 하는 실수
 
@@ -294,6 +294,8 @@ pipeline은 진짜이고, 안쪽 부품도 아래 표처럼 하나씩 진짜로 
 |---|---|---|---|
 | 행동 기록 저장 `ActionWriter` | **진짜** `JpaActionWriter`: `record.action`에 저장, `room_seq`·해시 체인. 메모리 가짜 `FakeActionWriter`는 테스트 코드에만 있고 `ActionPipelineFixture`가 써요 | — | B |
 | 호실 잠금·읽기 `RoomGateReader` | **진짜** `JpaRoomGateReader`(#143): `room_record`를 `FOR UPDATE`로 잠그고 `party`로 당사자 확인. `FakeRoomGateReader`는 DB 없는 테스트(`ActionPipelineFixture`)가 `new`로 써요 | — | A (ROOM-2) |
+| 부위 조회 `RoomQueryService.findPart` | **진짜** `JpaRoomQueryService`: `room_part`를 읽음 | — | room (#140) |
+| 자리 상태 `CounterpartReader` | **진짜** `JpaCounterpartReader`: `room_record`·`party`·`member`를 읽음. 수신 거부(`optedOut`)·가린 이름(`maskedName`)은 아직 채우지 않음(거짓·null, 문자 보내기 PR에서 채움) | — | room (#140) |
 
 배포 서버에서 기능을 확인하려면(07 6장 끝 기준) 잠금·읽기(`RoomGateReader`)가 진짜여야 하는데, #143으로 진짜가 됐어요.
 
