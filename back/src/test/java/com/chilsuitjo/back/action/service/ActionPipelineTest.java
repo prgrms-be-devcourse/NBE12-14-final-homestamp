@@ -45,10 +45,11 @@ class ActionPipelineTest {
   private final FakeActionWriter writer = new FakeActionWriter();
   private final FakeRoomGateReader gates = new FakeRoomGateReader();
   private final ActionFollowUps followUps = new ActionFollowUps();
+  private final ActionRequestContext requestContext = new ActionRequestContext();
   private final ActionPipelineFixture.NoOpTransactionManager transactionManager =
       new ActionPipelineFixture.NoOpTransactionManager();
   private final ActionPipeline pipeline =
-      new ActionPipeline(gates, writer, followUps, transactionManager, clock);
+      new ActionPipeline(gates, writer, followUps, requestContext, transactionManager, clock);
 
   private final SampleStore store = new SampleStore();
   private final SampleTransitions rules = new SampleTransitions();
@@ -310,7 +311,7 @@ class ActionPipelineTest {
   void 같은_키가_동시에_와서_제약에_걸리면_새_트랜잭션에서_처음_결과를_돌려준다() {
     RacingWriter racing = new RacingWriter(writer);
     ActionPipeline racingPipeline =
-        new ActionPipeline(gates, racing, followUps, transactionManager, clock);
+        new ActionPipeline(gates, racing, followUps, requestContext, transactionManager, clock);
     PipelineResult<Sample> winner = pipeline.create(register("k1"), store, rules);
 
     PipelineResult<Sample> loser = racingPipeline.create(register("k1"), store, rules);
@@ -373,6 +374,40 @@ class ActionPipelineTest {
     assertThat(again.replayed()).isTrue();
     assertThat(again.actions()).hasSize(3).allMatch(ActionResult::replayed);
     assertThat(writer.findByRoom(room)).hasSize(3);
+  }
+
+  @Test
+  void 상태_없는_행동에도_대상을_남기고_다시_온_요청은_대상으로_맞춘다() {
+    UUID linkId = UUID.randomUUID();
+    Actor viewer = Actor.link(linkId, PartySide.LANDLORD);
+    ActionTarget link = ActionTarget.of(TargetKind.LINK, linkId);
+
+    BatchResult first =
+        pipeline.executeAll(
+            ActionBatch.of(room, viewer, "view")
+                .record(ActionType.LINK_VIEW, done -> link, Map.of()));
+    BatchResult again =
+        pipeline.executeAll(
+            ActionBatch.of(room, viewer, "view")
+                .record(ActionType.LINK_VIEW, done -> link, Map.of()));
+
+    assertThat(writer.findByTarget(link))
+        .singleElement()
+        .extracting(ActionEntry::type)
+        .isEqualTo(ActionType.LINK_VIEW);
+    assertThat(first.first().target()).isEqualTo(link);
+    assertThat(again.replayed()).isTrue();
+    // 같은 키로 다른 대상이면 다른 요청이다.
+    assertThatThrownBy(() ->
+            pipeline.executeAll(
+                ActionBatch.of(room, viewer, "view")
+                    .record(
+                        ActionType.LINK_VIEW,
+                        done -> ActionTarget.of(TargetKind.LINK, UUID.randomUUID()),
+                        Map.of())))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            e -> assertThat(e.errorCode()).isEqualTo(ErrorCode.IDEMPOTENCY_KEY_REUSED));
   }
 
   @Test
@@ -468,7 +503,8 @@ class ActionPipelineTest {
   void apply가_받은_시각과_저장된_시각은_요청마다_하나이고_마이크로초로_자른다() {
     FakeActionWriter saved = new FakeActionWriter();
     ActionPipeline advancing =
-        new ActionPipeline(gates, saved, followUps, transactionManager, advancingClock());
+        new ActionPipeline(
+            gates, saved, followUps, requestContext, transactionManager, advancingClock());
     List<Instant> seen = new ArrayList<>();
     Transitions<Sample> capturing =
         new Transitions<>() {
@@ -492,6 +528,108 @@ class ActionPipelineTest {
     Instant at = seen.getFirst();
     assertThat(at).isEqualTo(at.truncatedTo(ChronoUnit.MICROS));
     assertThat(saved.findByRoom(room)).extracting(ActionEntry::createdAt).containsOnly(at);
+  }
+
+  @Test
+  void 잘못된_멱등_키는_400_VALIDATION_FAILED() {
+    for (String key :
+        new String[] {null, "", "  ", "a#b", "k".repeat(ActionBatch.MAX_KEY_LENGTH + 1)}) {
+      assertThatThrownBy(() -> ActionBatch.of(room, Actor.member(tenantId), key))
+          .as(String.valueOf(key))
+          .isInstanceOfSatisfying(
+              BusinessException.class,
+              e -> assertThat(e.errorCode()).isEqualTo(ErrorCode.VALIDATION_FAILED));
+    }
+    assertThat(ErrorCode.VALIDATION_FAILED.status().value()).isEqualTo(400);
+    // 화면의 키(UUID)와 한도 길이는 받는다.
+    ActionBatch.of(room, Actor.member(tenantId), UUID.randomUUID().toString());
+    ActionBatch.of(room, Actor.member(tenantId), "k".repeat(ActionBatch.MAX_KEY_LENGTH));
+  }
+
+  @Test
+  void save에서_읽은_시각과_requestId는_행동_기록과_같다() {
+    List<Instant> seenAt = new ArrayList<>();
+    List<UUID> seenRequest = new ArrayList<>();
+    store.afterSave =
+        () -> {
+          seenAt.add(requestContext.at());
+          seenRequest.add(requestContext.requestId());
+        };
+    ActionPipeline advancing =
+        new ActionPipeline(
+            gates, writer, followUps, requestContext, transactionManager, advancingClock());
+
+    advancing.create(register("k1"), store, rules);
+
+    ActionEntry recorded = writer.findByRoom(room).getFirst();
+    assertThat(seenAt).containsExactly(recorded.createdAt());
+    assertThat(seenRequest).containsExactly(recorded.requestId());
+  }
+
+  @Test
+  void 요청_시각은_pipeline_밖에서_읽을_수_없고_실패해도_닫힌다() {
+    assertThatThrownBy(requestContext::at).isInstanceOf(IllegalStateException.class);
+
+    pipeline.create(register("ok"), store, rules);
+    assertThatThrownBy(requestContext::requestId).isInstanceOf(IllegalStateException.class);
+
+    store.afterSave =
+        () -> {
+          throw new BusinessException(ErrorCode.INVALID_STATE);
+        };
+    assertThatThrownBy(() -> pipeline.create(register("fail"), store, rules))
+        .isInstanceOf(BusinessException.class);
+    assertThatThrownBy(requestContext::at).isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
+  void 요청_시각은_load와_apply에서_처음_요청부터_읽을_수_없다() {
+    // 다시 온 요청의 load에는 창구가 없다. 처음 요청에서도 막아야 잘못 쓴 코드가 첫 실행에서 드러난다(#94 리뷰).
+    store.onLoad = requestContext::at;
+    assertThatThrownBy(() -> pipeline.create(register("load"), store, rules))
+        .isInstanceOf(IllegalStateException.class);
+    store.onLoad = () -> {};
+
+    Transitions<Sample> readingInApply =
+        new Transitions<>() {
+          @Override
+          public Sample initial() {
+            return rules.initial();
+          }
+
+          @Override
+          public Sample apply(Sample now, ActionEntry action) {
+            requestContext.at();
+            return rules.apply(now, action);
+          }
+        };
+    assertThatThrownBy(() -> pipeline.create(register("apply"), store, readingInApply))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(writer.findByRoom(room)).isEmpty();
+  }
+
+  @Test
+  void 같은_키로_다시_온_요청은_save를_부르지_않고_load는_창구_없이_돈다() {
+    List<Instant> seenAt = new ArrayList<>();
+    store.afterSave = () -> seenAt.add(requestContext.at());
+    PipelineResult<Sample> first = pipeline.create(register("again"), store, rules);
+
+    List<Boolean> openInLoad = new ArrayList<>();
+    store.onLoad =
+        () -> {
+          try {
+            requestContext.at();
+            openInLoad.add(true);
+          } catch (IllegalStateException closed) {
+            openInLoad.add(false);
+          }
+        };
+    PipelineResult<Sample> again = pipeline.create(register("again"), store, rules);
+
+    assertThat(again.action().replayed()).isTrue();
+    assertThat(again.action().actionId()).isEqualTo(first.action().actionId());
+    assertThat(seenAt).hasSize(1); // save는 처음 요청에서만
+    assertThat(openInLoad).containsExactly(false);
   }
 
   /** 부를 때마다 1.001마이크로초씩 가는 시계. 시각을 두 번 읽거나 자르지 않으면 값이 어긋난다. */
@@ -672,8 +810,6 @@ class ActionPipelineTest {
 
   @Test
   void 잘못_부른_요청은_벨트에_들어가지_않는다() {
-    assertThatThrownBy(() -> ActionBatch.of(room, Actor.member(tenantId), "a#b"))
-        .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> pipeline.executeAll(ActionBatch.of(room, Actor.member(tenantId), "k")))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() ->
@@ -973,9 +1109,11 @@ class ActionPipelineTest {
   static final class SampleStore implements StateStore<Sample> {
     private final Map<ActionTarget, Sample> rows = new HashMap<>();
     Runnable afterSave = () -> {};
+    Runnable onLoad = () -> {};
 
     @Override
     public Sample load(ActionCommand command) {
+      onLoad.run();
       return command.target() == null
           ? new SampleTransitions().initial()
           : rows.getOrDefault(command.target(), new SampleTransitions().initial());

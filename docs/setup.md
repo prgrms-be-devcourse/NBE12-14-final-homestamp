@@ -109,7 +109,7 @@ npm run dev                # http://localhost:5173, /api는 백엔드(8080)로 �
   - 회원이 DB에 있는지는 보지 않는다. 회원 정보를 읽는 API는 `state.member`에 그 UUID의 행이 있어야 한다.
   - 테스트 코드에서는 이 도구 대신 `SecurityTestSupport.loginAs(회원 UUID)`를 쓴다(`mvc.perform(get(...).with(loginAs(id)))`, 같은 키로 만든 토큰).
   - 리프레시 쿠키는 주지 않는다. 재발급·로그아웃까지 확인하려면 로그인 API를 기다린다.
-- **테이블은 아직 없다.** V1 마이그레이션(1일차) 전에는 Flyway 기록 테이블만 생긴다.
+- **테이블은 Flyway가 만든다.** 앱이 뜰 때 `back/src/main/resources/db/migration`의 V 파일을 차례로 적용한다(`state`·`record`·`log` 스키마). 브랜치를 바꿔 V 파일이 달라지면 로컬 DB와 어긋날 수 있으니, 그때는 `cd back && docker compose down -v`로 지우고 다시 띄운다(되돌릴 수 없음).
 
 ## 문제가 생기면
 
@@ -120,6 +120,9 @@ npm run dev                # http://localhost:5173, /api는 백엔드(8080)로 �
 | 막으면 안 되는 명령이 막힌다 | 직접 터미널에서 실행하고, 훅 오탐으로 이슈를 올린다 |
 | IDE에서 맞췄는데 `spotlessCheck`가 떨어진다 | google-java-format 플러그인 버전이 2.0.0.x인지 확인. 그래도 다르면 `./gradlew spotlessApply`로 맞추고, `docs/rules/04` 17장 "서식 기준"의 cleanup 시험 결과를 확인 |
 | google-java-format 플러그인이 시작할 때 오류를 낸다 | 플러그인 안내에 있는 `--add-exports` 줄을 Help → Edit Custom VM Options에 넣고 IntelliJ를 다시 켠다 |
+| 실행하면 `No Docker Compose file found in directory`로 떨어진다 | 작업 폴더가 저장소 루트다. `bootRun`으로 띄우거나, IntelliJ 실행 설정의 Working directory를 `back/`으로 |
+| 로그에 `No active profile set, falling back to ... "default"` | 프로필이 비었다. `bootRun`으로 띄우거나 실행 설정에 `SPRING_PROFILES_ACTIVE=local`. 프로필이 없으면 Swagger가 켜지지 않고 개발용 토큰도 받지 않는다 |
+| Swagger·API가 로그인 화면이나 401만 준다 | 지금 브랜치에 보안 뼈대(#80)가 없을 수 있다. 오래된 브랜치면 dev를 합치고 다시 띄운다. dev에서는 local 프로필이면 Swagger가 로그인 없이 열리고, API는 위 "개발용 토큰"(`./gradlew localAccessToken`)으로 만든 `Authorization: Bearer <토큰>`으로 부른다 |
 | `bootRun`이 `Failed to configure a DataSource`로 떨어진다 | Docker Desktop이 켜져 있는지(`docker info`) 확인. IntelliJ에서 실행했다면 작업 폴더가 `back/`인지 확인(`compose.yml`을 그 폴더에서 찾는다) |
 | `bootRun`이 Docker Compose 오류로 떨어진다 | `cd back && docker compose up postgres`로 직접 띄워 오류 메시지를 본다. 이미지 받기 실패면 네트워크, 볼륨 오류면 `docker compose down -v`로 지우고 다시 |
 | 화면에서 `/api` 요청이 404·연결 거부 | 백엔드(`bootRun`)가 떠 있는지, 프론트를 `npm run dev`로 띄웠는지 확인(프록시는 개발 서버에서만) |

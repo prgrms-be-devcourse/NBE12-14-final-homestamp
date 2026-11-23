@@ -16,4 +16,10 @@ public interface RecipientDirectory {
 
   /** 회원의 인증된 번호. 탈퇴했거나 인증이 풀렸으면 빈 값. */
   Optional<String> phoneOfMember(UUID memberId);
+
+  /**
+   * 통지를 보낼 자리의 지금 번호. 연결된 회원 자리면 그 회원의 인증된 번호, 아직 비회원 자리면 초대 번호다. 보낼 수 없으면(탈퇴·인증 풀림·번호 지움) 빈 값이고,
+   * 아웃박스 작업자는 문자를 보내지 않는다(통지를 최종 실패로 두지 않음, 04 4-2).
+   */
+  Optional<String> phoneOfRecipient(UUID partyId);
 }

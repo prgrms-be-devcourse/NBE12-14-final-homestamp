@@ -28,6 +28,18 @@ springdoc:
 app:
   # 한국 시간으로 정해진 규칙(문자 보류 21~08시, 하루 한도의 "하루")만 이 위치로 계산한다
   zone: Asia/Seoul
+  # 아웃박스 문자 작업자(04 4-2). 테스트처럼 작업자를 직접 부를 때만 끈다
+  outbox:
+    worker:
+      enabled: true
+      interval-ms: 5000
+      batch-size: 50
+  # 06 0-1 설정값
+  notice:
+    send:
+      retry: 1m,5m,15m
+  delivery:
+    unknown-after: 3d
   # 비밀 키(docs/rules/04 비밀값). 여기에는 값을 두지 않는다. 운영은 Parameter Store에서 받고, 값이 없으면 앱이 시작하지 않는다.
   # local·test는 아래 고정 값을 쓴다. verify-code: 인증번호 해시, verify-ticket: 인증 표 서명, phone-hmac: 번호 HMAC(번호 잠금 키)
   keys:
