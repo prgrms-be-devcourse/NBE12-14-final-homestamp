@@ -5,8 +5,8 @@ import com.chilsuitjo.back.global.common.PartySide;
 import java.time.Instant;
 
 /**
- * 응답을 받는 기록 하나를 {@link AnswerSupport}가 보는 모양(#86). 수리 건 하자, 점검 항목, 지불, 송금, 고친 내용 등이 각자 자기 State에서 이
- * 값을 만들어 넘긴다.
+ * 응답을 받는 기록 하나를 {@link AnswerSupport}가 보는 모양(#86). 수리 건 하자, 점검 항목, 지불, 송금, 고친 내용, 원인 설명 등이 각자 자기
+ * State에서 이 값을 만들어 넘긴다.
  *
  * @param recordedBy 기록한 측. 그 반대 측이 답하고, 이 측이 보충한다. <b>각 도메인이 정해서 넣는다</b>: 송금은 보낸 쪽이 기록했으면 받은 쪽이,
  *     [받았어요(혼자)]로 기록했으면 보낸 쪽이 답한다(SET-4). {@code AnswerSupport}는 이 규칙을 모른다

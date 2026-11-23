@@ -78,7 +78,7 @@ public class RepairTransitions implements Transitions<RepairState> {
     return switch (action.type()) {
       case REGISTER -> new RepairState(RepairStatus.NOT_STARTED, AckState.PENDING);
       case RESPOND_DEFECT -> {
-        RespondPayload in = action.payloadAs(RespondPayload.class); // payload는 내 record로 바꿔 읽어요
+        AnswerPayload in = action.payloadAs(AnswerPayload.class); // payload는 record로 바꿔 읽어요(실제 응답 규칙은 8장 AnswerSupport)
         yield new RepairState(now.status(), AckState.valueOf(in.answer().name()));
       }
       // 내 영역이 아닌 행동이나 지금 상태에서 안 되는 행동은 예외 → 저장도 기록도 남지 않아요
@@ -286,12 +286,12 @@ pipeline은 진짜이고, 안쪽 부품 두 개만 가짜예요. 진짜로 바�
 
 ## 8. 응답 공통 처리 (`AnswerSupport`)
 
-맞아요·보류·이견(응답하기)과 [보충하고 다시 확인 요청]·[사진 더해서 다시 요청](다시 요청)은 모든 도메인이 `action/rule/AnswerSupport`로 같은 규칙을 써요(#86). 순수 함수라 `apply` 안에서 불러요.
+맞아요·보류·이견(응답하기)과 [보충하고 다시 확인 요청]·[사진 더해서 다시 요청](다시 요청)은 모든 도메인이 `action/rule/AnswerSupport`로 같은 규칙을 써요(#86). 쓰는 곳: 수리 건 하자, 점검 항목, 지불, 송금, 고친 내용, 원인 설명(응답만. 고치면 새 설명이라 다시 요청이 없어요, 06 4-6). 순수 함수라 `apply` 안에서 불러요.
 
 | 메서드 | 하는 일 | 거절 |
 |---|---|---|
 | `answer(기록, 답하는 측, 답, 사유, 본 판 번호)` | 다음 응답 값(`AckState`) | `NOT_COUNTERPART_SIDE`(기록한 측), `VERSION_CONFLICT`, `ACK_FINAL`, `INVALID_STATE`(보류·이견에서 맞아요가 아닌 답), `REASON_REQUIRED` |
-| `rerequest(기록, 부르는 측, 근거 있음, 요청을 열 수 있음, 지금, 간격)` | `PENDING`(상대가 새로 고름) + 저장할 다시 요청 시각 | `NOT_COUNTERPART_SIDE`(기록한 측이 아님), `INVALID_STATE`(보류·이견이 아님, 지금 열 수 없는 요청), `ASKED_RECENTLY`, `EVIDENCE_REQUIRED` |
+| `rerequest(기록, 부르는 측, 근거 있음, 요청을 열 수 있음, 지금, 간격)` | `PENDING`(상대가 새로 고름) + 저장할 다시 요청 시각 | `NOT_COUNTERPART_SIDE`(기록한 측이 아님), `INVALID_STATE`(보류·이견이 아님, 지금 열 수 없는 요청), `EVIDENCE_REQUIRED`, `ASKED_RECENTLY`(근거를 간격보다 먼저 봐요) |
 | `canAnswer` · `canRerequest` | 화면 `availableActions`·확인 카드 버튼. 위 두 메서드와 같은 결과 | — |
 | `nextRerequestAt` | "○월 ○일부터 다시 요청할 수 있어요"의 날짜. 다시 요청한 적이 없으면 null | — |
 | `requireEvidence` · `checkInterval` | [상황이 바뀌었어요]처럼 조건이 다른 버튼이 근거·7일만 가져다 써요 | `EVIDENCE_REQUIRED`, `ASKED_RECENTLY` |
@@ -302,7 +302,7 @@ pipeline은 진짜이고, 안쪽 부품 두 개만 가짜예요. 진짜로 바�
 // repair/rule/RepairState.java
 public record RepairState(
     RepairStatus status, AckState defectAck, PartySide registeredBy, int contentNo,
-    Instant lastRerequestAt, boolean living, boolean canOpenDefectConfirm) {
+    Instant lastRerequestAt, boolean canOpenDefectConfirm) {
 
   Answerable defect() {
     return new Answerable(registeredBy, defectAck, contentNo, lastRerequestAt);
@@ -353,7 +353,7 @@ case SUPPLEMENT -> {
 | 일 | `save`에서 부를 것 |
 |---|---|
 | 응답(늦은 답 포함) | `waitService.answered(대상, 요청 종류, 답한 측)`. 열린 요청이 있으면 "답함"으로 닫고, 없거나 닫혀 있으면 아무것도 하지 않아요 |
-| 다시 요청 | `waitService.restart(new OpenRequestCommand(호실, 종류, 대상, 요청한 측))`. 있으면 다시 열고 없으면 새로 열어요(기한을 다시 셀지는 notification이 종류를 보고 정해요) |
+| 다시 요청 | `waitService.restart(new OpenRequestCommand(호실, 종류, 대상, 요청한 측))`만 불러요. 새로 열지·묶을지·기한은 notification이 정해요(`WaitService#restart`). 도메인은 그 규칙을 따로 갖지 않아요 |
 | [상황이 바뀌었어요] | 진행 상황마다 새 상황 확인이라 `restart`가 아니라 `open` |
 
 **요청 하나에 기록이 여럿이면**(점검 확인: 점검 × 방향마다 요청 하나, 응답은 항목마다) `answered`는 그 방향에 답하지 않은 항목이 0개가 될 때만 불러요. 항목마다 부르면 첫 답에서 요청이 닫혀 나머지 항목의 재통지·혼자 잠금이 돌지 않아요. 고친 내용 확인도 같아요.
