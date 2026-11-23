@@ -1,10 +1,12 @@
 package com.chilsuitjo.back.global.error;
 
+import jakarta.persistence.OptimisticLockException;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
@@ -37,6 +39,18 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
   static long seconds(Duration wait) {
     long seconds = wait.toSeconds() + (wait.toNanosPart() > 0 ? 1 : 0);
     return Math.max(1, seconds);
+  }
+
+  /**
+   * 상태 행의 {@code version}이 달라 저장이 실패했다(낙관적 잠금, 04 "동시에 누름"). 명세 4-0 "동시 수정"대로 {@code 409
+   * VERSION_CONFLICT}로 돌려준다. 다른 쪽이 먼저 바꾼 것이라 서버 오류가 아니다. pipeline 안에서 났으면 트랜잭션은 이미 되돌려져 행동 기록도 남지
+   * 않는다.
+   */
+  @ExceptionHandler({OptimisticLockingFailureException.class, OptimisticLockException.class})
+  ResponseEntity<ProblemDetail> handleVersionConflict(Exception e) {
+    log.info("동시 수정으로 저장하지 못함: {}", e.getClass().getSimpleName());
+    ErrorCode code = ErrorCode.VERSION_CONFLICT;
+    return ResponseEntity.status(code.status()).body(problem(code, code.status(), null));
   }
 
   @ExceptionHandler(Exception.class)

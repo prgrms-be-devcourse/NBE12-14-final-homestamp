@@ -7,10 +7,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import jakarta.persistence.OptimisticLockException;
 import java.time.Duration;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -86,6 +88,17 @@ class GlobalExceptionHandlerTest {
   }
 
   @Test
+  void 낙관적_잠금_충돌은_409_VERSION_CONFLICT() throws Exception {
+    // Spring이 감싼 것(트랜잭션 커밋·@Repository)과 JPA 예외가 그대로 올라온 것 둘 다
+    for (String path : new String[] {"/시험/버전-spring", "/시험/버전-jpa"}) {
+      mvc.perform(post(path))
+          .andExpect(status().isConflict())
+          .andExpect(jsonPath("$.code").value("VERSION_CONFLICT"))
+          .andExpect(jsonPath("$.detail").value(ErrorCode.VERSION_CONFLICT.message()));
+    }
+  }
+
+  @Test
   void 초는_올림하고_0초_이하는_1초다() {
     assertThat(GlobalExceptionHandler.seconds(Duration.ofSeconds(40))).isEqualTo(40);
     assertThat(GlobalExceptionHandler.seconds(Duration.ofMillis(40_001))).isEqualTo(41);
@@ -114,6 +127,16 @@ class GlobalExceptionHandlerTest {
     @PostMapping("/시험/규칙")
     String 규칙() {
       throw new BusinessException(ErrorCode.DAILY_LIMIT);
+    }
+
+    @PostMapping("/시험/버전-spring")
+    String 버전_spring() {
+      throw new ObjectOptimisticLockingFailureException("RepairCase", "id");
+    }
+
+    @PostMapping("/시험/버전-jpa")
+    String 버전_jpa() {
+      throw new OptimisticLockException("Row was updated or deleted by another transaction");
     }
   }
 }
