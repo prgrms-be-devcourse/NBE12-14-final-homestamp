@@ -66,7 +66,7 @@ public class ActionRecord {
   @Column(name = "actor_key", nullable = false, length = 80, updatable = false)
   private String actorKey;
 
-  /** {@code ActionType.name()}. V1 {@code ck_action_type}이 값을 막는다. */
+  /** {@code ActionType.name()}. {@code ck_action_type}(지금 V5)이 값을 막는다. */
   @Column(nullable = false, length = 40, updatable = false)
   private String type;
 
