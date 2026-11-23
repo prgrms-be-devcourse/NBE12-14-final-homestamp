@@ -10,9 +10,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.chilsuitjo.back.TestcontainersConfiguration;
 import com.chilsuitjo.back.action.dto.DigestField;
 import com.chilsuitjo.back.action.dto.DigestInput;
-import com.chilsuitjo.back.action.dto.RoomGate;
 import com.chilsuitjo.back.action.rule.ContentDigest;
-import com.chilsuitjo.back.action.service.FakeRoomGateReader;
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.notification.dto.PartyFacts;
 import com.chilsuitjo.back.notification.rule.PartyPresence;
@@ -38,8 +36,9 @@ import org.springframework.test.web.servlet.ResultActions;
 /**
  * 06 REP-1 하자 등록을 보안·pipeline·진짜 행동 기록 저장(PostgreSQL)까지 띄워 본다. 사진·알리기는 아직 없다(#134).
  *
- * <p>pipeline이 바깥 트랜잭션을 거절해서 {@code @Transactional}로 되돌리지 않는다. 테스트마다 새 호실을 만들어 섞이지 않게 한다. 잠금·부위·자리
- * 상태는 아직 가짜라 빈을 받아 값을 정한다(안내서 5-3).
+ * <p>pipeline이 바깥 트랜잭션을 거절해서 {@code @Transactional}로 되돌리지 않는다. 테스트마다 새 호실을 만들어 섞이지 않게 한다. 잠금은 진짜
+ * ({@code JpaRoomGateReader})라 {@code room_record}·{@code party} 행으로 정하고, 부위·자리 상태 읽기는 아직 가짜라 빈을 받아
+ * 값을 정한다(안내서 5-3, #140).
  */
 @Import(TestcontainersConfiguration.class)
 @SpringBootTest
@@ -49,7 +48,6 @@ class RepairRegisterApiTest {
 
   @Autowired private MockMvc mvc;
   @Autowired private JdbcTemplate jdbc;
-  @Autowired private FakeRoomGateReader gates;
   @Autowired private FakeRoomQueryService roomParts;
   @Autowired private FakeCounterpartReader parties;
 
@@ -62,22 +60,13 @@ class RepairRegisterApiTest {
     jdbc.update(
         "INSERT INTO state.region (code, sido, dong) VALUES ('9999999999', '테스트', '테스트동')"
             + " ON CONFLICT DO NOTHING");
-    room = UUID.randomUUID();
-    jdbc.update(
-        """
-        INSERT INTO state.room_record
-          (id, region_code, alias, status, created_by_side, created_at, version)
-        VALUES (?, '9999999999', '테스트 호실', 'LIVING', 'TENANT', CURRENT_TIMESTAMP, 0)
-        """,
-        room);
-    tenant = UUID.randomUUID();
-    jdbc.update(
-        "INSERT INTO state.member (id, status, created_at, version)"
-            + " VALUES (?, 'ACTIVE', CURRENT_TIMESTAMP, 0)",
-        tenant);
+    room = room();
+    tenant = member();
     part = part(room);
     roomParts.seedPart(room, part, "천장");
-    gates.member(room, tenant, PartySide.TENANT);
+    // 잠금·당사자 확인은 진짜(JpaRoomGateReader)라 party 행으로 정한다: 세입자(나)와 집주인 모두 연결됨
+    seat(PartySide.TENANT, tenant, "CONNECTED");
+    seat(PartySide.LANDLORD, member(), "CONNECTED");
     parties.seed(room, PartySide.TENANT, connected());
     parties.seed(room, PartySide.LANDLORD, connected());
   }
@@ -232,7 +221,12 @@ class RepairRegisterApiTest {
   @Test
   void 내가_공유를_그만뒀어도_등록은_되지만_상대에게_보이지_않는다() throws Exception {
     // 공유를 그만둔 사람도 나만 보는 기록으로 남길 수 있다(ActionType WHILE_SHARING_STOPPED, 03 B)
-    gates.put(tenant, new RoomGate(room, PartySide.TENANT, false, false, true, false));
+    jdbc.update(
+        "UPDATE state.party SET status = 'SHARING_STOPPED', sharing_stopped_at = ?"
+            + " WHERE room_record_id = ? AND member_id = ?",
+        Timestamp.from(Instant.parse("2026-11-01T00:00:00Z")),
+        room,
+        tenant);
     parties.seed(room, PartySide.TENANT, stopped(PartyPresence.CONNECTED));
 
     register("my-stop", body(part, "누수", null)).andExpect(status().isCreated());
@@ -261,7 +255,11 @@ class RepairRegisterApiTest {
 
   @Test
   void 정산이_끝난_호실에는_SETTLED() throws Exception {
-    gates.put(tenant, new RoomGate(room, PartySide.TENANT, true, false, false, false));
+    // 정산 완료면 거주 종료 시각도 있다(V1 CHECK). 정산 완료가 거주 종료보다 먼저 거절된다(09 3-1 순서 3)
+    jdbc.update(
+        "UPDATE state.room_record SET status = 'SETTLED', ended_at = CURRENT_TIMESTAMP,"
+            + " settled_at = CURRENT_TIMESTAMP WHERE id = ?",
+        room);
 
     register("settled", body(part, "누수", null))
         .andExpect(status().isConflict())
@@ -273,7 +271,10 @@ class RepairRegisterApiTest {
 
   @Test
   void 합치기_전_기록에는_JOINED_RECORD() throws Exception {
-    gates.put(tenant, new RoomGate(room, PartySide.TENANT, false, true, false, false));
+    jdbc.update(
+        "UPDATE state.room_record SET joined_into_id = ?, joined_at = CURRENT_TIMESTAMP WHERE id = ?",
+        room(),
+        room);
 
     register("joined", body(part, "누수", null))
         .andExpect(status().isConflict())
@@ -285,7 +286,9 @@ class RepairRegisterApiTest {
 
   @Test
   void 거주가_끝난_호실에는_새_수리_건이_없다() throws Exception {
-    gates.put(tenant, new RoomGate(room, PartySide.TENANT, false, false, false, true));
+    jdbc.update(
+        "UPDATE state.room_record SET status = 'ENDED', ended_at = CURRENT_TIMESTAMP WHERE id = ?",
+        room);
 
     register("ended", body(part, "누수", null))
         .andExpect(status().isConflict())
@@ -380,6 +383,42 @@ class RepairRegisterApiTest {
         + "\""
         + (description == null ? "" : ",\"description\":\"" + description + "\"")
         + "}";
+  }
+
+  private UUID room() {
+    UUID id = UUID.randomUUID();
+    jdbc.update(
+        """
+        INSERT INTO state.room_record
+          (id, region_code, alias, status, created_by_side, created_at, version)
+        VALUES (?, '9999999999', '테스트 호실', 'LIVING', 'TENANT', CURRENT_TIMESTAMP, 0)
+        """,
+        id);
+    return id;
+  }
+
+  private UUID member() {
+    UUID id = UUID.randomUUID();
+    jdbc.update(
+        "INSERT INTO state.member (id, status, created_at, version)"
+            + " VALUES (?, 'ACTIVE', CURRENT_TIMESTAMP, 0)",
+        id);
+    return id;
+  }
+
+  /** 이 호실의 당사자 자리. 진짜 잠금(JpaRoomGateReader)이 이 행으로 당사자·측·공유 중단을 본다. */
+  private void seat(PartySide side, UUID memberId, String status) {
+    jdbc.update(
+        """
+        INSERT INTO state.party
+          (id, room_record_id, side, member_id, status, connected_at, created_at, version)
+        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0)
+        """,
+        UUID.randomUUID(),
+        room,
+        side.name(),
+        memberId,
+        status);
   }
 
   private UUID part(UUID roomId) {
