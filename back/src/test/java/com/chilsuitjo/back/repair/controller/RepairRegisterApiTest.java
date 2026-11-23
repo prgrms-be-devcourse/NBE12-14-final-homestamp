@@ -167,6 +167,51 @@ class RepairRegisterApiTest {
   }
 
   @Test
+  void 제목은_앞뒤_공백을_자르고_공백뿐인_설명은_없는_것으로_남긴다() throws Exception {
+    register("trim", body(part, "  천장 누수  ", " \\n\\t ")).andExpect(status().isCreated());
+
+    Map<String, Object> content =
+        jdbc.queryForMap(
+            "SELECT title, description FROM record.repair_content WHERE room_record_id = ?", room);
+    assertThat(content.get("title")).isEqualTo("천장 누수");
+    assertThat(content.get("description")).isNull();
+  }
+
+  @Test
+  void 설명은_2000자까지_받는다() throws Exception {
+    register("desc-2000", body(part, "누수", "가".repeat(2000))).andExpect(status().isCreated());
+    register("desc-2001", body(part, "누수", "가".repeat(2001)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+
+    assertThat(count("state.repair_case")).isEqualTo(1);
+  }
+
+  @Test
+  void 제목이나_설명에_주민번호_형태가_있으면_RESIDENT_ID_BLOCKED() throws Exception {
+    register("rrn-title", body(part, "900101-1234567 누수", null))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("RESIDENT_ID_BLOCKED"));
+    register("rrn-desc", body(part, "누수", "집주인 9001011234567"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("RESIDENT_ID_BLOCKED"));
+
+    assertThat(count("state.repair_case")).isZero();
+    assertThat(count("record.action")).isZero();
+  }
+
+  @Test
+  void 아직_받지_않는_사진_칸이_오면_VALIDATION_FAILED() throws Exception {
+    register(
+            "tickets",
+            "{\"roomPartId\":\"" + part + "\",\"title\":\"누수\",\"uploadTickets\":[\"t1\"]}")
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+
+    assertThat(count("state.repair_case")).isZero();
+  }
+
+  @Test
   void 상대가_아직_연결되지_않았으면_처음_보인_시각은_비어_있다() throws Exception {
     parties.seed(
         room,

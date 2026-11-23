@@ -5,6 +5,7 @@ import com.chilsuitjo.back.action.dto.Actor;
 import com.chilsuitjo.back.action.dto.PipelineResult;
 import com.chilsuitjo.back.action.rule.ActionType;
 import com.chilsuitjo.back.action.service.ActionPipeline;
+import com.chilsuitjo.back.global.common.ResidentIdGuard;
 import com.chilsuitjo.back.repair.dto.RegisterRepairRequest;
 import com.chilsuitjo.back.repair.dto.RepairCaseCreated;
 import com.chilsuitjo.back.repair.repository.RepairStateStore;
@@ -28,11 +29,13 @@ public class RepairService {
   private final RepairTransitions rules;
 
   /**
-   * 하자 등록(06 REP-1). 당사자가 아니면 {@code NOT_FOUND}, 거주 종료면 {@code ROOM_ENDED}(pipeline), 잘못된 키면 {@code
-   * VALIDATION_FAILED}다. 내용 지문은 {@code save}가 만든 판 #1로 남는다(새 판을 만드는 행동, 안내서 3-3).
+   * 하자 등록(06 REP-1). 제목·설명에 주민등록번호 형태가 있으면 {@code RESIDENT_ID_BLOCKED}(pipeline 전, 03 6-1), 당사자가
+   * 아니면 {@code NOT_FOUND}, 거주 종료면 {@code ROOM_ENDED}(pipeline), 잘못된 키면 {@code VALIDATION_FAILED}다.
+   * 내용 지문은 {@code save}가 만든 판 #1로 남는다(새 판을 만드는 행동, 안내서 3-3).
    */
   public RepairCaseCreated register(
       UUID roomRecordId, UUID memberId, String idempotencyKey, RegisterRepairRequest request) {
+    ResidentIdGuard.check(request.title(), request.description());
     PipelineResult<RepairState> result =
         pipeline.create(
             new ActionCommand(
