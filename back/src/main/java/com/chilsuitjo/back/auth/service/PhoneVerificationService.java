@@ -14,6 +14,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -216,6 +217,22 @@ public class PhoneVerificationService {
   }
 
   /**
+   * 바꾸는 일의 인증 표를 쓰기 전에 미리 확인한다(서명·목적·인증 여부·쓴 적 없음·유효 시간). 쓴 것으로 바꾸지 않고 행을 잠그지도 않는다. 표가 없는 요청이 이메일
+   * 확인·비밀번호 해시까지 가지 않게 하려는 것이고, 실제로 쓰는 일은 그 작업의 트랜잭션에서 {@link #useTicket}이 맡는다(통과한 뒤 다른 요청이 먼저 쓰면
+   * 거기서 {@code CODE_EXPIRED}).
+   *
+   * @throws BusinessException 쓸 수 없는 표면 {@code CODE_EXPIRED}
+   * @throws IllegalArgumentException 아이디 찾기({@link #readTicket}을 쓴다)
+   */
+  @Transactional(readOnly = true)
+  public void checkTicket(String ticket, VerificationPurpose purpose) {
+    if (!purpose.usedOnce()) {
+      throw new IllegalArgumentException(purpose + " 인증 표는 readTicket으로 확인한다");
+    }
+    usableRow(ticket, purpose).orElseThrow(() -> expired());
+  }
+
+  /**
    * 아이디 찾기의 인증 표를 확인하고 인증한 번호를 돌려준다. 보기만 해서 쓴 것으로 바꾸지 않고, 유효 시간 안에는 다시 쓸 수 있다(06 ACC-1f, 4-1).
    *
    * @throws BusinessException 쓸 수 없는 표면 {@code CODE_EXPIRED}
@@ -226,14 +243,17 @@ public class PhoneVerificationService {
     if (purpose.usedOnce()) {
       throw new IllegalArgumentException(purpose + " 인증 표는 한 번만 쓴다. useTicket을 쓴다");
     }
+    return usableRow(ticket, purpose).map(PhoneVerification::getPhone).orElseThrow(() -> expired());
+  }
+
+  /** 잠그지 않고 읽은, 지금 쓸 수 있는 표의 행. */
+  private Optional<PhoneVerification> usableRow(String ticket, VerificationPurpose purpose) {
     Instant now = clock.instant();
     return keys.readTicket(ticket)
         .flatMap(verifications::findById)
         .filter(v -> v.getPurpose() == purpose)
         .filter(v -> v.getVerifiedAt() != null && v.getConsumedAt() == null)
-        .filter(v -> now.isBefore(v.getExpiresAt()))
-        .map(PhoneVerification::getPhone)
-        .orElseThrow(() -> expired());
+        .filter(v -> now.isBefore(v.getExpiresAt()));
   }
 
   private static BusinessException expired() {
