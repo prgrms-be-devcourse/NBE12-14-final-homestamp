@@ -1,6 +1,5 @@
 package com.chilsuitjo.back.notification.entity;
 
-import com.chilsuitjo.back.notification.rule.DeliveryPollSchedule;
 import com.chilsuitjo.back.notification.rule.NoticeChannel;
 import com.chilsuitjo.back.notification.rule.NoticeKind;
 import com.chilsuitjo.back.notification.rule.NoticeStatus;
@@ -12,7 +11,6 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
@@ -31,9 +29,6 @@ import org.hibernate.annotations.UuidGenerator;
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Notice {
-
-  /** 보내고 처음 전달 결과를 물을 때까지(04 4-2 "보내고 1분·5분 뒤"). */
-  static final Duration FIRST_POLL = DeliveryPollSchedule.FIRST_POLL;
 
   @Id
   @GeneratedValue
@@ -87,6 +82,15 @@ public class Notice {
   @Column(name = "next_poll_at")
   private Instant nextPollAt;
 
+  @Column(name = "delivery_poll_token")
+  private UUID deliveryPollToken;
+
+  @Column(name = "delivery_poll_started_at")
+  private Instant deliveryPollStartedAt;
+
+  @Column(name = "delivery_poll_protected_until")
+  private Instant deliveryPollProtectedUntil;
+
   /** 보낼 예정 시각(모으기·밤 보류·한도 미룸). */
   @Column(name = "scheduled_for")
   private Instant scheduledFor;
@@ -116,16 +120,20 @@ public class Notice {
     this.createdAt = Objects.requireNonNull(createdAt, "createdAt");
   }
 
-  /** 업체가 받았다(보냄) 또는 결과를 모른다(보낸 것으로 봄, 04 4-2). 전달 결과는 1분 뒤부터 묻는다. */
-  public void markSent(String providerMessageId, Instant at) {
+  /** 업체가 받았다(보냄) 또는 결과를 모른다(보낸 것으로 봄, 04 4-2). 첫 조회 시각은 설정을 읽은 작업자가 넘긴다. */
+  public void markSent(String providerMessageId, Instant at, Instant firstPollAt) {
     if (status != NoticeStatus.REQUESTED) {
       return;
+    }
+    Objects.requireNonNull(firstPollAt, "firstPollAt");
+    if (!firstPollAt.isAfter(at)) {
+      throw new IllegalArgumentException("첫 전달 결과 조회 시각은 보낸 시각보다 뒤여야 해요");
     }
     this.status = NoticeStatus.SENT;
     this.sentAt = at;
     this.providerMessageId = providerMessageId;
     this.batchLeadId = id;
-    this.nextPollAt = at.plus(FIRST_POLL);
+    this.nextPollAt = firstPollAt;
   }
 
   /** 최종 실패(업체가 거절, 업체에 닿지 못한 채 3일). 보낸 측이 한 번 다시 보낼 수 있다(05 {@code notice}, 03 1-1). */
@@ -149,6 +157,59 @@ public class Notice {
     this.nextPollAt = at;
   }
 
+  /** 조회 예약과 세대를 원자적으로 저장한다. 실제 조회 시작은 별도 트랜잭션에서 기록한다. */
+  public void claimDeliveryPoll(UUID token, Instant next) {
+    if (status != NoticeStatus.SENT) {
+      return;
+    }
+    this.deliveryPollToken = Objects.requireNonNull(token, "token");
+    this.deliveryPollStartedAt = null;
+    this.deliveryPollProtectedUntil = null;
+    scheduleNextPoll(next);
+  }
+
+  /** 조회 직전에 호출한다. 회수된 세대라면 업체를 조회하지 않는다. */
+  public boolean startDeliveryPoll(UUID token, Instant startedAt, Instant protectedUntil) {
+    if (status != NoticeStatus.SENT
+        || !Objects.equals(deliveryPollToken, token)
+        || deliveryPollStartedAt != null) {
+      return false;
+    }
+    if (!protectedUntil.isAfter(startedAt)) {
+      throw new IllegalArgumentException("조회 보호 종료는 시작 뒤여야 해요");
+    }
+    deliveryPollStartedAt = startedAt;
+    deliveryPollProtectedUntil = protectedUntil;
+    if (nextPollAt == null || nextPollAt.isAfter(protectedUntil)) {
+      nextPollAt = protectedUntil;
+    }
+    return true;
+  }
+
+  public boolean ownsDeliveryPoll(UUID token, Instant now) {
+    return status == NoticeStatus.SENT
+        && Objects.equals(deliveryPollToken, token)
+        && deliveryPollStartedAt != null
+        && now.isBefore(deliveryPollProtectedUntil);
+  }
+
+  /** 기한 전에 실제 시작한 조회만 기한 만료 FAILED보다 우선한다. */
+  public boolean hasProtectedDeliveryPoll(Instant now, Instant deadline) {
+    return deliveryPollStartedAt != null
+        && deliveryPollStartedAt.isBefore(deadline)
+        && now.isBefore(deliveryPollProtectedUntil);
+  }
+
+  public void finishDeliveryPoll(UUID token, Instant scheduledNextPollAt) {
+    if (!Objects.equals(deliveryPollToken, token)) {
+      return;
+    }
+    deliveryPollToken = null;
+    deliveryPollStartedAt = null;
+    deliveryPollProtectedUntil = null;
+    nextPollAt = Objects.requireNonNull(scheduledNextPollAt, "scheduledNextPollAt");
+  }
+
   /**
    * 업체가 전달됐다고 답했다(결과 4000, 04 4-2). 보낸(SENT) 통지만 바뀌고, 그 밖의 상태(아직 보내기 전, 이미 전달·열람·실패)는 그대로 둔다(상태는
    * 앞으로만). 더 묻지 않으므로 다음 조회 시각을 지운다.
@@ -163,6 +224,9 @@ public class Notice {
     this.status = NoticeStatus.DELIVERED;
     this.deliveredAt = at;
     this.nextPollAt = null;
+    deliveryPollToken = null;
+    deliveryPollStartedAt = null;
+    deliveryPollProtectedUntil = null;
   }
 
   /**
@@ -177,5 +241,8 @@ public class Notice {
     this.status = NoticeStatus.FAILED;
     this.failedAt = at;
     this.nextPollAt = null;
+    deliveryPollToken = null;
+    deliveryPollStartedAt = null;
+    deliveryPollProtectedUntil = null;
   }
 }

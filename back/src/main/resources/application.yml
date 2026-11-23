@@ -40,11 +40,13 @@ app:
       retry: 1m,5m,15m
   delivery:
     unknown-after: 3d
-    # 전달 결과 조회 일정. 일정은 코드(DeliveryPollSchedule)가 정하고, 이 값이 그와 다르면 앱이 시작하지 않는다
+    # 전달 결과 조회 일정: 보내고 첫 조회, 보내고 두 번째 조회, 그 뒤 조회 간격(06 0-1)
     poll: 1m,5m,15m
     # 전달 결과 조회 작업자(04 4-2). 기본은 꺼 둔다(실제 문자 업체 연동 전 가짜 발송기로 뜻하지 않게 돌지 않게).
     # 서비스를 열 때는 꼭 켠다(예: 환경 변수 APP_DELIVERY_POLLER_ENABLED=true). 꺼져 있으면 보낸 문자가 전달됨으로 바뀌지 않고 켜질 때 경고가 남는다
     poller:
+      # 팀 검토 전 제안값. 실제 SMS 조회 클라이언트의 타임아웃은 이 값보다 짧아야 한다.
+      protect-for: 2m
       enabled: false
       initial-delay-ms: 5000
       interval-ms: 30000

@@ -11,6 +11,7 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -37,17 +38,20 @@ public class DeliveryPollClaimer {
   private final Clock clock;
   private final TransactionTemplate transaction;
   private final Duration giveUpAfter;
+  private final DeliveryPollSchedule schedule;
 
   public DeliveryPollClaimer(
       NoticeRepository notices,
       Clock clock,
       PlatformTransactionManager transactionManager,
-      @Value("${app.delivery.unknown-after:3d}") Duration giveUpAfter) {
+      @Value("${app.delivery.unknown-after:3d}") Duration giveUpAfter,
+      DeliveryPollSchedule schedule) {
     this.notices = notices;
     this.clock = clock;
     this.transaction = new TransactionTemplate(transactionManager);
     this.transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     this.giveUpAfter = giveUpAfter;
+    this.schedule = schedule;
   }
 
   /**
@@ -63,25 +67,35 @@ public class DeliveryPollClaimer {
       Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
       List<ClaimedDeliveryPoll> claimed = new ArrayList<>();
       for (Notice notice : notices.lockDuePolls(now, limit)) {
+        Instant deadline =
+            notice.getSentAt() == null
+                ? null
+                : DeliveryPollSchedule.deadline(notice.getSentAt(), giveUpAfter);
+        if (deadline != null && notice.hasProtectedDeliveryPoll(now, deadline)) {
+          notice.scheduleNextPoll(notice.getDeliveryPollProtectedUntil());
+          continue;
+        }
         if (notice.getSentAt() == null || notice.getBatchLeadId() == null) {
-          notice.scheduleNextPoll(now.plus(DeliveryPollSchedule.INTERVAL));
+          notice.scheduleNextPoll(now.plus(schedule.interval()));
           log.error("보낸 시각 또는 묶음 ID가 없는 보낸 통지라 전달 결과를 묻지 않음: notice={}", notice.getId());
           continue;
         }
-        Instant deadline = DeliveryPollSchedule.deadline(notice.getSentAt(), giveUpAfter);
         boolean pastDeadline = !now.isBefore(deadline);
         // 정상 조회 일정은 기한을 넘지 않는다. 기한이 지난 통지는 다음 조회가 없고 이번 조회 뒤 최종 결과로 끝낸다(DeliveryResultPoller).
         // 그때 옮기는 시각은 조회 기한 연장이 아니라, 그 처리가 중간에 멈췄을 때만 다시 가져갈 복구용 예약이다
         Instant next =
-            DeliveryPollSchedule.next(notice.getSentAt(), now, giveUpAfter)
-                .orElse(now.plus(DeliveryPollSchedule.INTERVAL));
-        notice.scheduleNextPoll(next);
+            schedule
+                .next(notice.getSentAt(), now, giveUpAfter)
+                .orElse(now.plus(schedule.interval()));
+        UUID token = UUID.randomUUID();
+        notice.claimDeliveryPoll(token, next);
         claimed.add(
             new ClaimedDeliveryPoll(
                 notice.getId(),
                 new DeliveryQuery(notice.getBatchLeadId(), notice.getProviderMessageId()),
                 pastDeadline,
-                next));
+                next,
+                token));
       }
       return claimed;
     });

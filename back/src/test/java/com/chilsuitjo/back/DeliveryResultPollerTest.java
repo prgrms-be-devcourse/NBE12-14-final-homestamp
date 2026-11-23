@@ -1,6 +1,7 @@
 package com.chilsuitjo.back;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.chilsuitjo.back.notification.dto.DeliveryQuery;
 import com.chilsuitjo.back.notification.dto.SmsMessage;
@@ -24,9 +25,8 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
-import java.util.function.Supplier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -55,6 +55,9 @@ class DeliveryResultPollerTest {
   private static final Duration THREE_DAYS = Duration.ofDays(3);
   private static final Instant DEADLINE = SENT.plus(THREE_DAYS);
   private static final Instant FIRST_POLL = SENT.plus(Duration.ofMinutes(1));
+  private static final DeliveryPollSchedule SCHEDULE =
+      new DeliveryPollSchedule(
+          List.of(Duration.ofMinutes(1), Duration.ofMinutes(5), Duration.ofMinutes(15)));
 
   @Autowired private NoticeRepository notices;
   @Autowired private PlatformTransactionManager transactionManager;
@@ -113,6 +116,50 @@ class DeliveryResultPollerTest {
     assertThat(time(id, "delivered_at")).isEqualTo(savedAt);
     assertThat(time(id, "next_poll_at")).isNull();
     assertThat(time(id, "sent_at")).isEqualTo(SENT);
+  }
+
+  @Test
+  void 전달_결과를_확인한_시각을_저장_시각과_구분해_남긴다() {
+    UUID id = notice(FIRST_POLL);
+    fake.respondDelivery(id, DeliveryOutcome.DELIVERED);
+    Instant observedAt = FIRST_POLL.plusSeconds(2);
+    Instant savingAt = FIRST_POLL.plusSeconds(3);
+    AtomicInteger reads = new AtomicInteger();
+    Clock advancingClock =
+        new Clock() {
+          @Override
+          public ZoneOffset getZone() {
+            return ZoneOffset.UTC;
+          }
+
+          @Override
+          public Clock withZone(java.time.ZoneId zone) {
+            return this;
+          }
+
+          @Override
+          public Instant instant() {
+            return switch (reads.getAndIncrement()) {
+              case 0 -> FIRST_POLL;
+              case 1 -> observedAt;
+              default -> savingAt;
+            };
+          }
+        };
+
+    new DeliveryResultPoller(
+            claimer(FIRST_POLL),
+            notices,
+            fake,
+            advancingClock,
+            transactionManager,
+            THREE_DAYS,
+            Duration.ofMinutes(2))
+        .runOnce(50);
+
+    assertThat(reads.get()).isEqualTo(3);
+    assertThat(column(id, "status")).isEqualTo("DELIVERED");
+    assertThat(time(id, "delivered_at")).isEqualTo(observedAt);
   }
 
   @Test
@@ -326,82 +373,195 @@ class DeliveryResultPollerTest {
     assertThat(context.getBeanNamesForType(DeliveryPollScheduler.class)).isEmpty();
   }
 
-  // ---- 두 작업자 경합(#120): A가 묻는 사이 B가 다시 가져간다. A는 기한 1초 전에 가져가 기한을 다음 시각으로 잡고, B는 기한에 다시 가져간다
+  // ---- 기한 전 시작한 A가 보호 중이면 B는 기한에 재선점할 수 없다
 
   @Test
-  void 다시_가져간_뒤_오래된_결과_없음이_먼저_와도_실패로_적지_않고_최신_전달됨이_남는다() throws Exception {
+  void 서로_다른_작업자가_경합해도_기한_전_조회에서_확인한_전달됨이_남는다() throws Exception {
     UUID id = notice(DEADLINE.minusSeconds(1));
-
-    race(id, () -> DeliveryOutcome.NONE, () -> DeliveryOutcome.DELIVERED, false);
-
+    CountDownLatch querying = new CountDownLatch(1);
+    CountDownLatch release = new CountDownLatch(1);
+    SmsGateway delayed =
+        gateway(queries -> {
+          querying.countDown();
+          await(release);
+          return Map.of(id, DeliveryOutcome.DELIVERED);
+        });
+    CompletableFuture<Integer> first =
+        CompletableFuture.supplyAsync(
+            () -> poller(DEADLINE.minusSeconds(1), DEADLINE.plusSeconds(1), delayed).runOnce(50));
+    try {
+      await(querying);
+      assertThat(poller(DEADLINE, DEADLINE, fake).runOnce(50)).isZero();
+    } finally {
+      release.countDown();
+    }
+    assertThat(first.get(10, TimeUnit.SECONDS)).isEqualTo(1);
     assertThat(column(id, "status")).isEqualTo("DELIVERED");
-    assertThat(time(id, "delivered_at")).isEqualTo(DEADLINE.plusSeconds(2));
+    assertThat(time(id, "delivered_at")).isEqualTo(DEADLINE.plusSeconds(1));
   }
 
   @Test
-  void 다시_가져간_뒤_오래된_조회_예외가_먼저_와도_실패로_적지_않고_최신_전달됨이_남는다() throws Exception {
+  void 가져가기만_하고_조회가_시작되지_않으면_기한에_회수해_실패를_기록한다() {
     UUID id = notice(DEADLINE.minusSeconds(1));
+    assertThat(claimer(DEADLINE.minusSeconds(1)).claim(50)).hasSize(1);
 
-    race(
-        id,
-        () -> {
-          throw new IllegalStateException("오래된 조회 시간 초과");
-        },
-        () -> DeliveryOutcome.DELIVERED,
-        false);
+    assertThat(poller(DEADLINE, DEADLINE, fake).runOnce(50)).isEqualTo(1);
 
-    assertThat(column(id, "status")).isEqualTo("DELIVERED");
+    assertThat(column(id, "status")).isEqualTo("FAILED");
+    assertThat(time(id, "delivered_at")).isNull();
   }
 
   @Test
-  void 최신_작업자의_전달됨이_먼저_적히면_오래된_결과는_아무것도_바꾸지_않는다() throws Exception {
+  void 보호_상한이_지나면_다른_작업자가_회수하고_늦은_응답은_최종_상태를_바꾸지_않는다() throws Exception {
     UUID id = notice(DEADLINE.minusSeconds(1));
+    Instant recovery = DEADLINE.plus(Duration.ofMinutes(2));
+    CountDownLatch querying = new CountDownLatch(1);
+    CountDownLatch release = new CountDownLatch(1);
+    SmsGateway delayed =
+        gateway(queries -> {
+          querying.countDown();
+          await(release);
+          return Map.of(id, DeliveryOutcome.DELIVERED);
+        });
+    CompletableFuture<Integer> first =
+        CompletableFuture.supplyAsync(
+            () -> poller(DEADLINE.minusSeconds(1), recovery.plusSeconds(2), delayed).runOnce(50));
+    try {
+      await(querying);
+      assertThat(poller(recovery, recovery.plusSeconds(1), fake).runOnce(50)).isEqualTo(1);
+    } finally {
+      release.countDown();
+    }
+    assertThat(first.get(10, TimeUnit.SECONDS)).isEqualTo(1);
+    assertThat(column(id, "status")).isEqualTo("FAILED");
+    assertThat(time(id, "delivered_at")).isNull();
+  }
 
-    race(id, () -> DeliveryOutcome.NONE, () -> DeliveryOutcome.DELIVERED, true);
-
+  @Test
+  void 진행_중인_조회가_있으면_기한에_다른_작업자는_가져가지_못한다() {
+    UUID id = notice(DEADLINE.minusSeconds(1));
+    SmsGateway delivered =
+        gateway(queries -> {
+          assertThat(claimer(DEADLINE).claim(50)).isEmpty();
+          assertThat(time(id, "next_poll_at"))
+              .isEqualTo(DEADLINE.minusSeconds(1).plus(Duration.ofMinutes(2)));
+          return Map.of(id, DeliveryOutcome.DELIVERED);
+        });
+    poller(DEADLINE.minusSeconds(1), DEADLINE.plusSeconds(1), delivered).runOnce(50);
     assertThat(column(id, "status")).isEqualTo("DELIVERED");
-    assertThat(time(id, "delivered_at")).isEqualTo(DEADLINE.plusSeconds(2));
+    assertThat(time(id, "delivered_at")).isEqualTo(DEADLINE.plusSeconds(1));
+  }
+
+  @Test
+  void 보호_중인_조회가_명시적_최종_실패를_받으면_그_결과를_기록한다() {
+    UUID id = notice(DEADLINE.minusSeconds(1));
+    SmsGateway failed =
+        gateway(queries -> {
+          assertThat(claimer(DEADLINE).claim(50)).isEmpty();
+          return Map.of(id, DeliveryOutcome.FAILED);
+        });
+
+    poller(DEADLINE.minusSeconds(1), DEADLINE.plusSeconds(1), failed).runOnce(50);
+
+    assertThat(column(id, "status")).isEqualTo("FAILED");
+    assertThat(time(id, "failed_at")).isEqualTo(DEADLINE.plusSeconds(1));
+  }
+
+  @Test
+  void 조회_보호_설정은_양수이면서_15분_이하여야_한다() {
+    assertThatThrownBy(() ->
+            new DeliveryResultPoller(
+                claimer(FIRST_POLL),
+                notices,
+                fake,
+                Clock.systemUTC(),
+                transactionManager,
+                THREE_DAYS,
+                Duration.ZERO))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() ->
+            new DeliveryResultPoller(
+                claimer(FIRST_POLL),
+                notices,
+                fake,
+                Clock.systemUTC(),
+                transactionManager,
+                THREE_DAYS,
+                Duration.ofMinutes(16)))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void 보호_중_조회_예외도_기한_뒤에는_결과_없음으로_실패한다() {
+    UUID id = notice(DEADLINE.minusSeconds(1));
+    SmsGateway failed =
+        gateway(queries -> {
+          assertThat(claimer(DEADLINE).claim(50)).isEmpty();
+          throw new IllegalStateException("조회 시간 초과");
+        });
+    poller(DEADLINE.minusSeconds(1), DEADLINE.plusSeconds(1), failed).runOnce(50);
+    assertThat(column(id, "status")).isEqualTo("FAILED");
+  }
+
+  @Test
+  void 보호_상한_후_다른_작업자의_전달됨이_먼저_적히면_오래된_결과를_버린다() {
+    UUID id = notice(DEADLINE.minusSeconds(1));
+    Instant recovery = DEADLINE.plus(Duration.ofMinutes(2));
+    SmsGateway stale =
+        gateway(queries -> {
+          fake.respondDelivery(id, DeliveryOutcome.DELIVERED);
+          assertThat(poller(recovery, recovery.plusSeconds(1), fake).runOnce(50)).isEqualTo(1);
+          return Map.of(id, DeliveryOutcome.NONE);
+        });
+    poller(DEADLINE.minusSeconds(1), recovery.plusSeconds(2), stale).runOnce(50);
+    assertThat(column(id, "status")).isEqualTo("DELIVERED");
+    assertThat(time(id, "delivered_at")).isEqualTo(recovery.plusSeconds(1));
     assertThat(time(id, "failed_at")).isNull();
   }
 
   @Test
-  void 오래된_작업자의_전달됨은_아직_보낸_상태면_남기고_최신_결과_없음은_덮어쓰지_않는다() throws Exception {
+  void 보호_상한_안에_전달됨이_저장되면_이후_기한_조회가_덮어쓰지_않는다() {
     UUID id = notice(DEADLINE.minusSeconds(1));
-
-    race(id, () -> DeliveryOutcome.DELIVERED, () -> DeliveryOutcome.NONE, false);
-
+    SmsGateway delivered =
+        gateway(queries -> {
+          assertThat(claimer(DEADLINE).claim(50)).isEmpty();
+          return Map.of(id, DeliveryOutcome.DELIVERED);
+        });
+    poller(DEADLINE.minusSeconds(1), DEADLINE.plusSeconds(1), delivered).runOnce(50);
+    assertThat(claimer(DEADLINE.plusSeconds(2)).claim(50)).isEmpty();
     assertThat(column(id, "status")).isEqualTo("DELIVERED");
     assertThat(time(id, "delivered_at")).isEqualTo(DEADLINE.plusSeconds(1));
     assertThat(time(id, "failed_at")).isNull();
   }
 
   @Test
-  void 오래된_작업자의_최종_실패는_적지_않는다() throws Exception {
+  void 보호_상한이_지난_오래된_작업자의_최종_실패는_적지_않는다() {
     UUID id = notice(DEADLINE.minusSeconds(1));
     Instant claimA = DEADLINE.minusSeconds(1);
     SmsGateway stale =
         gateway(queries -> {
           // 묻는 사이 다른 작업자가 다시 가져갔다(결과는 아직 적지 않음)
-          claimer(DEADLINE).claim(50);
+          claimer(DEADLINE.plus(Duration.ofMinutes(2))).claim(50);
           return Map.of(id, DeliveryOutcome.FAILED);
         });
 
-    poller(claimA, DEADLINE.plusSeconds(1), stale).runOnce(50);
+    poller(claimA, DEADLINE.plus(Duration.ofMinutes(2)).plusSeconds(1), stale).runOnce(50);
 
     assertThat(column(id, "status")).isEqualTo("SENT");
-    assertThat(time(id, "next_poll_at")).isEqualTo(DEADLINE.plus(Duration.ofMinutes(15)));
+    assertThat(time(id, "next_poll_at")).isEqualTo(DEADLINE.plus(Duration.ofMinutes(17)));
   }
 
-  /**
-   * 알려진 한계(후속 결정 필요): 최신 작업자 B가 기한 뒤 결과 없음으로 먼저 실패를 적으면, 그 뒤에 온 오래된 작업자 A의 전달됨은 반영되지 않는다. 상태는
-   * 앞으로만이라 FAILED를 DELIVERED로 되돌리지 않기 때문이다(04 4-2). 이 테스트는 지금 동작을 고정해 정책이 바뀌면 드러나게 한다.
-   */
+  /** 유한한 보호 상한 이후에는 이전 조회의 전달 증거를 반드시 보존한다고 보장하지 않는다. 새 작업자가 기한 만료 실패를 확정했다면 최종 상태를 뒤집지 않는다. */
   @Test
-  void 알려진_한계_최신_작업자의_만료_실패가_먼저_적히면_오래된_전달됨은_반영되지_않는다() throws Exception {
+  void 보호_상한_후_새_작업자가_만료_실패를_확정하면_오래된_전달됨은_반영되지_않는다() {
     UUID id = notice(DEADLINE.minusSeconds(1));
-
-    race(id, () -> DeliveryOutcome.DELIVERED, () -> DeliveryOutcome.NONE, true);
-
+    Instant recovery = DEADLINE.plus(Duration.ofMinutes(2));
+    SmsGateway delayed =
+        gateway(queries -> {
+          assertThat(poller(recovery, recovery.plusSeconds(1), fake).runOnce(50)).isEqualTo(1);
+          return Map.of(id, DeliveryOutcome.DELIVERED);
+        });
+    poller(DEADLINE.minusSeconds(1), recovery.plusSeconds(2), delayed).runOnce(50);
     assertThat(column(id, "status")).isEqualTo("FAILED");
     assertThat(time(id, "delivered_at")).isNull();
   }
@@ -419,50 +579,6 @@ class DeliveryResultPollerTest {
     assertThat(column(id, "status")).isEqualTo("FAILED");
   }
 
-  /**
-   * A가 묻는 동안 B가 다시 가져가 묻게 하고, 저장 순서를 정한다. A는 기한 1초 전 가져감(기한 + 1초에 적음), B는 기한에 가져감(기한 + 2초에 적음).
-   *
-   * @param bFinishesFirst 참이면 B가 묻고 적기까지 마친 뒤 A가 적는다. 거짓이면 B가 묻는 중에 A가 먼저 적고, 그 뒤 B가 적는다
-   */
-  private void race(
-      UUID id,
-      Supplier<DeliveryOutcome> aAnswer,
-      Supplier<DeliveryOutcome> bAnswer,
-      boolean bFinishesFirst)
-      throws Exception {
-    CountDownLatch bQuerying = new CountDownLatch(1);
-    CountDownLatch aSaved = new CountDownLatch(1);
-    DeliveryResultPoller b =
-        poller(
-            DEADLINE,
-            DEADLINE.plusSeconds(2),
-            gateway(queries -> {
-              bQuerying.countDown();
-              if (!bFinishesFirst) {
-                await(aSaved);
-              }
-              return Map.of(id, bAnswer.get());
-            }));
-    AtomicReference<CompletableFuture<Integer>> bRun = new AtomicReference<>();
-    DeliveryResultPoller a =
-        poller(
-            DEADLINE.minusSeconds(1),
-            DEADLINE.plusSeconds(1),
-            gateway(queries -> {
-              bRun.set(CompletableFuture.supplyAsync(() -> b.runOnce(50)));
-              if (bFinishesFirst) {
-                bRun.get().join();
-              } else {
-                await(bQuerying);
-              }
-              return Map.of(id, aAnswer.get());
-            }));
-
-    a.runOnce(50);
-    aSaved.countDown();
-    assertThat(bRun.get().get(10, TimeUnit.SECONDS)).isEqualTo(1);
-  }
-
   private static void await(CountDownLatch latch) {
     try {
       if (!latch.await(10, TimeUnit.SECONDS)) {
@@ -476,7 +592,7 @@ class DeliveryResultPollerTest {
 
   private DeliveryPollClaimer claimer(Instant at) {
     return new DeliveryPollClaimer(
-        notices, Clock.fixed(at, ZoneOffset.UTC), transactionManager, THREE_DAYS);
+        notices, Clock.fixed(at, ZoneOffset.UTC), transactionManager, THREE_DAYS, SCHEDULE);
   }
 
   /** 가져갈 때와 적을 때의 시각을 따로 정한다(업체에 묻는 사이 시간이 흐름). */
@@ -485,10 +601,30 @@ class DeliveryResultPollerTest {
         claimer(claimAt),
         notices,
         gateway,
-        Clock.fixed(saveAt, ZoneOffset.UTC),
+        advancingClock(claimAt, saveAt),
         transactionManager,
         THREE_DAYS,
-        List.of(Duration.ofMinutes(1), Duration.ofMinutes(5), Duration.ofMinutes(15)));
+        Duration.ofMinutes(2));
+  }
+
+  private static Clock advancingClock(Instant startAt, Instant resultAt) {
+    AtomicInteger reads = new AtomicInteger();
+    return new Clock() {
+      @Override
+      public ZoneOffset getZone() {
+        return ZoneOffset.UTC;
+      }
+
+      @Override
+      public Clock withZone(java.time.ZoneId zone) {
+        return this;
+      }
+
+      @Override
+      public Instant instant() {
+        return reads.getAndIncrement() == 0 ? startAt : resultAt;
+      }
+    };
   }
 
   private static SmsGateway gateway(

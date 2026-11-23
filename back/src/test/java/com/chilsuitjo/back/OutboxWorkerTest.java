@@ -16,14 +16,17 @@ import com.chilsuitjo.back.notification.repository.NoticeRepository;
 import com.chilsuitjo.back.notification.repository.OutboxRepository;
 import com.chilsuitjo.back.notification.repository.SmsGateway;
 import com.chilsuitjo.back.notification.rule.DeliveryOutcome;
+import com.chilsuitjo.back.notification.rule.DeliveryPollSchedule;
 import com.chilsuitjo.back.notification.rule.NoticeKind;
 import com.chilsuitjo.back.notification.service.FakeRecipientDirectory;
 import com.chilsuitjo.back.notification.service.NoticeOutbox;
 import com.chilsuitjo.back.notification.service.OutboxPoller;
 import com.chilsuitjo.back.notification.service.OutboxWorker;
 import com.chilsuitjo.back.notification.service.RecipientDirectory;
+import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -67,6 +70,7 @@ class OutboxWorkerTest {
   @Autowired private NoticeRepository noticeRepository;
   @Autowired private Clock clock;
   @Autowired private PlatformTransactionManager transactionManager;
+  @Autowired private DeliveryPollSchedule deliveryPollSchedule;
 
   private UUID room;
   private UUID party;
@@ -153,6 +157,33 @@ class OutboxWorkerTest {
     assertThat(notice.get("next_poll_at")).isNotNull();
     assertThat(outboxStatus(noticeId)).isEqualTo("DONE");
     assertThat(gateway.sentBatchIds()).containsExactly(noticeId);
+  }
+
+  @Test
+  void 다른_조회_설정의_첫_간격을_보낼_때_저장한다() {
+    UUID noticeId = enqueue();
+    DeliveryPollSchedule configured =
+        new DeliveryPollSchedule(
+            List.of(Duration.ofMinutes(2), Duration.ofMinutes(7), Duration.ofMinutes(10)));
+    OutboxWorker sender =
+        new OutboxWorker(
+            outboxRepository,
+            noticeRepository,
+            recipients,
+            gateway,
+            clock,
+            transactionManager,
+            50,
+            List.of(Duration.ofMinutes(1)),
+            Duration.ofDays(3),
+            configured);
+
+    sender.runOnce();
+
+    Map<String, Object> saved = notice(noticeId);
+    Instant sentAt = ((Timestamp) saved.get("sent_at")).toInstant();
+    Instant nextPollAt = ((Timestamp) saved.get("next_poll_at")).toInstant();
+    assertThat(nextPollAt).isEqualTo(sentAt.plus(Duration.ofMinutes(2)));
   }
 
   @Test
@@ -374,7 +405,8 @@ class OutboxWorkerTest {
         transactionManager,
         50,
         List.of(Duration.ofMinutes(1)),
-        Duration.ofDays(3));
+        Duration.ofDays(3),
+        deliveryPollSchedule);
   }
 
   @Test
@@ -420,7 +452,8 @@ class OutboxWorkerTest {
             transactionManager,
             50,
             List.of(Duration.ofMinutes(1)),
-            Duration.ofDays(3));
+            Duration.ofDays(3),
+            deliveryPollSchedule);
     CompletableFuture<Integer> result = CompletableFuture.supplyAsync(blockedWorker::runOnce);
     try {
       assertThat(sending.await(10, TimeUnit.SECONDS)).isTrue();

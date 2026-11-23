@@ -7,40 +7,62 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * 보낸 문자의 전달 결과를 언제 다시 물을지(04 4-2, #120). 보낸 뒤 1분(첫 조회, {@code Notice.markSent})과 5분에 묻고, 그 뒤로는
- * 15분마다 묻는다. 보낸 뒤 기한({@code app.delivery.unknown-after}, 3일)이 지나면 더 예약하지 않는다.
+ * 보낸 문자의 전달 결과 조회 일정(06 0-1 {@code delivery.poll}). 세 설정값은 첫 조회까지의 시간, 보낸 뒤 두 번째 조회까지의 시간, 그 뒤 조회
+ * 간격이다. 기한({@code app.delivery.unknown-after})을 넘지 않게 예약한다.
  *
- * <p>조회 횟수를 따로 적지 않으므로 보낸 시각과 지금 시각만으로 정한다. 그래서 서버가 오래 멈췄다 켜져도 밀린 시각을 차례로 다시 묻지 않고, 지금부터 다음 간격을
- * 잡는다. 순수 함수라 {@code Clock}을 부르지 않는다(09 2장 {@code rule/}).
+ * <p>조회 횟수를 따로 적지 않으므로 보낸 시각과 지금 시각만으로 정한다. 서버가 오래 멈췄다 켜져도 밀린 시각을 차례로 다시 묻지 않고, 지금부터 다음 간격을 잡는다.
+ * 계산은 순수 함수이며 {@code Clock}을 부르지 않는다(09 2장 {@code rule/}).
  */
 public final class DeliveryPollSchedule {
 
-  /** 첫 조회: 보낸 뒤 1분({@code Notice.markSent}가 잡음). */
+  /** 기본 첫 조회: 보낸 뒤 1분. */
   public static final Duration FIRST_POLL = Duration.ofMinutes(1);
 
-  /** 두 번째 조회: 보낸 뒤 5분. */
+  /** 기본 두 번째 조회: 보낸 뒤 5분. */
   public static final Duration SECOND_POLL = Duration.ofMinutes(5);
 
-  /** 그 뒤 조회 간격. */
+  /** 기본 이후 조회 간격: 15분. */
   public static final Duration INTERVAL = Duration.ofMinutes(15);
 
-  private DeliveryPollSchedule() {}
+  private final Duration firstPoll;
+  private final Duration secondPoll;
+  private final Duration interval;
 
-  /**
-   * 지금 물은 뒤 다음에 물을 시각. 언제나 지금보다 뒤이고 기한을 넘지 않는다. 지금이 이미 기한이거나 지났으면 비어 있다(이번이 마지막 조회, 결과가 없으면 최종 실패).
-   *
-   * @param sentAt 보낸 시각({@code notice.sent_at})
-   * @param now 지금(조회 대상을 가져가는 시각)
-   * @param giveUpAfter 보낸 뒤 결과 없이 기다리는 기한
-   */
-  public static Optional<Instant> next(Instant sentAt, Instant now, Duration giveUpAfter) {
+  public DeliveryPollSchedule(List<Duration> configured) {
+    if (configured == null || configured.size() != 3) {
+      throw new IllegalArgumentException("app.delivery.poll은 첫 조회·두 번째 조회·이후 간격 세 값이 필요해요");
+    }
+    for (Duration delay : configured) {
+      if (delay == null
+          || delay.compareTo(Duration.ofNanos(1_000)) < 0
+          || delay.getNano() % 1_000 != 0) {
+        throw new IllegalArgumentException("app.delivery.poll의 간격은 양수이고 마이크로초 단위여야 해요");
+      }
+    }
+    if (configured.get(1).compareTo(configured.get(0)) <= 0) {
+      throw new IllegalArgumentException("app.delivery.poll의 두 번째 조회는 첫 조회보다 뒤여야 해요");
+    }
+    this.firstPoll = configured.get(0);
+    this.secondPoll = configured.get(1);
+    this.interval = configured.get(2);
+  }
+
+  /** 첫 조회 시각. 결과 확인 기한보다 늦게 예약하지 않는다. */
+  public Instant first(Instant sentAt, Duration giveUpAfter) {
+    Instant deadline = deadline(sentAt, giveUpAfter);
+    Instant first = sentAt.plus(firstPoll);
+    return first.isAfter(deadline) ? deadline : first;
+  }
+
+  /** 지금 물은 뒤 다음에 물을 시각. 언제나 지금보다 뒤이고 기한을 넘지 않는다. 지금이 이미 기한이거나 지났으면 비어 있다. */
+  public Optional<Instant> next(Instant sentAt, Instant now, Duration giveUpAfter) {
     Instant deadline = deadline(sentAt, giveUpAfter);
     Objects.requireNonNull(now, "now");
     if (!now.isBefore(deadline)) {
       return Optional.empty();
     }
-    Instant second = sentAt.plus(SECOND_POLL);
-    Instant candidate = now.isBefore(second) ? second : now.plus(INTERVAL);
+    Instant second = sentAt.plus(secondPoll);
+    Instant candidate = now.isBefore(second) ? second : now.plus(interval);
     return Optional.of(candidate.isAfter(deadline) ? deadline : candidate);
   }
 
@@ -51,15 +73,8 @@ public final class DeliveryPollSchedule {
     return sentAt.plus(giveUpAfter);
   }
 
-  /**
-   * 설정의 조회 일정(06 0-1 {@code delivery.poll}, {@code app.delivery.poll})이 이 클래스의 일정과 같은지 본다. 일정은 코드
-   * 상수가 정하고 설정은 06 표와 같다는 것을 보이는 값이라, 둘이 다르면 앱을 시작하지 않는다(설정만 바꾸고 동작은 그대로인 일을 막음).
-   */
-  public static void requireSameAs(List<Duration> configured) {
-    List<Duration> schedule = List.of(FIRST_POLL, SECOND_POLL, INTERVAL);
-    if (!schedule.equals(configured)) {
-      throw new IllegalStateException(
-          "app.delivery.poll이 코드의 조회 일정(1m,5m,15m)과 달라요: " + configured);
-    }
+  /** 완료되지 않은 선점이나 잘못된 통지를 다시 가져갈 복구용 간격. */
+  public Duration interval() {
+    return interval;
   }
 }

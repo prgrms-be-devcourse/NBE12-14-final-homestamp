@@ -104,13 +104,23 @@ class NoticeTest {
   void 보내면_보낸_시각과_1분_뒤_첫_조회가_정해지고_두_번_보내지_않는다() {
     Notice notice = requested();
 
-    notice.markSent("fake-1", SENT_AT);
-    notice.markSent("fake-2", LATER);
+    notice.markSent("fake-1", SENT_AT, SENT_AT.plusSeconds(60));
+    notice.markSent("fake-2", LATER, LATER.plusSeconds(60));
 
     assertThat(notice.getStatus()).isEqualTo(NoticeStatus.SENT);
     assertThat(notice.getSentAt()).isEqualTo(SENT_AT);
     assertThat(notice.getProviderMessageId()).isEqualTo("fake-1");
     assertThat(notice.getNextPollAt()).isEqualTo(SENT_AT.plusSeconds(60));
+  }
+
+  @Test
+  void 보내기_작업자가_계산한_첫_조회_시각을_그대로_저장한다() {
+    Notice notice = requested();
+    Instant configuredFirst = SENT_AT.plusSeconds(120);
+
+    notice.markSent("fake-1", SENT_AT, configuredFirst);
+
+    assertThat(notice.getNextPollAt()).isEqualTo(configuredFirst);
   }
 
   @Test
@@ -156,7 +166,7 @@ class NoticeTest {
 
   private static Notice sent() {
     Notice notice = requested();
-    notice.markSent("fake-1", SENT_AT);
+    notice.markSent("fake-1", SENT_AT, SENT_AT.plusSeconds(60));
     return notice;
   }
 }

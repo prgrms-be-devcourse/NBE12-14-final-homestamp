@@ -11,6 +11,7 @@ import com.chilsuitjo.back.notification.rule.NoticeStatus;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -51,6 +52,7 @@ public class DeliveryResultPoller {
   private final Clock clock;
   private final TransactionTemplate transaction;
   private final Duration giveUpAfter;
+  private final Duration protectFor;
 
   public DeliveryResultPoller(
       DeliveryPollClaimer claimer,
@@ -59,8 +61,16 @@ public class DeliveryResultPoller {
       Clock clock,
       PlatformTransactionManager transactionManager,
       @Value("${app.delivery.unknown-after:3d}") Duration giveUpAfter,
-      @Value("${app.delivery.poll:1m,5m,15m}") List<Duration> pollSchedule) {
-    DeliveryPollSchedule.requireSameAs(pollSchedule);
+      @Value("${app.delivery.poller.protect-for:2m}") Duration protectFor) {
+    if (protectFor == null
+        || protectFor.isNegative()
+        || protectFor.isZero()
+        || protectFor.compareTo(Duration.ofNanos(1_000)) < 0
+        || protectFor.getNano() % 1_000 != 0
+        || protectFor.compareTo(Duration.ofMinutes(15)) > 0) {
+      throw new IllegalArgumentException(
+          "app.delivery.poller.protect-for는 마이크로초 이상 15분 이하이고 마이크로초 단위여야 해요");
+    }
     this.claimer = claimer;
     this.notices = notices;
     this.gateway = gateway;
@@ -68,6 +78,7 @@ public class DeliveryResultPoller {
     this.transaction = new TransactionTemplate(transactionManager);
     this.transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     this.giveUpAfter = giveUpAfter;
+    this.protectFor = protectFor;
   }
 
   /** 많아야 {@code limit}개를 가져가 묻고, 가져간 통지 수를 돌려준다. 한 통지에서 예외가 나도 나머지는 적는다. */
@@ -76,12 +87,17 @@ public class DeliveryResultPoller {
     if (claimed.isEmpty()) {
       return 0;
     }
-    Map<UUID, DeliveryOutcome> results = query(claimed);
-    for (ClaimedDeliveryPoll poll : claimed) {
+    List<ClaimedDeliveryPoll> started = claimed.stream().filter(this::begin).toList();
+    if (started.isEmpty()) {
+      return claimed.size();
+    }
+    QueriedResults queried = query(started);
+    for (ClaimedDeliveryPoll poll : started) {
       try {
-        // 업체가 이 묶음 ID를 빠뜨렸으면 결과 없음과 같다. 조회 자체가 실패했으면(results == null) 이번에는 아무 결과도 모른다
-        DeliveryOutcome outcome = results == null ? null : results.get(poll.query().batchLeadId());
-        record(poll, outcome);
+        // 업체가 이 묶음 ID를 빠뜨렸으면 결과 없음과 같다. 조회 자체가 실패했으면 결과 맵이 null이라 이번에는 아무 결과도 모른다
+        DeliveryOutcome outcome =
+            queried.results() == null ? null : queried.results().get(poll.query().batchLeadId());
+        record(poll, outcome, queried.observedAt());
       } catch (RuntimeException e) {
         log.error("전달 결과 저장 실패: notice={}, error={}", poll.noticeId(), e.getClass().getName());
       }
@@ -89,42 +105,61 @@ public class DeliveryResultPoller {
     return claimed.size();
   }
 
-  /** 업체에 묻는다. 조회 자체가 실패하면 null(결과 없음과 다름). */
-  private Map<UUID, DeliveryOutcome> query(List<ClaimedDeliveryPoll> claimed) {
+  /** 실제 업체 조회 직전, 잠긴 행에 시작과 유한한 보호 종료를 기록한다. 회수된 세대는 조회하지 않는다. */
+  private boolean begin(ClaimedDeliveryPoll poll) {
+    Boolean started =
+        transaction.execute(status -> {
+          Notice notice = notices.findForUpdate(poll.noticeId()).orElse(null);
+          if (notice == null) {
+            return false;
+          }
+          Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
+          return notice.startDeliveryPoll(poll.token(), now, now.plus(protectFor));
+        });
+    return Boolean.TRUE.equals(started);
+  }
+
+  /** 한 번의 묶음 응답을 확인한 서버 시각. 결과 조회 실패에는 전달 관측 시각이 없다. */
+  private record QueriedResults(Map<UUID, DeliveryOutcome> results, Instant observedAt) {}
+
+  /** 업체에 묻는다. 조회 자체가 실패하면 결과 맵은 null(결과 없음과 다름). */
+  private QueriedResults query(List<ClaimedDeliveryPoll> claimed) {
     List<DeliveryQuery> queries = claimed.stream().map(ClaimedDeliveryPoll::query).toList();
+    Map<UUID, DeliveryOutcome> results;
     try {
-      return gateway.queryResults(queries);
+      results = gateway.queryResults(queries);
     } catch (RuntimeException e) {
       log.warn("전달 결과 조회 실패: count={}, error={}", queries.size(), e.getClass().getName());
-      return null;
+      return new QueriedResults(null, null);
     }
+    return new QueriedResults(results, clock.instant());
   }
 
   /**
    * 통지를 다시 잠그고 결과를 적는다. 기한은 가져간 시각({@code pastDeadline})만 믿지 않고 적는 지금 다시 본다(업체에 묻는 사이 기한이 지날 수 있음).
    *
-   * <p>업체에 묻는 사이 다음 조회 시각이 지나 다른 작업자가 다시 가져갔으면({@code next_poll_at}이 가져갈 때 적은 값과 다름) 전달됨만 적고 나머지는
-   * 버린다. 다만 최신 작업자가 먼저 기한 만료 실패를 적었으면 뒤늦은 전달됨도 반영되지 않는다(FAILED는 되돌리지 않음, 후속 결정).
+   * <p>조회 토큰과 보호 종료 시각이 아직 유효할 때만 결과를 적는다. 기한 전에 시작한 조회의 보호 중 다른 작업자가 예약 시각을 옮겨도 명시적 결과는 적을 수 있다.
+   * 보호 종료 뒤 회수된 조회의 늦은 응답은 버린다.
    *
    * @param outcome 업체 결과. null이면 조회 실패로 결과를 모름
    */
-  private void record(ClaimedDeliveryPoll poll, DeliveryOutcome outcome) {
+  private void record(ClaimedDeliveryPoll poll, DeliveryOutcome outcome, Instant observedAt) {
     transaction.executeWithoutResult(status -> {
       Notice notice = notices.findForUpdate(poll.noticeId()).orElse(null);
       if (notice == null || notice.getStatus() != NoticeStatus.SENT) {
         return; // 그사이 다른 쪽이 끝냈다(상태는 앞으로만)
       }
       Instant now = clock.instant();
-      if (outcome == DeliveryOutcome.DELIVERED) {
-        // 전달 증거는 그사이 다른 작업자가 다시 가져갔어도 남긴다(아직 SENT일 때만, 상태는 앞으로만)
-        notice.markDelivered(deliveredAt(now));
+      if (!notice.ownsDeliveryPoll(poll.token(), now)) {
         return;
       }
-      if (!poll.lease().equals(notice.getNextPollAt())) {
-        // 그사이 다른 작업자가 다시 가져갔다. 오래된 결과 없음·조회 실패·실패로 최신 작업자의 결과를 앞지르지 않게 아무것도 적지 않는다
+      if (outcome == DeliveryOutcome.DELIVERED) {
+        // 보호 중 다른 작업자가 예약 시각을 옮겼더라도 같은 토큰의 전달 증거는 남긴다.
+        notice.markDelivered(observedAt);
         return;
       }
       if (outcome == DeliveryOutcome.FAILED) {
+        // 같은 조회의 명시적 최종 실패는 기한 만료 보호를 위한 예약 시각 이동과 무관하다.
         notice.markDeliveryFailed(now);
         return;
       }
@@ -134,13 +169,10 @@ public class DeliveryResultPoller {
       if (pastDeadline) {
         // 결과 없음 또는 조회 실패인 채 기한이 지났다: 전달 확인 기한 만료로 끝낸다(실제 전달 실패의 증거는 아님)
         notice.markDeliveryFailed(now);
+      } else {
+        notice.finishDeliveryPoll(poll.token(), poll.lease());
       }
       // 기한 전이면 그대로 둔다. 다음 조회 시각은 가져갈 때 이미 옮겼다
     });
-  }
-
-  /** 전달로 적을 시각. 지금은 서버가 업체의 전달 결과를 확인한 시각을 쓴다. 팀 결정 전 후보라(#120, d4 PR 머지 전 확인) 바꾸게 되면 여기만 고친다. */
-  private static Instant deliveredAt(Instant confirmedAt) {
-    return confirmedAt;
   }
 }

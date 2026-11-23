@@ -14,6 +14,17 @@ class DeliveryPollScheduleTest {
   private static final Instant SENT = Instant.parse("2026-11-23T01:00:00Z");
   private static final Duration THREE_DAYS = Duration.ofDays(3);
   private static final Instant DEADLINE = SENT.plus(THREE_DAYS);
+  private static final DeliveryPollSchedule DEFAULT =
+      new DeliveryPollSchedule(
+          List.of(
+              DeliveryPollSchedule.FIRST_POLL,
+              DeliveryPollSchedule.SECOND_POLL,
+              DeliveryPollSchedule.INTERVAL));
+
+  @Test
+  void 기본_첫_조회는_보낸_뒤_1분이다() {
+    assertThat(DEFAULT.first(SENT, THREE_DAYS)).isEqualTo(SENT.plusSeconds(60));
+  }
 
   @Test
   void 첫_조회_뒤에는_보낸_뒤_5분에_묻는다() {
@@ -46,9 +57,8 @@ class DeliveryPollScheduleTest {
 
   @Test
   void 기한이_되거나_지나면_더_예약하지_않는다() {
-    assertThat(DeliveryPollSchedule.next(SENT, DEADLINE, THREE_DAYS)).isEmpty();
-    assertThat(DeliveryPollSchedule.next(SENT, DEADLINE.plus(Duration.ofDays(1)), THREE_DAYS))
-        .isEmpty();
+    assertThat(DEFAULT.next(SENT, DEADLINE, THREE_DAYS)).isEmpty();
+    assertThat(DEFAULT.next(SENT, DEADLINE.plus(Duration.ofDays(1)), THREE_DAYS)).isEmpty();
   }
 
   @Test
@@ -65,19 +75,44 @@ class DeliveryPollScheduleTest {
   }
 
   @Test
-  void 설정의_조회_일정이_코드와_다르면_거절한다() {
-    DeliveryPollSchedule.requireSameAs(
-        List.of(Duration.ofMinutes(1), Duration.ofMinutes(5), Duration.ofMinutes(15)));
+  void 기본값이_아닌_설정으로_첫_조회와_후속_조회가_함께_바뀐다() {
+    DeliveryPollSchedule configured =
+        new DeliveryPollSchedule(
+            List.of(Duration.ofMinutes(2), Duration.ofMinutes(7), Duration.ofMinutes(10)));
 
+    assertThat(configured.first(SENT, THREE_DAYS)).isEqualTo(SENT.plus(Duration.ofMinutes(2)));
+    assertThat(configured.next(SENT, SENT.plus(Duration.ofMinutes(2)), THREE_DAYS))
+        .contains(SENT.plus(Duration.ofMinutes(7)));
+    assertThat(configured.next(SENT, SENT.plus(Duration.ofMinutes(7)), THREE_DAYS))
+        .contains(SENT.plus(Duration.ofMinutes(17)));
+    assertThat(configured.next(SENT, DEADLINE.minusSeconds(1), THREE_DAYS)).contains(DEADLINE);
+    assertThat(configured.next(SENT, DEADLINE, THREE_DAYS)).isEmpty();
+  }
+
+  @Test
+  void 첫_조회도_결과_확인_기한을_넘지_않는다() {
+    assertThat(DEFAULT.first(SENT, Duration.ofSeconds(30))).isEqualTo(SENT.plusSeconds(30));
+  }
+
+  @Test
+  void 조회_설정은_세_개의_마이크로초_단위_양수여야_하고_두번째가_더_늦어야_한다() {
+    assertThatThrownBy(() -> new DeliveryPollSchedule(List.of(Duration.ofMinutes(1))))
+        .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() ->
-            DeliveryPollSchedule.requireSameAs(
-                List.of(Duration.ofMinutes(1), Duration.ofMinutes(5), Duration.ofMinutes(10))))
-        .isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(() -> DeliveryPollSchedule.requireSameAs(List.of(Duration.ofMinutes(1))))
-        .isInstanceOf(IllegalStateException.class);
+            new DeliveryPollSchedule(
+                List.of(Duration.ZERO, Duration.ofMinutes(5), Duration.ofMinutes(15))))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() ->
+            new DeliveryPollSchedule(
+                List.of(Duration.ofMinutes(5), Duration.ofMinutes(5), Duration.ofMinutes(15))))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() ->
+            new DeliveryPollSchedule(
+                List.of(Duration.ofMinutes(1), Duration.ofMinutes(5), Duration.ofNanos(300))))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 
   private static Instant next(Instant now) {
-    return DeliveryPollSchedule.next(SENT, now, THREE_DAYS).orElseThrow();
+    return DEFAULT.next(SENT, now, THREE_DAYS).orElseThrow();
   }
 }

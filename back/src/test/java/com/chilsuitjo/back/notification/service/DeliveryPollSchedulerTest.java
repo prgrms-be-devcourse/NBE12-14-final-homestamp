@@ -7,11 +7,20 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.chilsuitjo.back.notification.repository.NoticeRepository;
+import com.chilsuitjo.back.notification.repository.SmsGateway;
+import com.chilsuitjo.back.notification.rule.DeliveryPollSchedule;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.Properties;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.config.YamlPropertiesFactoryBean;
+import org.springframework.boot.convert.ApplicationConversionService;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.transaction.PlatformTransactionManager;
 
 /**
  * 전달 결과 작업자의 예약 실행 부품(#120 3-B2). 실제 시각을 기다리지 않도록 {@code poll()}을 직접 부르고, 켜고 끄기는 DB 없는 작은 컨텍스트로
@@ -92,6 +101,44 @@ class DeliveryPollSchedulerTest {
         .isEqualTo("false");
     assertThat(yaml("config/application.yml").getProperty("app.delivery.poller.enabled"))
         .isEqualTo("false");
+  }
+
+  @Test
+  void 작업자를_꺼도_유효한_다른_조회_일정으로_서비스가_시작한다() {
+    ApplicationContextRunner configurationRunner =
+        new ApplicationContextRunner()
+            .withInitializer(context ->
+                context
+                    .getBeanFactory()
+                    .setConversionService(ApplicationConversionService.getSharedInstance()))
+            .withBean(DeliveryPollClaimer.class, () -> mock(DeliveryPollClaimer.class))
+            .withBean(NoticeRepository.class, () -> mock(NoticeRepository.class))
+            .withBean(SmsGateway.class, () -> mock(SmsGateway.class))
+            .withBean(Clock.class, () -> Clock.fixed(Instant.EPOCH, ZoneOffset.UTC))
+            .withBean(
+                PlatformTransactionManager.class, () -> mock(PlatformTransactionManager.class))
+            .withUserConfiguration(
+                DeliveryPollScheduleConfig.class,
+                DeliveryResultPoller.class,
+                DeliveryPollScheduler.class);
+
+    configurationRunner
+        .withPropertyValues("app.delivery.poll=2m,7m,10m", "app.delivery.poller.enabled=false")
+        .run(context -> {
+          assertThat(context).hasSingleBean(DeliveryResultPoller.class);
+          assertThat(context).doesNotHaveBean(DeliveryPollScheduler.class);
+          DeliveryPollSchedule schedule = context.getBean(DeliveryPollSchedule.class);
+          assertThat(schedule.first(Instant.EPOCH, Duration.ofDays(3)))
+              .isEqualTo(Instant.EPOCH.plus(Duration.ofMinutes(2)));
+          assertThat(
+                  schedule.next(
+                      Instant.EPOCH, Instant.EPOCH.plus(Duration.ofMinutes(2)), Duration.ofDays(3)))
+              .contains(Instant.EPOCH.plus(Duration.ofMinutes(7)));
+        });
+
+    configurationRunner
+        .withPropertyValues("app.delivery.poll=2m,0m,10m", "app.delivery.poller.enabled=false")
+        .run(context -> assertThat(context).hasFailed());
   }
 
   private static Properties yaml(String path) {

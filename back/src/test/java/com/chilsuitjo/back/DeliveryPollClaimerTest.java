@@ -11,6 +11,7 @@ import static org.mockito.Mockito.mock;
 import com.chilsuitjo.back.notification.dto.ClaimedDeliveryPoll;
 import com.chilsuitjo.back.notification.entity.Notice;
 import com.chilsuitjo.back.notification.repository.NoticeRepository;
+import com.chilsuitjo.back.notification.rule.DeliveryPollSchedule;
 import com.chilsuitjo.back.notification.service.DeliveryPollClaimer;
 import java.sql.Timestamp;
 import java.time.Clock;
@@ -51,6 +52,9 @@ class DeliveryPollClaimerTest {
   private static final String REGION = "9999999997";
   private static final Instant SENT = Instant.parse("2020-01-01T00:00:00Z");
   private static final Duration THREE_DAYS = Duration.ofDays(3);
+  private static final DeliveryPollSchedule SCHEDULE =
+      new DeliveryPollSchedule(
+          List.of(Duration.ofMinutes(1), Duration.ofMinutes(5), Duration.ofMinutes(15)));
 
   @Autowired private NoticeRepository notices;
   @Autowired private PlatformTransactionManager transactionManager;
@@ -191,7 +195,7 @@ class DeliveryPollClaimerTest {
         .lockDuePolls(any(), anyInt());
     DeliveryPollClaimer broken =
         new DeliveryPollClaimer(
-            failing, Clock.fixed(now, ZoneOffset.UTC), transactionManager, THREE_DAYS);
+            failing, Clock.fixed(now, ZoneOffset.UTC), transactionManager, THREE_DAYS, SCHEDULE);
 
     assertThatThrownBy(() -> broken.claim(50)).isInstanceOf(NullPointerException.class);
 
@@ -270,6 +274,35 @@ class DeliveryPollClaimerTest {
   }
 
   @Test
+  void 다른_조회_설정의_두번째와_이후_간격을_DB에_저장한다() {
+    DeliveryPollSchedule configured =
+        new DeliveryPollSchedule(
+            List.of(Duration.ofMinutes(2), Duration.ofMinutes(7), Duration.ofMinutes(10)));
+    Instant first = SENT.plus(Duration.ofMinutes(2));
+    UUID id = notice("SENT", first);
+
+    DeliveryPollClaimer firstClaim =
+        new DeliveryPollClaimer(
+            notices,
+            Clock.fixed(first, ZoneOffset.UTC),
+            transactionManager,
+            THREE_DAYS,
+            configured);
+    assertThat(ids(firstClaim.claim(50))).contains(id);
+    assertThat(nextPollAt(id)).isEqualTo(SENT.plus(Duration.ofMinutes(7)));
+
+    DeliveryPollClaimer secondClaim =
+        new DeliveryPollClaimer(
+            notices,
+            Clock.fixed(SENT.plus(Duration.ofMinutes(7)), ZoneOffset.UTC),
+            transactionManager,
+            THREE_DAYS,
+            configured);
+    assertThat(ids(secondClaim.claim(50))).contains(id);
+    assertThat(nextPollAt(id)).isEqualTo(SENT.plus(Duration.ofMinutes(17)));
+  }
+
+  @Test
   void 나노초_시계로_가져가면_마이크로초로_맞춘_값을_DB와_똑같이_돌려준다() {
     Instant due = SENT.plus(Duration.ofMinutes(10));
     UUID id = notice("SENT", due);
@@ -301,7 +334,7 @@ class DeliveryPollClaimerTest {
 
   private DeliveryPollClaimer claimerAt(Instant now) {
     return new DeliveryPollClaimer(
-        notices, Clock.fixed(now, ZoneOffset.UTC), transactionManager, THREE_DAYS);
+        notices, Clock.fixed(now, ZoneOffset.UTC), transactionManager, THREE_DAYS, SCHEDULE);
   }
 
   private List<UUID> claimAfter(CountDownLatch start, Instant now, int limit) {

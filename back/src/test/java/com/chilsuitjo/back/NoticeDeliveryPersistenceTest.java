@@ -72,7 +72,7 @@ class NoticeDeliveryPersistenceTest extends SchemaTestSupport {
         new Notice(
             room, null, null, party, NoticeKind.REQUEST, NoticeChannel.SMS, CREATED, CREATED);
     notices.saveAndFlush(notice);
-    notice.markSent("fake-1", SENT_AT);
+    notice.markSent("fake-1", SENT_AT, SENT_AT.plusSeconds(60));
     entityManager.flush();
     entityManager.clear();
     return notice.getId();

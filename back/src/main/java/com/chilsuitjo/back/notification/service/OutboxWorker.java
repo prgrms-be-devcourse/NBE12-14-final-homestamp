@@ -7,6 +7,7 @@ import com.chilsuitjo.back.notification.entity.Outbox;
 import com.chilsuitjo.back.notification.repository.NoticeRepository;
 import com.chilsuitjo.back.notification.repository.OutboxRepository;
 import com.chilsuitjo.back.notification.repository.SmsGateway;
+import com.chilsuitjo.back.notification.rule.DeliveryPollSchedule;
 import com.chilsuitjo.back.notification.rule.NoticeText;
 import java.time.Clock;
 import java.time.Duration;
@@ -51,6 +52,7 @@ public class OutboxWorker {
   private final int batchSize;
   private final List<Duration> retryDelays;
   private final Duration giveUpAfter;
+  private final DeliveryPollSchedule deliveryPollSchedule;
 
   public OutboxWorker(
       OutboxRepository outbox,
@@ -61,7 +63,8 @@ public class OutboxWorker {
       PlatformTransactionManager transactionManager,
       @Value("${app.outbox.worker.batch-size:50}") int batchSize,
       @Value("${app.notice.send.retry:1m,5m,15m}") List<Duration> retryDelays,
-      @Value("${app.delivery.unknown-after:3d}") Duration giveUpAfter) {
+      @Value("${app.delivery.unknown-after:3d}") Duration giveUpAfter,
+      DeliveryPollSchedule deliveryPollSchedule) {
     if (retryDelays.isEmpty()) {
       throw new IllegalArgumentException("app.notice.send.retry가 비어 있어요");
     }
@@ -74,6 +77,7 @@ public class OutboxWorker {
     this.batchSize = batchSize;
     this.retryDelays = List.copyOf(retryDelays);
     this.giveUpAfter = giveUpAfter;
+    this.deliveryPollSchedule = deliveryPollSchedule;
   }
 
   /** 한 번 돌고 처리한 줄 수를 돌려준다. 한 줄에서 예외가 나도 나머지 줄은 처리한다. */
@@ -181,7 +185,8 @@ public class OutboxWorker {
         case SENT, UNKNOWN -> {
           row.markDone();
           if (notice != null) {
-            notice.markSent(result.providerMessageId(), now);
+            notice.markSent(
+                result.providerMessageId(), now, deliveryPollSchedule.first(now, giveUpAfter));
           }
         }
         case REJECTED -> {
