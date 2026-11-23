@@ -79,11 +79,11 @@ public class Photo {
   private UUID roomPartId;
 
   /** 서버가 제출 행동과 대상에서 정한다. 화면이 보내지 않는다(05 2-8). */
-  @Column(updatable = false, length = 10)
+  @Column(updatable = false, length = 10, nullable = false)
   @Enumerated(EnumType.STRING)
   private PhotoStage stage;
 
-  @Column(name = "uploaded_by_side", length = 10, updatable = false)
+  @Column(name = "uploaded_by_side", length = 10, updatable = false, nullable = false)
   @Enumerated(EnumType.STRING)
   private PartySide uploadedBySide;
 
