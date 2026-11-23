@@ -7,10 +7,14 @@ import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.photo.rule.PhotoStage;
 import com.chilsuitjo.back.photo.rule.PhotoTargetType;
 import java.time.Instant;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -23,6 +27,20 @@ class PhotoTest {
   private static final String THUMB_KEY = "photos/" + ROOM_ID + "/thumb.jpg";
   private static final String ORIGINAL_SHA = "a".repeat(64);
   private static final String THUMB_SHA = "b".repeat(64);
+
+  /**
+   * 대상 종류마다 채워야 하는 칸. {@link PhotoTargetType}에 값이 늘었는데 여기에 없으면 아래 테스트가 실패한다(V1 {@code num_nonnulls
+   * = 1}).
+   */
+  private static final Map<PhotoTargetType, String> TARGET_COLUMN =
+      Map.of(
+          PhotoTargetType.REPAIR_CASE, "repairCaseId",
+          PhotoTargetType.INSPECTION_ITEM, "inspectionItemId",
+          PhotoTargetType.PAYMENT, "paymentId",
+          PhotoTargetType.CAUSE_NOTE, "causeNoteId",
+          PhotoTargetType.SETTLEMENT_ITEM, "settlementItemId",
+          PhotoTargetType.PROGRESS_NOTE, "progressNoteId",
+          PhotoTargetType.CORRECTION_REQUEST, "correctionRequestId");
 
   @ParameterizedTest
   @ValueSource(
@@ -158,15 +176,60 @@ class PhotoTest {
     assertThat(photo.getRedactedFromPhotoId()).isNull();
   }
 
+  @ParameterizedTest
+  @EnumSource(PhotoTargetType.class)
+  void 일반_사진은_대상_종류에_맞는_대상_칸_하나만_채운다(PhotoTargetType targetType) {
+    assertThat(TARGET_COLUMN).containsKey(targetType);
+
+    Photo photo = targetPhoto(targetType, TARGET_ID);
+
+    assertThat(filledTargetColumns(photo))
+        .containsExactly(Map.entry(TARGET_COLUMN.get(targetType), TARGET_ID));
+    assertThat(photo.getRoomPartId()).isNull();
+  }
+
+  @Test
+  void 일반_사진은_대상_종류와_대상_ID가_모두_필요하다() {
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> targetPhoto(null, TARGET_ID))
+        .withMessageContaining("targetType");
+    assertThatIllegalArgumentException()
+        .isThrownBy(() -> targetPhoto(PhotoTargetType.REPAIR_CASE, null))
+        .withMessageContaining("targetId");
+  }
+
   @Test
   void 부위_사진은_점검_ID와_부위_ID가_모두_필요하다() {
     assertThatIllegalArgumentException().isThrownBy(() -> inspectionPhoto(null, PART_ID));
     assertThatIllegalArgumentException().isThrownBy(() -> inspectionPhoto(TARGET_ID, null));
     assertThatIllegalArgumentException().isThrownBy(() -> inspectionPhoto(null, null));
+  }
 
-    Photo photo = inspectionPhoto(TARGET_ID, PART_ID);
-    assertThat(photo.getInspectionId()).isEqualTo(TARGET_ID);
+  @Test
+  void 부위_사진은_점검_칸과_부위_칸만_채우고_가린_사본의_원본을_그대로_남긴다() {
+    UUID redactedFrom = UUID.randomUUID();
+
+    Photo photo = inspectionPhoto(TARGET_ID, PART_ID, redactedFrom);
+
+    assertThat(filledTargetColumns(photo)).containsExactly(Map.entry("inspectionId", TARGET_ID));
     assertThat(photo.getRoomPartId()).isEqualTo(PART_ID);
+    assertThat(photo.getRedactedFromPhotoId()).isEqualTo(redactedFrom);
+  }
+
+  /** 대상 칸 여덟 개 중 채워진 것만. */
+  private static Map<String, UUID> filledTargetColumns(Photo photo) {
+    Map<String, UUID> columns = new HashMap<>();
+    columns.put("repairCaseId", photo.getRepairCaseId());
+    columns.put("inspectionItemId", photo.getInspectionItemId());
+    columns.put("inspectionId", photo.getInspectionId());
+    columns.put("paymentId", photo.getPaymentId());
+    columns.put("causeNoteId", photo.getCauseNoteId());
+    columns.put("settlementItemId", photo.getSettlementItemId());
+    columns.put("progressNoteId", photo.getProgressNoteId());
+    columns.put("correctionRequestId", photo.getCorrectionRequestId());
+    return columns.entrySet().stream()
+        .filter(column -> column.getValue() != null)
+        .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
   }
 
   private Photo repairPhoto(String missingField, long sizeBytes) {
@@ -218,19 +281,41 @@ class PhotoTest {
         NOW);
   }
 
+  private Photo targetPhoto(PhotoTargetType targetType, UUID targetId) {
+    return Photo.forTarget(
+        ROOM_ID,
+        targetType,
+        targetId,
+        null,
+        PhotoStage.BEFORE,
+        PartySide.TENANT,
+        null,
+        ORIGINAL_KEY,
+        THUMB_KEY,
+        ORIGINAL_SHA,
+        THUMB_SHA,
+        1,
+        0,
+        NOW);
+  }
+
   private Photo inspectionPhoto(UUID inspectionId, UUID roomPartId) {
+    return inspectionPhoto(inspectionId, roomPartId, null);
+  }
+
+  private Photo inspectionPhoto(UUID inspectionId, UUID roomPartId, UUID redactedFromPhotoId) {
     return Photo.forInspection(
         ROOM_ID,
         inspectionId,
         roomPartId,
-        null,
+        redactedFromPhotoId,
         PhotoStage.MOVE_IN,
         PartySide.TENANT,
         null,
         ORIGINAL_KEY,
         THUMB_KEY,
-        "a".repeat(64),
-        "b".repeat(64),
+        ORIGINAL_SHA,
+        THUMB_SHA,
         1,
         0,
         NOW);
