@@ -266,7 +266,7 @@ assertThat(fx.actions().findByRoom(roomId))
 
 ### 5-3. DB까지 보는 테스트
 
-엔티티 매핑·제약을 보려면 `@SpringBootTest` + Testcontainers예요(Docker 필요). 이때 잠금은 진짜(`JpaRoomGateReader`, #143)라 `FakeRoomGateReader`에 값을 넣어도 쓰이지 않아요. 호실 상태는 `room_record`(`status`·`joined_into_id`)와 `party`(당사자·`status`·`sharing_stopped_at`) 행으로 넣어요(예: `RepairRegisterApiTest`의 `seat`). 행동 기록은 진짜(`JpaActionWriter`)라 행동이 가리키는 회원·호실·대상 행을 먼저 넣어 두세요(7장). 예시는 `JpaActionWriterTest`예요.
+엔티티 매핑·제약을 보려면 `@SpringBootTest` + Testcontainers예요(Docker 필요). 이때 잠금은 진짜(`JpaRoomGateReader`, #143)예요. `FakeRoomGateReader`는 테스트 코드에만 있고 빈이 아니라 주입할 수 없어요. 호실 상태는 `room_record`(`status`·`joined_into_id`)와 `party`(당사자·`status`·`sharing_stopped_at`) 행으로 넣어요(예: `RepairRegisterApiTest`의 `seat`). 행동 기록은 진짜(`JpaActionWriter`)라 행동이 가리키는 회원·호실·대상 행을 먼저 넣어 두세요(7장). 예시는 `JpaActionWriterTest`예요.
 
 ## 6. 자주 하는 실수
 

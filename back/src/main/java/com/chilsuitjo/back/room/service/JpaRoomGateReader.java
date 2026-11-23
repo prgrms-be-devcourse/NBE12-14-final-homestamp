@@ -12,7 +12,6 @@ import com.chilsuitjo.back.room.repository.RoomRecordRepository;
 import com.chilsuitjo.back.room.rule.RoomStatus;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
-import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,11 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * pipeline 1단계의 호실 잠금과 읽기(09 3-1 {@code RoomGateReader}, ROOM-2). 호실 기록 행을 {@code FOR UPDATE}로 잠근 뒤
  * 읽은 값으로 {@link RoomGate}를 만든다. pipeline의 트랜잭션 안에서만 부른다.
- *
- * <p>{@code action}의 가짜({@code FakeRoomGateReader})가 아직 빈으로 남아 있어 {@link Primary}로 이 구현이 주입되게 한다.
- * 가짜에 값을 넣던 테스트가 실제 행을 쓰도록 바뀌면 가짜를 지운다.
  */
-@Primary
 @Component
 @RequiredArgsConstructor
 public class JpaRoomGateReader implements RoomGateReader {
