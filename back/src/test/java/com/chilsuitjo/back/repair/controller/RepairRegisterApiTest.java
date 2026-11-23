@@ -129,8 +129,7 @@ class RepairRegisterApiTest {
             List.of(
                 new DigestField("room_part_id", part.toString()),
                 new DigestField("title", "천장 누수"),
-                new DigestField("description", "비 오면 물이 떨어져요")),
-            List.of());
+                new DigestField("description", "비 오면 물이 떨어져요")));
     assertThat((byte[]) action.get("content_digest")).isEqualTo(ContentDigest.compute(expected));
     // 상대가 연결돼 있어 바로 보인다. 시각은 행동 시각과 같다(decisions 2026-11-18, #94 at()).
     assertThat(head.get("first_shown_at")).isEqualTo(action.get("created_at"));

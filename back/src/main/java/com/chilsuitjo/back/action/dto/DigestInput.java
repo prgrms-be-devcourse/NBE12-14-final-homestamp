@@ -13,11 +13,7 @@ import java.util.UUID;
  * @param versionId 판 ID
  * @param versionNo 판 번호
  * @param fields 칸 이름 순서대로. 순서도 형식의 일부
- * @param photoSha256s 그 판에 포함된 사진의 original_sha256(32바이트), sort_order 순
+ *     <p>사진 지문은 넣지 않는다. 사진은 판을 새로 만들지 않고 붙으므로 행동 payload에 남긴다({@code SavedState#withPhotos}, 05
+ *     2-3, #141).
  */
-public record DigestInput(
-    String kind,
-    UUID versionId,
-    int versionNo,
-    List<DigestField> fields,
-    List<byte[]> photoSha256s) {}
+public record DigestInput(String kind, UUID versionId, int versionNo, List<DigestField> fields) {}
