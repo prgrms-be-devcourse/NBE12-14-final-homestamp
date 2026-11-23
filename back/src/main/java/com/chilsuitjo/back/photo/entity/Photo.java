@@ -12,6 +12,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.regex.Pattern;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -33,6 +34,8 @@ import org.hibernate.annotations.UuidGenerator;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @Table(name = "photo", schema = "record")
 public class Photo {
+  private static final Pattern SHA256_HEX = Pattern.compile("[0-9a-f]{64}");
+
   @Id
   @GeneratedValue
   @UuidGenerator(style = UuidGenerator.Style.VERSION_7)
@@ -144,12 +147,8 @@ public class Photo {
     if (thumbKey == null) {
       throw new IllegalArgumentException("thumbKey는 필수입니다");
     }
-    if (originalSha256 == null) {
-      throw new IllegalArgumentException("originalSha256는 필수입니다");
-    }
-    if (thumbSha256 == null) {
-      throw new IllegalArgumentException("thumbSha256는 필수입니다");
-    }
+    requireSha256Hex(originalSha256, "originalSha256");
+    requireSha256Hex(thumbSha256, "thumbSha256");
     if (createdAt == null) {
       throw new IllegalArgumentException("createdAt은 필수입니다");
     }
@@ -169,6 +168,19 @@ public class Photo {
     this.sizeBytes = sizeBytes;
     this.sortOrder = sortOrder;
     this.createdAt = createdAt;
+  }
+
+  /**
+   * 지문값은 64자 소문자 hex만 받는다. 이 값이 행동 기록 payload에 들어가 체인으로 검증되므로, 대소문자 등 형식이 섞이면 같은 파일이라도 값이 어긋난다(PR
+   * #107 리뷰).
+   */
+  private static void requireSha256Hex(String value, String name) {
+    if (value == null) {
+      throw new IllegalArgumentException(name + "는 필수입니다");
+    }
+    if (!SHA256_HEX.matcher(value).matches()) {
+      throw new IllegalArgumentException(name + "는 64자 소문자 hex여야 합니다");
+    }
   }
 
   /** 부위 사진이 아닌 사진. {@code targetType}이 가리키는 대상 칸 하나만 채운다. */
