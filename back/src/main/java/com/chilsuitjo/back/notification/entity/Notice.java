@@ -168,7 +168,7 @@ public class Notice {
     scheduleNextPoll(next);
   }
 
-  /** 조회 직전에 호출한다. 회수된 세대라면 업체를 조회하지 않는다. */
+  /** 조회 batch를 DB에서 논리적으로 활성화할 때 호출한다. 전체 batch가 공유하는 논리 시작 시각을 받으며, 회수된 세대라면 조회하지 않는다. */
   public boolean startDeliveryPoll(UUID token, Instant startedAt, Instant protectedUntil) {
     if (status != NoticeStatus.SENT
         || !Objects.equals(deliveryPollToken, token)
@@ -214,7 +214,8 @@ public class Notice {
    * 업체가 전달됐다고 답했다(결과 4000, 04 4-2). 보낸(SENT) 통지만 바뀌고, 그 밖의 상태(아직 보내기 전, 이미 전달·열람·실패)는 그대로 둔다(상태는
    * 앞으로만). 더 묻지 않으므로 다음 조회 시각을 지운다.
    *
-   * @param at 전달로 기록할 시각. 서버가 결과를 확인한 시각인지 업체가 알려 준 시각인지는 정해지지 않아(#120 결정 후보) 부르는 쪽이 넘긴다
+   * @param at 서버가 업체의 DELIVERED 응답을 관측한 시각. 업체가 제공한 실제 배송 시각이나 DB 저장 완료 시각과는 다르다(#120 정책 제안, 팀 검토
+   *     대기)
    */
   public void markDelivered(Instant at) {
     Objects.requireNonNull(at, "at");

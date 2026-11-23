@@ -236,6 +236,77 @@ class DeliveryResultPollerTest {
   }
 
   @Test
+  void 기한_전_claim만으로_보호하지_않고_batch_논리_시작이_기한_후면_실패한다() {
+    UUID id = notice(DEADLINE.minusSeconds(1));
+    Instant batchStartedAt = DEADLINE.plusSeconds(1);
+    Clock workerClock =
+        sequenceClock(batchStartedAt, batchStartedAt.plusSeconds(1), batchStartedAt.plusSeconds(2));
+    SmsGateway noResult =
+        gateway(queries -> {
+          assertThat(time(id, "delivery_poll_started_at")).isEqualTo(batchStartedAt);
+          assertThat(
+                  notices
+                      .findById(id)
+                      .orElseThrow()
+                      .hasProtectedDeliveryPoll(batchStartedAt, DEADLINE))
+              .isFalse();
+          return Map.of(id, DeliveryOutcome.NONE);
+        });
+
+    poller(DEADLINE.minusSeconds(1), workerClock, noResult).runOnce(50);
+
+    assertThat(column(id, "status")).isEqualTo("FAILED");
+    assertThat(time(id, "delivered_at")).isNull();
+  }
+
+  @Test
+  void 정확히_3일_기한에_논리_시작한_조회는_기한_전_보호가_아니다() {
+    UUID id = notice(DEADLINE.minusSeconds(1));
+    Clock workerClock = sequenceClock(DEADLINE, DEADLINE, DEADLINE);
+    SmsGateway noResult =
+        gateway(queries -> {
+          var inFlight = notices.findById(id).orElseThrow();
+          assertThat(time(id, "delivery_poll_started_at")).isEqualTo(DEADLINE);
+          assertThat(inFlight.hasProtectedDeliveryPoll(DEADLINE, DEADLINE)).isFalse();
+          return Map.of(id, DeliveryOutcome.NONE);
+        });
+
+    poller(DEADLINE.minusSeconds(1), workerClock, noResult).runOnce(50);
+
+    assertThat(column(id, "status")).isEqualTo("FAILED");
+  }
+
+  @Test
+  void batch_앞뒤_통지는_하나의_논리_시작과_보호_종료를_공유한다() {
+    UUID first = notice(FIRST_POLL);
+    UUID last = notice(FIRST_POLL);
+    Instant batchStartedAt = DEADLINE.minusSeconds(1);
+    Instant observedAt = DEADLINE.plusSeconds(1);
+    Instant savedAt = observedAt.plusSeconds(1);
+    AtomicInteger clockReads = new AtomicInteger();
+    Clock workerClock = sequenceClock(clockReads, batchStartedAt, observedAt, savedAt);
+    SmsGateway delivered =
+        gateway(queries -> {
+          assertThat(clockReads).hasValue(1);
+          assertThat(queries).hasSize(2);
+          assertThat(time(first, "delivery_poll_started_at")).isEqualTo(batchStartedAt);
+          assertThat(time(last, "delivery_poll_started_at")).isEqualTo(batchStartedAt);
+          assertThat(time(first, "delivery_poll_protected_until"))
+              .isEqualTo(batchStartedAt.plus(Duration.ofMinutes(2)));
+          assertThat(time(last, "delivery_poll_protected_until"))
+              .isEqualTo(batchStartedAt.plus(Duration.ofMinutes(2)));
+          return Map.of(first, DeliveryOutcome.DELIVERED, last, DeliveryOutcome.DELIVERED);
+        });
+
+    poller(FIRST_POLL, workerClock, delivered).runOnce(50);
+
+    assertThat(column(first, "status")).isEqualTo("DELIVERED");
+    assertThat(column(last, "status")).isEqualTo("DELIVERED");
+    assertThat(time(first, "delivered_at")).isEqualTo(observedAt);
+    assertThat(time(last, "delivered_at")).isEqualTo(observedAt);
+  }
+
+  @Test
   void 기한이_지난_통지라도_마지막_조회에서_전달됨이면_전달됨이다() {
     UUID id = notice(DEADLINE);
     fake.respondDelivery(id, DeliveryOutcome.DELIVERED);
@@ -597,14 +668,42 @@ class DeliveryResultPollerTest {
 
   /** 가져갈 때와 적을 때의 시각을 따로 정한다(업체에 묻는 사이 시간이 흐름). */
   private DeliveryResultPoller poller(Instant claimAt, Instant saveAt, SmsGateway gateway) {
+    return poller(claimAt, advancingClock(claimAt, saveAt), gateway);
+  }
+
+  private DeliveryResultPoller poller(Instant claimAt, Clock workerClock, SmsGateway gateway) {
     return new DeliveryResultPoller(
         claimer(claimAt),
         notices,
         gateway,
-        advancingClock(claimAt, saveAt),
+        workerClock,
         transactionManager,
         THREE_DAYS,
         Duration.ofMinutes(2));
+  }
+
+  private static Clock sequenceClock(Instant... instants) {
+    return sequenceClock(new AtomicInteger(), instants);
+  }
+
+  private static Clock sequenceClock(AtomicInteger reads, Instant... instants) {
+    return new Clock() {
+      @Override
+      public ZoneOffset getZone() {
+        return ZoneOffset.UTC;
+      }
+
+      @Override
+      public Clock withZone(java.time.ZoneId zone) {
+        return this;
+      }
+
+      @Override
+      public Instant instant() {
+        int index = reads.getAndIncrement();
+        return instants[Math.min(index, instants.length - 1)];
+      }
+    };
   }
 
   private static Clock advancingClock(Instant startAt, Instant resultAt) {

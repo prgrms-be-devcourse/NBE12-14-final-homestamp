@@ -12,6 +12,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -87,12 +88,12 @@ public class DeliveryResultPoller {
     if (claimed.isEmpty()) {
       return 0;
     }
-    List<ClaimedDeliveryPoll> started = claimed.stream().filter(this::begin).toList();
-    if (started.isEmpty()) {
+    StartedBatch started = beginBatch(claimed);
+    if (started.polls().isEmpty()) {
       return claimed.size();
     }
-    QueriedResults queried = query(started);
-    for (ClaimedDeliveryPoll poll : started) {
+    QueriedResults queried = query(started.queries());
+    for (ClaimedDeliveryPoll poll : started.polls()) {
       try {
         // 업체가 이 묶음 ID를 빠뜨렸으면 결과 없음과 같다. 조회 자체가 실패했으면 결과 맵이 null이라 이번에는 아무 결과도 모른다
         DeliveryOutcome outcome =
@@ -105,26 +106,46 @@ public class DeliveryResultPoller {
     return claimed.size();
   }
 
-  /** 실제 업체 조회 직전, 잠긴 행에 시작과 유한한 보호 종료를 기록한다. 회수된 세대는 조회하지 않는다. */
-  private boolean begin(ClaimedDeliveryPoll poll) {
-    Boolean started =
+  /**
+   * 한 묶음의 논리적 조회 시작을 한 트랜잭션에서 승인한다. 모든 통지를 잠근 뒤 공통 시각을 기록하고, 커밋 직후 외부 Gateway를 부른다. DB 커밋과 네트워크 호출은
+   * 원자적이지 않으므로 이 공통 시각이 batch 조회의 논리적 시작이다. 회수된 세대는 제외한다.
+   */
+  private StartedBatch beginBatch(List<ClaimedDeliveryPoll> polls) {
+    StartedBatch started =
         transaction.execute(status -> {
-          Notice notice = notices.findForUpdate(poll.noticeId()).orElse(null);
-          if (notice == null) {
-            return false;
+          List<PollCandidate> candidates = new ArrayList<>(polls.size());
+          for (ClaimedDeliveryPoll poll : polls) {
+            notices
+                .findForUpdate(poll.noticeId())
+                .ifPresent(notice -> candidates.add(new PollCandidate(poll, notice)));
           }
-          Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
-          return notice.startDeliveryPoll(poll.token(), now, now.plus(protectFor));
+
+          Instant batchStartedAt = clock.instant().truncatedTo(ChronoUnit.MICROS);
+          Instant protectedUntil = batchStartedAt.plus(protectFor);
+          List<ClaimedDeliveryPoll> active = new ArrayList<>(candidates.size());
+          List<DeliveryQuery> queries = new ArrayList<>(candidates.size());
+          for (PollCandidate candidate : candidates) {
+            if (candidate
+                .notice()
+                .startDeliveryPoll(candidate.poll().token(), batchStartedAt, protectedUntil)) {
+              active.add(candidate.poll());
+              queries.add(candidate.poll().query());
+            }
+          }
+          return new StartedBatch(List.copyOf(active), List.copyOf(queries));
         });
-    return Boolean.TRUE.equals(started);
+    return started == null ? new StartedBatch(List.of(), List.of()) : started;
   }
+
+  private record PollCandidate(ClaimedDeliveryPoll poll, Notice notice) {}
+
+  private record StartedBatch(List<ClaimedDeliveryPoll> polls, List<DeliveryQuery> queries) {}
 
   /** 한 번의 묶음 응답을 확인한 서버 시각. 결과 조회 실패에는 전달 관측 시각이 없다. */
   private record QueriedResults(Map<UUID, DeliveryOutcome> results, Instant observedAt) {}
 
   /** 업체에 묻는다. 조회 자체가 실패하면 결과 맵은 null(결과 없음과 다름). */
-  private QueriedResults query(List<ClaimedDeliveryPoll> claimed) {
-    List<DeliveryQuery> queries = claimed.stream().map(ClaimedDeliveryPoll::query).toList();
+  private QueriedResults query(List<DeliveryQuery> queries) {
     Map<UUID, DeliveryOutcome> results;
     try {
       results = gateway.queryResults(queries);
