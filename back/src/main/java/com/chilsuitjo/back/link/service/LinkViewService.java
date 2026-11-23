@@ -5,6 +5,7 @@ import com.chilsuitjo.back.action.dto.ActionTarget;
 import com.chilsuitjo.back.action.dto.Actor;
 import com.chilsuitjo.back.action.rule.ActionType;
 import com.chilsuitjo.back.action.service.ActionPipeline;
+import com.chilsuitjo.back.action.service.ActionReader;
 import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
@@ -19,6 +20,7 @@ import com.chilsuitjo.back.link.rule.LinkKind;
 import com.chilsuitjo.back.link.rule.LinkToken;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -45,6 +47,7 @@ public class LinkViewService {
   private final LinkRepository links;
   private final LinkContentSource content;
   private final ActionPipeline pipeline;
+  private final ActionReader actions;
   private final Clock clock;
   private final Duration viewDedupe;
 
@@ -52,11 +55,13 @@ public class LinkViewService {
       LinkRepository links,
       LinkContentSource content,
       ActionPipeline pipeline,
+      ActionReader actions,
       Clock clock,
       @Value("${app.link.view-dedupe:10m}") Duration viewDedupe) {
     this.links = links;
     this.content = content;
     this.pipeline = pipeline;
+    this.actions = actions;
     this.clock = clock;
     if (viewDedupe == null
         || viewDedupe.isZero()
@@ -110,21 +115,35 @@ public class LinkViewService {
    * link-view:<링크>:<구간>}). pipeline이 호실을 잠근 뒤 링크를 잠그고 무효 여부를 다시 확인한다. 멱등 replay도 이 검증 뒤에만 수행한다.
    */
   private void recordView(Link link, LinkRoom room) {
-    long window = clock.instant().getEpochSecond() / viewDedupe.toSeconds();
+    var observedAt = clock.instant();
+    long window = observedAt.getEpochSecond() / viewDedupe.toSeconds();
     String key = "link-view:" + link.getId() + ":" + window;
-    pipeline.executeAll(
-        ActionBatch.of(link.getRoomRecordId(), Actor.link(link.getId(), room.recipientSide()), key)
-            .beforeReplayCheck(() -> requireCurrentLink(link))
-            .record(
-                ActionType.LINK_VIEW,
-                done -> ActionTarget.of(TargetKind.LINK, link.getId()),
-                Map.of()));
+    try {
+      pipeline.executeAll(
+          ActionBatch.of(
+                  link.getRoomRecordId(), Actor.link(link.getId(), room.recipientSide()), key)
+              .beforeReplayCheck(() -> requireCurrentLink(link, observedAt))
+              .record(
+                  ActionType.LINK_VIEW,
+                  done -> ActionTarget.of(TargetKind.LINK, link.getId()),
+                  Map.of()));
+    } catch (RecentLinkView ignored) {
+      // 링크 행과 호실 행을 잠근 뒤 확인한 최근 열람이다. 성공 응답만 돌리고 새 행동은 남기지 않는다.
+    }
   }
 
-  private void requireCurrentLink(Link resolved) {
+  private void requireCurrentLink(Link resolved, Instant observedAt) {
     Link current = links.findByIdForUpdate(resolved.getId()).orElseThrow(LinkViewService::invalid);
     if (current.isInvalidated() || !current.getRoomRecordId().equals(resolved.getRoomRecordId())) {
       throw invalid();
+    }
+    Instant cutoff = observedAt.minus(viewDedupe);
+    boolean recordedRecently =
+        actions.findByTarget(ActionTarget.of(TargetKind.LINK, resolved.getId())).stream()
+            .anyMatch(action ->
+                action.type() == ActionType.LINK_VIEW && !action.createdAt().isBefore(cutoff));
+    if (recordedRecently) {
+      throw new RecentLinkView();
     }
   }
 
@@ -173,5 +192,11 @@ public class LinkViewService {
 
   private static BusinessException invalid() {
     return new BusinessException(ErrorCode.LINK_INVALID);
+  }
+
+  private static final class RecentLinkView extends RuntimeException {
+    private RecentLinkView() {
+      super(null, null, false, false);
+    }
   }
 }

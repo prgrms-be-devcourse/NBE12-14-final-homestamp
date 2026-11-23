@@ -42,13 +42,13 @@ class LinkViewServiceTest {
 
   private static final Instant NOW = Instant.parse("2026-11-19T10:00:00Z");
 
-  private final ActionPipelineFixture fx =
-      new ActionPipelineFixture(Clock.fixed(NOW, ZoneOffset.UTC));
   private final LinkRepository links = mock(LinkRepository.class);
   private final FakeLinkContentSource content = new FakeLinkContentSource();
   private final MutableClock clock = new MutableClock(NOW);
+  private final ActionPipelineFixture fx = new ActionPipelineFixture(clock);
   private final LinkViewService service =
-      new LinkViewService(links, content, fx.pipeline(), clock, Duration.ofMinutes(10));
+      new LinkViewService(
+          links, content, fx.pipeline(), fx.actions(), clock, Duration.ofMinutes(10));
 
   private final UUID roomRecordId = UUID.randomUUID();
   private final UUID partyId = UUID.randomUUID();
@@ -89,6 +89,20 @@ class LinkViewServiceTest {
   }
 
   @Test
+  void 열_분_구간_경계에서도_실제_열람_간격이_짧으면_한_줄이다() {
+    String token = issue(LinkKind.INVITE, repairCaseId);
+    openRoom();
+    content.seedRecord(roomRecordId, repairCaseId, repairRecord(), false);
+    clock.advance(Duration.ofMinutes(9).plusSeconds(59));
+
+    service.view(new LinkViewRequest(token));
+    clock.advance(Duration.ofSeconds(2));
+    service.view(new LinkViewRequest(token));
+
+    assertThat(viewActions()).hasSize(1);
+  }
+
+  @Test
   void 호실만_초대한_링크는_안내만_보이고_기록은_없다() {
     String token = issue(LinkKind.INVITE, null);
     openRoom();
@@ -112,7 +126,8 @@ class LinkViewServiceTest {
     when(source.record(roomRecordId, TargetKind.INSPECTION, inspectionId))
         .thenReturn(Optional.of(inspectionRecord()));
     LinkViewService inspectionService =
-        new LinkViewService(links, source, fx.pipeline(), clock, Duration.ofMinutes(10));
+        new LinkViewService(
+            links, source, fx.pipeline(), fx.actions(), clock, Duration.ofMinutes(10));
 
     LinkViewResponse response = inspectionService.view(new LinkViewRequest(token));
 
@@ -137,8 +152,9 @@ class LinkViewServiceTest {
 
   @Test
   void 멱등_구간이_1초보다_짧으면_시작할_수_없다() {
-    assertThatThrownBy(
-            () -> new LinkViewService(links, content, fx.pipeline(), clock, Duration.ofMillis(999)))
+    assertThatThrownBy(() ->
+            new LinkViewService(
+                links, content, fx.pipeline(), fx.actions(), clock, Duration.ofMillis(999)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("app.link.view-dedupe");
   }
@@ -250,7 +266,8 @@ class LinkViewServiceTest {
     LinkContentSource failing = mock(LinkContentSource.class);
     when(failing.room(any(), any())).thenThrow(new BusinessException(ErrorCode.NOT_FOUND));
     LinkViewService withFailingContent =
-        new LinkViewService(links, failing, fx.pipeline(), clock, Duration.ofMinutes(10));
+        new LinkViewService(
+            links, failing, fx.pipeline(), fx.actions(), clock, Duration.ofMinutes(10));
     String token = issue(LinkKind.INVITE, repairCaseId);
 
     assertLinkInvalid(() -> withFailingContent.view(new LinkViewRequest(token)));
@@ -261,7 +278,7 @@ class LinkViewServiceTest {
     ActionPipeline rejecting = mock(ActionPipeline.class);
     when(rejecting.executeAll(any())).thenThrow(new BusinessException(ErrorCode.NOT_FOUND));
     LinkViewService withRejectingPipeline =
-        new LinkViewService(links, content, rejecting, clock, Duration.ofMinutes(10));
+        new LinkViewService(links, content, rejecting, fx.actions(), clock, Duration.ofMinutes(10));
     String token = issue(LinkKind.INVITE, repairCaseId);
     openRoom();
     content.seedRecord(roomRecordId, repairCaseId, repairRecord(), false);
@@ -275,7 +292,8 @@ class LinkViewServiceTest {
     LinkContentSource broken = mock(LinkContentSource.class);
     when(broken.room(any(), any())).thenThrow(new IllegalStateException("고장"));
     LinkViewService withBrokenContent =
-        new LinkViewService(links, broken, fx.pipeline(), clock, Duration.ofMinutes(10));
+        new LinkViewService(
+            links, broken, fx.pipeline(), fx.actions(), clock, Duration.ofMinutes(10));
     String token = issue(LinkKind.INVITE, repairCaseId);
 
     assertThatThrownBy(() -> withBrokenContent.view(new LinkViewRequest(token)))
