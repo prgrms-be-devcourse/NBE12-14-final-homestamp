@@ -18,6 +18,7 @@ import com.chilsuitjo.back.auth.service.PhoneVerificationService;
 import com.chilsuitjo.back.auth.service.SignupService;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
+import com.chilsuitjo.back.global.error.GlobalExceptionHandler;
 import com.chilsuitjo.back.member.dto.SignupRequest;
 import java.time.Clock;
 import java.time.Duration;
@@ -40,9 +41,13 @@ import java.util.stream.Collectors;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
@@ -65,6 +70,7 @@ import org.springframework.test.web.servlet.ResultActions;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
+@ExtendWith(OutputCaptureExtension.class)
 class SignupControllerTest {
 
   private static final Instant START = Instant.parse("2026-11-19T01:00:00Z");
@@ -314,6 +320,44 @@ class SignupControllerTest {
             jdbc.queryForObject(
                 "SELECT count(*) FROM state.member WHERE phone = ?", Integer.class, phone))
         .isOne();
+  }
+
+  // #105 비밀번호·인증 표·번호는 가입이 실패해도 로그에 남지 않는다. 기본 로그 수준에서 본다.
+  // 처리하지 못한 예외(DB 제약 오류 등)의 Handler 로그는 #125가 맡는다
+
+  @Test
+  void 가입이_실패해도_비밀번호_인증_표_번호가_로그에_남지_않는다(CapturedOutput output) throws Exception {
+    String phone = newPhone();
+    String ticket = ticket(phone, SIGNUP);
+    String taken = newEmail();
+    signUpOk(body(taken, ticket(newPhone(), SIGNUP)));
+    String weak = "logcheckonlyletters"; // 숫자가 없어 VALIDATION_FAILED
+    String secret = "logcheck7secret"; // 규칙에 맞는 비밀번호
+    int from = output.getAll().length();
+
+    Map<String, Object> weakPassword = body(newEmail(), ticket);
+    weakPassword.put("password", weak);
+    expectProblem(signUp(weakPassword), ErrorCode.VALIDATION_FAILED);
+    Map<String, Object> noTerms = body(newEmail(), ticket);
+    noTerms.put("password", secret);
+    noTerms.put("termsAgreed", false);
+    expectProblem(signUp(noTerms), ErrorCode.TERMS_REQUIRED);
+    Map<String, Object> emailTaken = body(taken, ticket);
+    emailTaken.put("password", secret);
+    expectProblem(signUp(emailTaken), ErrorCode.EMAIL_TAKEN);
+    Map<String, Object> badTicket = body(newEmail(), ticket + "x");
+    badTicket.put("password", secret);
+    expectProblem(signUp(badTicket), ErrorCode.CODE_EXPIRED);
+
+    // 로그가 이 출력으로 잡히는지 확인한다(잡히지 않으면 아래 검사는 늘 통과한다)
+    String canary = "log-capture-canary-" + UUID.randomUUID();
+    LoggerFactory.getLogger(GlobalExceptionHandler.class).warn(canary);
+    assertThat(output.getAll().substring(from)).contains(canary);
+    assertThat(output.getAll().substring(from))
+        .doesNotContain(weak)
+        .doesNotContain(secret)
+        .doesNotContain(ticket)
+        .doesNotContain(phone);
   }
 
   // 도움
