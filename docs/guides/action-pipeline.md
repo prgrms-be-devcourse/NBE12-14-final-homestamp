@@ -48,7 +48,7 @@ sequenceDiagram
 
 ## 3. 내 도메인에 만들 것
 
-이름은 09 4장을 따라요. `Xxx`에 도메인 이름을 넣어요(예: `Repair`). 아래 수리 코드는 REP-1을 만들기 전에 **모양을 보여 주는 예시**라 실제 `RepairState`와 다를 수 있어요. 그대로 도는 코드는 `ActionPipelineFixtureTest`예요.
+이름은 09 4장을 따라요. `Xxx`에 도메인 이름을 넣어요(예: `Repair`). 아래 수리 코드는 **실제 하자 등록(REP-1, #134)을 줄인 것**이에요. 전체는 `repair` 패키지의 `RepairTransitions`·`RepairStateStore`·`RepairService`·`RepairController`이고, 보안·pipeline·DB까지 끝까지 도는 테스트는 `RepairRegisterApiTest`예요.
 
 | 만들 것 | 위치 | 하는 일 | 지킬 것 |
 |---|---|---|---|
@@ -62,7 +62,10 @@ sequenceDiagram
 
 ```java
 // repair/rule/RepairState.java
-public record RepairState(RepairStatus status, AckState defectAck) {}
+public record RepairState(
+    RepairStatus status, AckState defectAck, MoneyStatus moneyStatus, PartySide registeredBy) {
+  public static final RepairState NONE = new RepairState(null, null, null, null); // 아직 없는 기록
+}
 
 // repair/rule/RepairTransitions.java
 @Component
@@ -70,17 +73,14 @@ public class RepairTransitions implements Transitions<RepairState> {
 
   @Override
   public RepairState initial() {
-    return new RepairState(null, AckState.PENDING); // 아직 없는 기록
+    return RepairState.NONE;
   }
 
   @Override
   public RepairState apply(RepairState now, ActionEntry action) {
     return switch (action.type()) {
-      case REGISTER -> new RepairState(RepairStatus.NOT_STARTED, AckState.PENDING);
-      case RESPOND_DEFECT -> {
-        AnswerPayload in = action.payloadAs(AnswerPayload.class); // payload는 record로 바꿔 읽어요(실제 응답 규칙은 8장 AnswerSupport)
-        yield new RepairState(now.status(), AckState.valueOf(in.answer().name()));
-      }
+      case REGISTER -> register(now, action); // 시작 전 · 확인 기다림 · 부담 미정, 등록한 측 = action.actorSide()
+      // 응답(RESPOND_DEFECT)은 REP-2부터 AnswerSupport로 붙여요(8장). payload는 action.payloadAs(내 record.class)로 바꿔 읽어요
       // 내 영역이 아닌 행동이나 지금 상태에서 안 되는 행동은 예외 → 저장도 기록도 남지 않아요
       default -> throw new BusinessException(ErrorCode.INVALID_STATE);
     };
@@ -96,27 +96,34 @@ public class RepairTransitions implements Transitions<RepairState> {
 ```java
 // repair/repository/RepairStateStore.java
 @Component
-class RepairStateStore implements StateStore<RepairState> {
+public class RepairStateStore {
 
-  private final RepairCaseRepository cases;
-
-  @Override
-  public RepairState load(ActionCommand command) {
-    if (command.target() == null) {
-      return new RepairTransitions().initial(); // 새로 만드는 행동이면 빈 상태
-    }
-    RepairCase row = cases.findById(command.target().id()).orElseThrow(...);
-    return new RepairState(row.getStatus(), row.getDefectAck());
+  // 하자 등록의 저장 방법. 제목·설명은 payload에 넣지 않고(05 2-3 "작은 부가 값만") 요청마다 담아 넘겨요
+  public StateStore<RepairState> registering(UUID roomPartId, String title, String description) {
+    return new Registering(roomPartId, title, description);
   }
 
-  @Override
-  public SavedState save(ActionCommand command, RepairState next) {
-    if (command.target() == null) { // 새 기록
-      RepairCase created = cases.save(RepairCase.create(command.roomRecordId(), next, ...));
-      return SavedState.created(ActionTarget.repairCase(created.getId())); // 행동 기록의 대상이 돼요
+  RepairState load(ActionCommand command) {
+    if (command.target() == null) {
+      return RepairState.NONE; // 새로 만드는 행동이면 빈 상태
     }
-    cases.findById(command.target().id()).orElseThrow().apply(next);
-    return SavedState.unchanged();
+    RepairCase row = cases.findByIdAndRoomRecordId(command.target().id(), command.roomRecordId())
+        .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND)); // 같은 키로 다시 온 요청도 여기로
+    return new RepairState(row.getStatus(), row.getDefectAck(), row.getMoneyStatus(), row.getCreatedBySide());
+  }
+
+  private final class Registering implements StateStore<RepairState> {
+    @Override
+    public SavedState save(ActionCommand command, RepairState next) {
+      rooms.findPart(command.roomRecordId(), roomPartId);   // 남의 부위면 NOT_FOUND(room 창구)
+      Instant at = requestContext.at();                      // 행동 기록과 같은 시각
+      UUID caseId = Uuids.v7(), contentId = Uuids.v7();      // 머리·판이 서로 가리켜서 미리 만들어요(05 0장)
+      RepairCase head = new RepairCase(caseId, room, contentId, next.registeredBy(), null, at);
+      if (counterpartSeesNow(...)) head.markShown(at);       // 상대가 지금 볼 수 있으면(03 3-1)
+      cases.save(head);
+      contents.save(new RepairContent(contentId, room, caseId, 1, roomPartId, title, description, ...));
+      return new SavedState(ActionTarget.repairCase(caseId), digest(contentId)); // 대상 + 판 #1 지문
+    }
   }
 }
 ```
@@ -140,16 +147,16 @@ public class RepairService {
   private final RepairTransitions rules;
 
   // @Transactional 없음: 트랜잭션은 pipeline이 열어요
-  public RegisterResult register(UUID roomRecordId, UUID memberId, String idempotencyKey, RegisterRequest req) {
+  public RepairCaseCreated register(UUID roomRecordId, UUID memberId, String idempotencyKey, RegisterRepairRequest req) {
     PipelineResult<RepairState> result = pipeline.create(
         new ActionCommand(roomRecordId, Actor.member(memberId), ActionType.REGISTER, idempotencyKey,
             null,              // 대상: 새로 만드는 행동이라 비워요
             null,              // seenVersionNo
-            content(req),      // DigestInput, 행동 기록의 내용 지문 재료(아래 "어느 판을 넣나")
+            null,              // content: 새 판을 만드는 행동이라 save가 SavedState로 돌려줘요(아래 "어느 판을 넣나")
             null,              // reason
             Map.of()),         // payload
-        store, rules);
-    return new RegisterResult(result.action().target().id(), result.action().replayed());
+        store.registering(req.roomPartId(), req.title(), req.description()), rules);
+    return new RepairCaseCreated(result.action().target().id(), result.action().replayed());
   }
 }
 ```
@@ -168,9 +175,10 @@ public class RepairService {
 @PostMapping("/api/rooms/{roomId}/repair-cases")
 public ResponseEntity<CreatedResponse> register(
     @PathVariable UUID roomId,
-    @RequestHeader("Idempotency-Key") String idempotencyKey,
-    @RequestBody RegisterRequest req) {
-  RegisterResult r = repairService.register(roomId, currentMemberId(), idempotencyKey, req);
+    @LoginMember UUID memberId,                               // 로그인한 회원(#80). 없으면 401
+    @RequestHeader("Idempotency-Key") String idempotencyKey,  // 없으면 400
+    @Valid @RequestBody RegisterRepairRequest req) {          // 부위·제목 필수 → 빠지면 VALIDATION_FAILED
+  RepairCaseCreated r = repairs.register(roomId, memberId, idempotencyKey, req);
   ResponseEntity.BodyBuilder res = ResponseEntity.status(HttpStatus.CREATED);
   if (r.replayed()) {
     res.header("Idempotent-Replayed", "true"); // 다시 온 요청도 처음과 같은 상태 코드·모양(06 4-0)
@@ -179,7 +187,7 @@ public ResponseEntity<CreatedResponse> register(
 }
 ```
 
-회원 ID를 꺼내는 부분(`currentMemberId()`)은 보안 뼈대(#80)에 맞춰요.
+만드는 API의 201 본문은 도메인마다 따로 만들지 말고 `global/response/CreatedResponse`를 써요.
 
 ## 4. 어느 메서드를 쓰나
 
