@@ -286,6 +286,8 @@ pipeline은 진짜이고, 안쪽 부품 중 잠금·읽기만 아직 가짜예�
 |---|---|---|---|
 | 행동 기록 저장 `ActionWriter` | **진짜** `JpaActionWriter`: `record.action`에 저장, `room_seq`·해시 체인. 메모리 가짜 `FakeActionWriter`는 테스트 코드에만 있고 `ActionPipelineFixture`가 써요 | — | B |
 | 호실 잠금·읽기 `RoomGateReader` | `FakeRoomGateReader`(테스트가 넣은 값) | `room_record`를 `FOR UPDATE`로 잠그고 읽음 | A (ROOM-2) |
+| 부위 조회 `RoomQueryService.findPart` | **진짜** `JpaRoomQueryService`: `room_part`를 읽음 | — | room (#140) |
+| 자리 상태 `CounterpartReader` | **진짜** `JpaCounterpartReader`: `room_record`·`party`·`member`를 읽음. 수신 거부(`optedOut`)·가린 이름(`maskedName`)은 아직 채우지 않음(거짓·null, 문자 보내기 PR에서 채움) | — | room (#140) |
 
 배포 서버에서 기능을 확인하려면(07 6장 끝 기준) 남은 가짜인 잠금·읽기(`RoomGateReader`)가 진짜여야 해요.
 
