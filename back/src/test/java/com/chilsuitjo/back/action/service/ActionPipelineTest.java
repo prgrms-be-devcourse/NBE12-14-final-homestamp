@@ -582,6 +582,56 @@ class ActionPipelineTest {
     assertThatThrownBy(requestContext::at).isInstanceOf(IllegalStateException.class);
   }
 
+  @Test
+  void 요청_시각은_load와_apply에서_처음_요청부터_읽을_수_없다() {
+    // 다시 온 요청의 load에는 창구가 없다. 처음 요청에서도 막아야 잘못 쓴 코드가 첫 실행에서 드러난다(#94 리뷰).
+    store.onLoad = requestContext::at;
+    assertThatThrownBy(() -> pipeline.create(register("load"), store, rules))
+        .isInstanceOf(IllegalStateException.class);
+    store.onLoad = () -> {};
+
+    Transitions<Sample> readingInApply =
+        new Transitions<>() {
+          @Override
+          public Sample initial() {
+            return rules.initial();
+          }
+
+          @Override
+          public Sample apply(Sample now, ActionEntry action) {
+            requestContext.at();
+            return rules.apply(now, action);
+          }
+        };
+    assertThatThrownBy(() -> pipeline.create(register("apply"), store, readingInApply))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(writer.findByRoom(room)).isEmpty();
+  }
+
+  @Test
+  void 같은_키로_다시_온_요청은_save를_부르지_않고_load는_창구_없이_돈다() {
+    List<Instant> seenAt = new ArrayList<>();
+    store.afterSave = () -> seenAt.add(requestContext.at());
+    PipelineResult<Sample> first = pipeline.create(register("again"), store, rules);
+
+    List<Boolean> openInLoad = new ArrayList<>();
+    store.onLoad =
+        () -> {
+          try {
+            requestContext.at();
+            openInLoad.add(true);
+          } catch (IllegalStateException closed) {
+            openInLoad.add(false);
+          }
+        };
+    PipelineResult<Sample> again = pipeline.create(register("again"), store, rules);
+
+    assertThat(again.action().replayed()).isTrue();
+    assertThat(again.action().actionId()).isEqualTo(first.action().actionId());
+    assertThat(seenAt).hasSize(1); // save는 처음 요청에서만
+    assertThat(openInLoad).containsExactly(false);
+  }
+
   /** 부를 때마다 1.001마이크로초씩 가는 시계. 시각을 두 번 읽거나 자르지 않으면 값이 어긋난다. */
   private static Clock advancingClock() {
     return new Clock() {
@@ -1059,9 +1109,11 @@ class ActionPipelineTest {
   static final class SampleStore implements StateStore<Sample> {
     private final Map<ActionTarget, Sample> rows = new HashMap<>();
     Runnable afterSave = () -> {};
+    Runnable onLoad = () -> {};
 
     @Override
     public Sample load(ActionCommand command) {
+      onLoad.run();
       return command.target() == null
           ? new SampleTransitions().initial()
           : rows.getOrDefault(command.target(), new SampleTransitions().initial());

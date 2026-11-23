@@ -124,7 +124,8 @@ class RepairStateStore implements StateStore<RepairState> {
 - `load`는 호실을 잠근 **뒤**에 불려서, 여기서 읽은 값은 최신이에요.
 - 링크·응답 요청·문자처럼 행동이 아닌 딸린 일은 `save` 안에서 주인 서비스를 불러요(같은 트랜잭션).
 - 서버 기록이 하나 더 필요하면 `ActionFollowUps.add(Actor.server(), 종류, 대상, payload)`를 `save`에서 불러요. pipeline을 다시 부르지 않아요.
-- 이 요청의 시각이 필요하면(응답 요청의 기한 시작 등) `Clock`을 다시 읽지 말고 `ActionRequestContext.at()`을 써요. 행동 기록의 `created_at`과 같은 값이에요. `requestId()`도 있어요. 테스트에서는 `fx.requestContext()`를 넣어요.
+- 이 요청의 시각이 필요하면(응답 요청의 기한 시작 등) `Clock`을 다시 읽지 말고 `save`에서 `ActionRequestContext.at()`을 써요. 행동 기록의 `created_at`과 같은 값이에요. `requestId()`도 있어요. 테스트에서는 `fx.requestContext()`를 넣어요.
+- `load`에서는 `at()`을 읽을 수 없어요. 같은 키로 다시 온 요청에서도 `load`가 불리는데, 그때는 새 행동이 없어 시각도 없어요. 시각으로 판단할 일(기한이 지났나 등)은 `apply`에서 `action.createdAt()`으로 해요.
 
 ### 3-3. 서비스
 
@@ -272,8 +273,8 @@ assertThat(fx.actions().findByRoom(roomId))
 | 도메인이 `RoomGate`를 만들어 넘기기 | 잠그기 전 옛 값으로 판단해요 | 만들지 않아요. 조회 화면의 당사자 확인은 `roomAccessService.require(...)` |
 | pipeline 밖이나 단계가 끝난 뒤(`@TransactionalEventListener`·커밋 직전 `BEFORE_COMMIT`·비동기 리스너)에서 `ActionFollowUps.add` | `IllegalStateException` "딸린 행동은 pipeline 단계 안에서만". 요청 전체가 되돌려져요(500) | `save`나 `save` 안에서 동기로 도는 `@EventListener`에서만 |
 | `save` 안에서 pipeline을 다시 부름 | `IllegalStateException` "pipeline 안에서 pipeline을 다시 부르지 않아요" | 같은 요청이면 `executeAll` 단계로, 서버 기록이면 `ActionFollowUps.add` |
-| 화면 키가 비었거나 `#`가 들었거나 64자를 넘음 | `VALIDATION_FAILED`(400). `ActionBatch`를 만들 때 걸려서 트랜잭션 전에 끝나요 | 화면 키는 UUID. `<키>#2`는 pipeline이 붙여요 |
-| pipeline 밖(커밋 뒤·비동기 리스너, 예약 작업)에서 `ActionRequestContext.at()` | `IllegalStateException` "요청 시각은 pipeline 안에서만" | `load`·`save`나 그 안에서 동기로 도는 `@EventListener`에서 읽기 |
+| 키가 비었거나 `#`가 들었거나 64자를 넘음 | `VALIDATION_FAILED`(400). `ActionBatch`를 만들 때 걸려서 트랜잭션 전에 끝나요. 서버·링크 주체가 만드는 키도 같아요 | 화면 키는 UUID. `<키>#2`는 pipeline이 붙여요. 서버 작업이 키를 만들 때도 64자 안, `#` 없이 |
+| `load`·`when`·`apply`나 pipeline 밖(커밋 뒤·비동기 리스너, 예약 작업)에서 `ActionRequestContext.at()` | `IllegalStateException` "요청 시각은 StateStore.save에서만". `load`에서 읽으면 처음 요청부터 실패해요 | `save`나 그 안에서 동기로 도는 `@EventListener`에서 읽기. `apply`는 `action.createdAt()` |
 | 같은 키로 다른 행동·대상 | `IDEMPOTENCY_KEY_REUSED`(422) | 버튼마다 새 키 |
 
 ## 7. 지금 가짜인 것

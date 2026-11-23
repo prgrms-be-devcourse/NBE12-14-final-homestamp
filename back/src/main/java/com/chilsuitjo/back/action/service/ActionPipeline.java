@@ -46,8 +46,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 트랜잭션에서 처음 결과를 찾아 {@code replayed}로 돌려준다(06 4-0).
  *
  * <p>여기에 특정 행동·도메인을 위한 분기를 넣지 않는다. 조건은 부르는 쪽이 {@code ActionStep.when}으로 넘기고, 도중에 생기는 일은 {@link
- * ActionFollowUps}로 남긴다. {@code load}·{@code save}가 이 요청의 행동 시각을 읽을 때는 {@link
- * ActionRequestContext}를 쓴다.
+ * ActionFollowUps}로 남긴다. {@code save}가 이 요청의 행동 시각을 읽을 때는 {@link ActionRequestContext}를 쓴다.
  */
 @Service
 public class ActionPipeline {
@@ -140,56 +139,51 @@ public class ActionPipeline {
     // 한 요청의 서버 시각은 하나다. apply에 넘긴 값 그대로 저장·해시에 쓴다(05 2-3 「해시 입력 형식」 시각, 09 3-1 순서 8. DB 정밀도에 맞춰
     // 마이크로초).
     Instant at = clock.instant().truncatedTo(ChronoUnit.MICROS);
-    requestContext.begin(requestId, at);
-    try {
-      List<ActionResult> results = new ArrayList<>();
-      Object lastState = null;
-      int written = 0;
+    List<ActionResult> results = new ArrayList<>();
+    Object lastState = null;
+    int written = 0;
 
-      for (ActionStep<?> step : batch.steps()) {
-        checkRoom(gate, actor, step.type()); // 3
-        ActionTarget target = step.target().apply(Collections.unmodifiableList(results)); // 4
-        ActionCommand command =
-            new ActionCommand(
-                roomRecordId,
-                actor,
-                step.type(),
-                keyOf(batch.idempotencyKey(), written + 1),
-                target,
-                step.seenVersionNo(),
-                step.content(),
-                step.reason(),
-                step.payload());
+    for (ActionStep<?> step : batch.steps()) {
+      checkRoom(gate, actor, step.type()); // 3
+      ActionTarget target = step.target().apply(Collections.unmodifiableList(results)); // 4
+      ActionCommand command =
+          new ActionCommand(
+              roomRecordId,
+              actor,
+              step.type(),
+              keyOf(batch.idempotencyKey(), written + 1),
+              target,
+              step.seenVersionNo(),
+              step.content(),
+              step.reason(),
+              step.payload());
 
-        if (step.recordOnly()) {
-          results.add(
-              resultOf(
-                  actionWriter.write(
-                      requireRoom(command.withTarget(withoutRoomTarget(command.target()))),
-                      requestId,
-                      at),
-                  false)); // 8
-          written++;
-          continue;
-        }
-
-        StepOutcome stepOutcome = runStep(step, command, gate, requestId, at, written);
-        if (stepOutcome == null) {
-          continue; // when이 거짓: 기록 없이 건너뜀
-        }
-        if (roomRecordId == null) {
-          roomRecordId = stepOutcome.roomRecordId();
-        }
-        results.addAll(stepOutcome.results());
-        written += stepOutcome.results().size();
-        lastState = stepOutcome.state();
+      if (step.recordOnly()) {
+        results.add(
+            resultOf(
+                actionWriter.write(
+                    requireRoom(command.withTarget(withoutRoomTarget(command.target()))),
+                    requestId,
+                    at),
+                false)); // 8
+        written++;
+        continue;
       }
 
-      // 모든 단계가 when으로 건너뛰어졌으면 남긴 행동 없이 끝난다(예: 정산이 이미 있어 OPEN_SETTLEMENT가 필요 없음).
-      return new Outcome(new BatchResult(results, false), lastState);
-    } finally {
-      requestContext.end();
+      StepOutcome stepOutcome = runStep(step, command, gate, requestId, at, written);
+      if (stepOutcome == null) {
+        continue; // when이 거짓: 기록 없이 건너뜀
+      }
+      if (roomRecordId == null) {
+        roomRecordId = stepOutcome.roomRecordId();
+      }
+      results.addAll(stepOutcome.results());
+      written += stepOutcome.results().size();
+      lastState = stepOutcome.state();
     }
+
+    // 모든 단계가 when으로 건너뛰어졌으면 남긴 행동 없이 끝난다(예: 정산이 이미 있어 OPEN_SETTLEMENT가 필요 없음).
+    return new Outcome(new BatchResult(results, false), lastState);
   }
 
   /** 5~9. {@code when}이 거짓이면 null. */
@@ -207,7 +201,7 @@ public class ActionPipeline {
     followUps.begin();
     try {
       S next = step.rules().apply(now, preview(command, at)); // 6
-      SavedState saved = step.store().save(command, next); // 7
+      SavedState saved = save(step.store(), command, next, requestId, at); // 7
       checkCreated(step, command, saved);
 
       ActionCommand toWrite = command;
@@ -252,6 +246,21 @@ public class ActionPipeline {
       return new StepOutcome(results, next, recorded.roomRecordId());
     } finally {
       followUps.end();
+    }
+  }
+
+  /**
+   * 7. 요청 시각 창구({@link ActionRequestContext})는 {@code save}(와 그 안에서 동기로 도는 리스너)에서만 연다. {@code
+   * load}·{@code when}은 다시 온 요청(창구를 열지 않음)에서도 불리고, 시각에 따른 판단은 행동 기록에 남도록 {@code apply}가 {@code
+   * createdAt}으로 한다(REP-10). 그래서 그 자리에서 읽으면 처음 요청부터 바로 실패한다(#94 리뷰).
+   */
+  private <S> SavedState save(
+      StateStore<S> store, ActionCommand command, S next, UUID requestId, Instant at) {
+    requestContext.begin(requestId, at);
+    try {
+      return store.save(command, next);
+    } finally {
+      requestContext.end();
     }
   }
 
