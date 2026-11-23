@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.chilsuitjo.back.action.dto.ActionEntry;
+import com.chilsuitjo.back.action.dto.ActionTarget;
 import com.chilsuitjo.back.action.dto.RoomGate;
 import com.chilsuitjo.back.action.rule.ActionType;
 import com.chilsuitjo.back.action.service.ActionPipeline;
@@ -56,7 +57,8 @@ class LinkViewServiceTest {
 
   @Test
   void 기록_링크는_그_기록과_돈이_있다는_것만_보이고_열람이_남는다() {
-    String token = issue(LinkKind.INVITE, repairCaseId);
+    Link link = newLink(LinkKind.INVITE, repairCaseId);
+    String token = stub(link);
     openRoom();
     content.seedRecord(roomRecordId, repairCaseId, repairRecord(), true);
 
@@ -68,6 +70,9 @@ class LinkViewServiceTest {
     assertThat(response.record().title()).isEqualTo("욕실 천장 누수");
     assertThat(response.hasMoney()).isTrue();
     assertThat(viewActions()).hasSize(1);
+    ActionTarget target = ActionTarget.of(TargetKind.LINK, link.getId());
+    assertThat(viewActions().getFirst().target()).isEqualTo(target);
+    assertThat(fx.actions().findByTarget(target)).hasSize(1);
   }
 
   @Test
@@ -93,6 +98,49 @@ class LinkViewServiceTest {
     assertThat(response.kind()).isEqualTo(LinkViewKind.ROOM_INVITE);
     assertThat(response.record()).isNull();
     assertThat(response.hasMoney()).isFalse();
+  }
+
+  @Test
+  void 점검_링크는_hasMoney_false이며_돈_조회는_하지_않는다() {
+    UUID inspectionId = UUID.randomUUID();
+    Link link = newLink(LinkKind.INVITE, null, inspectionId);
+    String token = stub(link);
+    LinkContentSource source = mock(LinkContentSource.class);
+    when(source.room(roomRecordId, partyId))
+        .thenReturn(
+            Optional.of(new LinkRoom(PartySide.LANDLORD, "서울특별시", "강남구", "역삼동", false, false)));
+    when(source.record(roomRecordId, TargetKind.INSPECTION, inspectionId))
+        .thenReturn(Optional.of(inspectionRecord()));
+    LinkViewService inspectionService =
+        new LinkViewService(links, source, fx.pipeline(), clock, Duration.ofMinutes(10));
+
+    LinkViewResponse response = inspectionService.view(new LinkViewRequest(token));
+
+    assertThat(response.hasMoney()).isFalse();
+    verify(source, never()).hasMoney(any(), any());
+  }
+
+  @Test
+  void 무효화_후_같은_멱등키로_다시와도_저장된_성공을_재생하지_않는다() {
+    Link link = newLink(LinkKind.INVITE, repairCaseId);
+    String token = stub(link);
+    openRoom();
+    content.seedRecord(roomRecordId, repairCaseId, repairRecord(), false);
+    service.view(new LinkViewRequest(token));
+    link.invalidate(LinkInvalidReason.REINVITED, NOW.plusSeconds(1));
+
+    assertLinkInvalid(() -> service.view(new LinkViewRequest(token)));
+
+    verify(links).countFailedView(link.getId());
+    assertThat(viewActions()).hasSize(1);
+  }
+
+  @Test
+  void 멱등_구간이_1초보다_짧으면_시작할_수_없다() {
+    assertThatThrownBy(
+            () -> new LinkViewService(links, content, fx.pipeline(), clock, Duration.ofMillis(999)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("app.link.view-dedupe");
   }
 
   @Test
@@ -244,13 +292,17 @@ class LinkViewServiceTest {
   }
 
   private Link newLink(LinkKind kind, UUID repairCase) {
+    return newLink(kind, repairCase, null);
+  }
+
+  private Link newLink(LinkKind kind, UUID repairCase, UUID inspectionId) {
     return new Link(
         UUID.randomUUID(),
         roomRecordId,
         kind,
         partyId,
         repairCase,
-        null,
+        inspectionId,
         "hash-" + UUID.randomUUID(),
         inviterId,
         NOW.minusSeconds(3600));
@@ -260,7 +312,13 @@ class LinkViewServiceTest {
   private String stub(Link link) {
     String token = LinkToken.newToken();
     when(links.findByTokenHash(LinkToken.hash(token))).thenReturn(Optional.of(link));
+    when(links.findByIdForUpdate(link.getId())).thenReturn(Optional.of(link));
     return token;
+  }
+
+  private static LinkRecordResponse inspectionRecord() {
+    return new LinkRecordResponse(
+        TargetKind.INSPECTION, "욕실", null, null, List.of(), List.of(), List.of());
   }
 
   private void openRoom() {

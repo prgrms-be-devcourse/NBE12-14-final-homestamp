@@ -1,17 +1,29 @@
 package com.chilsuitjo.back.link.repository;
 
 import com.chilsuitjo.back.link.entity.Link;
+import jakarta.persistence.LockModeType;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 public interface LinkRepository extends JpaRepository<Link, UUID> {
 
   Optional<Link> findByTokenHash(String tokenHash);
+
+  @Query("select l.roomRecordId from Link l where l.id = :id")
+  Optional<UUID> findRoomRecordIdById(@Param("id") UUID id);
+
+  /** 호실 기록을 먼저 잠근 뒤 링크를 잠근다(09 3-1 잠금 순서, 공개 열람과 무효화의 직렬화). */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("select l from Link l where l.id = :id")
+  @Transactional(propagation = Propagation.MANDATORY)
+  Optional<Link> findByIdForUpdate(@Param("id") UUID id);
 
   /**
    * 링크를 찾았는데 열지 못한 횟수를 하나 올린다(무효 링크, 호실 상태로 막힘, 내용을 못 읽음, pipeline 거절. 05 {@code

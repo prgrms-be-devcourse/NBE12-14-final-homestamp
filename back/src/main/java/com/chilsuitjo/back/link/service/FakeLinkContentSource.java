@@ -34,8 +34,8 @@ public class FakeLinkContentSource implements LinkContentSource {
   }
 
   @Override
-  public boolean hasMoney(UUID roomRecordId, TargetKind kind, UUID recordId) {
-    return withMoney.contains(new Key(roomRecordId, recordId));
+  public boolean hasMoney(UUID roomRecordId, UUID repairCaseId) {
+    return withMoney.contains(new Key(roomRecordId, repairCaseId));
   }
 
   public void seedRoom(UUID roomRecordId, UUID partyId, LinkRoom room) {

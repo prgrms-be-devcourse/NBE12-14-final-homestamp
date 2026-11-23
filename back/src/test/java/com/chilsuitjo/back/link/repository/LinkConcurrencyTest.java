@@ -4,8 +4,19 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.chilsuitjo.back.TestcontainersConfiguration;
+import com.chilsuitjo.back.action.dto.ActionBatch;
+import com.chilsuitjo.back.action.dto.ActionTarget;
+import com.chilsuitjo.back.action.dto.Actor;
+import com.chilsuitjo.back.action.rule.ActionType;
+import com.chilsuitjo.back.action.service.ActionPipeline;
+import com.chilsuitjo.back.action.service.ActionReader;
+import com.chilsuitjo.back.global.common.PartySide;
+import com.chilsuitjo.back.global.common.TargetKind;
+import com.chilsuitjo.back.global.error.BusinessException;
+import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.link.entity.Link;
 import com.chilsuitjo.back.link.rule.LinkInvalidReason;
+import com.chilsuitjo.back.link.service.LinkInvalidationService;
 import jakarta.persistence.EntityManager;
 import java.time.Instant;
 import java.util.UUID;
@@ -29,6 +40,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 @ActiveProfiles("test")
 class LinkConcurrencyTest {
   @Autowired private LinkRepository links;
+  @Autowired private LinkInvalidationService invalidations;
+  @Autowired private ActionPipeline pipeline;
+  @Autowired private ActionReader actions;
   @Autowired private JdbcTemplate jdbc;
   @Autowired private EntityManager entityManager;
   @Autowired private PlatformTransactionManager transactionManager;
@@ -199,6 +213,68 @@ class LinkConcurrencyTest {
   }
 
   private UUID createLink(TransactionTemplate tx) {
+    return createLinkWithRoom(tx).id();
+  }
+
+  @Test
+  void 열람_순서의_호실_후_링크_잠금이_무효화와_직렬화된다() throws Exception {
+    TransactionTemplate tx = new TransactionTemplate(transactionManager);
+    TestLink link = createLinkWithRoom(tx);
+    CountDownLatch viewLocked = new CountDownLatch(1);
+    CountDownLatch allowViewCommit = new CountDownLatch(1);
+    CountDownLatch invalidationStarted = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    Instant invalidatedAt = Instant.parse("2026-11-24T00:00:00Z");
+    try {
+      Future<?> view =
+          executor.submit(() -> pipeline.executeAll(viewBatch(link, viewLocked, allowViewCommit)));
+      assertThat(viewLocked.await(10, TimeUnit.SECONDS)).isTrue();
+
+      Future<?> invalidation =
+          executor.submit(() ->
+              tx.executeWithoutResult(status -> {
+                invalidationStarted.countDown();
+                invalidations.invalidate(link.id(), LinkInvalidReason.REINVITED);
+              }));
+      assertThat(invalidationStarted.await(10, TimeUnit.SECONDS)).isTrue();
+      allowViewCommit.countDown();
+      view.get(10, TimeUnit.SECONDS);
+      invalidation.get(10, TimeUnit.SECONDS);
+
+      tx.executeWithoutResult(status -> {
+        assertThat(links.findById(link.id()).orElseThrow().getInvalidatedAt()).isNotNull();
+        assertThat(actions.findByTarget(ActionTarget.of(TargetKind.LINK, link.id()))).hasSize(1);
+      });
+      ActionTarget target = ActionTarget.of(TargetKind.LINK, link.id());
+      assertThatThrownBy(() ->
+              pipeline.executeAll(viewBatch(link, new CountDownLatch(0), new CountDownLatch(0))))
+          .isInstanceOfSatisfying(
+              BusinessException.class,
+              exception -> assertThat(exception.errorCode()).isEqualTo(ErrorCode.LINK_INVALID));
+      tx.executeWithoutResult(status -> assertThat(actions.findByTarget(target)).hasSize(1));
+    } finally {
+      allowViewCommit.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  private ActionBatch viewBatch(TestLink link, CountDownLatch locked, CountDownLatch continueView) {
+    return ActionBatch.of(link.roomId(), Actor.link(link.id(), PartySide.TENANT), "link-view-race")
+        .beforeReplayCheck(() -> {
+          Link current = links.findByIdForUpdate(link.id()).orElseThrow();
+          if (current.isInvalidated()) {
+            throw new BusinessException(ErrorCode.LINK_INVALID);
+          }
+          locked.countDown();
+          await(continueView);
+        })
+        .record(
+            ActionType.LINK_VIEW,
+            done -> ActionTarget.of(TargetKind.LINK, link.id()),
+            java.util.Map.of());
+  }
+
+  private TestLink createLinkWithRoom(TransactionTemplate tx) {
     UUID id = UUID.randomUUID();
     UUID room = UUID.randomUUID();
     UUID party = UUID.randomUUID();
@@ -224,6 +300,8 @@ class LinkConcurrencyTest {
           member,
           id.toString());
     });
-    return id;
+    return new TestLink(id, room);
   }
+
+  private record TestLink(UUID id, UUID roomId) {}
 }

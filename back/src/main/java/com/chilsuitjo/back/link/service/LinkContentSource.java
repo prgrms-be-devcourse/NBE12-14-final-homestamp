@@ -25,6 +25,6 @@ public interface LinkContentSource {
    */
   Optional<LinkRecordResponse> record(UUID roomRecordId, TargetKind kind, UUID recordId);
 
-  /** 공유한 기록에 돈 기록이 있는지(금액 없이 있다는 것만, LINK-1d). */
-  boolean hasMoney(UUID roomRecordId, TargetKind kind, UUID recordId);
+  /** 공유한 수리 건에 돈 기록이 있는지(금액 없이 있다는 것만, LINK-1d). 점검에는 지불이 붙지 않는다. */
+  boolean hasMoney(UUID roomRecordId, UUID repairCaseId);
 }

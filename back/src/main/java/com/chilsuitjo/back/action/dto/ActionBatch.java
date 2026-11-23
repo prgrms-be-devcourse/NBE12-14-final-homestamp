@@ -3,6 +3,8 @@ package com.chilsuitjo.back.action.dto;
 import com.chilsuitjo.back.action.rule.ActionType;
 import com.chilsuitjo.back.action.rule.Transitions;
 import com.chilsuitjo.back.action.service.StateStore;
+import com.chilsuitjo.back.global.error.BusinessException;
+import com.chilsuitjo.back.global.error.ErrorCode;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -28,16 +30,31 @@ public final class ActionBatch {
   private final String idempotencyKey;
   private final boolean newRoom;
   private final List<ActionStep<?>> steps = new ArrayList<>();
+  private Runnable beforeReplayCheck = () -> {};
 
   private ActionBatch(UUID roomRecordId, Actor actor, String idempotencyKey, boolean newRoom) {
     this.roomRecordId = roomRecordId;
     this.actor = Objects.requireNonNull(actor, "actor");
-    this.idempotencyKey = Objects.requireNonNull(idempotencyKey, "idempotencyKey");
-    if (idempotencyKey.isBlank() || idempotencyKey.indexOf('#') >= 0) {
-      // <키>#2 …는 pipeline이 붙인다. 화면의 키는 UUID(06 4-0)라 #가 없다.
-      throw new IllegalArgumentException("Idempotency-Key가 비었거나 #가 들어 있어요");
-    }
+    this.idempotencyKey = checkKey(idempotencyKey);
     this.newRoom = newRoom;
+  }
+
+  /**
+   * 화면 키 길이 한도. 화면의 키는 UUID(36자)이고, pipeline이 {@code #2} …를 붙여도 V1 {@code varchar(100)}을 넘지 않게 여유를
+   * 둔다.
+   */
+  public static final int MAX_KEY_LENGTH = 64;
+
+  /**
+   * 화면이 보낸 {@code Idempotency-Key}를 확인한다(06 4-0). 비었거나 {@code #}가 들었거나({@code <키>#2} …는 pipeline이
+   * 붙임) {@link #MAX_KEY_LENGTH}를 넘으면 {@code VALIDATION_FAILED}(400). 서비스가 batch를 만들 때 걸리므로 트랜잭션·잠금
+   * 전에 끝난다.
+   */
+  private static String checkKey(String key) {
+    if (key == null || key.isBlank() || key.indexOf('#') >= 0 || key.length() > MAX_KEY_LENGTH) {
+      throw new BusinessException(ErrorCode.VALIDATION_FAILED);
+    }
+    return key;
   }
 
   public static ActionBatch of(UUID roomRecordId, Actor actor, String idempotencyKey) {
@@ -111,6 +128,34 @@ public final class ActionBatch {
   /** 상태 칸이 없는 행동({@code SHARE_CONSENT} 등). 행동 기록만 남긴다. */
   public ActionBatch record(ActionType type, Map<String, Object> payload) {
     return step(ActionStep.record(type, payload));
+  }
+
+  /**
+   * 상태 칸이 없지만 대상이 있는 행동. 예: {@code .record(LINK_VIEW, done -> ActionTarget.of(TargetKind.LINK,
+   * linkId), Map.of())}. 대상은 같은 호실이어야 한다(행동 기록의 복합 FK, 05 0장).
+   */
+  public ActionBatch record(
+      ActionType type,
+      Function<List<ActionResult>, ActionTarget> target,
+      Map<String, Object> payload) {
+    return step(ActionStep.record(type, target, payload));
+  }
+
+  /**
+   * 호실 잠금을 얻은 뒤 멱등 조회보다 먼저 실행할 현재 접근 검증. 처음 실행과 저장된 결과의 replay 모두에 적용한다. 검증은 pipeline 트랜잭션 안에서
+   * 부르므로, 도메인 행 잠금이 필요하면 호실 다음 순서로 얻는다.
+   */
+  public ActionBatch beforeReplayCheck(Runnable check) {
+    if (newRoom) {
+      throw new IllegalStateException("호실을 만드는 요청에는 접근 검증을 붙일 수 없어요");
+    }
+    this.beforeReplayCheck = Objects.requireNonNull(check, "check");
+    return this;
+  }
+
+  /** ActionPipeline이 호실 잠금 뒤, 멱등 조회 전에 부른다. */
+  public void runBeforeReplayCheck() {
+    beforeReplayCheck.run();
   }
 
   public UUID roomRecordId() {

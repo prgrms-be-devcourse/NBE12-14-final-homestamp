@@ -9,7 +9,7 @@ import com.chilsuitjo.back.global.common.PartySide;
  * @param sigungu 시·군·구. 세종처럼 없는 곳은 null(#65). 정산 초대 링크면 위치는 모두 null
  * @param yourSide 링크를 받은 쪽의 측(화면 문구용). 정산 초대 링크면 null
  * @param record 기록 링크일 때만. 호실 초대·정산 초대면 null
- * @param hasMoney 공유한 기록에 돈 기록이 있는지(금액·낸 사람·날짜는 없음, LINK-1d). 기록 링크가 아니면 false
+ * @param hasMoney 공유한 수리 건에 돈 기록이 있는지(금액·낸 사람·날짜는 없음, LINK-1d). 점검·호실·정산 초대면 false
  */
 public record LinkViewResponse(
     LinkViewKind kind,

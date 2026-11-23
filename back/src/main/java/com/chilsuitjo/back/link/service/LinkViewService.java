@@ -1,6 +1,7 @@
 package com.chilsuitjo.back.link.service;
 
 import com.chilsuitjo.back.action.dto.ActionBatch;
+import com.chilsuitjo.back.action.dto.ActionTarget;
 import com.chilsuitjo.back.action.dto.Actor;
 import com.chilsuitjo.back.action.rule.ActionType;
 import com.chilsuitjo.back.action.service.ActionPipeline;
@@ -57,6 +58,12 @@ public class LinkViewService {
     this.content = content;
     this.pipeline = pipeline;
     this.clock = clock;
+    if (viewDedupe == null
+        || viewDedupe.isZero()
+        || viewDedupe.isNegative()
+        || viewDedupe.getNano() != 0) {
+      throw new IllegalArgumentException("app.link.view-dedupe는 1초 이상의 정수 초여야 해요");
+    }
     this.viewDedupe = viewDedupe;
   }
 
@@ -85,9 +92,6 @@ public class LinkViewService {
 
   /** 토큰으로 링크를 찾은 뒤. 여기서 나온 업무 오류는 {@link #view}가 모두 {@code LINK_INVALID}로 덮고 실패 횟수를 센다. */
   private LinkViewResponse viewFound(Link link) {
-    if (link.isInvalidated()) {
-      throw invalid();
-    }
     LinkRoom room =
         content
             .room(link.getRoomRecordId(), link.getPartyId())
@@ -103,15 +107,25 @@ public class LinkViewService {
 
   /**
    * 링크 열람 행동. 같은 링크는 {@code link.view.dedupe}(10분) 안에서 한 줄이다(06 4-4, 멱등 키 {@code
-   * link-view:<링크>:<구간>}). 미리 거른 뒤 그사이 호실이 정산 완료로 바뀌면 pipeline이 잠근 뒤 거절하고, 그 오류도 {@link #view}가
-   * 덮는다.
+   * link-view:<링크>:<구간>}). pipeline이 호실을 잠근 뒤 링크를 잠그고 무효 여부를 다시 확인한다. 멱등 replay도 이 검증 뒤에만 수행한다.
    */
   private void recordView(Link link, LinkRoom room) {
     long window = clock.instant().getEpochSecond() / viewDedupe.toSeconds();
     String key = "link-view:" + link.getId() + ":" + window;
     pipeline.executeAll(
         ActionBatch.of(link.getRoomRecordId(), Actor.link(link.getId(), room.recipientSide()), key)
-            .record(ActionType.LINK_VIEW, Map.of()));
+            .beforeReplayCheck(() -> requireCurrentLink(link))
+            .record(
+                ActionType.LINK_VIEW,
+                done -> ActionTarget.of(TargetKind.LINK, link.getId()),
+                Map.of()));
+  }
+
+  private void requireCurrentLink(Link resolved) {
+    Link current = links.findByIdForUpdate(resolved.getId()).orElseThrow(LinkViewService::invalid);
+    if (current.isInvalidated() || !current.getRoomRecordId().equals(resolved.getRoomRecordId())) {
+      throw invalid();
+    }
   }
 
   private LinkViewResponse response(Link link, LinkRoom room) {
@@ -144,7 +158,7 @@ public class LinkViewService {
         room.dong(),
         room.recipientSide(),
         record,
-        content.hasMoney(link.getRoomRecordId(), kind, recordId));
+        kind == TargetKind.REPAIR_CASE && content.hasMoney(link.getRoomRecordId(), recordId));
   }
 
   private static TargetKind targetKind(Link link) {

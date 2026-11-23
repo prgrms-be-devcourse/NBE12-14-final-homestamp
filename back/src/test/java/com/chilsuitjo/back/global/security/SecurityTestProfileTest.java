@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.chilsuitjo.back.global.config.ClockConfig;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -18,9 +19,17 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
-/** test 프로필: 가짜 검증기로 {@code Bearer <회원 UUID>}가 로그인이 된다(06 4-0 인증, 4-10). */
+/**
+ * test 프로필: local·test 고정 키의 실제 JWT 검증기로 {@code Bearer <액세스 JWT>}가 로그인이 된다(06 4-0 인증, 4-10). 예전 가짜
+ * 검증기의 {@code Bearer <회원 UUID>}는 더 이상 받지 않는다.
+ */
 @WebMvcTest(SecurityTestControllerConfig.SecurityTestController.class)
-@Import({SecurityTestControllerConfig.class, SecurityConfig.class, FakeAccessTokenVerifier.class})
+@Import({
+  SecurityTestControllerConfig.class,
+  SecurityConfig.class,
+  AccessTokenConfig.class,
+  ClockConfig.class
+})
 @ActiveProfiles("test")
 class SecurityTestProfileTest {
 
@@ -47,6 +56,13 @@ class SecurityTestProfileTest {
   @Test
   void 틀린_토큰이면_401_LOGIN_REQUIRED() throws Exception {
     mvc.perform(get("/api/me").header(HttpHeaders.AUTHORIZATION, "Bearer not-a-uuid"))
+        .andExpect(status().isUnauthorized())
+        .andExpect(jsonPath("$.code").value("LOGIN_REQUIRED"));
+  }
+
+  @Test
+  void 예전_가짜_토큰_모양인_회원_UUID만으로는_401() throws Exception {
+    mvc.perform(get("/api/me").header(HttpHeaders.AUTHORIZATION, "Bearer " + UUID.randomUUID()))
         .andExpect(status().isUnauthorized())
         .andExpect(jsonPath("$.code").value("LOGIN_REQUIRED"));
   }

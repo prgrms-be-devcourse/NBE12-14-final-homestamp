@@ -38,7 +38,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * Transitions}만 채운다. 기준은 docs/rules/09-프로젝트-구조.md 3-1.
  *
  * <pre>
- * 1 잠금 + RoomGate 읽기(newRoom이면 건너뜀) → 2 멱등(같은 키면 처음 결과를 돌려주고 끝)
+ * 1 잠금 + RoomGate 읽기(newRoom이면 건너뜀) → 현재 접근 검증(설정된 경우) → 2 멱등(같은 키면 처음 결과를 돌려주고 끝)
  * 단계마다: 3 호실 단위 거절 → 4 대상 정하기 → 5 load → (when이 거짓이면 건너뜀) → 6 apply → 7 save → 8 기록 → 9 딸린 행동 기록
  * </pre>
  *
@@ -46,7 +46,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 트랜잭션에서 처음 결과를 찾아 {@code replayed}로 돌려준다(06 4-0).
  *
  * <p>여기에 특정 행동·도메인을 위한 분기를 넣지 않는다. 조건은 부르는 쪽이 {@code ActionStep.when}으로 넘기고, 도중에 생기는 일은 {@link
- * ActionFollowUps}로 남긴다.
+ * ActionFollowUps}로 남긴다. {@code save}가 이 요청의 행동 시각을 읽을 때는 {@link ActionRequestContext}를 쓴다.
  */
 @Service
 public class ActionPipeline {
@@ -54,6 +54,7 @@ public class ActionPipeline {
   private final RoomGateReader roomGateReader;
   private final ActionWriter actionWriter;
   private final ActionFollowUps followUps;
+  private final ActionRequestContext requestContext;
   private final TransactionTemplate transaction;
   private final Clock clock;
 
@@ -61,11 +62,13 @@ public class ActionPipeline {
       RoomGateReader roomGateReader,
       ActionWriter actionWriter,
       ActionFollowUps followUps,
+      ActionRequestContext requestContext,
       PlatformTransactionManager transactionManager,
       Clock clock) {
     this.roomGateReader = roomGateReader;
     this.actionWriter = actionWriter;
     this.followUps = followUps;
+    this.requestContext = requestContext;
     this.transaction = new TransactionTemplate(transactionManager);
     this.clock = clock;
   }
@@ -111,7 +114,15 @@ public class ActionPipeline {
     }
   }
 
+  /**
+   * 충돌 뒤 새 트랜잭션에서 처음 결과를 찾는다. 처음 실행과 같이 호실을 먼저 잠근다: 다시 읽는 {@code load}가 잠금 없이 돌면 그사이 바뀐 상태와 섞이고, 잠금
+   * 순서(호실 먼저)도 어긋난다(#94 리뷰, 링크 열람 경합). 호실을 만드는 요청은 아직 잠글 호실을 모른다.
+   */
   private Outcome replayIfDone(ActionBatch batch) {
+    if (!batch.isNewRoom()) {
+      roomGateReader.lockAndRead(batch.roomRecordId(), batch.actor()); // 1
+    }
+    batch.runBeforeReplayCheck();
     List<ActionEntry> done = actionWriter.findRequest(batch.actor().key(), batch.idempotencyKey());
     return done.isEmpty() ? null : replay(batch, done);
   }
@@ -121,6 +132,7 @@ public class ActionPipeline {
     RoomGate gate =
         batch.isNewRoom() ? null : roomGateReader.lockAndRead(roomRecordId, batch.actor()); // 1
 
+    batch.runBeforeReplayCheck();
     List<ActionEntry> done =
         actionWriter.findRequest(batch.actor().key(), batch.idempotencyKey()); // 2
     if (!done.isEmpty()) {
@@ -198,7 +210,7 @@ public class ActionPipeline {
     followUps.begin();
     try {
       S next = step.rules().apply(now, preview(command, at)); // 6
-      SavedState saved = step.store().save(command, next); // 7
+      SavedState saved = save(step.store(), command, next, requestId, at); // 7
       checkCreated(step, command, saved);
 
       ActionCommand toWrite = command;
@@ -217,6 +229,7 @@ public class ActionPipeline {
       if (saved.content() != null) {
         toWrite = toWrite.withContent(saved.content());
       }
+      toWrite = toWrite.withExtraPayload(saved.payload()); // 붙인 사진 목록 등(#141)
       ActionCommand recorded = requireRoom(toWrite.withTarget(withoutRoomTarget(toWrite.target())));
 
       List<ActionResult> results = new ArrayList<>();
@@ -243,6 +256,21 @@ public class ActionPipeline {
       return new StepOutcome(results, next, recorded.roomRecordId());
     } finally {
       followUps.end();
+    }
+  }
+
+  /**
+   * 7. 요청 시각 창구({@link ActionRequestContext})는 {@code save}(와 그 안에서 동기로 도는 리스너)에서만 연다. {@code
+   * load}·{@code when}은 다시 온 요청(창구를 열지 않음)에서도 불리고, 시각에 따른 판단은 행동 기록에 남도록 {@code apply}가 {@code
+   * createdAt}으로 한다(REP-10). 그래서 그 자리에서 읽으면 처음 요청부터 바로 실패한다(#94 리뷰).
+   */
+  private <S> SavedState save(
+      StateStore<S> store, ActionCommand command, S next, UUID requestId, Instant at) {
+    requestContext.begin(requestId, at);
+    try {
+      return store.save(command, next);
+    } finally {
+      requestContext.end();
     }
   }
 
