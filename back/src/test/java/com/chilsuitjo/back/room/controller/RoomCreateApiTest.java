@@ -1,5 +1,6 @@
 package com.chilsuitjo.back.room.controller;
 
+import static com.chilsuitjo.back.global.security.SecurityTestSupport.loginAs;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -41,8 +42,8 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * 06 4-3 {@code POST /api/rooms}(ROOM-1a)와 실제 권한 검사(ROOM-2a). 보안 설정까지 띄워 가짜 토큰({@code Bearer <회원
- * ID>})으로 부른다.
+ * 06 4-3 {@code POST /api/rooms}(ROOM-1a)와 실제 권한 검사(ROOM-2a). 보안 설정까지 띄워 테스트 키로 서명한 액세스 토큰({@code
+ * SecurityTestSupport.loginAs})으로 부른다(#115 뒤 {@code Bearer <회원 ID>}는 받지 않음).
  *
  * <p>호실을 만드는 요청은 pipeline이 트랜잭션을 열므로 테스트에 {@code @Transactional}을 두지 않는다. 행동 기록은 지울 수 없는 표(A)라
  * 테스트마다 지우지 않고 회원·별칭·키를 새로 만든다.
@@ -240,7 +241,7 @@ class RoomCreateApiTest {
 
     mvc.perform(
             post("/api/rooms")
-                .header("Authorization", "Bearer " + member)
+                .with(loginAs(member))
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body))
         .andExpect(status().isBadRequest())
@@ -362,7 +363,7 @@ class RoomCreateApiTest {
   private ResultActions create(UUID member, String key, String body) throws Exception {
     return mvc.perform(
         post("/api/rooms")
-            .header("Authorization", "Bearer " + member)
+            .with(loginAs(member))
             .header("Idempotency-Key", key)
             .contentType(MediaType.APPLICATION_JSON)
             .content(body));
