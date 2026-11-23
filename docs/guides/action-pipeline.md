@@ -124,6 +124,9 @@ class RepairStateStore implements StateStore<RepairState> {
 - `load`는 호실을 잠근 **뒤**에 불려서, 여기서 읽은 값은 최신이에요.
 - 링크·응답 요청·문자처럼 행동이 아닌 딸린 일은 `save` 안에서 주인 서비스를 불러요(같은 트랜잭션).
 - 서버 기록이 하나 더 필요하면 `ActionFollowUps.add(Actor.server(), 종류, 대상, payload)`를 `save`에서 불러요. pipeline을 다시 부르지 않아요.
+- 이 요청의 시각이 필요하면(응답 요청·통지를 만든 시각 등) `Clock`을 다시 읽지 말고 `save`에서 `ActionRequestContext.at()`을 써요. 행동 기록의 `created_at`과 같은 값이에요. `requestId()`도 있어요. 테스트에서는 `fx.requestContext()`를 넣어요.
+- 기다림(48시간)의 시작은 `at()`이 아니라 통지가 **전달된 시각**이에요(03 1-1 「타이머 시작점」). 그건 notification이 정해요.
+- `load`에서는 `at()`을 읽을 수 없어요. 같은 키로 다시 온 요청에서도 `load`가 불리는데, 그때는 새 행동이 없어 시각도 없어요. 시각으로 판단할 일(기한이 지났나 등)은 `apply`에서 `action.createdAt()`으로 해요.
 
 ### 3-3. 서비스
 
@@ -187,6 +190,7 @@ public ResponseEntity<CreatedResponse> register(
 | 한 요청에 행동 여럿 | `pipeline.executeAll(ActionBatch.of(호실, 주체, 키) .step(...) .record(...))` | 초대 [동의하고 보여 주기] = `SHARE_CONSENT` + `INVITE` |
 | 여러 행동 중 새 기록 만드는 단계 | `.creating(종류, store, rules)` | |
 | 상태 칸이 없는 행동(기록만) | `.record(종류, payload)` | `SHARE_CONSENT` |
+| 상태 칸은 없지만 대상이 있는 행동 | `.record(종류, done -> 대상, payload)` | `LINK_VIEW`(링크), `CONFIRM_ALL`(점검) |
 | 앞 단계가 만든 ID를 다음 단계에 | `.step(종류, done -> ActionTarget.xxx(done.get(0).target().id()), store, rules)` | |
 | 조건이 맞을 때만 하는 단계 | `ActionStep.of(...).when(now -> 조건)` → `.step(그 단계)`. 거짓이면 기록 없이 건너뜀 | 정산이 없을 때만 `OPEN_SETTLEMENT` |
 | `seenVersionNo`·`content`·`reason`까지 주는 단계 | `ActionStep.of(...).withSeenVersionNo(..).withContent(..).withReason(..)` | |
@@ -254,7 +258,7 @@ assertThat(fx.actions().findByRoom(roomId))
 
 ### 5-3. DB까지 보는 테스트
 
-엔티티 매핑·제약을 보려면 `@SpringBootTest` + Testcontainers예요(Docker 필요). 이때 `FakeRoomGateReader`는 빈이라 주입받아 `member(...)`·`put(...)`으로 호실 상태를 넣어요.
+엔티티 매핑·제약을 보려면 `@SpringBootTest` + Testcontainers예요(Docker 필요). 이때 `FakeRoomGateReader`는 빈이라 주입받아 `member(...)`·`put(...)`으로 호실 상태를 넣어요. 행동 기록은 진짜(`JpaActionWriter`)라 행동이 가리키는 회원·호실·대상 행을 먼저 넣어 두세요(7장). 예시는 `JpaActionWriterTest`예요.
 
 ## 6. 자주 하는 실수
 
@@ -270,19 +274,22 @@ assertThat(fx.actions().findByRoom(roomId))
 | 도메인이 `RoomGate`를 만들어 넘기기 | 잠그기 전 옛 값으로 판단해요 | 만들지 않아요. 조회 화면의 당사자 확인은 `roomAccessService.require(...)` |
 | pipeline 밖이나 단계가 끝난 뒤(`@TransactionalEventListener`·커밋 직전 `BEFORE_COMMIT`·비동기 리스너)에서 `ActionFollowUps.add` | `IllegalStateException` "딸린 행동은 pipeline 단계 안에서만". 요청 전체가 되돌려져요(500) | `save`나 `save` 안에서 동기로 도는 `@EventListener`에서만 |
 | `save` 안에서 pipeline을 다시 부름 | `IllegalStateException` "pipeline 안에서 pipeline을 다시 부르지 않아요" | 같은 요청이면 `executeAll` 단계로, 서버 기록이면 `ActionFollowUps.add` |
-| 화면 키에 `#`를 넣음 | `IllegalArgumentException` | 화면 키는 UUID. `<키>#2`는 pipeline이 붙여요 |
+| 키가 비었거나 `#`가 들었거나 64자를 넘음 | `VALIDATION_FAILED`(400). `ActionBatch`를 만들 때 걸려서 트랜잭션 전에 끝나요. 서버·링크 주체가 만드는 키도 같아요 | 화면 키는 UUID. `<키>#2`는 pipeline이 붙여요. 서버 작업이 키를 만들 때도 64자 안, `#` 없이 |
+| `load`·`when`·`apply`나 pipeline 밖(커밋 뒤·비동기 리스너, 예약 작업)에서 `ActionRequestContext.at()` | `IllegalStateException` "요청 시각은 StateStore.save에서만". `load`에서 읽으면 처음 요청부터 실패해요 | `save`나 그 안에서 동기로 도는 `@EventListener`에서 읽기. `apply`는 `action.createdAt()` |
 | 같은 키로 다른 행동·대상 | `IDEMPOTENCY_KEY_REUSED`(422) | 버튼마다 새 키 |
 
 ## 7. 지금 가짜인 것
 
-pipeline은 진짜이고, 안쪽 부품 두 개만 가짜예요. 진짜로 바뀌어도 **내 도메인 코드는 바뀌지 않아요**.
+pipeline은 진짜이고, 안쪽 부품 중 잠금·읽기만 아직 가짜예요. 진짜로 바뀌어도 **내 도메인 코드는 바뀌지 않아요**.
 
 | 부품 | 지금 | 진짜로 바뀌면 | 누가 |
 |---|---|---|---|
-| 행동 기록 저장 `ActionWriter` | `FakeActionWriter`(메모리, 서버를 다시 켜면 사라짐) | `record.action`에 저장, `room_seq`·해시 체인 | B |
+| 행동 기록 저장 `ActionWriter` | **진짜** `JpaActionWriter`: `record.action`에 저장, `room_seq`·해시 체인. 메모리 가짜 `FakeActionWriter`는 테스트 코드에만 있고 `ActionPipelineFixture`가 써요 | — | B |
 | 호실 잠금·읽기 `RoomGateReader` | `FakeRoomGateReader`(테스트가 넣은 값) | `room_record`를 `FOR UPDATE`로 잠그고 읽음 | A (ROOM-2) |
 
-배포 서버에서 기능을 확인하려면(07 6장 끝 기준) 두 부품이 진짜여야 해요.
+배포 서버에서 기능을 확인하려면(07 6장 끝 기준) 남은 가짜인 잠금·읽기(`RoomGateReader`)가 진짜여야 해요.
+
+**`@SpringBootTest`로 pipeline을 부르면 행동이 실제 DB에 저장돼요.** 그래서 행동이 가리키는 행이 DB에 있어야 해요(회원 행동이면 `member`, 호실 `room_record`, 대상 행, 대상은 같은 호실이어야 함: 05 0장 복합 FK). DB 없이 규칙만 보려면 `ActionPipelineFixture`를 쓰세요(5-2).
 
 ## 8. 응답 공통 처리 (`AnswerSupport`)
 

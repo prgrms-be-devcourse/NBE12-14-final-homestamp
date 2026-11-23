@@ -32,6 +32,7 @@ public final class ActionPipelineFixture {
   private final FakeActionWriter writer = new FakeActionWriter();
   private final FakeRoomGateReader gates = new FakeRoomGateReader();
   private final ActionFollowUps followUps = new ActionFollowUps();
+  private final ActionRequestContext requestContext = new ActionRequestContext();
   private final NoOpTransactionManager transactions = new NoOpTransactionManager();
   private final ActionPipeline pipeline;
 
@@ -41,7 +42,8 @@ public final class ActionPipelineFixture {
 
   /** 기한 계산처럼 시각이 중요한 테스트는 시계를 넘긴다. */
   public ActionPipelineFixture(Clock clock) {
-    this.pipeline = new ActionPipeline(gates, writer, followUps, transactions, clock);
+    this.pipeline =
+        new ActionPipeline(gates, writer, followUps, requestContext, transactions, clock);
   }
 
   /** 서비스에 넣을 pipeline. */
@@ -62,6 +64,14 @@ public final class ActionPipelineFixture {
   /** {@code save}에서 딸린 행동을 남기는 창구. 서비스·저장 구현이 {@code ActionFollowUps}를 받으면 이것을 넣는다. */
   public ActionFollowUps followUps() {
     return followUps;
+  }
+
+  /**
+   * {@code load}·{@code save}에서 이 요청의 행동 시각·{@code requestId}를 읽는 창구. 저장 구현이 {@code
+   * ActionRequestContext}를 받으면 이것을 넣는다.
+   */
+  public ActionRequestContext requestContext() {
+    return requestContext;
   }
 
   /** 지금까지 되돌린 트랜잭션 수. 실패한 요청이 정말 되돌려졌는지 볼 때 쓴다. */
