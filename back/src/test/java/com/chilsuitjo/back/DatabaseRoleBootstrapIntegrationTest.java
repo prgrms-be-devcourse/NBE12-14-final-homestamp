@@ -78,6 +78,8 @@ class DatabaseRoleBootstrapIntegrationTest {
       assertOwnerOwnsFlywayHistory(postgres);
       assertOwnerOwnsManagedObjects(postgres);
       assertActualApplicationPrivileges(postgres);
+      assertHumanMinimalRead(postgres);
+      assertGrantsAreRepeatableAndAtomic(postgres);
 
       assertBootstrapFailureRollsBack(postgres);
       assertBootstrapRejectsDriftWithoutRepair(postgres);
@@ -233,43 +235,88 @@ class DatabaseRoleBootstrapIntegrationTest {
     }
   }
 
+  private static final DatabaseGrantsIntegrationTest.GrantsJdbcExecutor.Roles GRANT_ROLES =
+      new DatabaseGrantsIntegrationTest.GrantsJdbcExecutor.Roles(OWNER, APP, PURGE, HUMAN);
+
+  /** #173 `--migrate`와 같은 Flyway 계약으로 Migration을 적용하고, #156 JDBC 실행 계약으로 GRANT를 적용한다. */
   private static void migrateAndApplyGrants(PostgreSQLContainer postgres) throws Exception {
     Flyway.configure()
         .dataSource(postgres.getJdbcUrl(), MIGRATION, FAKE_PASSWORD)
-        .initSql("SET ROLE " + OWNER)
+        .initSql("SET ROLE \"" + OWNER + "\"")
         .locations("classpath:db/migration")
-        .schemas("public", "record", "state", "log")
-        .defaultSchema("public")
+        .validateMigrationNaming(true)
+        .failOnMissingLocations(true)
+        .skipDefaultCallbacks(true)
+        .cleanDisabled(true)
         .load()
         .migrate();
 
-    Path script = Path.of("../infra/db/grants.sql").toAbsolutePath().normalize();
-    postgres.copyFileToContainer(MountableFile.forHostPath(script), "/tmp/grants.sql");
-    var result =
-        postgres.execInContainer(
-            "env",
-            "PGPASSWORD=" + FAKE_PASSWORD,
-            "psql",
-            "-X",
-            "-h",
-            "localhost",
-            "-U",
-            MIGRATION,
-            "-d",
-            postgres.getDatabaseName(),
-            "-v",
-            "ON_ERROR_STOP=1",
-            "-v",
-            "owner_role=" + OWNER,
-            "-v",
-            "app_role=" + APP,
-            "-v",
-            "purge_role=" + PURGE,
-            "-v",
-            "human_role=" + HUMAN,
-            "-f",
-            "/tmp/grants.sql");
-    assertEquals(0, result.getExitCode());
+    var observed = applyGrants(postgres);
+    assertEquals(MIGRATION, observed.sessionUser());
+    assertEquals(OWNER, observed.currentUser());
+  }
+
+  private static DatabaseGrantsIntegrationTest.GrantsJdbcExecutor.Observed applyGrants(
+      PostgreSQLContainer postgres) throws Exception {
+    try (Connection connection = roleConnection(postgres, MIGRATION)) {
+      return DatabaseGrantsIntegrationTest.GrantsJdbcExecutor.apply(connection, GRANT_ROLES);
+    }
+  }
+
+  /** 재실행은 같은 권한을 만들고, COMMIT 전에 실패하면 이미 실행한 GRANT·REVOKE까지 모두 되돌린다. */
+  private static void assertGrantsAreRepeatableAndAtomic(PostgreSQLContainer postgres)
+      throws Exception {
+    String first = aclSnapshot(postgres);
+    applyGrants(postgres);
+    assertEquals(first, aclSnapshot(postgres), "GRANT 재실행 결과가 같다");
+
+    executeAsAdmin(postgres, "GRANT SELECT ON state.member TO " + HUMAN);
+    try (Connection connection = roleConnection(postgres, MIGRATION)) {
+      SQLException failure =
+          assertThrows(
+              SQLException.class,
+              () ->
+                  DatabaseGrantsIntegrationTest.GrantsJdbcExecutor.apply(
+                      connection,
+                      GRANT_ROLES,
+                      c -> {
+                        throw new SQLException("COMMIT 전 실패", "P0001");
+                      }));
+      assertEquals("P0001", failure.getSQLState());
+      assertTrue(connection.getAutoCommit(), "자동 커밋 설정을 되돌린다");
+    }
+    try (Connection connection = adminConnection(postgres)) {
+      assertEquals(
+          "true",
+          scalar(
+              connection,
+              "SELECT has_table_privilege('" + HUMAN + "', 'state.member', 'SELECT')::text"),
+          "실패한 실행이 한 회수까지 되돌아가 과잉 권한이 그대로 남는다");
+    }
+    assertNotEquals(first, aclSnapshot(postgres));
+    applyGrants(postgres);
+    assertEquals(first, aclSnapshot(postgres), "성공한 재실행이 과잉 권한을 회수한다");
+  }
+
+  private static String aclSnapshot(PostgreSQLContainer postgres) throws Exception {
+    try (Connection connection = adminConnection(postgres)) {
+      return scalar(
+          connection,
+          "SELECT string_agg(x, E'\\n' ORDER BY x) FROM ("
+              + "SELECT 'rel ' || c.oid::regclass || ' ' || coalesce(c.relacl::text, '<default>') x"
+              + " FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace"
+              + " WHERE n.nspname IN ('record','state','log','public') AND c.relkind IN ('r','p','S','v','m')"
+              + " UNION ALL SELECT 'col ' || a.attrelid::regclass || '.' || a.attname || ' ' || a.attacl::text"
+              + " FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid"
+              + " JOIN pg_namespace n ON n.oid = c.relnamespace"
+              + " WHERE n.nspname IN ('record','state','log','public') AND a.attnum > 0"
+              + " AND NOT a.attisdropped AND a.attacl IS NOT NULL"
+              + " UNION ALL SELECT 'fn ' || p.oid::regprocedure || ' ' || coalesce(p.proacl::text, '<default>')"
+              + " FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace"
+              + " WHERE n.nspname IN ('record','state','log','public')"
+              + " UNION ALL SELECT 'def ' || d.defaclrole::regrole || ' ' || d.defaclnamespace || ' '"
+              + " || d.defaclobjtype::text || ' ' || d.defaclacl::text FROM pg_default_acl d) s");
+    }
   }
 
   private static void assertOwnerOwnsFlywayHistory(PostgreSQLContainer postgres) throws Exception {
@@ -325,45 +372,69 @@ class DatabaseRoleBootstrapIntegrationTest {
               + "inspection_item_id, side, description, created_at) "
               + "SELECT NULL::uuid, NULL::uuid, NULL::uuid, NULL::uuid, NULL::uuid, 'TENANT', "
               + "NULL::text, NULL::timestamptz WHERE false");
-      assertThrows(
-          SQLException.class,
-          () -> statement.execute("UPDATE record.supplement SET description = NULL WHERE false"));
-      assertThrows(
-          SQLException.class, () -> statement.execute("DELETE FROM record.supplement WHERE false"));
-      assertThrows(SQLException.class, () -> statement.execute("TRUNCATE record.supplement"));
-      assertThrows(
-          SQLException.class,
-          () -> statement.execute("CREATE TABLE record.app_must_not_create (id integer)"));
-      assertThrows(
-          SQLException.class,
-          () -> statement.execute("CREATE TEMP TABLE app_must_not_create (id integer)"));
-      assertThrows(
-          SQLException.class, () -> statement.execute("DELETE FROM record.action WHERE false"));
+      assertPermissionDenied(
+          statement, "UPDATE record.supplement SET description = NULL WHERE false");
+      assertPermissionDenied(statement, "DELETE FROM record.supplement WHERE false");
+      assertPermissionDenied(statement, "TRUNCATE record.supplement");
+      assertPermissionDenied(statement, "CREATE TABLE record.app_must_not_create (id integer)");
+      assertPermissionDenied(statement, "CREATE TEMP TABLE app_must_not_create (id integer)");
+      assertPermissionDenied(statement, "DELETE FROM record.action WHERE false");
     }
     try (Connection connection = roleConnection(postgres, HUMAN);
         Statement statement = connection.createStatement()) {
       assertEquals(0, scalarInt(statement, "SELECT count(*) FROM record.supplement"));
-      assertThrows(
-          SQLException.class,
-          () ->
-              statement.execute(
-                  "INSERT INTO record.supplement (id, room_record_id, repair_case_id, payment_id, "
-                      + "inspection_item_id, side, created_at) SELECT NULL::uuid, NULL::uuid, "
-                      + "NULL::uuid, NULL::uuid, NULL::uuid, 'TENANT', NULL::timestamptz WHERE false"));
-      assertThrows(
-          SQLException.class,
-          () -> statement.execute("UPDATE record.supplement SET description = NULL WHERE false"));
-      assertThrows(
-          SQLException.class, () -> statement.execute("DELETE FROM record.action WHERE false"));
+      assertPermissionDenied(
+          statement,
+          "INSERT INTO record.supplement (id, room_record_id, repair_case_id, payment_id, "
+              + "inspection_item_id, side, created_at) SELECT NULL::uuid, NULL::uuid, "
+              + "NULL::uuid, NULL::uuid, NULL::uuid, 'TENANT', NULL::timestamptz WHERE false");
+      assertPermissionDenied(
+          statement, "UPDATE record.supplement SET description = NULL WHERE false");
+      assertPermissionDenied(statement, "DELETE FROM record.action WHERE false");
     }
     assertTrue(hasFunctionPrivilege(postgres, PURGE, "state.purge_room_record(uuid)"));
     assertFalse(hasFunctionPrivilege(postgres, APP, "state.purge_room_record(uuid)"));
     assertFalse(hasFunctionPrivilege(postgres, HUMAN, "state.purge_room_record(uuid)"));
     try (Connection connection = roleConnection(postgres, PURGE);
         Statement statement = connection.createStatement()) {
-      assertThrows(
-          SQLException.class, () -> statement.execute("DELETE FROM record.action WHERE false"));
+      assertPermissionDenied(statement, "DELETE FROM record.action WHERE false");
     }
+  }
+
+  /** #156 Human 최소 조회: 민감 컬럼은 권한 오류(42501), 허용 컬럼만 읽는다. */
+  private static void assertHumanMinimalRead(PostgreSQLContainer postgres) throws Exception {
+    try (Connection connection = roleConnection(postgres, HUMAN);
+        Statement statement = connection.createStatement()) {
+      assertEquals(
+          0,
+          scalarInt(
+              statement,
+              "SELECT count(id) FROM record.cause_note WHERE basis IS NOT NULL AND text IS NOT NULL"));
+      assertEquals(
+          0, scalarInt(statement, "SELECT count(id) FROM state.member WHERE status IS NOT NULL"));
+      for (String sql :
+          List.of(
+              "SELECT expert_name FROM record.cause_note",
+              "SELECT id FROM record.cause_note WHERE expert_name IS NOT NULL",
+              "SELECT * FROM record.cause_note",
+              "SELECT c FROM record.cause_note c",
+              "SELECT password_hash FROM state.member",
+              "SELECT phone FROM state.member",
+              "SELECT token_hash FROM state.refresh_token",
+              "SELECT code_hash FROM state.phone_verification",
+              "SELECT token_hash FROM state.link",
+              "SELECT invite_phone FROM state.party",
+              "SELECT payload FROM state.outbox",
+              "UPDATE record.cause_note SET id = id WHERE false",
+              "DELETE FROM state.member WHERE false")) {
+        assertPermissionDenied(statement, sql);
+      }
+    }
+  }
+
+  private static void assertPermissionDenied(Statement statement, String sql) {
+    SQLException failure = assertThrows(SQLException.class, () -> statement.execute(sql), sql);
+    assertEquals("42501", failure.getSQLState(), "권한 거부여야 한다: " + sql);
   }
 
   private static void assertBootstrapRejectsDriftWithoutRepair(PostgreSQLContainer postgres)
