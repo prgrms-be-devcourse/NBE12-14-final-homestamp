@@ -107,7 +107,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\"roomPartId\":\"{{partId}}\",\"title\":\"천장 누수\",\"description\":\"비 오면 물이 떨어져요\"}",
+              "raw": "{\"roomPartId\":\"{{partId}}\",\"title\":\"천장 누수\",\"description\":\"비 오면 물이 떨어져요\",\"uploadTickets\":[\"{{$guid}}\"]}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -224,7 +224,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\"description\":\"밝은 데서 다시 찍었어요\"}",
+              "raw": "{\"description\":\"밝은 데서 다시 찍었어요\",\"uploadTickets\":[\"{{$guid}}\"]}",
               "options": {
                 "raw": {
                   "language": "json"

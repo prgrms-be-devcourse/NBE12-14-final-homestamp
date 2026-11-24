@@ -287,7 +287,10 @@ class RepairDetailApiTest {
                     .content(
                         "{\"roomPartId\":\""
                             + part
-                            + "\",\"title\":\"천장 누수\",\"description\":\"비 오면 물이 떨어져요\"}"))
+                            + "\",\"title\":\"천장 누수\",\"description\":\"비 오면 물이 떨어져요\","
+                            + "\"uploadTickets\":[\""
+                            + UUID.randomUUID()
+                            + "\"]}"))
             .andExpect(status().isCreated())
             .andReturn()
             .getResponse()

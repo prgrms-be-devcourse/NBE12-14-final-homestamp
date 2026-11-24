@@ -57,13 +57,20 @@ public class RepairStateStore {
   private final ActionReader actions;
   private final WaitService waits;
   private final SupplementWriter supplementWriter;
+  private final RepairPhotos photos;
 
-  /** 하자 등록(06 REP-1)의 저장 방법. 같은 키로 다시 온 요청이면 pipeline이 만든 수리 건을 {@code load}로 다시 읽는다. */
-  public StateStore<RepairState> registering(UUID roomPartId, String title, String description) {
+  /**
+   * 하자 등록(06 REP-1)의 저장 방법. 같은 키로 다시 온 요청이면 pipeline이 만든 수리 건을 {@code load}로 다시 읽는다.
+   *
+   * @param uploadTickets 붙일 사진의 업로드 표 1~10개(장수는 서비스·요청 본문이 먼저 본다)
+   */
+  public StateStore<RepairState> registering(
+      UUID roomPartId, String title, String description, List<String> uploadTickets) {
     return new Registering(
         Objects.requireNonNull(roomPartId, "roomPartId"),
         Objects.requireNonNull(title, "title"),
-        description);
+        description,
+        List.copyOf(uploadTickets));
   }
 
   /** 하자 응답(06 REP-2a~d·f)의 저장 방법. 하자 인정만 바꾸고 하자 확인 요청을 "답함"으로 닫는다. */
@@ -75,9 +82,10 @@ public class RepairStateStore {
    * 보충하고 다시 확인 요청(06 REP-2e)의 저장 방법. 설명을 보충 기록에 남기고 하자 확인 요청을 다시 연다.
    *
    * @param description 덧붙인 설명. 사진만 보충했으면 null
+   * @param uploadTickets 덧붙인 사진의 업로드 표. 설명만 보충했으면 빈 목록
    */
-  public StateStore<RepairState> supplementing(String description) {
-    return new Supplementing(description);
+  public StateStore<RepairState> supplementing(String description, List<String> uploadTickets) {
+    return new Supplementing(description, List.copyOf(uploadTickets));
   }
 
   /**
@@ -218,11 +226,14 @@ public class RepairStateStore {
     private final UUID roomPartId;
     private final String title;
     private final String description;
+    private final List<String> uploadTickets;
 
-    private Registering(UUID roomPartId, String title, String description) {
+    private Registering(
+        UUID roomPartId, String title, String description, List<String> uploadTickets) {
       this.roomPartId = roomPartId;
       this.title = title;
       this.description = description;
+      this.uploadTickets = uploadTickets;
     }
 
     @Override
@@ -233,6 +244,9 @@ public class RepairStateStore {
     /**
      * 머리와 판 #1을 한 트랜잭션에 만든다. 서로를 가리켜서 두 ID를 저장 전에 만든다(05 0장 "머리·판 네 쌍", 지연 FK). 시각은 행동 기록과 같은
      * {@code at()}이다. 내용 지문은 새로 만든 판 #1이다(안내서 3-3).
+     *
+     * <p>사진은 머리·판을 DB에 내보낸 뒤 수리 건에 붙인다(사진 행이 수리 건을 가리키므로, REP-1a "한 트랜잭션에 수리 건·판·사진·행동"). 사진 지문은 행동
+     * payload {@code photos}로 남는다(05 2-3). 사진이 실패하면 머리·판도 함께 되돌려진다.
      */
     @Override
     public SavedState save(ActionCommand command, RepairState next) {
@@ -255,8 +269,10 @@ public class RepairStateStore {
           new RepairContent(
               contentId, roomRecordId, caseId, 1, roomPartId, title, description, null, side, at);
       contents.save(first);
+      cases.flush();
 
-      return new SavedState(ActionTarget.repairCase(caseId), digest(first));
+      return new SavedState(ActionTarget.repairCase(caseId), digest(first))
+          .withPhotos(photos.attach(command, caseId, uploadTickets));
     }
   }
 
@@ -285,9 +301,11 @@ public class RepairStateStore {
   private final class Supplementing implements StateStore<RepairState> {
 
     private final String description;
+    private final List<String> uploadTickets;
 
-    private Supplementing(String description) {
+    private Supplementing(String description, List<String> uploadTickets) {
       this.description = description;
+      this.uploadTickets = uploadTickets;
     }
 
     @Override
@@ -297,8 +315,8 @@ public class RepairStateStore {
 
     /**
      * 보충 한 줄을 남기고(그 행이 이 행동의 내용 지문, #155) 하자 인정을 확인 기다림으로 되돌린 뒤 하자 확인 요청을 다시 연다. 새로 열지·묶을지·기한은
-     * notification이 정한다({@code WaitService#restart}, 안내서 8-4). 사진은 #153·#112 뒤에 {@code withPhotos}로
-     * 붙인다.
+     * notification이 정한다({@code WaitService#restart}, 안내서 8-4). 덧붙인 사진은 수리 건에 붙고 지문은 행동 payload
+     * {@code photos}로 남는다(#167). 사진만 보충하면 보충 행의 설명은 비어 있다.
      */
     @Override
     public SavedState save(ActionCommand command, RepairState next) {
@@ -309,7 +327,8 @@ public class RepairStateStore {
       waits.restart(
           new OpenRequestCommand(
               command.roomRecordId(), RequestKind.DEFECT_CONFIRM, defectRequest(command), side));
-      return new SavedState(null, content);
+      return new SavedState(null, content)
+          .withPhotos(photos.attach(command, command.target().id(), uploadTickets));
     }
   }
 }
