@@ -99,7 +99,16 @@ npm run dev                # http://localhost:5173, /api는 백엔드(8080)로 �
 
 - **프로필은 기본 `local`이다.** 다른 프로필로 띄우려면 환경 변수 `SPRING_PROFILES_ACTIVE`를 주거나(`SPRING_PROFILES_ACTIVE=test ./gradlew bootRun`) `--args='--spring.profiles.active=test'`를 붙인다.
 - **API 문서(Swagger UI)는 로컬에서만 켜진다.** `bootRun`이 local 프로필로 떠서 http://localhost:8080/swagger-ui/index.html 에 열린다(운영에서는 꺼짐, `docs/rules/04` API 문서). 문서 주소는 local·test 프로필에서만 로그인 없이 열리고, `prod`가 켜지면 열리지 않는다.
-- **로그인이 필요한 API는 개발용 토큰으로 부른다.** 서버는 실제 액세스 JWT만 받는다(`Bearer <회원 UUID>`는 이제 401). 로그인 API(`POST /api/auth/login`)가 생기기 전에는 아래처럼 토큰을 만들어 요청 머리에 넣는다. 토큰이 없거나 맞지 않으면 `401 LOGIN_REQUIRED`다. 가입·로그인 같은 공개 API(06 4-1)와 가입 전 링크(`POST /api/public/**`), `/actuator/health`는 토큰 없이 열린다.
+- **로그인 API로 토큰을 받는다.** 가입한 회원의 이메일·비밀번호로 `POST /api/auth/login`을 부르면 본문에 액세스 토큰, `Set-Cookie`에 리프레시 쿠키(`refresh_token`, `Path=/api/auth/refresh`, 14일)가 온다. 액세스 토큰은 15분이다. 이메일·비밀번호가 맞지 않으면 어느 쪽이 틀렸든 `401 LOGIN_FAILED`다.
+  ```
+  curl -i -X POST http://localhost:8080/api/auth/login \
+    -H "Content-Type: application/json" \
+    -d '{"email":"seoyun@example.com","password":"homestamp123"}'
+  # 본문 {"accessToken":"..."} → curl -H "Authorization: Bearer <accessToken>" http://localhost:8080/api/...
+  # 재발급: curl -i -X POST http://localhost:8080/api/auth/refresh -H "Origin: http://localhost:5173" -b "refresh_token=<Set-Cookie 값>"
+  ```
+  - 재발급은 `Origin`이 `app.origin`(local은 `http://localhost:5173`)과 같아야 받는다. 화면에서는 브라우저가 쿠키와 Origin을 알아서 붙인다.
+- **회원 없이 확인할 때는 개발용 토큰을 쓴다.** 서버는 실제 액세스 JWT만 받는다(`Bearer <회원 UUID>`는 401). 가입 없이 보호된 API만 빨리 불러 보려면 아래처럼 토큰을 만들어 요청 머리에 넣는다. 토큰이 없거나 맞지 않으면 `401 LOGIN_REQUIRED`다. 가입·로그인 같은 공개 API(06 4-1)와 가입 전 링크(`POST /api/public/**`), `/actuator/health`는 토큰 없이 열린다.
   ```
   cd back
   ./gradlew -q localAccessToken --args=0190b6c6-0000-7000-8000-000000000001   # 토큰 한 줄이 나온다(24시간)
@@ -110,7 +119,7 @@ npm run dev                # http://localhost:5173, /api는 백엔드(8080)로 �
   - 테스트 코드에서는 이 도구 대신 `SecurityTestSupport.loginAs(회원 UUID)`를 쓴다(`mvc.perform(get(...).with(loginAs(id)))`, 같은 키로 만든 토큰).
     - `@SpringBootTest` + `@ActiveProfiles("test")`에서는 그대로 쓴다.
     - `@WebMvcTest`에서는 `AccessTokenConfig`와 `ClockConfig`를 `@Import`해야 한다.
-  - 리프레시 쿠키는 주지 않는다. 재발급·로그아웃까지 확인하려면 로그인 API를 기다린다.
+  - 리프레시 쿠키는 주지 않는다. 재발급까지 확인하려면 위 로그인 API를 쓴다.
 - **테이블은 Flyway가 만든다.** 앱이 뜰 때 `back/src/main/resources/db/migration`의 V 파일을 차례로 적용한다(`state`·`record`·`log` 스키마). 브랜치를 바꿔 V 파일이 달라지면 로컬 DB와 어긋날 수 있으니, 그때는 `cd back && docker compose down -v`로 지우고 다시 띄운다(되돌릴 수 없음).
 
 ## 문제가 생기면
