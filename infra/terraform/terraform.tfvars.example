@@ -3,3 +3,9 @@
 # 계정 번호는 `aws sts get-caller-identity --profile homestamp`의 Account 값
 
 aws_account_id = "000000000000"
+
+# RDS 인스턴스 클래스(기본값 없음). PostgreSQL 18을 서울 리전에서 주문할 수 있는지 먼저 확인한다
+#   aws rds describe-orderable-db-instance-options --engine postgres --engine-version 18.6 \
+#     --db-instance-class <클래스> --region ap-northeast-2 --profile homestamp --query 'OrderableDBInstanceOptions[].AvailabilityZones'
+# 과정 계정은 RDS small까지 문의 없이 만들 수 있다(04 3장). 확인 전에는 채우지 않는다
+# db_instance_class = "db.t4g.micro"
