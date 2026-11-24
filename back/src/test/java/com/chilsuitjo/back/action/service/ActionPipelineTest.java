@@ -326,9 +326,17 @@ class ActionPipelineTest {
   void 충돌_뒤_새_트랜잭션에서도_호실을_먼저_잠그고_처음_결과를_찾는다() {
     List<String> events = new ArrayList<>();
     RoomGateReader lockingGates =
-        (roomRecordId, actor) -> {
-          events.add("lock");
-          return gates.lockAndRead(roomRecordId, actor);
+        new RoomGateReader() {
+          @Override
+          public RoomGate lockAndRead(UUID roomRecordId, Actor actor) {
+            events.add("lock");
+            return gates.lockAndRead(roomRecordId, actor);
+          }
+
+          @Override
+          public RoomGate read(UUID roomRecordId, Actor actor) {
+            return gates.read(roomRecordId, actor);
+          }
         };
     RacingWriter racing = new RacingWriter(writer);
     ActionWriter loggingWriter =

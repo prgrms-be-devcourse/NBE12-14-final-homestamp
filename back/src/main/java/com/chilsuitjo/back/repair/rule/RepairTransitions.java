@@ -1,13 +1,18 @@
 package com.chilsuitjo.back.repair.rule;
 
 import com.chilsuitjo.back.action.dto.ActionEntry;
+import com.chilsuitjo.back.action.rule.ActionType;
 import com.chilsuitjo.back.action.rule.AnswerPayload;
 import com.chilsuitjo.back.action.rule.AnswerSupport;
 import com.chilsuitjo.back.action.rule.Transitions;
 import com.chilsuitjo.back.global.common.AckState;
+import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -35,6 +40,36 @@ public class RepairTransitions implements Transitions<RepairState> {
   @Override
   public RepairState initial() {
     return RepairState.NONE;
+  }
+
+  /**
+   * 이 측이 지금 이 수리 건에 할 수 있는 행동(상세 조회의 {@code availableActions}, 06 4-0). {@link #apply}가 받아 주는지와 같은
+   * 판단이다: 하자 응답은 {@code AnswerSupport.canAnswer}와 상대가 볼 수 있는 기록인지, 보충은 {@code
+   * AnswerSupport.canRerequest}(근거는 더한다고 봄). 호실 단위 거절(정산 완료·공유 중단 등)은 여기서 보지 않는다({@code
+   * RoomGate.rejection}).
+   *
+   * <p>지금은 응답·보충만 있다. 다른 행동은 그 기능을 만들 때 {@link #apply}와 함께 더한다.
+   *
+   * @param now 지금 시각(7일 간격 판단). 행동이 아니라 조회라서 부르는 쪽이 {@code Clock}으로 넘긴다
+   */
+  public List<ActionType> available(RepairState state, PartySide side, Instant now) {
+    if (!state.exists() || side == null) {
+      return List.of();
+    }
+    List<ActionType> result = new ArrayList<>();
+    if (AnswerSupport.canAnswer(state.defect(), side) && !state.hiddenFromCounterpartKnown()) {
+      result.add(ActionType.RESPOND_DEFECT);
+    }
+    if (AnswerSupport.canRerequest(
+        state.defect(), side, !state.defectConfirmBlocked(), now, rerequestInterval)) {
+      result.add(ActionType.SUPPLEMENT);
+    }
+    return List.copyOf(result);
+  }
+
+  /** 다음에 보충할 수 있는 시각("○월 ○일부터 다시 요청할 수 있어요"). 보충한 적이 없으면 null. */
+  public Instant nextRerequestAt(RepairState state) {
+    return AnswerSupport.nextRerequestAt(state.defect(), rerequestInterval);
   }
 
   @Override
