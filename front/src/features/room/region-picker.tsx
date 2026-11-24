@@ -86,9 +86,6 @@ export function RegionPicker({ inputId }: { inputId: string }) {
             <strong className="block text-base text-ink">
               {regionName(picked)}
             </strong>
-            <small className="text-[13px] text-sub">
-              번지·건물명은 저장하지 않아요.
-            </small>
           </div>
           <Button
             type="button"
