@@ -11,7 +11,7 @@ import org.springframework.dao.DataAccessException;
 class SchemaRevisionTest extends SchemaTestSupport {
   @Test
   void tablesAndHistoryAreInTheirAssignedSchemas() {
-    assertEquals(11L, tableCount("record"));
+    assertEquals(12L, tableCount("record")); // V8 record.supplement
     assertEquals(25L, tableCount("state"));
     assertEquals(1L, tableCount("log"));
     assertEquals(1L, tableCount("public"));

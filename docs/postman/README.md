@@ -17,6 +17,25 @@
    ```
 4. 컬렉션 **Variables**에서 `bearer_token_15h5`의 **Current value**에 그 토큰(`eyJ...`, `Bearer` 없이)을 넣고 저장한다
 
+### 상대 측으로 시험할 때 (하자 응답 등)
+
+하자 응답처럼 등록한 쪽의 **상대**가 부르는 API는 두 번째 회원이 필요하다. 초대·연결 API가 아직 없어서 DB에서 바로 연결한다.
+
+1. 두 번째 회원을 넣는다
+   ```sql
+   INSERT INTO state.member (id, status, created_at, version)
+   VALUES ('0190b6c6-0000-7000-8000-000000000002', 'ACTIVE', now(), 0);
+   ```
+2. **호실 만들기**를 보낸 뒤, 비어 있는 상대 자리(만든 사람의 반대 측)에 그 회원을 연결한다
+   ```sql
+   UPDATE state.party
+   SET member_id = '0190b6c6-0000-7000-8000-000000000002', status = 'CONNECTED', connected_at = now()
+   WHERE room_record_id = '<roomId>' AND member_id IS NULL;
+   ```
+3. `./gradlew -q localAccessToken --args=0190b6c6-0000-7000-8000-000000000002`로 토큰을 만들어 `counterpart_token`의 Current value에 넣는다
+
+순서 예: 하자 등록(나) → 하자 응답 `NEED_MORE`(상대) → 보충하고 다시 확인 요청(나). 같은 수리 건에 보충은 7일에 한 번이라, 다시 시험하려면 하자를 새로 등록한다.
+
 ## 변수
 
 | 변수 | 값 | 채우는 법 |
@@ -26,6 +45,7 @@
 | `roomId` | 호실 ID | **호실 만들기**를 보내면 자동 |
 | `partId` | 부위 ID | 부위 조회 API가 아직 없어서 DB에서 찾아 직접 넣는다: `SELECT id, zone, name FROM state.room_part WHERE room_record_id = '<roomId>';` |
 | `repairCaseId` | 수리 건 ID | **하자 등록**을 보내면 자동 |
+| `counterpart_token` | 상대 측 회원의 개발용 토큰 | 직접(위 "상대 측으로 시험할 때") |
 
 - **Initial value는 비워 둔다.** 파일로 내보내면 Initial value가 들어가서 저장소에 올라간다. 토큰과 각자 로컬 DB의 ID는 Current value에만 둔다(`baseUrl`만 예외).
 - 요청 머리에 `Idempotency-Key`를 적지 않으면 컬렉션 스크립트가 요청마다 새 UUID를 붙인다. 같은 키로 다시 보내기를 시험할 때만 그 요청에 키를 직접 적는다(두 번째 응답에 `Idempotent-Replayed: true`, 06 4-0).
