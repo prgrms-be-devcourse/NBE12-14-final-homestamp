@@ -1,0 +1,2 @@
+org.springframework.boot.context.config.ConfigDataLocationResolver=com.chilsuitjo.back.global.config.ssm.SsmConfigDataLocationResolver
+org.springframework.boot.context.config.ConfigDataLoader=com.chilsuitjo.back.global.config.ssm.SsmConfigDataLoader

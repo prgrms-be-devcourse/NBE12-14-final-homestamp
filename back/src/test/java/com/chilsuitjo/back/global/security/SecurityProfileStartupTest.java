@@ -3,10 +3,21 @@ package com.chilsuitjo.back.global.security;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.chilsuitjo.back.global.config.ClockConfig;
+import com.chilsuitjo.back.global.config.ssm.SsmConfigParameter;
+import com.chilsuitjo.back.global.config.ssm.SsmParameterSource;
+import com.chilsuitjo.back.global.config.ssm.SsmTestParameterSource;
+import java.util.ArrayList;
+import java.util.List;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.bootstrap.DefaultBootstrapContext;
+import org.springframework.boot.context.config.ConfigDataEnvironmentPostProcessor;
 import org.springframework.boot.convert.ApplicationConversionService;
-import org.springframework.boot.test.context.ConfigDataApplicationContextInitializer;
+import org.springframework.boot.env.DefaultPropertiesPropertySource;
+import org.springframework.boot.env.RandomValuePropertySource;
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
+import org.springframework.context.ApplicationContextInitializer;
+import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -18,47 +29,49 @@ import org.springframework.web.servlet.config.annotation.EnableWebMvc;
  */
 class SecurityProfileStartupTest {
 
-  private static final String ACCESS_KEY =
-      "app.keys.access-token=prod-like-access-token-signing-key-0001";
-  private static final String REFRESH_KEY =
-      "app.keys.refresh-token=prod-like-refresh-token-rotation-key-0001";
-
   /**
    * 설정 파일을 읽는다. 프로필은 {@code spring.profiles.active}로 준다. 앱처럼 {@code 15m} 같은 기간 값을 읽도록 Boot 변환기를
    * 넣는다.
    */
   private final WebApplicationContextRunner runner =
       new WebApplicationContextRunner()
-          .withInitializer(new ConfigDataApplicationContextInitializer())
+          .withInitializer(new SsmAwareConfigDataInitializer())
           .withInitializer(context ->
               context.getBeanFactory().setConversionService(new ApplicationConversionService()))
           .withUserConfiguration(보안만.class);
 
+  @AfterEach
+  void resetSsmSource() {
+    SsmTestParameterSource.reset();
+  }
+
   @Test
-  void prod는_키가_없으면_시작하지_않는다() {
+  void prod는_SSM_필수_설정이_없으면_시작하지_않는다() {
+    SsmTestParameterSource.setParameters(List.of());
     runner
         .withPropertyValues("spring.profiles.active=prod")
         .run(context -> {
           assertThat(context).hasFailed();
-          assertThat(context.getStartupFailure())
-              .rootCause()
-              .isInstanceOf(IllegalStateException.class)
-              .hasMessageContaining("prod에는 실제 토큰 검증기")
-              .hasMessageContaining("app.keys.access-token");
+          assertThat(context.getStartupFailure()).hasMessageContaining("필수 SSM 앱 설정이 없다");
         });
   }
 
   @Test
   void prod에_local이_함께_켜져도_local_test_고정_키를_쓰지_않고_시작하지_않는다() {
+    SsmTestParameterSource.setParameters(List.of());
     runner
         .withPropertyValues("spring.profiles.active=local,prod")
-        .run(context -> assertThat(context).hasFailed());
+        .run(context -> {
+          assertThat(context).hasFailed();
+          assertThat(context.getStartupFailure()).hasMessageContaining("필수 SSM 앱 설정이 없다");
+        });
   }
 
   @Test
   void prod는_키가_있으면_실제_검증기로_시작한다() {
+    SsmTestParameterSource.setParameters(SsmTestParameterSource.validParameters());
     runner
-        .withPropertyValues("spring.profiles.active=prod", ACCESS_KEY, REFRESH_KEY)
+        .withPropertyValues("spring.profiles.active=prod")
         .run(context -> {
           assertThat(context).hasNotFailed();
           assertThat(context).hasSingleBean(AccessTokenVerifier.class);
@@ -68,12 +81,17 @@ class SecurityProfileStartupTest {
 
   @Test
   void 키가_32바이트보다_짧으면_시작하지_않는다() {
+    List<SsmConfigParameter> parameters = new ArrayList<>(SsmTestParameterSource.validParameters());
+    parameters.replaceAll(parameter ->
+        parameter.name().endsWith("app.keys.access-token")
+            ? new SsmConfigParameter(parameter.name(), "too-short", "SecureString")
+            : parameter);
+    SsmTestParameterSource.setParameters(parameters);
     runner
-        .withPropertyValues(
-            "spring.profiles.active=prod", "app.keys.access-token=too-short", REFRESH_KEY)
+        .withPropertyValues("spring.profiles.active=prod")
         .run(context -> {
           assertThat(context).hasFailed();
-          assertThat(context.getStartupFailure()).rootCause().hasMessageContaining("32바이트 이상");
+          assertThat(context.getStartupFailure()).hasMessageContaining("32바이트 이상");
         });
   }
 
@@ -94,6 +112,7 @@ class SecurityProfileStartupTest {
             assertThat(context).hasSingleBean(AccessTokens.class);
             assertThat(context.getEnvironment().getProperty("app.keys.access-token"))
                 .isEqualTo(SecurityTestSupport.TEST_ACCESS_KEY);
+            assertThat(SsmTestParameterSource.calls()).isZero();
           });
     }
   }
@@ -103,4 +122,19 @@ class SecurityProfileStartupTest {
   @EnableWebSecurity
   @Import({SecurityConfig.class, AccessTokenConfig.class, ClockConfig.class})
   static class 보안만 {}
+
+  private static class SsmAwareConfigDataInitializer
+      implements ApplicationContextInitializer<ConfigurableApplicationContext> {
+
+    @Override
+    public void initialize(ConfigurableApplicationContext context) {
+      var environment = context.getEnvironment();
+      RandomValuePropertySource.addToEnvironment(environment);
+      DefaultBootstrapContext bootstrapContext = new DefaultBootstrapContext();
+      bootstrapContext.register(SsmParameterSource.class, ignored -> new SsmTestParameterSource());
+      ConfigDataEnvironmentPostProcessor.applyTo(environment, context, bootstrapContext);
+      bootstrapContext.close(context);
+      DefaultPropertiesPropertySource.moveToEnd(environment);
+    }
+  }
 }

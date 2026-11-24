@@ -6,7 +6,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.chilsuitjo.back.global.config.ClockConfig;
+import com.chilsuitjo.back.global.config.ssm.SsmTestParameterSource;
 import java.util.UUID;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
@@ -20,6 +23,16 @@ import org.springframework.test.web.servlet.MockMvc;
  * 운영처럼 설정으로 키를 넣는다. 이때 local·test 고정 키로 만든 토큰은 받지 않는다.
  */
 abstract class SecurityProdProfileTest {
+
+  @BeforeAll
+  static void provideExplicitFakeSsmSettings() {
+    SsmTestParameterSource.setParameters(SsmTestParameterSource.validParameters());
+  }
+
+  @AfterAll
+  static void resetFakeSsmSettings() {
+    SsmTestParameterSource.reset();
+  }
 
   @Autowired private MockMvc mvc;
 
