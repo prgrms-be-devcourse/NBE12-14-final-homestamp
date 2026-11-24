@@ -2,6 +2,7 @@ package com.chilsuitjo.back.repair.dto;
 
 import com.chilsuitjo.back.global.common.AckState;
 import com.chilsuitjo.back.global.common.PartySide;
+import com.chilsuitjo.back.photo.dto.PhotoCard;
 import com.chilsuitjo.back.repair.rule.MoneyStatus;
 import com.chilsuitjo.back.repair.rule.RepairStatus;
 import java.time.Instant;
@@ -11,8 +12,8 @@ import java.util.UUID;
 /**
  * 수리 건 상세({@code GET /api/repair-cases/{id}}, 06 4-6·S-12).
  *
- * <p>영역마다 칸을 나눠 둔다. 지금은 기본 정보·내용·하자 인정·부담 상태만 있고, 사진·원인 설명·진행 상황·경과·통지 상태는 그 기능을 만드는 PR에서 칸을 더한다(이미
- * 있는 칸은 바꾸지 않는다, #164).
+ * <p>영역마다 칸을 나눠 둔다. 지금은 기본 정보·내용·하자 인정·부담 상태·수리 건 사진만 있고, 원인 설명·진행 상황·경과·통지 상태는 그 기능을 만드는 PR에서 칸을
+ * 더한다(이미 있는 칸은 바꾸지 않는다, #164).
  *
  * @param id 수리 건
  * @param roomRecordId 호실 기록
@@ -26,6 +27,8 @@ import java.util.UUID;
  * @param content 보이는 판(고정되지 않았으면 지금 판)
  * @param defect 하자 인정
  * @param money 수리비 부담
+ * @param photos 수리 건에 붙은 사진(하자 등록·보충, {@code sortOrder} 순). 보는 사람이 볼 수 있는 것만이고 지운 사진은 흔적({@code
+ *     erased})으로 남는다(03 3-1, 불변식 16). 주소는 {@code POST /api/photos/view-urls}로 따로 받는다
  * @param availableActions 지금 이 사람이 누를 수 있는 행동. 이름은 API 끝 단어와 같다(06 4-0 "할 수 있는 행동")
  */
 public record RepairCaseDetail(
@@ -40,6 +43,7 @@ public record RepairCaseDetail(
     Content content,
     Defect defect,
     Money money,
+    List<PhotoCard> photos,
     List<String> availableActions) {
 
   /**

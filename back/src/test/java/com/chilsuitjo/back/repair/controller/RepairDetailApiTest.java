@@ -131,6 +131,56 @@ class RepairDetailApiTest {
   }
 
   @Test
+  void 탈퇴로_풀리는지는_보는_사람_기준이다() throws Exception {
+    // 집주인이 공유를 그만뒀고 등록한 세입자가 탈퇴했다. 집주인에게는 상대가 탈퇴했으니 제한이 풀린다(06 CONS-3p, #175)
+    UUID caseId = register();
+    jdbc.update(
+        "UPDATE state.party SET status = 'SHARING_STOPPED', sharing_stopped_at ="
+            + " (SELECT created_at FROM state.repair_case WHERE id = ?)"
+            + " WHERE room_record_id = ? AND side = 'LANDLORD'",
+        caseId,
+        room);
+    jdbc.update(
+        "UPDATE state.party SET status = 'WITHDRAWN' WHERE room_record_id = ? AND side = 'TENANT'",
+        room);
+
+    detail(caseId, landlord)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.asOf").doesNotExist());
+  }
+
+  // ---- 사진(#175) ----
+
+  @Test
+  void 등록과_보충_사진이_순서대로_보이고_다른_수리_건_사진은_섞이지_않는다() throws Exception {
+    UUID caseId = register();
+    UUID other = register();
+    respond(caseId, landlord, "NEED_MORE", "사진이 흐려요").andExpect(status().isOk());
+    mvc.perform(
+            post("/api/repair-cases/{id}/supplement", caseId)
+                .with(loginAs(tenant))
+                .header("Idempotency-Key", "sup-" + UUID.randomUUID())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"uploadTickets\":[\"" + UUID.randomUUID() + "\"]}"))
+        .andExpect(status().isOk());
+
+    for (UUID viewer : new UUID[] {tenant, landlord}) {
+      detail(caseId, viewer)
+          .andExpect(jsonPath("$.photos.length()").value(2))
+          .andExpect(jsonPath("$.photos[0].sortOrder").value(0))
+          .andExpect(jsonPath("$.photos[1].sortOrder").value(1))
+          .andExpect(jsonPath("$.photos[0].stage").value("BEFORE"))
+          .andExpect(jsonPath("$.photos[1].stage").value("BEFORE"))
+          .andExpect(jsonPath("$.photos[0].uploadedBy").value("TENANT"))
+          .andExpect(jsonPath("$.photos[0].target.id").value(caseId.toString()))
+          .andExpect(jsonPath("$.photos[0].erased").doesNotExist());
+    }
+    detail(other, tenant)
+        .andExpect(jsonPath("$.photos.length()").value(1))
+        .andExpect(jsonPath("$.photos[0].target.id").value(other.toString()));
+  }
+
+  @Test
   void 상대_쪽은_확인_기다림이면_하자_응답을_누를_수_있다() throws Exception {
     UUID caseId = register();
 
