@@ -1,7 +1,6 @@
 ---
 name: issue
-description: GitHub 이슈를 템플릿대로 만들고, 사람이 승인하면 올린다. 사람이 /issue 또는 $issue로 부를 때만 쓴다
-disable-model-invocation: true
+description: GitHub 이슈를 템플릿대로 만들고, 사람이 승인하면 올린다. 새 작업을 시작하기 전(작업마다 이슈를 먼저 만든다), 또는 사람이 이슈를 부탁할 때 쓴다
 ---
 
 # issue

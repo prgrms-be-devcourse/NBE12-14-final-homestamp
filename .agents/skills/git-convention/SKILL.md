@@ -1,12 +1,15 @@
 ---
 name: git-convention
-description: 브랜치 이름과 커밋 메시지를 팀 규칙대로 만든다. 사람이 /git-convention 또는 $git-convention으로 부를 때만 쓴다
-disable-model-invocation: true
+description: 브랜치 이름과 커밋 메시지를 팀 규칙대로 만든다. 새 브랜치를 만들거나 커밋할 때, 또는 사람이 이름·메시지를 물을 때 쓴다
 ---
 
 # git-convention
 
-브랜치 이름이나 커밋 메시지 **초안만** 보여 준다. `git switch -c`, `git commit`은 실행하지 않는다. 사람이 확인하고 직접 한다.
+브랜치 이름이나 커밋 메시지 초안을 만든다.
+
+- 사람이 실행까지 맡겼으면("커밋해줘", "브랜치 만들어줘") 초안대로 `git switch -c`·`git commit`을 실행하고 결과(브랜치 이름, 커밋 해시·메시지)를 보여 준다. 실행 전에 `git branch --show-current`로 지금 브랜치를 확인한다(`docs/failure-memory.md` 2026-11-18). `main`·`dev`에 바로 커밋하지 않는다
+- 맡기지 않았으면 **초안만** 보여 주고 실행하지 않는다
+- push는 이 스킬이 하지 않는다. 사람이 "푸쉬해줘"라고 하거나 `pr-body`가 승인받았을 때만 한다
 
 ## 브랜치 이름
 
@@ -30,6 +33,7 @@ disable-model-invocation: true
 ## 커밋 메시지 만드는 순서
 
 1. `git diff --staged`만 본다. 스테이징된 게 없으면 "스테이징된 변경이 없습니다"라고 알리고 `git status --short` 결과를 보여 준 뒤 멈춘다
+   - 사람이 실행을 맡겼으면("커밋해줘") 멈추지 않고, 이 작업에서 바꾼 파일만 `git add`로 올린 뒤 올린 목록을 보여 주고 이어 간다. 이 작업과 상관없는 변경이나 비밀값 파일(`AGENTS.md` "AI가 지킬 것")은 올리지 않고 남겨 두었다고 알린다
 2. 바뀐 내용에 맞는 타입 하나를 고른다
 3. `타입: 내용` 한 줄로 쓴다
    - 한국어, 50자 이내, 범위 표시 없음 (`feat(back):` ✗)
