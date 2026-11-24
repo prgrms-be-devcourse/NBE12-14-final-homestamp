@@ -18,6 +18,7 @@ import com.chilsuitjo.back.global.error.ErrorCode;
 import com.jayway.jsonpath.JsonPath;
 import java.util.List;
 import java.util.UUID;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -60,6 +61,12 @@ class RegionApiTest {
         """,
         INACTIVE_DONG,
         INACTIVE_SIDO_DONG);
+  }
+
+  /** 넣은 비활성 동은 테스트마다 지워 같은 DB를 쓰는 다른 테스트에 남기지 않는다(가리키는 호실 기록이 없어 지울 수 있다). */
+  @AfterEach
+  void removeInactiveRegions() {
+    jdbc.update("DELETE FROM state.region WHERE code IN (?, ?)", INACTIVE_DONG, INACTIVE_SIDO_DONG);
   }
 
   @Test
