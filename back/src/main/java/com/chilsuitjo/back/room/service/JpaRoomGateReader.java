@@ -34,10 +34,24 @@ public class JpaRoomGateReader implements RoomGateReader {
   @Override
   @Transactional(propagation = Propagation.MANDATORY)
   public RoomGate lockAndRead(UUID roomRecordId, Actor actor) {
-    RoomRecord room =
+    return gate(
         rooms
             .findByIdForUpdate(roomRecordId)
-            .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
+            .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND)),
+        actor);
+  }
+
+  /** 잠그지 않고 같은 값을 읽는다(상세 조회의 {@code availableActions}). 읽기 트랜잭션 안에서 부른다. */
+  @Override
+  @Transactional(readOnly = true)
+  public RoomGate read(UUID roomRecordId, Actor actor) {
+    return gate(
+        rooms.findById(roomRecordId).orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND)),
+        actor);
+  }
+
+  private RoomGate gate(RoomRecord room, Actor actor) {
+    UUID roomRecordId = room.getId();
     boolean settled = room.getStatus() == RoomStatus.SETTLED;
     boolean ended = room.getStatus() != RoomStatus.LIVING; // 거주 종료 또는 정산 완료
     boolean joinedAway = room.getJoinedIntoId() != null;
