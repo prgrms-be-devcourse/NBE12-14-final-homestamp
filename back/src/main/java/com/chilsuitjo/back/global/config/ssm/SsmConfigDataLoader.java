@@ -14,19 +14,31 @@ public final class SsmConfigDataLoader implements ConfigDataLoader<SsmConfigData
       throws IOException {
     try {
       SsmParameterSource source = context.getBootstrapContext().get(SsmParameterSource.class);
-      return new ConfigData(
-          List.of(
-              new RedactedSsmPropertySource(
-                  SsmAppParameterMapper.toProperties(source.loadAppParameters()))));
+      return switch (resource.path()) {
+        case APP ->
+            new ConfigData(
+                List.of(
+                    new RedactedSsmPropertySource(
+                        "homestampSsmApp",
+                        SsmAppParameterMapper.toProperties(source.loadAppParameters()))));
+        case MIGRATION ->
+            new ConfigData(
+                List.of(
+                    new RedactedSsmPropertySource(
+                        "homestampSsmMigration",
+                        MigrationSsmParameterMapper.toProperties(
+                            source.loadMigrationParameters()))));
+      };
     } catch (RuntimeException exception) {
       if (exception instanceof ApiCallTimeoutException) {
-        throw new IllegalStateException("운영 앱 SSM 설정 조회 시간이 초과됐다");
+        String scope = resource.path() == SsmConfigDataResource.Path.APP ? "앱" : "Migration";
+        throw new IllegalStateException("운영 " + scope + " SSM 설정 조회 시간이 초과됐다");
       }
       if (exception instanceof IllegalStateException stateException
           && isSanitized(stateException.getMessage())) {
         throw stateException;
       }
-      throw new IllegalStateException("운영 앱 SSM 설정을 불러오거나 검증하지 못했다");
+      throw new IllegalStateException("운영 SSM 설정을 불러오거나 검증하지 못했다");
     }
   }
 
@@ -43,6 +55,12 @@ public final class SsmConfigDataLoader implements ConfigDataLoader<SsmConfigData
             || message.startsWith("AWS 리전")
             || message.startsWith("AWS SSM 클라이언트")
             || message.startsWith("운영 앱 SSM 설정 조회 시간이 초과됐다")
-            || message.startsWith("운영 앱 SSM 설정을 불러오지 못했다"));
+            || message.startsWith("운영 앱 SSM 설정을 불러오지 못했다")
+            || message.startsWith("운영 Migration SSM 설정")
+            || message.startsWith("Migration SSM 설정")
+            || message.startsWith("Migration 경로 외 SSM")
+            || message.startsWith("허용하지 않는 Migration SSM")
+            || message.startsWith("필수 Migration SSM")
+            || message.startsWith("Migration 데이터베이스"));
   }
 }

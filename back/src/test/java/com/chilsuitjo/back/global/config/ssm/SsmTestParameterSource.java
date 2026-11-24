@@ -8,8 +8,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class SsmTestParameterSource implements SsmParameterSource {
 
   private static volatile List<SsmConfigParameter> parameters = List.of();
+  private static volatile List<SsmConfigParameter> migrationParameters = List.of();
   private static final AtomicInteger calls = new AtomicInteger();
+  private static final AtomicInteger migrationCalls = new AtomicInteger();
   private static volatile RuntimeException failure;
+  private static volatile RuntimeException migrationFailure;
 
   public static void setParameters(List<SsmConfigParameter> newParameters) {
     parameters = List.copyOf(newParameters);
@@ -20,14 +23,40 @@ public final class SsmTestParameterSource implements SsmParameterSource {
     failure = newFailure;
   }
 
+  public static void setMigrationParameters(List<SsmConfigParameter> newParameters) {
+    migrationParameters = List.copyOf(newParameters);
+    migrationFailure = null;
+  }
+
+  public static void setMigrationFailure(RuntimeException newFailure) {
+    migrationFailure = newFailure;
+  }
+
   public static void reset() {
     parameters = List.of();
+    migrationParameters = List.of();
     failure = null;
+    migrationFailure = null;
     calls.set(0);
+    migrationCalls.set(0);
   }
 
   public static int calls() {
     return calls.get();
+  }
+
+  public static int migrationCalls() {
+    return migrationCalls.get();
+  }
+
+  public static List<SsmConfigParameter> migrationParameters(
+      String url, String username, String password, String ownerRole) {
+    String prefix = MigrationSsmParameterMapper.PARAMETER_PREFIX;
+    return List.of(
+        new SsmConfigParameter(prefix + "spring.datasource.url", url, "String"),
+        new SsmConfigParameter(prefix + "spring.datasource.username", username, "SecureString"),
+        new SsmConfigParameter(prefix + "spring.datasource.password", password, "SecureString"),
+        new SsmConfigParameter(prefix + "app.migration.owner-role", ownerRole, "String"));
   }
 
   public static List<SsmConfigParameter> validParameters() {
@@ -63,5 +92,24 @@ public final class SsmTestParameterSource implements SsmParameterSource {
       throw failure;
     }
     return new ArrayList<>(parameters);
+  }
+
+  @Override
+  public List<SsmConfigParameter> loadMigrationParameters() {
+    migrationCalls.incrementAndGet();
+    if (migrationFailure != null) {
+      throw migrationFailure;
+    }
+    if (!migrationParameters.isEmpty()) {
+      return new ArrayList<>(migrationParameters);
+    }
+    if (Boolean.parseBoolean(System.getenv("HOMESTAMP_TEST_MIGRATION_SSM"))) {
+      return migrationParameters(
+          System.getenv("HOMESTAMP_TEST_MIGRATION_DB_URL"),
+          System.getenv("HOMESTAMP_TEST_MIGRATION_DB_USERNAME"),
+          System.getenv("HOMESTAMP_TEST_MIGRATION_DB_PASSWORD"),
+          System.getenv("HOMESTAMP_TEST_MIGRATION_OWNER_ROLE"));
+    }
+    return List.of();
   }
 }

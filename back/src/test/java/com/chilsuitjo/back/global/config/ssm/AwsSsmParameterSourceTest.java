@@ -59,6 +59,34 @@ class AwsSsmParameterSourceTest {
   }
 
   @Test
+  void migration_요청은_고정된_migration_경로만_복호화해_읽는다() {
+    SsmClient client = mock(SsmClient.class);
+    when(client.getParametersByPath(any(GetParametersByPathRequest.class)))
+        .thenReturn(
+            GetParametersByPathResponse.builder()
+                .parameters(
+                    Parameter.builder()
+                        .name(AwsSsmParameterSource.MIGRATION_PATH + "spring.datasource.url")
+                        .value("jdbc:postgresql://db")
+                        .type(ParameterType.STRING)
+                        .build())
+                .build());
+
+    List<SsmConfigParameter> parameters =
+        new AwsSsmParameterSource(() -> client).loadMigrationParameters();
+
+    assertEquals(1, parameters.size());
+    assertEquals(
+        AwsSsmParameterSource.MIGRATION_PATH + "spring.datasource.url",
+        parameters.getFirst().name());
+    var requestCaptor = org.mockito.ArgumentCaptor.forClass(GetParametersByPathRequest.class);
+    verify(client).getParametersByPath(requestCaptor.capture());
+    assertEquals(AwsSsmParameterSource.MIGRATION_PATH, requestCaptor.getValue().path());
+    assertEquals(false, requestCaptor.getValue().recursive());
+    assertEquals(true, requestCaptor.getValue().withDecryption());
+  }
+
+  @Test
   void 반복된_페이지_토큰은_비밀값을_노출하지_않고_실패한다() {
     SsmClient client = mock(SsmClient.class);
     when(client.getParametersByPath(any(GetParametersByPathRequest.class)))

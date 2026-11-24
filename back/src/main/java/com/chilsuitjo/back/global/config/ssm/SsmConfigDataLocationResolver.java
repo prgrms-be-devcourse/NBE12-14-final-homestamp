@@ -22,12 +22,16 @@ public final class SsmConfigDataLocationResolver
   public List<SsmConfigDataResource> resolve(
       ConfigDataLocationResolverContext context, ConfigDataLocation location)
       throws ConfigDataLocationNotFoundException, ConfigDataResourceNotFoundException {
-    if (!location.getNonPrefixedValue(PREFIX).isEmpty()) {
-      throw new IllegalStateException("SSM ConfigData 위치에는 추가 경로를 지정할 수 없다");
-    }
+    String requestedPath = location.getNonPrefixedValue(PREFIX);
+    SsmConfigDataResource.Path path =
+        switch (requestedPath) {
+          case "" -> SsmConfigDataResource.Path.APP;
+          case "migration" -> SsmConfigDataResource.Path.MIGRATION;
+          default -> throw new IllegalStateException("허용하지 않는 SSM ConfigData 경로다");
+        };
     context
         .getBootstrapContext()
         .registerIfAbsent(SsmParameterSource.class, ignored -> new AwsSsmParameterSource());
-    return List.of(new SsmConfigDataResource());
+    return List.of(new SsmConfigDataResource(path));
   }
 }

@@ -88,6 +88,8 @@ spring:
     activate:
       on-profile: prod
     import: "homestamp-ssm:"
+  flyway:
+    enabled: false
 
 ---
 spring:
