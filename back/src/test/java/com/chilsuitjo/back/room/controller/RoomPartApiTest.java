@@ -171,6 +171,16 @@ class RoomPartApiTest {
   }
 
   @Test
+  void 이름에_NUL_문자가_있으면_VALIDATION_FAILED() throws Exception {
+    for (String name : List.of("\\u0000", "다\\u0000락", "다락\\u0000")) {
+      add(key(), "{\"zone\":\"방\",\"name\":\"" + name + "\"}")
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
+    assertThat(parts()).isEqualTo(29);
+  }
+
+  @Test
   void 멱등_키가_없으면_VALIDATION_FAILED() throws Exception {
     mvc.perform(
             post("/api/rooms/{id}/parts", room)
@@ -440,6 +450,33 @@ class RoomPartApiTest {
     JsonNode listed = listOf(member);
     assertThat(listed.has("asOf") && listed.get("asOf").isNull()).isTrue();
     assertThat(find(listed.get("parts"), closet).get("hidden").asBoolean()).isTrue();
+  }
+
+  @Test
+  void 공유를_그만둔_뒤_같은_키로_다시_보내도_그만둔_뒤_상대가_바꾼_부위_상태는_보이지_않는다() throws Exception {
+    // 세입자가 숨김·추가를 한 뒤 공유를 그만둠 → 집주인이 그 부위들을 바꿈 → 세입자가 같은 키로 다시 보냄(06 4-0 재응답)
+    UUID landlord = connectLandlord();
+    UUID closet = partNamed("붙박이장");
+    String hideKey = key();
+    action(closet, "hide", hideKey, null).andExpect(status().isOk());
+    String addKey = key();
+    String addBody = "{\"zone\":\"방\",\"name\":\"다락\"}";
+    UUID added =
+        UUID.fromString(
+            body(add(addKey, addBody).andExpect(status().isCreated())).get("id").asString());
+    stopSharing("TENANT");
+    actionAs(landlord, closet, "show", null).andExpect(status().isOk());
+    actionAs(landlord, added, "hide", null).andExpect(status().isOk());
+
+    action(closet, "hide", hideKey, null)
+        .andExpect(status().isOk())
+        .andExpect(header().string("Idempotent-Replayed", "true"))
+        .andExpect(jsonPath("$.hidden").value(true));
+    add(addKey, addBody)
+        .andExpect(status().isCreated())
+        .andExpect(header().string("Idempotent-Replayed", "true"))
+        .andExpect(jsonPath("$.id").value(added.toString()))
+        .andExpect(jsonPath("$.hidden").value(false));
   }
 
   // ---- 준비물
