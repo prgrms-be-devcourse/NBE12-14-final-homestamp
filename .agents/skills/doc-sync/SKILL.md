@@ -1,7 +1,6 @@
 ---
 name: doc-sync
-description: PR 전에 바뀐 코드에 맞춰 규칙 문서에서 고칠 곳을 제안한다. 사람이 부를 때만 쓴다
-disable-model-invocation: true
+description: PR 전에 바뀐 코드에 맞춰 규칙 문서에서 고칠 곳을 제안한다. 코드를 바꾼 작업을 끝내고 PR을 만들기 전, 또는 사람이 부탁할 때 쓴다
 ---
 
 # doc-sync
