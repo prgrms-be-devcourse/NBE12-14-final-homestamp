@@ -255,6 +255,74 @@ class RepairTransitionsTest {
         .isEqualTo(AckState.PENDING);
   }
 
+  // ---- 할 수 있는 행동(availableActions) ----
+
+  /** 하자 인정 × 측 × 상대에게 보임 × 요청을 열 수 있음 × 마지막 보충(없음·3일 전·7일 전). */
+  static Stream<RepairState> availableCases() {
+    Instant[] lastSupplements = {null, NOW.minus(Duration.ofDays(3)), NOW.minus(INTERVAL)};
+    return Arrays.stream(AckState.values())
+        .flatMap(ack ->
+            Stream.of(true, false)
+                .flatMap(hidden ->
+                    Stream.of(true, false)
+                        .flatMap(canOpen ->
+                            Arrays.stream(lastSupplements)
+                                .map(last ->
+                                    new RepairState(
+                                        RepairStatus.NOT_STARTED,
+                                        ack,
+                                        MoneyStatus.UNDECIDED,
+                                        PartySide.TENANT,
+                                        1,
+                                        last,
+                                        canOpen,
+                                        hidden)))));
+  }
+
+  @ParameterizedTest
+  @MethodSource("availableCases")
+  void 보여_주는_버튼은_apply가_받아_주는_행동과_같다(RepairState state) {
+    for (PartySide side : PartySide.values()) {
+      List<ActionType> available = rules.available(state, side, NOW);
+
+      // 맞아요가 되는지(보류·이견에서도 맞아요로는 바꿀 수 있어 버튼이 보인다)
+      boolean respondAccepted =
+          accepts(() -> rules.apply(state, respond(side, Answer.ACK, null, 1)));
+      boolean supplementAccepted = accepts(() -> rules.apply(state, supplement(side, NOW)));
+
+      assertThat(available.contains(ActionType.RESPOND_DEFECT))
+          .as("respond %s %s", side, state)
+          .isEqualTo(respondAccepted);
+      assertThat(available.contains(ActionType.SUPPLEMENT))
+          .as("supplement %s %s", side, state)
+          .isEqualTo(supplementAccepted);
+    }
+  }
+
+  @Test
+  void 없는_기록이나_측이_없으면_할_수_있는_행동이_없다() {
+    assertThat(rules.available(RepairState.NONE, PartySide.TENANT, NOW)).isEmpty();
+    assertThat(rules.available(registered(AckState.PENDING), null, NOW)).isEmpty();
+  }
+
+  @Test
+  void 다음_보충_시각은_마지막_보충에서_7일_뒤고_보충한_적이_없으면_없다() {
+    RepairState never = registered(AckState.NEED_MORE);
+    RepairState supplemented = never.withLastRerequestAt(NOW);
+
+    assertThat(rules.nextRerequestAt(never)).isNull();
+    assertThat(rules.nextRerequestAt(supplemented)).isEqualTo(NOW.plus(INTERVAL));
+  }
+
+  private static boolean accepts(Runnable call) {
+    try {
+      call.run();
+      return true;
+    } catch (BusinessException e) {
+      return false;
+    }
+  }
+
   // ---- 아직 없는 행동 ----
 
   /** 아직 만들지 않은 수리 행동. 새 행동을 붙이면 여기서 빼고 따로 테스트한다. */

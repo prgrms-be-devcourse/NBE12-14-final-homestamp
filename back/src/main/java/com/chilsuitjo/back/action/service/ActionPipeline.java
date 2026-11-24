@@ -12,7 +12,6 @@ import com.chilsuitjo.back.action.dto.PipelineResult;
 import com.chilsuitjo.back.action.dto.RoomGate;
 import com.chilsuitjo.back.action.dto.SavedState;
 import com.chilsuitjo.back.action.rule.ActionType;
-import com.chilsuitjo.back.action.rule.ActionType.Allow;
 import com.chilsuitjo.back.action.rule.RoomGateReader;
 import com.chilsuitjo.back.action.rule.Transitions;
 import com.chilsuitjo.back.global.common.TargetKind;
@@ -273,25 +272,17 @@ public class ActionPipeline {
   }
 
   /**
-   * 3. 호실 단위 거절. 서버·운영 행동과 호실을 만드는 요청은 건너뛴다. 여럿이 겹치면 정산 완료 → 거주 종료 → 합류 전 기록 → 공유 중단 순서로 앞의 것을
-   * 돌려준다(정산 완료면 거주 종료도 참이라 {@code SETTLED}가 먼저).
+   * 3. 호실 단위 거절({@link RoomGate#rejection}). 서버·운영 행동과 호실을 만드는 요청은 건너뛴다. 상세 조회의 {@code
+   * availableActions}도 같은 판단을 쓴다.
    */
   private static void checkRoom(RoomGate gate, Actor actor, ActionType type) {
     if (gate == null || actor.isSystem()) {
       return;
     }
-    if (gate.settled() && !type.allows(Allow.AFTER_SETTLED)) {
-      throw new BusinessException(ErrorCode.SETTLED);
-    }
-    if (gate.ended() && type.blockedAfterEnded()) {
-      throw new BusinessException(ErrorCode.ROOM_ENDED);
-    }
-    if (gate.joinedAway() && !type.allows(Allow.ON_JOINED)) {
-      throw new BusinessException(ErrorCode.JOINED_RECORD);
-    }
-    if (gate.mySharingStopped() && !type.allows(Allow.WHILE_SHARING_STOPPED)) {
-      throw new BusinessException(ErrorCode.SHARING_STOPPED);
-    }
+    gate.rejection(type)
+        .ifPresent(code -> {
+          throw new BusinessException(code);
+        });
   }
 
   /**

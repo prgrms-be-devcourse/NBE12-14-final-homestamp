@@ -1355,6 +1355,35 @@
           "response": []
         },
         {
+          "name": "수리 건 상세",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{bearer_token_15h5}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/repair-cases/{{repairCaseId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "repair-cases",
+                "{{repairCaseId}}"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
           "name": "하자응답(상대 측)",
           "request": {
             "auth": {
