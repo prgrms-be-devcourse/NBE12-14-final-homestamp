@@ -164,6 +164,23 @@ class RepairProgressApiTest {
   }
 
   @Test
+  void 하자를_등록한_측이_종료를_확인하면_함께_맞아요를_남기지_않고_종료_확인만_남긴다() throws Exception {
+    // 세입자가 등록하고 집주인이 종료를 요청하면 종료 확인은 세입자 몫이다. 세입자는 자기 하자에 맞아요로 답할 수 없다(03 3장)
+    UUID caseId = closeRequested(landlord);
+
+    act(caseId, tenant, "confirm-close", "{\"alsoAckDefect\":true,\"seenVersionNo\":1}")
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("DONE"))
+        .andExpect(jsonPath("$.defectAck").value("PENDING"));
+
+    assertThat(countActions(caseId, "CONFIRM_CLOSE")).isEqualTo(1);
+    assertThat(countActions(caseId, "RESPOND_DEFECT")).isZero();
+    assertThat(caseRow(caseId))
+        .containsEntry("status", "DONE")
+        .containsEntry("defect_ack", "PENDING");
+  }
+
+  @Test
   void 함께_남길_하자_응답의_판_번호가_다르면_종료_확인도_남지_않는다() throws Exception {
     UUID caseId = closeRequested(tenant);
 
