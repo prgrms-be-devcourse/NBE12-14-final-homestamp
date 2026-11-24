@@ -78,7 +78,56 @@ class RepairDetailApiTest {
         .andExpect(jsonPath("$.defect.ack").value("PENDING"))
         .andExpect(jsonPath("$.defect.nextRerequestAt").doesNotExist())
         .andExpect(jsonPath("$.money.status").value("UNDECIDED"))
+        .andExpect(jsonPath("$.asOf").doesNotExist())
         .andExpect(jsonPath("$.availableActions").isEmpty());
+  }
+
+  @Test
+  void 공유를_그만둔_뒤_상대가_바꾼_상태는_그만둔_쪽에_보이지_않고_그_시각_기준으로_고정된다() throws Exception {
+    // 중단 전 수리 건 → 세입자가 공유를 그만둠 → 집주인이 하자에 답하고 부담 상태가 바뀜 → 세입자가 상세를 봄(03 6-6 9번, #166 리뷰)
+    UUID caseId = register();
+    Timestamp stoppedAt =
+        jdbc.queryForObject(
+            "SELECT created_at FROM state.repair_case WHERE id = ?", Timestamp.class, caseId);
+    jdbc.update(
+        "UPDATE state.party SET status = 'SHARING_STOPPED', sharing_stopped_at = ?"
+            + " WHERE room_record_id = ? AND side = 'TENANT'",
+        stoppedAt,
+        room);
+    respond(caseId, landlord, "ACK", null).andExpect(status().isOk());
+    // 부담 상태를 바꾸는 행동은 아직 없어 행만 바꿔 둔다. 보이는 상태는 행동으로 다시 계산하므로 드러나지 않아야 한다
+    jdbc.update("UPDATE state.repair_case SET money_status = 'NO_COST' WHERE id = ?", caseId);
+
+    detail(caseId, tenant)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.asOf").value(stoppedAt.toInstant().toString()))
+        .andExpect(jsonPath("$.defect.ack").value("PENDING"))
+        .andExpect(jsonPath("$.money.status").value("UNDECIDED"))
+        .andExpect(jsonPath("$.status").value("NOT_STARTED"))
+        .andExpect(jsonPath("$.content.no").value(1))
+        .andExpect(jsonPath("$.availableActions").isEmpty());
+    // 양방향: 남은 쪽도 같은 시각으로 고정되지만, 자기가 남긴 답은 자기에게 보인다
+    detail(caseId, landlord)
+        .andExpect(jsonPath("$.asOf").value(stoppedAt.toInstant().toString()))
+        .andExpect(jsonPath("$.defect.ack").value("ACK"))
+        .andExpect(jsonPath("$.money.status").value("UNDECIDED"));
+  }
+
+  @Test
+  void 상대가_탈퇴해_풀린_공유_중단은_고정하지_않는다() throws Exception {
+    // 탈퇴하면 남은 공유 중단 시각을 보지 않는다(06 CONS-3q)
+    UUID caseId = register();
+    respond(caseId, landlord, "ACK", null).andExpect(status().isOk());
+    jdbc.update(
+        "UPDATE state.party SET status = 'WITHDRAWN', sharing_stopped_at ="
+            + " (SELECT created_at FROM state.repair_case WHERE id = ?)"
+            + " WHERE room_record_id = ? AND side = 'LANDLORD'",
+        caseId,
+        room);
+
+    detail(caseId, tenant)
+        .andExpect(jsonPath("$.asOf").doesNotExist())
+        .andExpect(jsonPath("$.defect.ack").value("ACK"));
   }
 
   @Test

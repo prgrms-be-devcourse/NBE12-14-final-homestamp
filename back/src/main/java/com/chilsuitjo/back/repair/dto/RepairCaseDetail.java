@@ -21,7 +21,9 @@ import java.util.UUID;
  * @param status 수리 진행(시작 전 → 처리 중 → 종료 확인 대기 → 처리 완료)
  * @param solo 혼자 진행 가능으로 바뀐 수리 건인지(ROOM-7)
  * @param createdAt 등록한 시각
- * @param content 지금 판
+ * @param asOf 공유를 그만둬 보이는 범위를 고정한 시각(화면의 "○월 ○일 기준", 03 6-6 9번). 이때 {@code status}·{@code
+ *     content}·{@code defect}·{@code money}는 그 시각까지의 행동과 보는 사람 자신의 행동으로 다시 계산한 값이다. 고정되지 않았으면 null
+ * @param content 보이는 판(고정되지 않았으면 지금 판)
  * @param defect 하자 인정
  * @param money 수리비 부담
  * @param availableActions 지금 이 사람이 누를 수 있는 행동. 이름은 API 끝 단어와 같다(06 4-0 "할 수 있는 행동")
@@ -34,6 +36,7 @@ public record RepairCaseDetail(
     RepairStatus status,
     boolean solo,
     Instant createdAt,
+    Instant asOf,
     Content content,
     Defect defect,
     Money money,

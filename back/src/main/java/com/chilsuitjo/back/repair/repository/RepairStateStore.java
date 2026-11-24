@@ -154,6 +154,21 @@ public class RepairStateStore {
    * 보이므로(03 1-4) 연결 여부는 보지 않는다.
    */
   private static boolean hiddenFromCounterpart(RoomParties room, RepairCase row) {
+    Instant stopped = sharingCutoff(room);
+    return stopped != null && row.getCreatedAt().isAfter(stopped);
+  }
+
+  /**
+   * 이 호실에서 보이는 범위를 고정하는 시각(03 6-6 9번 "그만둔 시각 기준으로 고정", 3-1 "모든 줄에 같게"). 제한이 살아 있는 공유 중단 시각 중 이른
+   * 것이고, 없으면 비어 있다. 공유 중단은 양방향이라 어느 쪽이 그만뒀든 같다. 상대가 탈퇴해 풀린 공유 중단은 보지 않는다({@code RoomParties}, 06
+   * CONS-3p·3q). 이 시각보다 뒤에 남은 상대 측 행동은 보는 사람에게 보이지 않는다(불변식 18).
+   */
+  public Optional<Instant> sharingCutoff(RepairCase row) {
+    return Optional.ofNullable(
+        sharingCutoff(parties.read(row.getRoomRecordId(), row.getCreatedBySide())));
+  }
+
+  private static Instant sharingCutoff(RoomParties room) {
     Instant stopped = null;
     if (room.mySharingStoppedApplies()) {
       stopped = room.mine().sharingStoppedAt();
@@ -162,7 +177,7 @@ public class RepairStateStore {
       Instant theirs = room.counterpart().sharingStoppedAt();
       stopped = stopped == null || theirs.isBefore(stopped) ? theirs : stopped;
     }
-    return stopped != null && row.getCreatedAt().isAfter(stopped);
+    return stopped;
   }
 
   private RepairCase row(ActionCommand command) {

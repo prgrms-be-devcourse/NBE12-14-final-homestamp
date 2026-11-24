@@ -1,9 +1,14 @@
 package com.chilsuitjo.back.repair.service;
 
+import com.chilsuitjo.back.action.dto.ActionEntry;
+import com.chilsuitjo.back.action.dto.ActionTarget;
 import com.chilsuitjo.back.action.dto.Actor;
 import com.chilsuitjo.back.action.dto.RoomGate;
 import com.chilsuitjo.back.action.rule.ActionType;
+import com.chilsuitjo.back.action.rule.Replay;
 import com.chilsuitjo.back.action.rule.RoomGateReader;
+import com.chilsuitjo.back.action.service.ActionReader;
+import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.repair.dto.RepairCaseDetail;
@@ -16,6 +21,7 @@ import com.chilsuitjo.back.repair.rule.RepairState;
 import com.chilsuitjo.back.repair.rule.RepairTransitions;
 import com.chilsuitjo.back.room.service.RoomQueryService;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -44,6 +50,7 @@ public class RepairQueryService {
   private final RepairTransitions rules;
   private final RoomGateReader gates;
   private final RoomQueryService rooms;
+  private final ActionReader actionReader;
   private final Clock clock;
 
   /**
@@ -53,6 +60,12 @@ public class RepairQueryService {
    * <p>{@code availableActions}는 실제 요청과 같은 판단으로 만든다: 호실 단위 거절은 {@code RoomGate.rejection}(pipeline
    * 3단계와 같음), 수리 건 규칙은 {@code RepairTransitions.available}({@code apply}와 같음). 잠그지 않고 읽으므로 화면을 연 뒤
    * 상태가 바뀔 수 있고, 그때는 요청이 서버에서 다시 검사되어 거절된다.
+   *
+   * <p><b>공유를 그만둔 뒤</b>(어느 쪽이든, 제한이 살아 있을 때)에는 보이는 상태를 그만둔 시각으로 고정한다(03 6-6 9번 "상태도 그 시각까지로 다시 계산",
+   * 3-1 "사진·돈 포함 모든 줄", 양방향). 그 시각까지의 행동과 보는 사람 자신의 행동만으로 다시 계산하고({@code Replay.fold}), 그 시각을
+   * {@code asOf}로 돌려준다(화면의 "○월 ○일 기준"). 상대가 그 뒤에 바꾼 하자 인정·수리 진행·부담 상태는 드러나지 않는다(#166 리뷰). {@code
+   * availableActions}는 실제 요청과 같아야 해서 지금 상태로 계산한다: 그만둔 쪽은 pipeline이 막아({@code SHARING_STOPPED}) 버튼이
+   * 없고, 남은 쪽의 지금 상태에는 그만둔 쪽이 바꾼 것이 없다(하자 응답·보충은 공유 중단 중 막힘).
    */
   @Transactional(readOnly = true)
   public RepairCaseDetail detail(UUID repairCaseId, UUID memberId) {
@@ -69,10 +82,12 @@ public class RepairQueryService {
     if (state.hiddenFromCounterpartKnown() && gate.side() != state.registeredBy()) {
       throw new BusinessException(ErrorCode.NOT_FOUND);
     }
+    Instant asOf = store.sharingCutoff(row).orElse(null);
+    RepairState shown = asOf == null ? state : visibleState(row, gate.side(), asOf);
     RepairContent content =
         contents
-            .findById(row.getCurrentContentId())
-            .orElseThrow(() -> new IllegalStateException("지금 판이 없어요: " + row.getId()));
+            .findByRepairCaseIdAndNo(row.getId(), shown.contentNo())
+            .orElseThrow(() -> new IllegalStateException("보이는 판이 없어요: " + row.getId()));
     String partName = rooms.findPart(roomRecordId, content.getRoomPartId()).name();
     List<String> actions =
         rules.available(state, gate.side(), clock.instant()).stream()
@@ -84,17 +99,30 @@ public class RepairQueryService {
         roomRecordId,
         gate.side(),
         row.getCreatedBySide(),
-        row.getStatus(),
+        shown.status(),
         row.isSolo(),
         row.getCreatedAt(),
+        asOf,
         new RepairCaseDetail.Content(
             content.getNo(),
             content.getRoomPartId(),
             partName,
             content.getTitle(),
             content.getDescription()),
-        new RepairCaseDetail.Defect(row.getDefectAck(), rules.nextRerequestAt(state)),
-        new RepairCaseDetail.Money(row.getMoneyStatus()),
+        new RepairCaseDetail.Defect(shown.defectAck(), rules.nextRerequestAt(shown)),
+        new RepairCaseDetail.Money(shown.moneyStatus()),
         actions);
+  }
+
+  /**
+   * 보는 사람에게 보이는 행동만으로 다시 계산한 상태(03 6-6 9번). 고정 시각까지의 행동(그 시각에 남은 것 포함, 불변식 18 "뒤에 남긴 것은 ✕")과 보는 사람
+   * 측의 행동을 남긴다. 행동 기록이 원본이라 같은 규칙({@link RepairTransitions})으로 다시 계산하면 그때의 상태가 나온다(REP-10).
+   */
+  private RepairState visibleState(RepairCase row, PartySide viewer, Instant asOf) {
+    List<ActionEntry> visible =
+        actionReader.findByTarget(ActionTarget.repairCase(row.getId())).stream()
+            .filter(entry -> !entry.createdAt().isAfter(asOf) || entry.actorSide() == viewer)
+            .toList();
+    return Replay.fold(rules, visible);
   }
 }
