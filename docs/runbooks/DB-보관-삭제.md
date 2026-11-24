@@ -51,8 +51,8 @@ psql -X -v ON_ERROR_STOP=1 \
    - 사람 계정이 LOGIN `NOINHERIT`가 아니거나 관리 속성이 있음, `VALID UNTIL`이 없음
    - 그룹 멤버십 옵션이 `INHERIT TRUE`·`SET FALSE`·`ADMIN FALSE`가 아님
    - 그룹 밖 멤버십(`pg_read_all_data`, Owner, App 등), 다른 역할이 사람 계정을 쓸 수 있는 멤버십
-   - 사람 계정에 직접 준 테이블·컬럼·스키마·함수·DB·기본 권한, 사람 계정이 소유한 객체
-   사람 추가·회수 뒤와 운영 배포 전에 실행한다. `grants.sql`은 사람 계정을 보지 않으므로 직접 권한은 이 점검으로만 잡는다.
+   - 사람 계정에 직접 준 테이블·컬럼·스키마·함수·DB·기본 권한, 사람 계정이 소유한 객체. 그 밖의 카탈로그(언어·타입·large object·파라미터 등)와 같은 클러스터의 다른 DB에 남은 소유·권한·정책은 `pg_shdepend`로 잡는다
+   사람 추가·회수 뒤와 운영 배포 전에 실행한다. `grants.sql`은 사람 계정을 보지 않으므로 직접 권한은 이 점검으로만 잡는다. 점검 대상은 그룹의 멤버뿐이다. `PUBLIC`에 준 권한(Bootstrap·`grants.sql`이 관리)과, 그룹에서 빠졌지만 DROP되지 않은 LOGIN 역할은 보지 않으므로 회수 절차(4)를 끝까지 지킨다. 성공 메시지에는 점검한 사람 수와, 예외로 건너뛴 관리자(CREATEROLE·superuser의 ADMIN 전용 멤버십) 이름이 나온다.
 3. 연장: 만료 전에 `ALTER ROLE <사람 식별자> VALID UNTIL '<새 만료 시각>';`
 4. 회수: 아래 순서를 지킨다.
    1. `REVOKE <Human 읽기 그룹> FROM <사람 식별자>;` (권한 회수)
