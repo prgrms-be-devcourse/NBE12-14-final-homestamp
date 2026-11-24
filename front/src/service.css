@@ -23,7 +23,6 @@ main {
   padding: 20px 0;
   gap: 14px;
 }
-.svc-card-head,
 .panel-head {
   display: flex;
   align-items: flex-start;
@@ -31,7 +30,6 @@ main {
   gap: 12px;
   padding: 0 20px;
 }
-.svc-card-title,
 .panel-head [data-slot="card-title"] {
   font-size: 18px;
   font-weight: 750;
@@ -49,11 +47,6 @@ main {
   margin-top: 4px;
   font-size: 14px;
   color: var(--svc-sub);
-}
-.svc-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
 }
 .svc-room-icon {
   width: 38px;
@@ -103,21 +96,6 @@ main {
   line-height: 1.6;
   padding: 0 4px;
 }
-.svc-field-label {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-.svc-warn {
-  background: var(--svc-amber-soft);
-  color: var(--svc-amber-ink);
-  border-radius: 12px;
-  padding: 12px 14px;
-  font-size: 14px;
-  line-height: 1.6;
-}
 
 /* 호실 목록 */
 .svc-room-grid {
@@ -138,7 +116,6 @@ main {
   font-size: 18px;
   font-weight: 750;
   color: var(--svc-ink);
-  overflow-wrap: anywhere;
 }
 .svc-facts {
   display: grid;
@@ -157,15 +134,6 @@ main {
   font-weight: 650;
   color: var(--svc-ink);
   overflow-wrap: anywhere;
-}
-.svc-room-grid .add-room {
-  min-height: 180px;
-  height: auto;
-  flex-direction: column;
-  gap: 6px;
-  border-style: dashed;
-  border-radius: 16px;
-  white-space: normal;
 }
 @media (min-width: 768px) {
   .svc-room-grid {
@@ -303,29 +271,6 @@ main {
   box-shadow: 0 8px 30px #1720330f;
   background: #fff;
 }
-.auth-info,
-.auth-dev {
-  display: flex;
-  gap: 8px;
-  align-items: flex-start;
-  border-radius: 12px;
-  padding: 10px 12px;
-  font-size: 14px;
-  line-height: 1.6;
-}
-.auth-info {
-  background: var(--svc-blue-soft);
-  color: #1d43a8;
-}
-.auth-dev {
-  background: var(--svc-amber-soft);
-  color: var(--svc-amber-ink);
-}
-.auth-info svg,
-.auth-dev svg {
-  flex: none;
-  margin-top: 3px;
-}
 .auth-steps {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -449,43 +394,6 @@ main {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
-.side-choice {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-.side-choice button {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-  min-height: 84px;
-  padding: 12px;
-  border: 1px solid var(--svc-line);
-  border-radius: 12px;
-  background: #fff;
-  text-align: left;
-  color: var(--svc-ink);
-}
-.side-choice button svg {
-  color: var(--svc-sub);
-}
-.side-choice button small {
-  color: var(--svc-sub);
-  font-size: 13px;
-}
-.side-choice button.is-on {
-  border-color: var(--svc-blue);
-  box-shadow: 0 0 0 1px var(--svc-blue) inset;
-  background: var(--svc-blue-soft);
-}
-.side-choice button.is-on svg {
-  color: var(--svc-blue);
-}
-.side-choice button:focus-visible {
-  outline: 2px solid var(--svc-blue);
-  outline-offset: 2px;
-}
 /* ── 기록 카드: 썸네일 + 지금 기록 요약 (점검 하자 항목 · 부위 사진) ── */
 
 .rec-item {
@@ -560,9 +468,6 @@ main {
   height: 64px;
 }
 @media (max-width: 640px) {
-  .comparison-pair {
-    grid-template-columns: 1fr;
-  }
   .rec-item {
     grid-template-columns: 72px minmax(0, 1fr);
     gap: 12px;
@@ -574,43 +479,6 @@ main {
 }
 
 /* ── 고치기 요청 묶음 ── */
-.fix-group {
-  border: 1px solid #f1d9b0;
-  background: var(--svc-amber-soft);
-  border-radius: 12px;
-}
-.fix-group > summary {
-  list-style: none;
-  cursor: pointer;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 8px;
-  padding: 10px 12px;
-}
-.fix-group > summary::-webkit-details-marker {
-  display: none;
-}
-.fix-group > summary::after {
-  content: "펼치기";
-  margin-left: auto;
-  font-size: 13px;
-  color: var(--svc-amber-ink);
-}
-.fix-group[open] > summary::after {
-  content: "접기";
-}
-.fix-group > summary small {
-  flex-basis: 100%;
-  font-size: 13px;
-  color: var(--svc-sub);
-  overflow-wrap: anywhere;
-}
-.fix-group-title {
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--svc-ink);
-}
 .fix-row {
   background: #fff;
   border: 1px solid var(--svc-line);
@@ -699,22 +567,6 @@ main {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.history-block {
-  border: 1px solid var(--svc-line);
-  border-radius: 12px;
-  padding: 8px 12px;
-  background: #fafbfe;
-  margin-top: 10px;
-}
-.history-block > summary {
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--svc-sub);
-  min-height: 28px;
-  display: flex;
-  align-items: center;
-}
 .history-item {
   background: #fff;
   border: 1px solid var(--svc-line);
@@ -734,31 +586,6 @@ main {
 }
 
 /* ── 지불 합계 표 ── */
-.pay-summary {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 14px;
-}
-.pay-summary th,
-.pay-summary td {
-  padding: 8px 6px;
-  border-bottom: 1px solid var(--svc-line);
-  text-align: right;
-  white-space: nowrap;
-}
-.pay-summary th:first-child,
-.pay-summary td:first-child {
-  text-align: left;
-}
-.pay-summary thead th {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--svc-sub);
-}
-.pay-summary-wrap {
-  overflow-x: auto;
-  margin: 12px 0;
-}
 
 /* ── 넘침 방지 공통 ── */
 .svc-card,
@@ -823,7 +650,6 @@ main {
   padding-bottom: 8px;
 }
 .welcome-cta {
-  padding-top: 4px;
   border-top: 1px solid var(--svc-line);
   padding-top: 20px;
 }
@@ -998,10 +824,6 @@ main {
 
 /* ══ 격자 카드: 옆 카드 높이에 맞춰 늘어나지 않고 내용만큼 ══
    (긴 카드 옆의 짧은 카드가 위로 몰리고 아래가 비어 보이던 것) */
-.comparison-grid,
-.comparison-pair {
-  align-items: start;
-}
 
 /* 썸네일 옆 글이 짧으면 썸네일과 세로 가운데로 맞춰 덜 비어 보이게 */
 .rec-item:has(.rec-body > :nth-child(-n + 4):last-child) {
@@ -1369,48 +1191,6 @@ main {
 }
 
 /* '내 쪽' 고르기(RadioGroup): 카드 전체를 눌러 고르고, 동그라미로 선택 표시 */
-.side-choice[data-slot="radio-group"] {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-.side-option {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  min-height: 72px;
-  padding: 12px;
-  border: 1px solid var(--svc-line);
-  border-radius: 12px;
-  background: #fff;
-  cursor: pointer;
-}
-.side-option:hover {
-  border-color: #c9d6f3;
-}
-.side-option.is-on {
-  border-color: var(--svc-blue);
-  box-shadow: 0 0 0 1px var(--svc-blue) inset;
-  background: var(--svc-blue-soft);
-}
-.side-option [data-slot="radio-group-item"] {
-  margin-top: 2px;
-}
-.side-option strong {
-  display: block;
-  font-size: 15px;
-  color: var(--svc-ink);
-}
-.side-option small {
-  display: block;
-  font-size: 13px;
-  color: var(--svc-sub);
-}
-@media (max-width: 420px) {
-  .side-choice[data-slot="radio-group"] {
-    grid-template-columns: 1fr;
-  }
-}
 
 /* 모바일 메뉴(Sheet): 좁은 화면에서는 옆 메뉴 대신 왼쪽에서 열리는 시트 */
 .mobile-nav[data-slot="sheet-content"] {

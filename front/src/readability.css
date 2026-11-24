@@ -21,10 +21,6 @@
 .main-shell {
   margin-left: 256px;
 }
-.workspace-label {
-  letter-spacing: 0.5px;
-  margin-top: 28px;
-}
 .brand small {
   white-space: normal;
   line-height: 1.6;
@@ -37,14 +33,8 @@
   white-space: normal;
   line-height: 1.5;
 }
-.nav-item svg,
-.task-icon,
-.room-icon,
-.stat-icon {
+.nav-item svg {
   flex-shrink: 0;
-}
-.record-tip {
-  padding: 18px 14px;
 }
 .profile {
   min-height: 80px;
@@ -78,13 +68,6 @@
   top: -6px;
   right: -8px;
 }
-.demo-strip {
-  flex-wrap: wrap;
-  line-height: 1.7;
-}
-.demo-detail {
-  margin-left: 0;
-}
 .page-heading {
   flex-wrap: wrap;
   align-items: flex-start;
@@ -113,92 +96,18 @@
   min-height: 44px;
   min-width: 210px;
 }
-.hero-card {
-  min-height: 320px;
-  padding-top: 34px;
-  padding-bottom: 34px;
-}
-.hero-card h2 {
-  font-size: 34px;
-  line-height: 1.45;
-}
-.hero-card p {
-  font-size: 16px;
-  line-height: 1.75;
-}
-.hero-content {
-  max-width: 65%;
-}
-.hero-kicker,
-.hero-white,
-.hero-ghost {
-  font-size: 14px;
-}
-.art-bubble {
-  padding: 12px;
-}
-.stats-grid {
-  gap: 18px;
-}
-.stat-card {
-  padding: 22px 18px;
-}
-.stat-card > div {
-  align-items: flex-start;
-  gap: 10px;
-}
-.stat-label {
-  line-height: 1.65;
-}
-.stat-card > p {
-  line-height: 1.7;
-}
-.stat-card > strong {
-  font-size: 32px;
-  margin-top: 12px;
-  line-height: 1.5;
-}
 .panel {
   padding-top: 24px;
   padding-bottom: 24px;
-  gap: 20px;
-}
-.panel-head {
-  flex-wrap: wrap;
-  align-items: center;
-}
-.panel-head [data-slot="card-title"] {
-  font-size: 20px;
-  line-height: 1.5;
 }
 .panel-head > button {
   min-height: 36px;
   height: auto;
   padding: 4px 0;
 }
-.room-summary {
-  gap: 14px;
-  align-items: flex-start;
-}
-.room-summary h3,
-.person-card h3,
-.room-card h2 {
+.person-card h3 {
   font-size: 18px;
   line-height: 1.5;
-}
-.room-summary > div {
-  flex: 1;
-}
-.room-summary > button {
-  flex-shrink: 0;
-}
-.process {
-  gap: 10px;
-}
-.process-step strong,
-.process-step small {
-  font-size: 14px;
-  line-height: 1.65;
 }
 .status,
 [data-slot="badge"] {
@@ -210,23 +119,6 @@
 }
 .status {
   padding: 4px 8px;
-}
-.repair-row {
-  align-items: center;
-  padding: 14px;
-  gap: 14px;
-}
-.repair-row-link {
-  min-width: 0;
-  flex: 1;
-  height: auto;
-  justify-content: space-between;
-  text-align: left;
-  padding: 0;
-  white-space: normal;
-}
-.repair-row-link > svg {
-  flex-shrink: 0;
 }
 .repair-summary > strong,
 .task strong,
@@ -270,20 +162,12 @@
 .info-box,
 .info-box p,
 .info-box strong,
-.muted,
-.helper {
+.muted {
   font-size: 14px;
   line-height: 1.8;
 }
 .info-box {
   padding: 20px;
-}
-.helper {
-  align-items: flex-start;
-}
-.helper svg {
-  flex-shrink: 0;
-  margin-top: 5px;
 }
 .proposal {
   gap: 12px;
@@ -303,22 +187,6 @@
 .comparison-record p {
   font-size: 16px;
   line-height: 1.8;
-}
-.comparison-label,
-.comparison-pair strong {
-  font-size: 14px;
-  line-height: 1.65;
-}
-.comparison-pair {
-  gap: 14px;
-}
-.comparison-pair > div {
-  min-width: 0;
-}
-
-.room-card-meta {
-  flex-wrap: wrap;
-  gap: 10px;
 }
 .notice-row {
   align-items: flex-start;
@@ -370,11 +238,6 @@
   flex: 1 1 150px;
   width: auto;
 }
-.role-cards button {
-  white-space: normal;
-  padding: 18px 12px;
-}
-.role-cards small,
 .upload-zone strong,
 .upload-zone small,
 .consent,
@@ -458,11 +321,6 @@
 }
 .photo-more {
   min-height: 64px;
-}
-.photo-stage-heading {
-  font-size: 18px;
-  font-weight: 700;
-  margin: 22px 0 10px;
 }
 .after-record {
   border-top: 1px solid var(--border);
@@ -555,13 +413,6 @@
   bottom: 2px;
   padding: 2px 4px;
 }
-
-.comparison-pair .gallery-cover .photo-cover {
-  height: 150px;
-}
-.comparison-pair .gallery-cover .photo-trigger:not(.photo-cover) {
-  height: 58px;
-}
 .photo-viewer {
   width: min(960px, calc(100vw - 32px));
   max-width: 960px;
@@ -627,33 +478,11 @@
 }
 
 @media (max-width: 1280px) {
-  .stats-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .dashboard-grid {
-    grid-template-columns: 1fr;
-  }
-  .hero-content {
-    max-width: 70%;
-  }
   .page-heading {
     flex-direction: column;
   }
   .heading-actions {
     align-self: stretch;
-  }
-}
-@media (min-width: 761px) and (max-width: 1100px) {
-  .detail-layout,
-  .comparison-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .hero-content {
-    max-width: 100%;
-  }
-  .home-art {
-    opacity: 0.25;
   }
 }
 @media (max-width: 760px) {
@@ -682,32 +511,8 @@
     white-space: normal;
     overflow: visible;
   }
-  .top-actions .role-toggle {
-    font-size: 14px;
-    max-width: 190px;
-    min-height: 44px;
-  }
   .page-heading h1 {
     font-size: 28px;
-  }
-  .hero-card {
-    min-height: 360px;
-    padding: 28px 22px;
-  }
-  .hero-content {
-    max-width: 100%;
-  }
-  .hero-card h2 {
-    font-size: 28px;
-  }
-  .hero-card p {
-    font-size: 16px;
-  }
-  .home-art {
-    opacity: 0.25;
-    transform: scale(0.55);
-    right: -20px;
-    bottom: -10px;
   }
   .heading-actions {
     gap: 10px;
@@ -718,34 +523,10 @@
   .heading-actions > button {
     flex: 1 1 110px;
   }
-  .stat-card {
-    padding: 18px 14px;
-  }
-  .stat-card > div {
-    flex-wrap: wrap;
-  }
-  .stat-card > strong,
-  .stat-card > strong.stat-text {
-    font-size: 28px;
-  }
   .panel-head [data-slot="card-title"] {
     font-size: 18px;
   }
   .panel-head {
-    gap: 10px;
-  }
-  .room-summary {
-    flex-wrap: wrap;
-  }
-  .process {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 22px 16px;
-  }
-  .process-step:nth-child(2):after {
-    display: none;
-  }
-  .repair-row {
-    padding: 12px 10px;
     gap: 10px;
   }
   .gallery-compact {
@@ -765,18 +546,6 @@
   .field input,
   .field textarea {
     font-size: 16px;
-  }
-  .comparison-pair {
-    gap: 10px;
-  }
-  .comparison-pair .gallery-cover {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .comparison-pair .gallery-cover .photo-cover {
-    height: 135px;
-  }
-  .comparison-pair .gallery-cover .photo-trigger:not(.photo-cover) {
-    height: 64px;
   }
   .guest-banner h1 {
     font-size: 26px;
@@ -835,13 +604,6 @@
 }
 .received-invitation .status {
   margin-left: 12px;
-}
-.demo-account-guide {
-  font-size: 14px;
-  line-height: 1.8;
-  color: var(--muted-foreground);
-  margin: 12px 0 20px;
-  overflow-wrap: anywhere;
 }
 .received-invitation h3 {
   font-size: 18px;
