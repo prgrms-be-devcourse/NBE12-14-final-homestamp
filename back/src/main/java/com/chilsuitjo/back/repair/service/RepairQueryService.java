@@ -11,6 +11,10 @@ import com.chilsuitjo.back.action.service.ActionReader;
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
+import com.chilsuitjo.back.photo.dto.PhotoCard;
+import com.chilsuitjo.back.photo.dto.PhotoTarget;
+import com.chilsuitjo.back.photo.rule.PhotoTargetType;
+import com.chilsuitjo.back.photo.service.PhotoService;
 import com.chilsuitjo.back.repair.dto.RepairCaseDetail;
 import com.chilsuitjo.back.repair.entity.RepairCase;
 import com.chilsuitjo.back.repair.entity.RepairContent;
@@ -19,6 +23,7 @@ import com.chilsuitjo.back.repair.repository.RepairContentRepository;
 import com.chilsuitjo.back.repair.repository.RepairStateStore;
 import com.chilsuitjo.back.repair.rule.RepairState;
 import com.chilsuitjo.back.repair.rule.RepairTransitions;
+import com.chilsuitjo.back.room.service.RoomAccessService;
 import com.chilsuitjo.back.room.service.RoomQueryService;
 import java.time.Clock;
 import java.time.Instant;
@@ -51,6 +56,8 @@ public class RepairQueryService {
   private final RoomGateReader gates;
   private final RoomQueryService rooms;
   private final ActionReader actionReader;
+  private final PhotoService photos;
+  private final RoomAccessService access;
   private final Clock clock;
 
   /**
@@ -66,6 +73,9 @@ public class RepairQueryService {
    * {@code asOf}로 돌려준다(화면의 "○월 ○일 기준"). 상대가 그 뒤에 바꾼 하자 인정·수리 진행·부담 상태는 드러나지 않는다(#166 리뷰). {@code
    * availableActions}는 실제 요청과 같아야 해서 지금 상태로 계산한다: 그만둔 쪽은 pipeline이 막아({@code SHARING_STOPPED}) 버튼이
    * 없고, 남은 쪽의 지금 상태에는 그만둔 쪽이 바꾼 것이 없다(하자 응답·보충은 공유 중단 중 막힘).
+   *
+   * <p>사진({@code photos})은 수리 건에 붙은 사진이다(하자 등록·보충). 보이는 범위(공유 중단 뒤 고정, 지운 사진 흔적)는 사진 창구가 03 3-1대로
+   * 거른다({@code PhotoService.cards}, #175).
    */
   @Transactional(readOnly = true)
   public RepairCaseDetail detail(UUID repairCaseId, UUID memberId) {
@@ -94,6 +104,9 @@ public class RepairQueryService {
             .filter(type -> gate.rejection(type).isEmpty())
             .map(ACTION_NAMES::get)
             .toList();
+    PhotoTarget photoTarget = new PhotoTarget.Ref(PhotoTargetType.REPAIR_CASE, row.getId());
+    List<PhotoCard> photoCards =
+        photos.cards(access.require(roomRecordId, memberId), List.of(photoTarget)).get(photoTarget);
     return new RepairCaseDetail(
         row.getId(),
         roomRecordId,
@@ -111,6 +124,7 @@ public class RepairQueryService {
             content.getDescription()),
         new RepairCaseDetail.Defect(shown.defectAck(), rules.nextRerequestAt(shown)),
         new RepairCaseDetail.Money(shown.moneyStatus()),
+        photoCards,
         actions);
   }
 
