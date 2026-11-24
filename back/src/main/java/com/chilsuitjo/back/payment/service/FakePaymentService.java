@@ -16,6 +16,9 @@ import org.springframework.stereotype.Service;
  * 지불 가짜(#111). DB·행동 기록 없이 지불 ID·소속과 재요청 결과를 메모리에 보관한다. 멱등 키 검사와 재요청 판정은 진짜 {@code ActionPipeline}과
  * 같게 맞추고, 중복 지불 검사(MONEY-1a·1c)와 공유 중단 막기는 하지 않는다.
  *
+ * <p>진짜와 다른 점: 지불만 기억하므로 같은 키를 하자 등록처럼 다른 종류 행동에 먼저 썼어도 새 지불을 만든다(진짜는 {@code
+ * IDEMPOTENCY_KEY_REUSED}). 요청 칸({@link PaymentCreateRequest})도 검사하지 않는다.
+ *
  * <p>실제 구현이 들어오면 이 클래스를 지운다. 다른 도메인은 {@link PaymentService}만 쓰므로 바뀌지 않는다.
  */
 @Service
