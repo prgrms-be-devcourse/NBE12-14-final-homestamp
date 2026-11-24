@@ -19,6 +19,12 @@ import { MoneyInput } from "@/components/common/money-input"
 import { Panel, Status, Choice } from "@/components/common/blocks"
 import { CountChip } from "@/components/common/fold"
 import { MoreMenu } from "@/components/common/more-menu"
+import {
+  CurrentProposal,
+  PastProposal,
+  ProposalDispute,
+} from "@/components/common/money-proposal"
+import { proposalHead } from "@/lib/words"
 import { cn } from "cn"
 import { parseMoney } from "@/lib/money"
 import { newAmountOffer, respondToOffer, roomTransfers } from "@/lib/workflows"
@@ -85,17 +91,23 @@ type Mode =
   | null
 function offerHistory(offers: AmountOffer[]) {
   return offers.map((o) => (
-    <div className="note" key={o.id}>
-      <strong>
-        이전 제안 {o.round}회 · {sideName(o.by)} · {won(o.amount)} · {o.status}
-      </strong>
+    <PastProposal
+      key={o.id}
+      head={proposalHead(
+        "이전 제안",
+        o.round,
+        sideName(o.by),
+        won(o.amount),
+        o.status,
+      )}
+    >
       <p>{o.reason}</p>
       {o.disputeReason && (
         <p>
           {o.disputeBy} 이견: {o.disputeReason}
         </p>
       )}
-    </div>
+    </PastProposal>
   ))
 }
 export function RoomFinancials({
@@ -559,18 +571,18 @@ export function RoomFinancials({
             </div>
           </div>
           {offer && (
-            <div className="proposal">
-              <small>
-                현재 제안 {offer.round}회 · {sideText(offer.by)}
-              </small>
-              <strong>{won(offer.amount)}</strong>
-              <p>{offer.reason}</p>
+            <CurrentProposal
+              head={proposalHead("현재 제안", offer.round, sideText(offer.by))}
+              amount={offer.amount}
+              reason={offer.reason}
+            >
               {offer.disputeReason && (
-                <div className="dispute-callout">
-                  {offer.disputeBy} 이견: {offer.disputeReason}
-                </div>
+                <ProposalDispute
+                  by={offer.disputeBy}
+                  reason={offer.disputeReason}
+                />
               )}
-            </div>
+            </CurrentProposal>
           )}
           {offerHistory(room.depositHistory || [])}
           {/* 보증금은 계약 금액을 맞추는 것이라 "제안·합의" 대신 "적기·확인"을 써요(08 10장 [반드시]) */}
@@ -669,9 +681,10 @@ export function RoomFinancials({
                           <p className="text-sm">{s.proposalReason}</p>
                         )}
                         {s.disputeReason && (
-                          <div className="dispute-callout">
-                            {s.disputeBy} 이견: {s.disputeReason}
-                          </div>
+                          <ProposalDispute
+                            by={s.disputeBy}
+                            reason={s.disputeReason}
+                          />
                         )}
                         {s.repairId && (
                           <small className="block muted">출처: 수리 건</small>
@@ -728,12 +741,19 @@ export function RoomFinancials({
                           </p>
                         ))}
                         {s.history?.map((h, n) => (
-                          <div className="note" key={n}>
-                            이전 제안 {h.round || 1}회 · {sideName(h.by)} ·{" "}
-                            {won(h.amount)} · {h.withdrawn ? "거둠" : h.status}
+                          <PastProposal
+                            key={n}
+                            head={proposalHead(
+                              "이전 제안",
+                              h.round,
+                              sideName(h.by),
+                              won(h.amount),
+                              h.withdrawn ? "거둠" : h.status,
+                            )}
+                          >
                             <p>{h.proposalReason || h.reason}</p>
                             {h.disputeReason && <p>이견: {h.disputeReason}</p>}
-                          </div>
+                          </PastProposal>
                         ))}
                         {(big.length > 0 ||
                           hasAction(itemActionsOf(s), "withdraw")) && (

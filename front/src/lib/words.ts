@@ -28,3 +28,13 @@ export const ackText = (ack: string) =>
       "상대 미확인": "확인 없음",
     }) as Record<string, string>
   )[ack] ?? ack
+
+// 제안의 머리 줄: "현재 제안 2회 · 세입자 쪽 · 11/20"
+export function proposalHead(
+  label: string,
+  round: number | undefined,
+  who: string,
+  ...more: (string | undefined)[]
+) {
+  return [`${label} ${round || 1}회`, who, ...more].filter(Boolean).join(" · ")
+}

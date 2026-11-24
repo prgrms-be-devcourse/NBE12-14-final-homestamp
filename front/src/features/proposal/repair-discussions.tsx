@@ -39,6 +39,12 @@ import { sideName, sideText } from "@/lib/words"
 import { Fold } from "@/components/common/fold"
 import { History } from "lucide-react"
 import { Notice } from "@/components/common/notice"
+import {
+  CurrentProposal,
+  PastProposal,
+  ProposalDispute,
+} from "@/components/common/money-proposal"
+import { proposalHead } from "@/lib/words"
 import type { RepairCommand } from "@/features/repair/use-repair-case"
 
 // request는 06 4장의 주소(api/records), text·update는 목업이 서버 대신 쓰는 값이에요
@@ -57,11 +63,15 @@ const PLANS = [
 
 function ProposalCard({ p, title }: { p: Proposal; title: string }) {
   return (
-    <div className="note">
-      <strong>
-        {title} {p.round || 1}회 · {sideText(p.by)}
-        {p.at ? ` · ${p.at}` : ""} · {p.withdrawn ? "거둠" : p.status}
-      </strong>
+    <PastProposal
+      head={proposalHead(
+        title,
+        p.round,
+        sideText(p.by),
+        p.at,
+        p.withdrawn ? "거둠" : p.status,
+      )}
+    >
       <p>
         전체 {won(p.amount)} · {proposalText(p)}
       </p>
@@ -74,7 +84,7 @@ function ProposalCard({ p, title }: { p: Proposal; title: string }) {
       {p.closedReason && (
         <small className="muted block">바꾸자는 안 · {p.closedReason}</small>
       )}
-    </div>
+    </PastProposal>
   )
 }
 
@@ -180,14 +190,17 @@ export function CostAgreement({
         )}
       </div>
       {p ? (
-        <div className="proposal">
-          <small>
-            현재 제안 {p.round || 1}회 · 제안한 쪽 {sideName(p.by)}
-            {p.at ? ` · ${p.at}` : ""}
-          </small>
-          <strong>{won(p.amount)}</strong>
-          <span>{proposalText(p)}</span>
-          {p.reason && <p>{p.reason}</p>}
+        <CurrentProposal
+          head={proposalHead(
+            "현재 제안",
+            p.round,
+            `제안한 쪽 ${sideName(p.by)}`,
+            p.at,
+          )}
+          amount={p.amount}
+          detail={proposalText(p)}
+          reason={p.reason}
+        >
           {p.totalChanged && (
             <div className="dispute-callout">
               전체 금액이 바뀌었어요 · 지불 합계 {won(workTotal(r))}.{" "}
@@ -206,12 +219,12 @@ export function CostAgreement({
               </div>
             )}
           {p.disputeReason && (
-            <div className="dispute-callout">
-              <strong>{p.disputeBy}의 비용 이견</strong>
-              <p>{p.disputeReason}</p>
-            </div>
+            <ProposalDispute
+              title={`${p.disputeBy}의 비용 이견`}
+              reason={p.disputeReason}
+            />
           )}
-        </div>
+        </CurrentProposal>
       ) : (
         <p>아직 제안이 없어요.</p>
       )}
