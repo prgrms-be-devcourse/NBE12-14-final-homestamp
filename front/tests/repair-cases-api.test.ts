@@ -78,6 +78,29 @@ test("행동을 보내면 기록이 바뀌고 경과에 남으며, 새 행동 �
   expect(done.repair.status).toBe("처리 완료")
 })
 
+test("종료 확인은 하자 맞아요만 함께 남겨요(06 REP-3a, alsoAckDefect)", async () => {
+  const { store, api, id } = setup()
+  store.setState((d) => ({
+    ...d,
+    repairs: d.repairs.map((r) =>
+      r.id === id
+        ? {
+            ...r,
+            afterPhotos: ["a.jpg"],
+            closeBy: undefined,
+            author: "임차인",
+            ack: "확인 기다림",
+            ackDispute: undefined,
+          }
+        : r,
+    ),
+  }))
+  await api.requestClose(tenant, id)
+  const done = await api.confirmClose(landlord, id, { alsoAckDefect: true })
+  expect(done.repair.status).toBe("처리 완료")
+  expect(done.repair.ack).toBe("확인됨")
+})
+
 const room302 = "302"
 const photo = "data:image/png;base64,AA"
 

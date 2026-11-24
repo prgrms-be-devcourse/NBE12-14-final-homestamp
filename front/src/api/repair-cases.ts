@@ -82,11 +82,12 @@ export interface RepairCasesApi {
   start(s: Session, id: string): Promise<RepairCaseView>
   // POST /request-close
   requestClose(s: Session, id: string): Promise<RepairCaseView>
-  // POST /confirm-close: 하자 응답이 비어 있으면 함께 답해요(06 S-12)
+  // POST /confirm-close: 하자 인정이 "확인 기다림"이면 alsoAckDefect로 하자 "맞아요"까지 함께 남겨요(06 REP-3a).
+  // 보류·이견은 하자 응답(respond)으로 따로 해요(decisions 2026-11-17)
   confirmClose(
     s: Session,
     id: string,
-    body?: { defect?: { answer: RespondAnswer; reason?: string } },
+    body?: { alsoAckDefect?: boolean },
   ): Promise<RepairCaseView>
   // POST /not-yet {reason}
   notYet(

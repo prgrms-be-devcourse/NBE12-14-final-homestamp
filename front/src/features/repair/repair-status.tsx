@@ -29,6 +29,9 @@ import { versionOf } from "@/lib/versions"
 import { ackText, sideName, waitLabel } from "@/lib/words"
 import type { RepairCommand } from "@/features/repair/use-repair-case"
 
+const CLOSE_WITH_ACK = "네, 하자도 맞아요"
+const CLOSE_WITHOUT_ACK = "하자는 따로 답할게요"
+
 // 수리 상태·하자 인정 표시(상태와 규칙 D). 비회원 링크 화면에서도 같은 표시를 씁니다.
 // compact: 상세 화면 제목 옆에 수리 상태·하자 인정·수리 시작 표시가 이미 있어 겹치는 배지를 뺍니다.
 export function RepairBadges({
@@ -165,8 +168,7 @@ export function RepairActions({
   const [mode, setMode] = useState<"notyet" | "reopen" | "close-ack" | null>(
     null,
   )
-  const [disputeType, setDisputeType] = useState<"보류" | "이견">("보류")
-  const [closeAck, setCloseAck] = useState("네, 하자도 확인해요")
+  const [closeAck, setCloseAck] = useState(CLOSE_WITH_ACK)
   const [error, setError] = useState("")
   // 판단은 서버(지금은 목업 API)가 해요. 화면은 보내고, 돌아온 오류 문구만 보여 줘요.
   const exec = async (call: RepairCommand) => {
@@ -394,53 +396,30 @@ export function RepairActions({
         description="끝난 뒤에는 수리 건이 잠기므로, 아직 비어 있는 하자 인정도 함께 물어요."
         submitLabel="종료 확인"
         onClose={() => setMode(null)}
-        onSubmit={(f) => {
-          const agree = closeAck.startsWith("네")
-          const reason = String(f.get("reason") || "")
-          // 종료 확인과 비어 있던 하자 응답을 함께 보내요(06 S-12)
-          return exec((api, s) =>
+        onSubmit={() =>
+          // 하자 "맞아요"만 종료 확인과 함께 보내요(06 REP-3a). 보류·이견은 하자 응답으로 따로
+          exec((api, s) =>
             api.confirmClose(s, r.id, {
-              defect: agree
-                ? { answer: "ACK" }
-                : {
-                    answer: disputeType === "보류" ? "NEED_MORE" : "DISPUTE",
-                    reason,
-                  },
+              alsoAckDefect: closeAck === CLOSE_WITH_ACK,
             }),
           )
-        }}
+        }
       >
         <div className="field">
           <label>이 하자가 있었다는 것도 확인할까요?</label>
           <Choice
             label="하자 인정"
             value={closeAck}
-            values={["네, 하자도 확인해요", "아니요, 더 필요하거나 달라요"]}
+            values={[CLOSE_WITH_ACK, CLOSE_WITHOUT_ACK]}
             onChange={setCloseAck}
           />
         </div>
-        {closeAck.startsWith("아니요") && (
-          <>
-            <div className="field">
-              <label>어떤 건가요?</label>
-              <Choice
-                label="어떤 건가요"
-                value={
-                  disputeType === "보류"
-                    ? "더 필요한 게 있어요"
-                    : "사실과 달라요"
-                }
-                values={["더 필요한 게 있어요", "사실과 달라요"]}
-                onChange={(v) =>
-                  setDisputeType(v === "사실과 달라요" ? "이견" : "보류")
-                }
-              />
-            </div>
-            <div className="field">
-              <label htmlFor="close-ack-reason">사유 · 필수</label>
-              <Textarea id="close-ack-reason" name="reason" required />
-            </div>
-          </>
+        {closeAck === CLOSE_WITHOUT_ACK && (
+          <p className="muted">
+            수리 종료만 확인해요. 하자에 더 필요한 게 있거나 사실과 다르면 하자
+            줄의 [아니에요]로 따로 남겨 주세요. 정산이 끝나기 전까지 남길 수
+            있어요.
+          </p>
         )}
       </ActionDialog>
     </div>

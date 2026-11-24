@@ -176,19 +176,12 @@ export function createMockRepairCases(store: MockStore): RepairCasesApi {
           (r) =>
             r.soloClosed
               ? "혼자 종료한 건 종료 확인 · 양측 확인"
-              : `수리 종료 · 양측 확인${b?.defect ? ` · 하자 ${b.defect.answer === "ACK" ? "확인" : b.defect.answer === "NEED_MORE" ? "보충 요청" : "이견"}` : ""}`,
+              : `수리 종료 · 양측 확인${b?.alsoAckDefect ? " · 하자 확인" : ""}`,
           (r, role) => {
             if (r.soloClosed) return confirmSoloClosed(r, role)
-            if (b?.defect)
-              if (b.defect.answer === "ACK")
-                confirmDefect(r, role, versionOf(r))
-              else
-                respondDefect(
-                  r,
-                  role,
-                  b.defect.answer === "NEED_MORE" ? "보류" : "이견",
-                  b.defect.reason ?? "",
-                )
+            // 한 요청에 종료 확인과 하자 맞아요를 함께 남겨요(서버 행동 순서는 CONFIRM_CLOSE → RESPOND_DEFECT).
+            // 목업은 닫힌 수리 건의 하자 확인을 막으므로 상태는 하자부터 바꿔요
+            if (b?.alsoAckDefect) confirmDefect(r, role, versionOf(r))
             confirmClose(r, role)
           },
         ),
