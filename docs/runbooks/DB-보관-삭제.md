@@ -24,9 +24,26 @@ V1은 부모 삭제 보호·수신 거부 UPDATE 금지·회원 확인 기록 �
 - `state.part_template`·`state.region`은 고정 조회 데이터이므로 앱의 INSERT·UPDATE·DELETE를 회수하고 SELECT만 남긴다. `state.sms_opt_out`은 SELECT·INSERT·DELETE만 허용한다.
 - 앱에 `record`, `state`, `log` USAGE를 주고, 스키마 CREATE·public 접근·소유자 멤버십은 주지 않는다. Flyway는 소유자로 실행하며 이력은 `public`, 관리 스키마는 `public,record,state,log`다.
 - 삭제 작업 역할은 필요한 `record`·`state`·`log` 조회, 감사·아웃박스 INSERT와 `state.purge_room_record(uuid)` EXECUTE만 받는다. 앱에는 이 함수 EXECUTE가 없다.
+- 사람별 읽기 전용 역할(Human)은 장애 대응 조회에 필요한 범위만 읽는다. 쓰기·TRUNCATE·함수 실행·다른 역할 전환은 없다.
+  - 테이블 단위 SELECT는 `grants.sql`의 명시 목록(기록·상태·감사 테이블 31개)에만 준다. 기본 권한(Default Privileges)으로는 주지 않으므로 새 테이블은 분류하기 전까지 읽을 수 없고, 분류되지 않은 테이블이 있으면 GRANT가 실패한다.
+  - 민감 테이블 7개는 컬럼 단위 SELECT만 준다. 읽을 수 없는 컬럼: `member`의 `email`·`password_hash`·`display_name`·`phone`, `refresh_token`의 `token_hash`·`device_label`, `phone_verification`의 `phone`·`code_hash`, `link`의 `token_hash`, `party`의 `invite_phone`, `outbox`의 `payload`·`dedupe_key`, `cause_note`의 `expert_name`(제3자의 실제 이름). 이 컬럼은 SELECT 목록·WHERE·`SELECT *`·행 전체 참조 어디에 써도 권한 오류(SQLState `42501`)로 거부된다.
+  - 새 컬럼이 Human에게 보이는지는 테이블 분류에 따라 다르다.
+    - 컬럼 단위 7개 테이블: 새 컬럼은 `grants.sql`의 허용 컬럼 목록에 넣고 GRANT를 다시 실행하기 전까지 읽을 수 없다.
+    - 테이블 단위 31개 테이블: PostgreSQL의 테이블 SELECT는 나중에 추가된 컬럼에도 적용된다. Migration이 컬럼을 추가하는 순간 Human은 GRANT를 다시 실행하지 않아도 그 컬럼을 읽는다.
+  - Human이 읽을 수 있는 컬럼 중 이름이 인증·연락처처럼 보이는 것(`phone`·`email`·`token`·`hash`·`hmac`·`code`·`name` 등)은 `grants.sql`의 승인 목록에 있어야 하고, 없으면 GRANT가 실패한다. 이 검사는 GRANT를 실행할 때 찾아내는 안전장치일 뿐이다. 위 테이블 단위 권한 때문에 그 전에 이미 보이는 것은 막지 못하고, 이름이 평범한 민감 컬럼(`memo`·`contact` 등)은 찾지 못한다.
+  - **테이블 단위 31개 테이블에 컬럼을 추가하는 Migration PR은 Human이 그 컬럼을 읽어야 하는지와 개인정보가 들어가는지를 반드시 검토한다.** 민감한 컬럼이면 아래 순서를 따른다. Migration 뒤 GRANT가 실패하는 것으로는 대신할 수 없다(실패할 때는 이미 노출된 뒤다).
+    1. 그 테이블의 Human 테이블 단위 SELECT를 먼저 줄여야 하는지 판단한다.
+    2. 줄여야 하면 먼저 `grants.sql`에서 그 테이블을 컬럼 단위로 옮기는 변경만 배포한다(기존 컬럼은 그대로 허용).
+    3. 실제 DB에 적용됐는지 확인한다(그 테이블에 Human 테이블 단위 SELECT가 없음).
+    4. 그다음 배포에서 민감 컬럼을 추가하는 Migration을 적용한다.
+
+    두 변경을 같은 배포에 묶지 않는다. 배포 순서가 Migration 다음 GRANT라면 그 사이에 노출되기 때문이다. 권한을 줄이는 것은 App·Purge 권한과 스키마를 바꾸지 않으므로 실행 중인 Blue 앱과 충돌하지 않고, 컬럼 추가도 기존 Expand 단계로 그대로 둔다. (GRANT 실행 진입점과 배포 순서는 #173 후속이며 아직 확정되지 않았다.)
+  - 남은 위험: 테이블 단위 테이블에 있는 자유 서술(`cause_note.text`, `description`·`reason`·`progress_note.text` 등, `room_record.alias`)에는 사용자가 개인정보를 적을 수 있다. 서비스 기록 확인에 필요해 지금은 열어 두고, 보안 재점검 때 다시 본다.
 - 앱에는 `record.purge_member_acknowledgements(uuid, timestamptz)` EXECUTE만 예외로 준다. 함수는 PUBLIC EXECUTE를 제거하며 B 직접 DELETE는 허용하지 않는다.
 - 기본 함수 EXECUTE 권한도 소유자 역할에서 `ALTER DEFAULT PRIVILEGES ... REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC`으로 회수한다. V1의 두 삭제 함수는 생성 직후 명시적으로 회수한다.
 - SQL에는 스키마를 붙이며 `search_path`를 권한 경계로 믿지 않는다. 엔티티도 `@Table(schema = ...)`를 사용한다.
+
+GRANT SQL은 `back/src/main/resources/db/grants/grants.sql` 하나다(앱 이미지에 함께 들어가고 Flyway 위치 `db/migration` 밖이라 Flyway가 실행하지 않는다). psql 메타 명령 없이 JDBC로 실행한다. 실행기는 Migration 로그인(NOINHERIT, Owner 멤버십 `SET TRUE`·`INHERIT FALSE`·`ADMIN FALSE`)으로 접속해 자동 커밋을 끄고 `SET LOCAL ROLE "<Owner>"`, `set_config('homestamp.grants.{app,purge,human}_role', ?, true)`, `pg_advisory_xact_lock(1752392040, 156)`을 같은 트랜잭션에서 실행한 뒤 DO 블록 하나를 실행하고 COMMIT한다. 어느 단계든 실패하면 ROLLBACK하므로 권한은 실행 전 상태로 남는다. DO 블록은 Owner로 전환하지 않았거나, 잠금이 없거나, Migration 로그인이 Owner를 상속·관리하면 아무것도 바꾸지 않고 실패한다. 테이블·함수 목록이 이 이미지의 Migration 결과와 다르면 실패하므로, 테이블이나 함수를 추가하는 V 파일은 같은 PR에서 이 파일의 목록과 권한도 고친다. 운영 실행 진입점(`--apply-grants`)과 역할 이름 공급은 Migration Runner(#173) 후속 작업에서 연결한다.
 
 ## 호실 밖 삭제
 
