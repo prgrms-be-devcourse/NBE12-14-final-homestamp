@@ -16,7 +16,7 @@ psql: host=<RDS 주소>(인증서 이름 확인)  hostaddr=127.0.0.1(실제로 �
 - Secret 값·비밀번호를 화면에 출력하지 않는다. 명령 인자, 셸 기록, GitHub, 이슈·채팅, 로그에 넣지 않는다
 - 비밀번호는 노트북의 임시 `PGPASSFILE`(0600)에만 두고 끝나면 지운다. **EC2에는 두지 않는다**(셸로 EC2에서 psql을 돌리지 않는다. 셸 세션 기록에 남을 수 있다)
 - `sslmode`를 `require` 이하로 낮추지 않는다. 인증서 확인이 안 되면 멈춘다
-- 실패해도 10·11단계(임시 파일 삭제, 세션 종료)는 반드시 한다(아래 `trap`)
+- 실패해도 11단계(임시 파일 삭제, 포워딩 종료)는 반드시 한다(아래 `trap`)
 
 ## 준비물 (노트북)
 
@@ -87,27 +87,68 @@ psql -X -v ON_ERROR_STOP=1 -v human_role=homestamp_human_read -f infra/db/check_
 
 ### 9. 결과 판단
 - 7·8 모두 종료 코드 0이어야 성공. 하나라도 0이 아니면 멈추고, 출력에서 비밀값이 아닌 오류 문장만 대장에 적는다. 같은 단계를 고쳐 다시 돌리기 전에 원인을 팀에 공유한다
+- 실패해도 아래 10~11단계(세션·파일 정리)는 하고, 12단계(교체)는 원인을 정리한 뒤 따로 정한다
 
-### 10~11. 정리 (실패해도 `trap`이 한다)
+### 10. 다른 마스터 세션 정리 (아직 붙어 있는 동안)
+비밀번호를 바꿔도 **이미 열린 세션은 끊기지 않는다**(PostgreSQL은 접속할 때만 인증한다. 실환경 확인 NOT_RUN). 그래서 마스터 계정으로 열린 다른 세션을 먼저 확인하고 끊는다.
 ```sh
-cleanup; trap - EXIT INT TERM
+psql -X -At -c "SELECT pid, application_name, backend_start FROM pg_stat_activity WHERE usename = current_user AND pid <> pg_backend_pid();"
+# 내 것이 아닌 세션이 있으면 대장에 적고 끊는다
+psql -X -At -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = current_user AND pid <> pg_backend_pid();"
+```
+
+### 11. 노트북 정리 (실패해도 `trap`이 한다)
+```sh
+cleanup; trap - EXIT INT TERM                       # 임시 PGPASSFILE 삭제, 포워딩 종료
 aws ssm describe-sessions --state Active --query 'Sessions[].SessionId' --output text   # 내 세션이 남아 있으면 terminate-session
-unset PGPASSFILE PGHOST PGHOSTADDR PGPORT PGDATABASE PGUSER SECRET_ARN
+unset PGPASSFILE                                    # PGHOST·SECRET_ARN 등 위치 값은 13~14단계에서 다시 쓴다
 ```
 
-### 12. 마스터 Secret 즉시 교체
-Bootstrap에서 노트북으로 꺼낸 비밀번호의 유효 기간을 줄인다(직접 접근을 막는 경계는 아니다, 04 6장).
+### 12. 마스터 비밀번호 즉시 교체 (승인 뒤)
+Bootstrap에서 노트북으로 꺼낸 비밀번호의 유효 기간을 줄인다. 직접 접근을 막는 경계는 아니다(04 6장).
+
+- **승인**: 운영 담당이 팀 작업 대장에 "교체 실행"을 적고 진행한다(실행자·시각)
+- **방식**: RDS의 즉시 교체(`ModifyDBInstance`의 `RotateMasterUserPassword=true`, `ApplyImmediately=true`). Secrets Manager `rotate-secret`을 직접 부르지 않는다(AWS RDS 문서 "Rotating the master user password secret for a DB instance"는 RDS 경로만 안내한다)
+- **자격 증명(교육 계정)**: 관리 역할은 `GetSecretValue`만 있어 교체할 수 없다. AWS 문서상 교체하는 사용자에게 `secretsmanager:RotateSecret`이 필요하고 호출 자체는 `rds:ModifyDBInstance`다. 교육 계정에서는 이 둘을 이미 가진 **공용 팀 사용자 프로필(`homestamp`)**로 이 명령 하나만 실행한다(2026-11-25 IAM 시뮬레이터로 허용 확인, 관리 역할 권한은 늘리지 않음). 개인 계정에서는 이 경로 대신 교체 전용 최소 권한 역할을 둔다
 ```sh
-aws secretsmanager rotate-secret --secret-id "$SECRET_ARN"
+AWS_PROFILE=homestamp aws rds modify-db-instance --db-instance-identifier homestamp-db \
+  --rotate-master-user-password --apply-immediately \
+  --query 'DBInstance.[DBInstanceStatus,MasterUserSecret.SecretStatus]' --output text
 ```
-- ⚠ **미정**: 관리 역할은 지금 `GetSecretValue`만 가진다. 교체를 관리 역할로 할지(`secretsmanager:RotateSecret`을 같은 Secret 하나에 더함) 공용 팀 사용자로 할지 정해야 한다. 정하기 전에는 이 단계를 실행하지 않는다
+- `--query`로 상태만 받는다(기본 출력에는 Secret ARN·계정 번호가 들어 있다). 이 명령에는 비밀번호가 없다
 
-### 13. 교체 뒤 접속 확인
-- 3~6단계를 다시 해서 새 비밀번호로 붙는지 확인한다(새 값도 같은 방식으로 읽고, 끝나면 10~11단계). 교체가 끝나기 전이면 이전 값이 나올 수 있으니 잠시 뒤 다시 한다
+### 13. 교체 상태 확인
+```sh
+AWS_PROFILE=homestamp aws rds wait db-instance-available --db-instance-identifier homestamp-db
+AWS_PROFILE=homestamp aws rds describe-db-instances --db-instance-identifier homestamp-db \
+  --query 'DBInstances[0].[DBInstanceStatus,MasterUserSecret.SecretStatus]' --output text   # available  active 여야 한다
+AWS_PROFILE=homestamp aws secretsmanager describe-secret --secret-id "$SECRET_ARN" \
+  --query '{lastRotated:LastRotatedDate,versions:length(keys(VersionIdsToStages))}'          # 값이 아니라 메타데이터
+```
+- `SecretStatus`가 `rotating`이면 잠시 뒤 다시 본다. `LastRotatedDate`·`VersionIdsToStages`는 Secrets Manager API의 일반 항목이고 RDS 문서에는 없다(실환경 확인 NOT_RUN). 12단계 전에 같은 명령으로 값을 적어 두고 비교한다
 
-### 14. 기록
-- 대장: 실행자, 목적, 시작·종료 시각, 7·8·12·13 결과(성공·실패만)
-- 감사 증거: CloudTrail 이벤트 기록에서 `AssumeRole`, `GetSecretValue`, `StartSession`, `TerminateSession`, `RotateSecret`의 시각과 주체(`assumed-role/homestamp-ops-admin/<세션 이름>`)를 대장과 대조한다
+### 14. 새 비밀번호로 재접속하고 남은 세션 끊기
+- 3~6단계를 다시 한다(관리 역할 `homestamp-ops-admin`으로 새 값을 읽어 새 임시 `PGPASSFILE`에. 새 값도 화면·인자·EC2에 남기지 않는다)
+- 접속되면 10단계의 두 쿼리를 다시 돌려, 교체 전부터 열려 있던 마스터 세션이 남아 있지 않은지 확인하고 있으면 끊는다
+- 끝나면 11단계로 정리하고 위치 값도 지운다: `unset PGHOST PGHOSTADDR PGPORT PGDATABASE PGUSER PGSSLMODE PGSSLROOTCERT SECRET_ARN INSTANCE_ID`
+- 이전 비밀번호로 접속이 거절되는지는 일부러 시험하지 않는다(이전 값은 이미 지웠다)
+
+### 교체가 실패하면
+- `SecretStatus`가 `impaired`: AWS 문서상 Secret으로 접속은 되지만 교체는 안 되는 상태다. 다시 교체를 누르지 말고 대장에 적고 팀에 알린 뒤 원인(권한·KMS·DB 상태)을 확인한다
+- DB가 `available`로 돌아오지 않거나 새 값으로 접속이 안 됨: 반복 실행하지 않는다. 비밀번호를 손으로 정하지 않는다(관리형에서는 `MasterUserPassword`를 줄 수 없다). 앱·배포는 마스터 계정을 쓰지 않으므로 서비스에는 바로 영향이 없다. 원인을 확인한 뒤 12단계를 다시 할지 정한다
+- 어떤 경우에도 정리(11단계)는 한다
+
+### 15. 기록
+- 대장: 실행자, 목적, 시작·종료 시각, 7·8·10·12·13·14 결과(성공·실패, 끊은 세션 수만)
+- 감사 증거: CloudTrail 이벤트 기록에서 `AssumeRole`·`GetSecretValue`·`StartSession`·`TerminateSession`(관리 역할, `assumed-role/homestamp-ops-admin/<세션 이름>`)과 `ModifyDBInstance`(공용 팀 사용자 `user/devcos-team07`, 사람을 구분하지 못함)의 시각을 대장과 대조한다
+
+### 자동 교체와 이번 교체의 차이
+| | 자동 교체 | Bootstrap 뒤 즉시 교체 |
+|---|---|---|
+| 언제 | RDS가 기본 7일마다(AWS 문서) | Bootstrap·역할 변경으로 사람이 값을 꺼낸 직후 |
+| 누가 | RDS | 운영 담당(교육 계정은 공용 팀 사용자 프로필) |
+| 목적 | 정기적으로 바꿈 | 노트북에 꺼낸 값의 유효 기간을 줄임 |
+| 열린 세션 | 끊지 않음 | 끊지 않음 → 10·14단계에서 직접 끊는다 |
 
 ## apply 뒤 1회 확인 (보안 경계로 쓰기 전)
 
@@ -121,7 +162,7 @@ aws ssm start-session --target "$INSTANCE_ID" --document-name homestamp-rds-forw
 
 | 항목 | 남는 것 | 한계 |
 |---|---|---|
-| CloudTrail | `AssumeRole`·`GetSecretValue`·`StartSession`·`RotateSecret` 같은 API 호출, 시각, 주체 | 세션 이름은 입력한 값이라 신원 증명이 아니다. 공용 팀 사용자 키로 직접 부른 호출은 사람을 구분하지 못한다. **추적(Trail)은 아직 없어** 이벤트 기록(90일)만 있다 |
+| CloudTrail | `AssumeRole`·`GetSecretValue`·`StartSession`·`ModifyDBInstance` 같은 API 호출, 시각, 주체 | 세션 이름은 입력한 값이라 신원 증명이 아니다. 공용 팀 사용자 키로 직접 부른 호출은 사람을 구분하지 못한다. **추적(Trail)은 아직 없어** 이벤트 기록(90일)만 있다 |
 | SSM 세션 로그 | 없음(포트 포워딩 세션은 Session Manager 로깅 대상이 아니다. 시작·종료는 CloudTrail에 남는다) | 오간 내용(SQL)은 S3·CloudWatch 어디에도 남지 않는다 |
 | PostgreSQL | RDS `postgresql` 로그(CloudWatch, 365일, terse) | 실행한 SQL을 남기려면 `log_statement` 또는 pgAudit가 필요하다(아직 없음). 켜더라도 비밀번호가 들어가는 문장이 로그에 남지 않게 한다 |
 | 교육 계정 | — | 공용 팀 사용자는 `AdministratorAccess`라 이 절차를 거치지 않고 Secret을 읽거나 세션 문서를 바꿀 수 있다. 팀 약속·대장·CloudTrail 대조로 관리한다(04 8장) |
