@@ -40,7 +40,8 @@ class DatabaseGrantsIntegrationTest {
           "record.proposal_line",
           "record.progress_note",
           "record.repair_content",
-          "record.settlement_transfer_version");
+          "record.settlement_transfer_version",
+          "record.supplement");
 
   private static final Set<String> STATE_TABLES =
       Set.of(
@@ -98,6 +99,7 @@ class DatabaseGrantsIntegrationTest {
     assertAllProjectTablesAreClassified();
     assertMigrationCanAssumeOwnerAndAppCannot();
     seedOverbroadDefaultPrivileges();
+    assertUnclassifiedTableFailsClosed();
     assertGrantsRejectPublicSchemaAccess(
         "GRANT CREATE ON SCHEMA public TO " + APP, "REVOKE CREATE ON SCHEMA public FROM " + APP);
     assertGrantsRejectPublicSchemaAccess(
@@ -180,6 +182,34 @@ class DatabaseGrantsIntegrationTest {
     try (Connection connection = adminConnection();
         Statement statement = connection.createStatement()) {
       statement.execute(revokeSql);
+    }
+  }
+
+  private static void assertUnclassifiedTableFailsClosed() throws Exception {
+    try (Connection connection = roleConnection(MIGRATION);
+        Statement statement = connection.createStatement()) {
+      statement.execute("SET ROLE " + OWNER);
+      statement.execute("CREATE TABLE record.unclassified_grant_table (id integer)");
+      statement.execute(
+          "REVOKE ALL ON TABLE record.unclassified_grant_table FROM "
+              + APP
+              + ", "
+              + PURGE
+              + ", "
+              + HUMAN);
+    }
+
+    var result = executeGrants();
+    assertTrue(result.getExitCode() != 0, result.getStdout() + result.getStderr());
+    try (Connection connection = adminConnection()) {
+      assertFalse(hasTablePrivilege(connection, APP, "record.action", "SELECT"));
+      assertFalse(hasTablePrivilege(connection, APP, "record.unclassified_grant_table", "SELECT"));
+    }
+
+    try (Connection connection = roleConnection(MIGRATION);
+        Statement statement = connection.createStatement()) {
+      statement.execute("SET ROLE " + OWNER);
+      statement.execute("DROP TABLE record.unclassified_grant_table");
     }
   }
 
@@ -281,6 +311,12 @@ class DatabaseGrantsIntegrationTest {
         Statement statement = connection.createStatement()) {
       statement.execute("SET ROLE " + APP);
       statement.execute("SELECT count(*) FROM record.action");
+      statement.execute("SELECT count(*) FROM record.supplement");
+      statement.execute(
+          "INSERT INTO record.supplement (id, room_record_id, repair_case_id, side, created_at) "
+              + "SELECT '00000000-0000-0000-0000-000000000001'::uuid, "
+              + "'00000000-0000-0000-0000-000000000002'::uuid, "
+              + "'00000000-0000-0000-0000-000000000003'::uuid, 'TENANT', now() WHERE false");
       assertEquals(
           "1",
           scalar(
@@ -298,6 +334,8 @@ class DatabaseGrantsIntegrationTest {
           "INSERT INTO state.sms_opt_out (phone_hmac, created_at) VALUES ('test-hmac', now())");
       statement.execute("DELETE FROM state.sms_opt_out WHERE phone_hmac = 'test-hmac'");
       assertPermissionDenied(statement, "UPDATE record.action SET created_at = created_at");
+      assertPermissionDenied(statement, "UPDATE record.supplement SET description = 'changed'");
+      assertPermissionDenied(statement, "DELETE FROM record.supplement");
       assertPermissionDenied(statement, "DELETE FROM record.member_acknowledgement");
       assertPermissionDenied(statement, "UPDATE state.sms_opt_out SET created_at = now()");
       assertPermissionDenied(statement, "DELETE FROM state.room_record");

@@ -32,6 +32,7 @@ DECLARE
         'record.progress_note',
         'record.repair_content',
         'record.settlement_transfer_version',
+        'record.supplement',
         'state.correction_request',
         'state.in_app_notification',
         'state.inspection',
