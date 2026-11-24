@@ -6,7 +6,6 @@ import { FormDialog } from "@/components/common/form-dialog"
 import { ConsentList } from "@/components/common/consent-list"
 import { post } from "@/api/records"
 import { endpoints } from "@/api/endpoints"
-import { maskPhone } from "@/api/auth"
 import { API_MODE } from "@/config"
 import { other, type Role, type Room } from "@/data/demo"
 import { requestInspectionAll } from "@/lib/inspection-rules"
@@ -15,7 +14,8 @@ import {
   issueInvite,
   logRepairNotice,
 } from "@/lib/workflows"
-import { isMobile, onlyDigits, type Commit } from "@/lib/record-commands"
+import { type Commit } from "@/lib/record-commands"
+import { isMobilePhone, maskPhone, normalizePhone } from "@/lib/phone"
 
 // 공유 확인 · 상대 초대(ROOM-4, S-07). target이 있으면 그 기록 한 건과 함께 알려요.
 export function InviteForm({
@@ -51,10 +51,10 @@ export function InviteForm({
       onSubmit={(text) => {
         // 번호 변경을 고르지 않으면 호실에 저장된 기준 연락처를 그대로 써요.
         const changing = changePhone && canChangeInvitePhone(room, role)
-        const phone = onlyDigits(
+        const phone = normalizePhone(
           changing ? text("phone") : room.phone || text("phone"),
         )
-        if (!isMobile(phone)) {
+        if (!isMobilePhone(phone)) {
           setError("010으로 시작하는 11자리 번호를 입력해 주세요.")
           return
         }

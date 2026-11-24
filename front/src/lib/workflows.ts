@@ -1,3 +1,4 @@
+import { isMobilePhone, normalizePhone } from "@/lib/phone"
 import {
   uid,
   type DemoState,
@@ -100,9 +101,6 @@ export function roomTransfers(room: Room): Transfer[] {
   )
 }
 
-const normalizePhone = (phone: string | undefined) =>
-  (phone || "").replace(/\D/g, "")
-
 // 받은 초대는 역할이 아니라 "초대받은 계정의 인증 번호"로 구분합니다.
 // 계정 번호는 가입할 때 휴대폰 인증을 마친 번호(로그인 세션)입니다.
 // 정산 초대 링크(상태와 규칙 C): 거주 종료 뒤 연결되지 않은 상대에게. 내용 없이 가입·연결 안내만
@@ -133,7 +131,7 @@ export function sendSettlementLink(room: Room, role: Role, phone: string) {
     throw new Error("거주 종료 뒤 연결되지 않은 상대에게만 보낼 수 있어요.")
   if (room.creator !== role) throw new Error("호실을 만든 쪽이 보낼 수 있어요.")
   const next = normalizePhone(phone)
-  if (!/^010\d{8}$/.test(next))
+  if (!isMobilePhone(next))
     throw new Error("010으로 시작하는 11자리 번호를 입력해 주세요.")
   const at = new Date().toISOString()
   room.settlementLinks = (room.settlementLinks || []).map((l) =>

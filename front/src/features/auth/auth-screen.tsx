@@ -23,12 +23,11 @@ import { errorMessage } from "@/api/errors"
 import {
   DEV_FIXED_CODE,
   PASSWORD_RULE,
-  maskPhone,
   validPassword,
-  validPhone,
   type Account,
   type AuthApi,
 } from "@/api/auth"
+import { isMobilePhone, maskPhone } from "@/lib/phone"
 import { Notice } from "@/components/common/notice"
 
 type Mode = "login" | "signup"
@@ -256,7 +255,7 @@ function SignupForm({
   }
   const sendCode = () =>
     run(async () => {
-      if (!validPhone(phone))
+      if (!isMobilePhone(phone))
         throw new Error("010으로 시작하는 휴대폰 번호 11자리를 입력해 주세요.")
       const v = await auth.requestPhoneCode(phone)
       setVerification({

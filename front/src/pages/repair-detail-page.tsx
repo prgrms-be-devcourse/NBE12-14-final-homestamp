@@ -35,7 +35,10 @@ import {
   WrongPhotos,
   RepairMaskedNotes,
 } from "@/features/repair/repair-records"
-import { CauseNotes, CostAgreement } from "@/features/proposal/repair-discussions"
+import {
+  CauseNotes,
+  CostAgreement,
+} from "@/features/proposal/repair-discussions"
 import { RepairPayments } from "@/features/payment/repair-payments"
 import { afterMasks, beforeMasks, type maskOf } from "@/lib/photo-privacy"
 import { safeSharedText } from "@/lib/service-rules"

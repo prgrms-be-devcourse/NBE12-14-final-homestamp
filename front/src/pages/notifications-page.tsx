@@ -2,7 +2,11 @@ import { useState } from "react"
 import { Bell, CheckCheck, ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Panel } from "@/components/common/blocks"
-import { EmptyState, ErrorState, LoadingState } from "@/components/common/states"
+import {
+  EmptyState,
+  ErrorState,
+  LoadingState,
+} from "@/components/common/states"
 import { useApi, useApiQuery } from "@/api/hooks"
 import { errorMessage } from "@/api/errors"
 import type { Notice, Room } from "@/data/demo"

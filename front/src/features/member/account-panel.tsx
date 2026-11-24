@@ -1,7 +1,8 @@
 import { LogOut } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { FormDialog } from "@/components/common/form-dialog"
-import { maskPhone, type Account } from "@/api/auth"
+import type { Account } from "@/api/auth"
+import { maskPhone } from "@/lib/phone"
 
 // 내 계정(이름·이메일·인증한 휴대폰)과 로그아웃. 보내는 칸이 없어 아래 버튼 줄도 없어요.
 export function AccountPanel({

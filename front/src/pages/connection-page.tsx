@@ -1,7 +1,7 @@
 import { Link2, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Panel, Status } from "@/components/common/blocks"
-import { maskPhone } from "@/api/auth"
+import { maskPhone } from "@/lib/phone"
 import { other, type Role, type Room } from "@/data/demo"
 import { activeInviteLinks } from "@/lib/workflows"
 import { sideText } from "@/lib/words"

@@ -63,6 +63,7 @@ import {
 import { useApi } from "@/api/hooks"
 import { RespondButtons } from "@/components/common/respond-buttons"
 import { SupplementRequest } from "@/components/common/supplement-request"
+import { isMobilePhone, normalizePhone } from "@/lib/phone"
 
 type Commit = (
   request: RecordRequest,
@@ -845,11 +846,8 @@ export function InspectionPage({
                 <Button
                   variant="outline"
                   onClick={() => {
-                    const phone = (settlePhone || room.phone || "").replace(
-                      /\D/g,
-                      "",
-                    )
-                    if (!/^010\d{8}$/.test(phone)) {
+                    const phone = normalizePhone(settlePhone || room.phone)
+                    if (!isMobilePhone(phone)) {
                       toast("010으로 시작하는 11자리 번호를 입력해 주세요.")
                       return
                     }

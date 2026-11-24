@@ -3,10 +3,10 @@ import { Input } from "@/components/ui/input"
 import { Notice } from "@/components/common/notice"
 import { FormDialog } from "@/components/common/form-dialog"
 import { notInSpec } from "@/api/records"
-import { maskPhone } from "@/api/auth"
 import type { Role, Room } from "@/data/demo"
 import { updateNumberOnlyPhone } from "@/lib/workflows"
-import { isMobile, onlyDigits, type Commit } from "@/lib/record-commands"
+import { type Commit } from "@/lib/record-commands"
+import { isMobilePhone, maskPhone, normalizePhone } from "@/lib/phone"
 
 // 초대 전 상대 번호 고치기: 번호만 바꾸고 초대·링크 발급은 하지 않아요.
 export function PhoneForm({
@@ -31,8 +31,8 @@ export function PhoneForm({
       onCancel={onCancel}
       submitLabel="번호 저장"
       onSubmit={(text) => {
-        const phone = onlyDigits(text("phone"))
-        if (!isMobile(phone)) {
+        const phone = normalizePhone(text("phone"))
+        if (!isMobilePhone(phone)) {
           setError("010으로 시작하는 11자리 번호를 입력해 주세요.")
           return
         }
@@ -40,7 +40,7 @@ export function PhoneForm({
           setError("내 계정 번호는 상대로 넣을 수 없어요.")
           return
         }
-        if (phone === onlyDigits(room.phone ?? "")) {
+        if (phone === normalizePhone(room.phone ?? "")) {
           setError("기존 번호와 같아요.")
           return
         }

@@ -44,7 +44,3 @@ export function readZonePart(zone: string, part: string, text: FieldText) {
 }
 export const ZONE_PART_ERROR =
   "구역과 부위를 선택하고, 기타는 이름을 직접 입력해 주세요."
-
-// 상대 휴대폰 번호: 010으로 시작하는 11자리, 내 계정 번호는 안 돼요
-export const onlyDigits = (v: string) => v.replace(/\D/g, "")
-export const isMobile = (phone: string) => /^010\d{8}$/.test(phone)

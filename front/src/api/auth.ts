@@ -1,4 +1,5 @@
 import { API_BASE_URL, API_MODE } from "@/config"
+import { isMobilePhone, normalizePhone } from "@/lib/phone"
 import { ApiError } from "./errors"
 import { endpoints } from "./endpoints"
 import { createHttpClient, type HttpRequest } from "./http-client"
@@ -77,12 +78,6 @@ export const DEV_ACCOUNTS = [
 export const PASSWORD_RULE = "8자 이상, 영문과 숫자를 함께 써 주세요."
 export const validPassword = (p: string) =>
   p.length >= 8 && /[A-Za-z]/.test(p) && /\d/.test(p)
-export const normalizePhone = (p: string) => p.replace(/\D/g, "")
-export const validPhone = (p: string) => /^010\d{8}$/.test(normalizePhone(p))
-export const maskPhone = (p: string) => {
-  const n = normalizePhone(p)
-  return n.length === 11 ? `${n.slice(0, 3)}-••••-${n.slice(7)}` : n
-}
 
 /* ── 백엔드 연결 ── */
 export function createHttpAuth(
@@ -170,7 +165,7 @@ export function createLocalAuth(): AuthApi {
     getToken: () => current?.id,
     async requestPhoneCode(phone) {
       const n = normalizePhone(phone)
-      if (!validPhone(n))
+      if (!isMobilePhone(n))
         fail(
           "VALIDATION_FAILED",
           "010으로 시작하는 휴대폰 번호 11자리를 입력해 주세요.",
