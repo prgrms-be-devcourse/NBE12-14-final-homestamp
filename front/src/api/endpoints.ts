@@ -1,0 +1,111 @@
+// 명세 4장 API 목록 중 화면이 쓰는 주소. 문서에 있는 것만 적습니다(없는 API는 만들지 않음).
+const id = (v: string) => encodeURIComponent(v)
+export const endpoints = {
+  // 4-1 계정·인증
+  phoneVerifications: "/api/auth/phone-verifications",
+  verifyPhone: (vid: string) =>
+    `/api/auth/phone-verifications/${id(vid)}/verify`,
+  signup: "/api/auth/signup",
+  login: "/api/auth/login",
+  refresh: "/api/auth/refresh",
+  logout: "/api/auth/logout",
+  me: "/api/me",
+  // 4-2 홈·알림
+  home: "/api/me/home",
+  notifications: "/api/me/notifications",
+  unreadCount: "/api/me/notifications/unread-count",
+  readNotification: (nid: string) => `/api/me/notifications/${id(nid)}/read`,
+  sharing: "/api/me/sharing",
+  // 4-3 호실과 참여
+  // 법정동 찾기·단계 선택(호실 만들기, ROOM-1)
+  regionSearch: (q: string) => `/api/regions/search?q=${id(q)}`,
+  regions: (parent?: string) =>
+    parent ? `/api/regions?parent=${id(parent)}` : "/api/regions",
+  rooms: "/api/rooms",
+  room: (rid: string) => `/api/rooms/${id(rid)}`,
+  timeline: (rid: string) => `/api/rooms/${id(rid)}/timeline`,
+  invite: (rid: string) => `/api/rooms/${id(rid)}/invite`,
+  invitations: "/api/invitations",
+  connect: (pid: string) => `/api/invitations/${id(pid)}/connect`,
+  rejectInvitation: (pid: string) => `/api/invitations/${id(pid)}/reject`,
+  roomInfo: (rid: string) => `/api/rooms/${id(rid)}/info`,
+  counterpartPhone: (rid: string) => `/api/rooms/${id(rid)}/counterpart-phone`,
+  stopSharing: (rid: string) => `/api/rooms/${id(rid)}/stop-sharing`,
+  resumeSharing: (rid: string) => `/api/rooms/${id(rid)}/resume-sharing`,
+  moveOut: (rid: string) => `/api/rooms/${id(rid)}/move-out`,
+  // 세입자 측이 집주인의 거주 종료 요청에 "맞아요" / "아직 살고 있어요"
+  moveOutAnswer: (rid: string, answer: "confirm" | "reject") =>
+    `/api/rooms/${id(rid)}/move-out/${answer}`,
+  // 4-5 사진
+  uploadTickets: (rid: string) => `/api/rooms/${id(rid)}/upload-tickets`,
+  photoAction: (
+    pid: string,
+    action:
+      "hide-on-link" | "show-on-link" | "erase" | "mark-wrong" | "unmark-wrong",
+  ) => `/api/photos/${id(pid)}/${action}`,
+  // 4-6 수리·돈
+  repairCases: (rid: string) => `/api/rooms/${id(rid)}/repair-cases`,
+  repairCase: (cid: string) => `/api/repair-cases/${id(cid)}`,
+  // 원인 설명 응답(06 4장 POST /api/cause-notes/{id}/respond)
+  causeNoteRespond: (nid: string) => `/api/cause-notes/${id(nid)}/respond`,
+  repairAction: (
+    cid: string,
+    // 06 4장 수리 건 행동(하자 응답은 /respond 하나: ACK·NEED_MORE·DISPUTE)
+    action:
+      | "respond"
+      | "supplement"
+      | "start"
+      | "request-close"
+      | "confirm-close"
+      | "not-yet"
+      | "close-alone"
+      | "reopen"
+      | "photos"
+      | "ask-progress"
+      | "progress-notes"
+      | "cause-notes",
+  ) => `/api/repair-cases/${id(cid)}/${action}`,
+  corrections: "/api/corrections",
+  correctionAction: (
+    cid: string,
+    action: "respond" | "resubmit" | "withdraw",
+  ) => `/api/corrections/${id(cid)}/${action}`,
+  acceptAllCorrections: "/api/corrections/accept-all",
+  payments: (cid: string) => `/api/repair-cases/${id(cid)}/payments`,
+  paymentAction: (pid: string, action: "respond" | "supplement") =>
+    `/api/payments/${id(pid)}/${action}`,
+  proposals: (cid: string) => `/api/repair-cases/${id(cid)}/proposals`,
+  proposalAction: (
+    pid: string,
+    action: "agree" | "dispute" | "counter" | "withdraw",
+  ) => `/api/proposals/${id(pid)}/${action}`,
+  // 4-7 점검
+  inspections: (rid: string) => `/api/rooms/${id(rid)}/inspections`,
+  inspection: (iid: string) => `/api/inspections/${id(iid)}`,
+  inspectionAction: (
+    iid: string,
+    action:
+      "items" | "part-photos" | "request-confirm" | "confirm-all" | "finish",
+  ) => `/api/inspections/${id(iid)}/${action}`,
+  inspectionItemAction: (itemId: string, action: "respond" | "supplement") =>
+    `/api/inspection-items/${id(itemId)}/${action}`,
+  // 4-8 정산
+  openSettlement: (rid: string) => `/api/rooms/${id(rid)}/settlement`,
+  settlement: (sid: string) => `/api/settlements/${id(sid)}`,
+  settlementAction: (
+    sid: string,
+    action:
+      | "deposit-proposals"
+      | "items"
+      | "transfers"
+      | "finish"
+      | "finish/confirm"
+      | "finish/not-yet"
+      | "finish/alone"
+      | "invite",
+  ) => `/api/settlements/${id(sid)}/${action}`,
+  settlementItemAction: (itemId: string, action: "exclude" | "proposals") =>
+    `/api/settlement-items/${id(itemId)}/${action}`,
+  transferRespond: (tid: string) =>
+    `/api/settlement-transfers/${id(tid)}/respond`,
+} as const

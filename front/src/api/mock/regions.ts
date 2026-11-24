@@ -1,0 +1,41 @@
+import type { Region, RegionOption } from "../types"
+
+// 서버 없이 개발할 때 쓰는 법정동 코드 몇 줄. 값은 백엔드 V2__seed_region.sql(법정동코드 전체자료)에서 그대로 옮겼어요.
+// 세종특별자치시처럼 시·군·구가 없는 곳은 sigungu가 null이에요.
+export const MOCK_REGIONS: Region[] = [
+  { code: "1111010100", sido: "서울특별시", sigungu: "종로구", dong: "청운동" },
+  { code: "1111010400", sido: "서울특별시", sigungu: "종로구", dong: "효자동" },
+  { code: "1144010100", sido: "서울특별시", sigungu: "마포구", dong: "아현동" },
+  { code: "1144010200", sido: "서울특별시", sigungu: "마포구", dong: "공덕동" },
+  { code: "1144012000", sido: "서울특별시", sigungu: "마포구", dong: "서교동" },
+  { code: "1144012200", sido: "서울특별시", sigungu: "마포구", dong: "합정동" },
+  { code: "1144012300", sido: "서울특별시", sigungu: "마포구", dong: "망원동" },
+  { code: "1144012400", sido: "서울특별시", sigungu: "마포구", dong: "연남동" },
+  { code: "1144012600", sido: "서울특별시", sigungu: "마포구", dong: "중동" },
+  { code: "1144012700", sido: "서울특별시", sigungu: "마포구", dong: "상암동" },
+  { code: "2635010500", sido: "부산광역시", sigungu: "해운대구", dong: "우동" },
+  { code: "2635010600", sido: "부산광역시", sigungu: "해운대구", dong: "중동" },
+  { code: "2635010700", sido: "부산광역시", sigungu: "해운대구", dong: "좌동" },
+  { code: "3611011000", sido: "세종특별자치시", sigungu: null, dong: "어진동" },
+  { code: "3611011100", sido: "세종특별자치시", sigungu: null, dong: "종촌동" },
+  { code: "3611011400", sido: "세종특별자치시", sigungu: null, dong: "도담동" },
+]
+
+// GET /api/regions/search?q=: 동 이름으로 찾기
+export const searchMockRegions = (q: string) => {
+  const k = q.trim()
+  return k ? MOCK_REGIONS.filter((r) => r.dong.includes(k)) : []
+}
+
+// GET /api/regions?parent=: 없으면 시·도, 2자리면 시·군·구, 5자리면 읍·면·동
+export function listMockRegions(parent?: string): RegionOption[] {
+  const seen = new Map<string, string>()
+  for (const r of MOCK_REGIONS) {
+    if (!parent) seen.set(r.code.slice(0, 2), r.sido)
+    else if (parent.length === 2 && r.code.startsWith(parent))
+      seen.set(r.code.slice(0, 5), r.sigungu ?? r.sido)
+    else if (parent.length === 5 && r.code.startsWith(parent))
+      seen.set(r.code, r.dong)
+  }
+  return [...seen].map(([code, name]) => ({ code, name }))
+}
