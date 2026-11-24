@@ -80,8 +80,12 @@ test("휴대폰 인증 → 계정 → 확인 항목으로 가입하고, 호실�
     await screen.findByRole("radio", { name: /이 집을 빌려줬어요/ }),
   )
   fireEvent.change(screen.getByLabelText(/주소/), {
-    target: { value: "서울시 마포구 연남동" },
+    target: { value: "연남" },
   })
+  fireEvent.click(screen.getByRole("button", { name: /^찾기$/ }))
+  fireEvent.click(
+    await screen.findByRole("button", { name: /서울특별시 마포구 연남동/ }),
+  )
   fireEvent.change(screen.getByLabelText("호실 별칭"), {
     target: { value: "302호" },
   })

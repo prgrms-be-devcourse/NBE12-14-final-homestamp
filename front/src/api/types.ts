@@ -9,13 +9,18 @@ import type { AvailableActionsApi } from "./available-actions"
 export interface Session {
   accountId: string
 }
-// 주소 검색 결과 한 줄. 저장은 시·도 · 시·군·구 · 읍·면·동만 해요(명세 '주소 저장 범위').
-// label(도로명 주소 전체)은 결과 중에서 고를 때 보여 주기만 하고 저장하지 않아요.
-export interface AddressRegion {
+// 법정동 한 줄(06 4-3 GET /api/regions/search). 호실 주소는 법정동 코드와 별칭만 저장해요(decisions 2026-11-13).
+// 세종특별자치시처럼 시·군·구가 없는 곳은 sigungu가 null이에요.
+export interface Region {
+  code: string
   sido: string
-  sigungu: string
+  sigungu: string | null
   dong: string
-  label: string
+}
+// 단계 선택 한 칸(06 4-3 GET /api/regions?parent=). 06에 응답 모양이 아직 없어 코드와 이름만 써요.
+export interface RegionOption {
+  code: string
+  name: string
 }
 export interface HomeStampApi {
   mode: "mock" | "http"
@@ -26,8 +31,10 @@ export interface HomeStampApi {
   // POST /api/me/notifications/{id}/read — 읽음은 응답이 아니라 기다림 타이머는 그대로
   readNotification(session: Session, id: string): Promise<void>
   readAllNotifications(session: Session): Promise<void>
-  // GET /api/addresses?keyword= — 서버가 행정안전부 도로명주소 검색 API(승인키는 서버에만)를 대신 불러 시·도·시·군·구·읍·면·동으로 줄여 줘요
-  searchAddress(keyword: string): Promise<AddressRegion[]>
+  // GET /api/regions/search?q= — 동 이름으로 법정동 찾기
+  searchRegions(q: string): Promise<Region[]>
+  // GET /api/regions?parent= — 없으면 시·도, 2자리면 시·군·구, 5자리면 읍·면·동
+  listRegions(parent?: string): Promise<RegionOption[]>
   // 수리 건(06 4장 /api/repair-cases). 도메인마다 이렇게 하나씩 더해 가요.
   repairCases: RepairCasesApi
   // 호실 기록 읽기와, 수리 건 API 밖의 기록 바꾸기(지불·고치기·점검·정산·호실 …)

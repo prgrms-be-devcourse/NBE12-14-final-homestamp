@@ -17,8 +17,10 @@ export const endpoints = {
   readNotification: (nid: string) => `/api/me/notifications/${id(nid)}/read`,
   sharing: "/api/me/sharing",
   // 4-3 호실과 참여
-  // 주소 검색(호실 만들기): 서버가 도로명주소 검색 API를 대신 불러요. 명세 4장에 아직 없어 추가가 필요해요
-  addresses: (keyword: string) => `/api/addresses?keyword=${id(keyword)}`,
+  // 법정동 찾기·단계 선택(호실 만들기, ROOM-1)
+  regionSearch: (q: string) => `/api/regions/search?q=${id(q)}`,
+  regions: (parent?: string) =>
+    parent ? `/api/regions?parent=${id(parent)}` : "/api/regions",
   rooms: "/api/rooms",
   room: (rid: string) => `/api/rooms/${id(rid)}`,
   timeline: (rid: string) => `/api/rooms/${id(rid)}/timeline`,

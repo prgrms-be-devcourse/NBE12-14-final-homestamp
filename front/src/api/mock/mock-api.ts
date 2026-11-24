@@ -1,3 +1,4 @@
+import { listMockRegions, searchMockRegions } from "./regions"
 import type { HomeStampApi, Session } from "../types"
 import type { MockStore } from "./store"
 import type { Notice } from "@/data/demo"
@@ -46,10 +47,13 @@ export function createMockApi(store: MockStore): HomeStampApi {
         ),
       }))
     },
-    // 가짜 주소 결과는 만들지 않아요. 서버(승인키) 없이 쓸 수 없다고 알려요.
-    async searchAddress() {
+    async searchRegions(q) {
       await delay()
-      throw new Error("주소 검색은 서버가 연결된 뒤에 쓸 수 있어요.")
+      return searchMockRegions(q)
+    },
+    async listRegions(parent) {
+      await delay()
+      return listMockRegions(parent)
     },
     async readAllNotifications(s) {
       await delay()

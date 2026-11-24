@@ -1,4 +1,4 @@
-import type { AddressRegion, HomeStampApi } from "./types"
+import type { HomeStampApi, Region, RegionOption } from "./types"
 import { endpoints } from "./endpoints"
 import { createHttpRepairCases } from "./http-repair-cases"
 import { createHttpRecords } from "./http-records"
@@ -9,16 +9,8 @@ import type { Notice, Room } from "@/data/demo"
 // 백엔드 연결용 구현. 응답 본문 형식은 명세에 아직 정의되지 않아, 연결 때 아래 변환 함수에서 화면 모델로 맞춥니다.
 const toRooms = (body: unknown) => body as Room[]
 const toNotices = (body: unknown) => body as Notice[]
-// 서버 응답에서 시·도·시·군·구·읍·면·동과 보여 줄 이름만 꺼내요(그 밖의 칸은 버려요)
-const toAddresses = (body: unknown): AddressRegion[] =>
-  (Array.isArray(body) ? body : [])
-    .map((x: Partial<AddressRegion>) => ({
-      sido: String(x.sido ?? ""),
-      sigungu: String(x.sigungu ?? ""),
-      dong: String(x.dong ?? ""),
-      label: String(x.label ?? ""),
-    }))
-    .filter((x) => x.sido && x.sigungu && x.dong)
+const toRegions = (body: unknown) => body as Region[]
+const toRegionOptions = (body: unknown) => body as RegionOption[]
 export function createHttpApi(request: HttpRequest): HomeStampApi {
   return {
     mode: "http",
@@ -31,9 +23,12 @@ export function createHttpApi(request: HttpRequest): HomeStampApi {
     async listNotifications() {
       return toNotices(await request<unknown>("GET", endpoints.notifications))
     },
-    async searchAddress(keyword) {
-      return toAddresses(
-        await request<unknown>("GET", endpoints.addresses(keyword)),
+    async searchRegions(q) {
+      return toRegions(await request<unknown>("GET", endpoints.regionSearch(q)))
+    },
+    async listRegions(parent) {
+      return toRegionOptions(
+        await request<unknown>("GET", endpoints.regions(parent)),
       )
     },
     async readNotification(_s, id) {

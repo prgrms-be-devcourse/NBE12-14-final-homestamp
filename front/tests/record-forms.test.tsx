@@ -13,6 +13,9 @@ import { RoomForm } from "../src/features/room/room-form"
 import { SettlementItemForm } from "../src/features/settlement/settlement-item-form"
 import { InspectionItemForm } from "../src/features/inspection/inspection-item-form"
 import { ZONE_PART_ERROR } from "../src/lib/record-commands"
+import { ApiProvider } from "../src/api"
+import { createMockApi } from "../src/api/mock/mock-api"
+import { createMockStore } from "../src/api/mock/store"
 
 // 입력 창 부품(App.tsx에서 기능별로 옮긴 것): 창마다 확인과 보내는 요청이 그대로인지 봐요.
 const inDialog = (ui: ReactNode) =>
@@ -120,20 +123,31 @@ describe("초대", () => {
 })
 
 describe("호실 만들기", () => {
-  test("선택 번호가 틀리면 막고, 맞으면 호실 주소로 보낸 뒤 만든 호실로 간다", async () => {
+  test("주소(법정동)·선택 번호가 틀리면 막고, 맞으면 호실 주소로 보낸 뒤 만든 호실로 간다", async () => {
     const send = vi.fn().mockResolvedValue({ id: "new-room" })
     const onCreated = vi.fn()
     inDialog(
-      <RoomForm
-        account={account}
-        initialSide="임대인"
-        send={send}
-        onCreated={onCreated}
-        onCancel={() => {}}
-      />,
+      <ApiProvider api={createMockApi(createMockStore())}>
+        <RoomForm
+          account={account}
+          initialSide="임대인"
+          send={send}
+          onCreated={onCreated}
+          onCancel={() => {}}
+        />
+      </ApiProvider>,
     )
-    type("주소 · 시·구·동까지", "서울시 마포구 연남동")
     type("호실 별칭", "302호")
+    submit(/만들기/)
+    expect(screen.getByRole("alert").textContent).toBe(
+      "주소를 동까지 골라 주세요.",
+    )
+    // 동 이름으로 찾아 고르면 법정동 코드가 들어가요(06 4-3, decisions 2026-11-13)
+    type("주소 · 시·구·동까지", "연남")
+    fireEvent.click(screen.getByRole("button", { name: /^찾기$/ }))
+    fireEvent.click(
+      await screen.findByRole("button", { name: /서울특별시 마포구 연남동/ }),
+    )
     type(/세입자 휴대폰 번호/, "0101")
     submit(/만들기/)
     expect(screen.getByRole("alert").textContent).toBe(
@@ -145,6 +159,7 @@ describe("호실 만들기", () => {
     expect(request.path).toBe(endpoints.rooms)
     expect(request.body).toMatchObject({
       side: "임대인",
+      regionCode: "1144012400",
       alias: "302호",
       counterpartPhone: "01055556666",
     })

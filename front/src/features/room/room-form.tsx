@@ -1,14 +1,12 @@
 import { useState } from "react"
 import { Input } from "@/components/ui/input"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
-import { Notice } from "@/components/common/notice"
-import { AddressSearch } from "@/components/address-search"
 import { FormDialog } from "@/components/common/form-dialog"
 import { post } from "@/api/records"
 import { endpoints } from "@/api/endpoints"
 import type { Account } from "@/api/auth"
-import { API_MODE } from "@/config"
 import { uid, type Role } from "@/data/demo"
+import { RegionPicker } from "@/features/room/region-picker"
 import { todayKey } from "@/lib/workflows"
 import { type Send } from "@/lib/record-commands"
 import { isMobilePhone, normalizePhone } from "@/lib/phone"
@@ -39,9 +37,9 @@ export function RoomForm({
       onCancel={onCancel}
       submitLabel="만들기"
       onSubmit={(text) => {
-        // 서버 연결 시 주소는 검색 결과로만 채워져요(숨은 칸이라 required가 걸리지 않아 여기서 확인)
-        if (API_MODE === "http" && !text("address")) {
-          setError("[주소 검색]으로 동까지 골라 주세요.")
+        // 주소는 법정동을 고를 때만 채워져요(숨은 칸이라 required가 걸리지 않아 여기서 확인)
+        if (!text("regionCode")) {
+          setError("주소를 동까지 골라 주세요.")
           return
         }
         const phone = normalizePhone(text("phone"))
@@ -64,7 +62,7 @@ export function RoomForm({
         void send(
           post(endpoints.rooms, {
             side,
-            address,
+            regionCode: text("regionCode"),
             alias: name,
             moveInDate: since || undefined,
             counterpartPhone: phone || undefined,
@@ -128,26 +126,8 @@ export function RoomForm({
         </small>
       </div>
       <div className="field">
-        <label htmlFor={API_MODE === "http" ? "address-search" : "address"}>
-          주소 · 시·구·동까지
-        </label>
-        {/* 서버 연결 시: 도로명주소 검색으로 시·도·시·군·구·읍·면·동만 채워요. 개발 환경(서버 없음): 가짜 결과 없이 직접 입력 */}
-        {API_MODE === "http" ? (
-          <AddressSearch name="address" inputId="address-search" />
-        ) : (
-          <>
-            <Notice tone="amber">
-              개발 환경 · 서버가 연결되지 않아 주소 검색을 쓸 수 없어요.
-              시·구·동을 직접 적어 주세요.
-            </Notice>
-            <Input
-              id="address"
-              name="address"
-              placeholder="예: 서울시 마포구 연남동"
-              required
-            />
-          </>
-        )}
+        <label htmlFor="room-region">주소 · 시·구·동까지</label>
+        <RegionPicker inputId="room-region" />
         <small className="muted">
           번지·건물명은 적지 않아요. 공유 링크에는 동까지만 보여요.
         </small>
