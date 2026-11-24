@@ -28,6 +28,9 @@ springdoc:
 app:
   # 한국 시간으로 정해진 규칙(문자 보류 21~08시, 하루 한도의 "하루")만 이 위치로 계산한다
   zone: Asia/Seoul
+  # 한 기록에 [보충하고 다시 확인 요청]·[사진 더해서 다시 요청]·[상황이 바뀌었어요] 간격(06 0-1 rerequest.interval)
+  rerequest:
+    interval: 7d
   # 아웃박스 문자 작업자(04 4-2). 테스트처럼 작업자를 직접 부를 때만 끈다
   outbox:
     worker:
@@ -77,6 +80,11 @@ verify:
 sms:
   daily:
     total: 40
+
+# 대상별 사진 한도(06 0-1). 이름은 06 표와 같다. 점검·정산 항목 한도는 그 기능을 만들 때 더한다
+photo:
+  max:
+    repair: 30
 
 ---
 spring:

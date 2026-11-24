@@ -9,11 +9,13 @@ public class BusinessException extends RuntimeException {
 
   private final ErrorCode errorCode;
   private final Duration retryAfter;
+  private final Integer photoIndex;
 
   public BusinessException(ErrorCode errorCode) {
     super(errorCode.name());
     this.errorCode = errorCode;
     this.retryAfter = null;
+    this.photoIndex = null;
   }
 
   /**
@@ -24,6 +26,26 @@ public class BusinessException extends RuntimeException {
     super(errorCode.name());
     this.errorCode = errorCode;
     this.retryAfter = Objects.requireNonNull(retryAfter);
+    this.photoIndex = null;
+  }
+
+  /**
+   * 실패한 사진의 업로드 표 목록 위치를 함께 알린다. 첫 사진은 0이다.
+   *
+   * @throws IllegalArgumentException 사진 업로드 표·검사 오류가 아니거나 사진 번호가 음수인 경우
+   */
+  public BusinessException(ErrorCode errorCode, int photoIndex) {
+    super(errorCode.name());
+    switch (errorCode) {
+      case UPLOAD_TICKET_INVALID, UPLOAD_TICKET_EXPIRED, PHOTO_CHECK_FAILED -> {}
+      default -> throw new IllegalArgumentException("사진 번호는 사진 업로드 표·검사 오류에만 넣을 수 있습니다");
+    }
+    if (photoIndex < 0) {
+      throw new IllegalArgumentException("사진 번호는 0 이상이어야 합니다");
+    }
+    this.errorCode = errorCode;
+    this.retryAfter = null;
+    this.photoIndex = photoIndex;
   }
 
   public ErrorCode errorCode() {
@@ -32,5 +54,9 @@ public class BusinessException extends RuntimeException {
 
   public Optional<Duration> retryAfter() {
     return Optional.ofNullable(retryAfter);
+  }
+
+  public Optional<Integer> photoIndex() {
+    return Optional.ofNullable(photoIndex);
   }
 }
