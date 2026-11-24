@@ -1,18 +1,14 @@
-\set ON_ERROR_STOP on
-
--- Run with psql as the migration login after Flyway has completed.
--- Required psql variables: owner_role, app_role, purge_role, human_role.
--- The owner role, role membership, schemas, tables, and functions are
--- provisioning/migration preconditions. This file never creates credentials
--- or changes object ownership. public schema ACLs must be prepared by its owner
--- or a database administrator before this script runs; this script only checks them.
-SET ROLE :"owner_role";
-SELECT set_config('homestamp.grants.app_role', :'app_role', false);
-SELECT set_config('homestamp.grants.purge_role', :'purge_role', false);
-SELECT set_config('homestamp.grants.human_role', :'human_role', false);
-
-BEGIN;
-
+-- HomeStamp DB grants: one DO block executed over JDBC (no psql meta-commands).
+--
+-- Executor contract (see DatabaseGrantsIntegrationTest.GrantsJdbcExecutor):
+--   1. connect as the migration login (LOGIN NOINHERIT, owner membership SET TRUE / INHERIT FALSE / ADMIN FALSE)
+--   2. autocommit off, then SET LOCAL ROLE "<owner>" with a validated identifier
+--   3. SELECT set_config('homestamp.grants.{app,purge,human}_role', ?, true) via PreparedStatement
+--   4. SELECT pg_advisory_xact_lock(1752392040, 156)
+--   5. execute this block, then COMMIT (ROLLBACK on any error)
+-- The owner role is current_user after step 2. This file never creates credentials or changes ownership.
+-- public schema ACLs must be prepared by the bootstrap (database administrator); this block only checks them.
+-- It lives outside db/migration so Flyway never runs it.
 DO $$
 DECLARE
     owner_role name := current_user;
@@ -70,7 +66,99 @@ DECLARE
         'state.purge_room_record(uuid)'
     ];
     actual_functions text[];
+    -- Human (per-person read-only login): explicit allowlist. Every table in expected_tables must be classified
+    -- in exactly one of these lists; a new table without a decision fails closed. No default privileges for Human.
+    human_full_tables text[] := ARRAY[
+        'log.deletion_log',
+        'record.action',
+        'record.inspection_item_version',
+        'record.member_acknowledgement',
+        'record.payment_version',
+        'record.photo',
+        'record.proposal',
+        'record.proposal_line',
+        'record.progress_note',
+        'record.repair_content',
+        'record.settlement_transfer_version',
+        'record.supplement',
+        'state.correction_request',
+        'state.in_app_notification',
+        'state.inspection',
+        'state.inspection_item',
+        'state.notice',
+        'state.payment',
+        'state.photo_visibility',
+        'state.progress_note_response',
+        'state.rate_counter',
+        'state.region',
+        'state.repair_case',
+        'state.response_request',
+        'state.room_part',
+        'state.room_record',
+        'state.settlement',
+        'state.settlement_item',
+        'state.settlement_transfer',
+        'state.part_template',
+        'state.sms_opt_out'
+    ];
+    -- Column-level SELECT only. Excluded: credentials and hashes used for authentication (password_hash,
+    -- token_hash, code_hash), plaintext phone numbers and email, display_name, device_label, outbox payload/dedupe_key,
+    -- and cause_note.expert_name (a real third-party person's name).
+    human_column_tables text[] := ARRAY[
+        'record.cause_note',
+        'state.member',
+        'state.refresh_token',
+        'state.phone_verification',
+        'state.link',
+        'state.party',
+        'state.outbox'
+    ];
+    human_column_lists text[] := ARRAY[
+        'id,room_record_id,repair_case_id,side,text,basis,previous_id,created_at',
+        'id,phone_verified_at,sms_enabled,status,withdrawn_at,created_at,version',
+        'id,member_id,family_id,expires_at,revoked_at,replaced_by_id,created_at,version',
+        'id,purpose,expires_at,attempt_count,verified_at,consumed_at,created_at,version',
+        'id,room_record_id,kind,party_id,repair_case_id,inspection_id,issued_by_member_id,invalidated_at,invalidated_reason,failed_view_count,created_at,version',
+        'id,room_record_id,side,member_id,status,connected_at,sharing_stopped_at,created_at,version',
+        'id,kind,status,attempts,next_attempt_at,created_at,version'
+    ];
+    human_no_access_tables text[] := ARRAY[]::text[];
+    -- Columns Human may read even though their names look sensitive. Reviewed reasons:
+    -- keyed HMAC pseudonyms (phone_hmac; linkable to each other, not reversible without the server key),
+    -- record hash-chain values, timestamps/flags, region and part lookup codes/labels (room_part.name is user input),
+    -- small action payload values (today: answer, consentVersion, photo digests; open map, review new keys).
+    human_approved_sensitive_columns text[] := ARRAY[
+        'log.deletion_log.action_hash',
+        'log.deletion_log.phone_hmac',
+        'log.deletion_log.prev_hash',
+        'record.action.hash',
+        'record.action.hash_version',
+        'record.action.payload',
+        'record.action.prev_hash',
+        'record.photo.device_taken_at',
+        'state.member.phone_verified_at',
+        'state.part_template.name',
+        'state.region.code',
+        'state.room_part.name',
+        'state.room_record.region_code',
+        'state.sms_opt_out.phone_hmac'
+    ];
+    human_visible_sensitive text[];
+    human_table text;
+    human_index int;
 BEGIN
+    -- The executor must take this transaction-level lock in the same transaction before running this block.
+    -- An autocommit caller would have released it already, so this also proves one explicit transaction.
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_locks
+        WHERE locktype = 'advisory' AND pid = pg_backend_pid()
+          AND classid = 1752392040 AND objid = 156 AND objsubid = 2 AND granted
+    ) THEN
+        RAISE EXCEPTION 'grants must run inside the transaction that holds the grants advisory lock';
+    END IF;
+    IF current_user = session_user THEN
+        RAISE EXCEPTION 'grants must run after SET ROLE from the migration login to the object owner';
+    END IF;
     IF app_role IS NULL OR purge_role IS NULL OR human_role IS NULL THEN
         RAISE EXCEPTION 'required homestamp.grants role settings are missing';
     END IF;
@@ -96,10 +184,15 @@ BEGIN
     IF NOT pg_has_role(session_user, owner_role, 'SET') THEN
         RAISE EXCEPTION 'session login cannot SET ROLE to the object owner';
     END IF;
+    -- USAGE means the owner's privileges are usable without SET ROLE (inherited); SET only allows switching.
+    IF pg_has_role(session_user, owner_role, 'USAGE')
+       OR pg_has_role(session_user, owner_role, 'MEMBER WITH ADMIN OPTION') THEN
+        RAISE EXCEPTION 'migration login must not inherit or administer the object owner role';
+    END IF;
     IF NOT EXISTS (
         SELECT 1 FROM pg_roles
         WHERE rolname = session_user AND rolcanlogin AND NOT rolsuper
-          AND NOT rolcreatedb AND NOT rolcreaterole
+          AND NOT rolcreatedb AND NOT rolcreaterole AND NOT rolinherit
     ) THEN
         RAISE EXCEPTION 'grants must be applied by a non-superuser migration login';
     END IF;
@@ -207,6 +300,29 @@ BEGIN
         RAISE EXCEPTION 'all record, state, and log functions must be owned by the current owner role';
     END IF;
 
+    IF (SELECT array_agg(x ORDER BY x) FROM unnest(human_full_tables || human_column_tables || human_no_access_tables) x)
+       IS DISTINCT FROM (SELECT array_agg(x ORDER BY x) FROM unnest(expected_tables) x)
+       OR cardinality(human_column_tables) <> cardinality(human_column_lists) THEN
+        RAISE EXCEPTION 'every table must be classified exactly once for the human role';
+    END IF;
+    -- Any column Human could read whose name looks like a credential or contact value must be explicitly approved.
+    SELECT array_agg(format('%s.%s', table_name, column_name) ORDER BY table_name, column_name)
+      INTO human_visible_sensitive FROM (
+        SELECT a.attrelid::regclass::text AS table_name, a.attname::text AS column_name
+          FROM pg_attribute a
+         WHERE a.attrelid = ANY (SELECT t::regclass FROM unnest(human_full_tables) t)
+           AND a.attnum > 0 AND NOT a.attisdropped
+        UNION
+        SELECT human_column_tables[i], c
+          FROM generate_subscripts(human_column_tables, 1) i,
+               LATERAL unnest(string_to_array(human_column_lists[i], ',')) c
+    ) visible
+    WHERE (column_name ~ '(phone|email|mail|password|passwd|token|secret|hash|hmac|otp|credential|code|payload|device|name|address|account)' OR column_name ~ '(^|_)ip(_|$)')
+      AND format('%s.%s', table_name, column_name) <> ALL (human_approved_sensitive_columns);
+    IF human_visible_sensitive IS NOT NULL THEN
+        RAISE EXCEPTION 'human role would see unapproved sensitive-looking columns: %', human_visible_sensitive;
+    END IF;
+
     -- Clear any older global defaults first; per-schema REVOKE cannot cancel a global grant.
     EXECUTE format(
         'ALTER DEFAULT PRIVILEGES FOR ROLE %I REVOKE ALL ON TABLES FROM PUBLIC, %I, %I, %I',
@@ -266,8 +382,18 @@ BEGIN
     EXECUTE format('REVOKE DELETE ON TABLE state.room_record FROM %I', app_role);
     EXECUTE format('GRANT INSERT ON TABLE log.deletion_log TO %I', app_role);
 
-    EXECUTE format('GRANT SELECT ON ALL TABLES IN SCHEMA record, state, log TO %I, %I',
-                   purge_role, human_role);
+    EXECUTE format('GRANT SELECT ON ALL TABLES IN SCHEMA record, state, log TO %I', purge_role);
+    -- Human: table-level SELECT only on the explicit list; column-level SELECT on sensitive tables.
+    -- REVOKE ALL ON ALL TABLES above also removes column privileges, so reruns start from nothing.
+    FOREACH human_table IN ARRAY human_full_tables LOOP
+        EXECUTE format('GRANT SELECT ON TABLE %s TO %I', human_table::regclass, human_role);
+    END LOOP;
+    FOR human_index IN 1 .. cardinality(human_column_tables) LOOP
+        EXECUTE format('GRANT SELECT (%s) ON TABLE %s TO %I',
+                       (SELECT string_agg(quote_ident(c), ', ')
+                          FROM unnest(string_to_array(human_column_lists[human_index], ',')) c),
+                       human_column_tables[human_index]::regclass, human_role);
+    END LOOP;
     EXECUTE format('GRANT INSERT ON TABLE log.deletion_log, state.outbox TO %I', purge_role);
     EXECUTE format('GRANT EXECUTE ON FUNCTION state.purge_room_record(uuid) TO %I', purge_role);
     EXECUTE format('GRANT EXECUTE ON FUNCTION record.purge_member_acknowledgements(uuid, timestamptz) TO %I',
@@ -285,12 +411,7 @@ BEGIN
                    owner_role, purge_role);
     EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA log GRANT SELECT ON TABLES TO %I',
                    owner_role, purge_role);
-    EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA record GRANT SELECT ON TABLES TO %I',
-                   owner_role, human_role);
-    EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA state GRANT SELECT ON TABLES TO %I',
-                   owner_role, human_role);
-    EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA log GRANT SELECT ON TABLES TO %I',
-                   owner_role, human_role);
+    -- No default SELECT for Human: a new table stays unreadable until it is classified above.
 
     EXECUTE format('GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA record, state, log TO %I', app_role);
     EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA record GRANT USAGE, SELECT ON SEQUENCES TO %I',
@@ -303,5 +424,3 @@ BEGIN
     EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC', owner_role);
 END
 $$;
-
-COMMIT;
