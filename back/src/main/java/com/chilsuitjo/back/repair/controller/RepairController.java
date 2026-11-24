@@ -9,12 +9,15 @@ import com.chilsuitjo.back.repair.dto.DefectAckChanged;
 import com.chilsuitjo.back.repair.dto.DefectAckResponse;
 import com.chilsuitjo.back.repair.dto.RegisterRepairRequest;
 import com.chilsuitjo.back.repair.dto.RepairCaseCreated;
+import com.chilsuitjo.back.repair.dto.RepairCaseDetail;
+import com.chilsuitjo.back.repair.service.RepairQueryService;
 import com.chilsuitjo.back.repair.service.RepairService;
 import jakarta.validation.Valid;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -30,6 +33,7 @@ public class RepairController {
   static final String REPLAYED = "Idempotent-Replayed";
 
   private final RepairService repairs;
+  private final RepairQueryService queries;
 
   /**
    * 하자 등록(REP-1). 처음 성공과 다시 온 요청 모두 201과 만든 ID를 돌려준다. 다시 온 요청이면 {@code Idempotent-Replayed: true}를
@@ -51,6 +55,17 @@ public class RepairController {
       response.header(REPLAYED, "true");
     }
     return response.body(new CreatedResponse(created.id()));
+  }
+
+  /**
+   * 수리 건 상세(S-12). 버튼은 {@code availableActions}에 있는 것만 보여 준다(06 4-0).
+   *
+   * <p><b>아직 06과 다르다</b>: 사진·원인 설명·진행 상황·경과·같은 부위 입주 기록·통지 상태는 없고, {@code availableActions}에는 지금 있는
+   * 행동({@code respond}·{@code supplement})만 나온다. 그 기능을 만드는 PR에서 칸을 더한다(#164).
+   */
+  @GetMapping("/api/repair-cases/{id}")
+  public RepairCaseDetail detail(@PathVariable UUID id, @LoginMember UUID memberId) {
+    return queries.detail(id, memberId);
   }
 
   /**

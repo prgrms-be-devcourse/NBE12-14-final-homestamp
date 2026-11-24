@@ -106,14 +106,21 @@ public class RepairStateStore {
     if (target.kind() != TargetKind.REPAIR_CASE) {
       throw new IllegalArgumentException("수리 건이 아닌 대상이에요: " + target);
     }
-    RepairCase row = row(command);
+    return current(row(command));
+  }
+
+  /**
+   * 이 수리 건 행의 지금 상태({@link #load}와 같은 값). 상세 조회가 {@code availableActions}를 계산할 때도 쓴다(06 4-0 "서버의 같은
+   * 함수"). 트랜잭션 안에서 부른다(행동 기록 읽기가 {@code MANDATORY}).
+   */
+  public RepairState current(RepairCase row) {
     int contentNo =
         contents
             .findById(row.getCurrentContentId())
             .orElseThrow(() -> new IllegalStateException("지금 판이 없어요: " + row.getId()))
             .getNo();
     Instant lastSupplementAt =
-        actions.findByTarget(target).stream()
+        actions.findByTarget(ActionTarget.repairCase(row.getId())).stream()
             .filter(entry -> entry.type() == ActionType.SUPPLEMENT)
             .map(ActionEntry::createdAt)
             .max(Instant::compareTo)
@@ -126,7 +133,7 @@ public class RepairStateStore {
         row.getCreatedBySide(),
         contentNo,
         lastSupplementAt,
-        canOpenDefectConfirm(room, command.roomRecordId()),
+        canOpenDefectConfirm(room, row.getRoomRecordId()),
         hiddenFromCounterpart(room, row));
   }
 
