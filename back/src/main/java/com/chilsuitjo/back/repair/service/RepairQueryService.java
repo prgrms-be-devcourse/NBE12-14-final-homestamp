@@ -82,7 +82,7 @@ public class RepairQueryService {
     if (state.hiddenFromCounterpartKnown() && gate.side() != state.registeredBy()) {
       throw new BusinessException(ErrorCode.NOT_FOUND);
     }
-    Instant asOf = store.sharingCutoff(row).orElse(null);
+    Instant asOf = store.sharingCutoff(row, gate.side()).orElse(null);
     RepairState shown = asOf == null ? state : visibleState(row, gate.side(), asOf);
     RepairContent content =
         contents

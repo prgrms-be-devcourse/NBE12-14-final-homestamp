@@ -217,6 +217,25 @@ class RepairDetailApiTest {
   }
 
   @Test
+  void 탈퇴로_풀리는지는_보는_사람_기준이다() throws Exception {
+    // 집주인이 공유를 그만뒀고 등록한 세입자가 탈퇴했다. 집주인에게는 상대가 탈퇴했으니 제한이 풀린다(06 CONS-3p, #175)
+    UUID caseId = register();
+    jdbc.update(
+        "UPDATE state.party SET status = 'SHARING_STOPPED', sharing_stopped_at ="
+            + " (SELECT created_at FROM state.repair_case WHERE id = ?)"
+            + " WHERE room_record_id = ? AND side = 'LANDLORD'",
+        caseId,
+        room);
+    jdbc.update(
+        "UPDATE state.party SET status = 'WITHDRAWN' WHERE room_record_id = ? AND side = 'TENANT'",
+        room);
+
+    detail(caseId, landlord)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.asOf").doesNotExist());
+  }
+
+  @Test
   void 공유를_그만둔_쪽에게는_하자_응답_버튼이_없다() throws Exception {
     // 집주인이 공유를 그만뒀다. 그 전에 남긴 하자는 계속 보이지만 집주인은 새 행동을 할 수 없다(pipeline SHARING_STOPPED)
     UUID caseId = register();
