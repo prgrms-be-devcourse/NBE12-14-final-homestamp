@@ -125,7 +125,26 @@ public class RepairStateStore {
         row.getCreatedBySide(),
         contentNo,
         lastSupplementAt,
-        waits.canOpen(command.roomRecordId(), RequestKind.DEFECT_CONFIRM));
+        waits.canOpen(command.roomRecordId(), RequestKind.DEFECT_CONFIRM),
+        hiddenFromCounterpart(row));
+  }
+
+  /**
+   * 상대 측이 이 기록을 볼 수 없나(03 불변식 18): 제한이 살아 있는 공유 중단 시각 중 이른 것보다 뒤에 등록한 기록이면 참이다. 공유 중단은 양방향이라 어느 쪽이
+   * 그만뒀든 같다. 상대가 탈퇴해 풀린 공유 중단은 보지 않는다({@code RoomParties}의 판단, 06 CONS-3p·3q). 연결 전에 남긴 기록은 연결하면
+   * 보이므로(03 1-4) 연결 여부는 보지 않는다.
+   */
+  private boolean hiddenFromCounterpart(RepairCase row) {
+    RoomParties room = parties.read(row.getRoomRecordId(), row.getCreatedBySide());
+    Instant stopped = null;
+    if (room.mySharingStoppedApplies()) {
+      stopped = room.mine().sharingStoppedAt();
+    }
+    if (room.counterpartSharingStoppedApplies()) {
+      Instant theirs = room.counterpart().sharingStoppedAt();
+      stopped = stopped == null || theirs.isBefore(stopped) ? theirs : stopped;
+    }
+    return stopped != null && row.getCreatedAt().isAfter(stopped);
   }
 
   private RepairCase row(ActionCommand command) {

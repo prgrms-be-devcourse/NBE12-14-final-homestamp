@@ -215,6 +215,46 @@ class RepairDefectApiTest {
     respond(caseId, landlord, "r1", "ACK", null, 1).andExpect(jsonPath("$.code").value("SETTLED"));
   }
 
+  @Test
+  void 등록한_쪽이_공유를_그만둔_뒤_남긴_하자에는_상대가_답할_수_없다() throws Exception {
+    // 세입자가 공유를 그만둔 뒤 등록한 하자는 "나만 보는 기록"이라 집주인에게 보이지 않는다(03 불변식 18)
+    jdbc.update(
+        "UPDATE state.party SET status = 'SHARING_STOPPED',"
+            + " sharing_stopped_at = CURRENT_TIMESTAMP - interval '1 hour'"
+            + " WHERE room_record_id = ? AND side = 'TENANT'",
+        room);
+    UUID caseId = register();
+
+    respond(caseId, landlord, "r1", "ACK", null, 1)
+        .andExpect(jsonPath("$.code").value("INVALID_STATE"));
+    assertThat(caseRow(caseId)).containsEntry("defect_ack", "PENDING");
+    assertThat(countActions(caseId, "RESPOND_DEFECT")).isZero();
+  }
+
+  @Test
+  void 공유를_그만두기_전에_남긴_하자에는_남은_사람이_답할_수_있다() throws Exception {
+    UUID caseId = register();
+    // 등록한 뒤(1초 뒤) 세입자가 공유를 그만뒀다. 그 전에 남긴 기록은 집주인에게 계속 보인다
+    jdbc.update(
+        "UPDATE state.party SET status = 'SHARING_STOPPED', sharing_stopped_at ="
+            + " (SELECT created_at + interval '1 second' FROM state.repair_case WHERE id = ?)"
+            + " WHERE room_record_id = ? AND side = 'TENANT'",
+        caseId,
+        room);
+
+    respond(caseId, landlord, "r1", "ACK", null, 1).andExpect(status().isOk());
+  }
+
+  @Test
+  void 응답_사유에_주민번호_형태가_있으면_RESIDENT_ID_BLOCKED() throws Exception {
+    UUID caseId = register();
+
+    respond(caseId, landlord, "r1", "DISPUTE", "제 번호 900101-1234567로 연락 주세요", 1)
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("RESIDENT_ID_BLOCKED"));
+    assertThat(countActions(caseId, "RESPOND_DEFECT")).isZero();
+  }
+
   // ---- 보충하고 다시 확인 요청 ----
 
   @Test

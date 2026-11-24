@@ -67,9 +67,10 @@ public class RepairService {
   }
 
   /**
-   * 하자 응답(06 REP-2a~d·f, REP-3, REP-9a). 답이 없으면 {@code VALIDATION_FAILED}, 없는 수리 건·당사자가 아니면 {@code
-   * NOT_FOUND}, 그 밖의 거절은 {@code AnswerSupport.answer} 순서다(상대 측 → 판 번호 → 맞아요는 끝 → 보류·이견에서는 맞아요로만 →
-   * 사유).
+   * 하자 응답(06 REP-2a~d·f, REP-3, REP-9a). 답이 없으면 {@code VALIDATION_FAILED}, 사유에 주민등록번호 형태가 있으면
+   * {@code RESIDENT_ID_BLOCKED}(pipeline 전, 03 6-1. 사유는 고칠 수 없는 행동 기록에 남는다), 없는 수리 건·당사자가 아니면
+   * {@code NOT_FOUND}, 상대가 볼 수 없는 하자면 {@code INVALID_STATE}, 그 밖의 거절은 {@code AnswerSupport.answer}
+   * 순서다(상대 측 → 판 번호 → 맞아요는 끝 → 보류·이견에서는 맞아요로만 → 사유).
    *
    * <p>답은 payload {@code answer}, 사유는 행동 기록의 {@code reason}에 남긴다(#155). 내용 지문은 본 판이다(안내서 3-3). 같은
    * 키로 다시 오면 처음 결과를 저장하지 않으므로 수리 건의 지금 하자 인정을 돌려준다({@code AnswerResult}, 06 4-0).
@@ -79,6 +80,7 @@ public class RepairService {
     if (request == null || request.answer() == null) {
       throw new BusinessException(ErrorCode.VALIDATION_FAILED);
     }
+    ResidentIdGuard.check(request.reason());
     UUID roomRecordId = roomOf(repairCaseId);
     PipelineResult<RepairState> result =
         pipeline.execute(

@@ -320,7 +320,8 @@ pipeline은 진짜이고, 안쪽 부품도 아래 표처럼 하나씩 진짜로 
 // repair/rule/RepairState.java
 public record RepairState(
     RepairStatus status, AckState defectAck, MoneyStatus moneyStatus, PartySide registeredBy,
-    Integer contentNo, Instant lastRerequestAt, boolean canOpenDefectConfirm) {
+    Integer contentNo, Instant lastRerequestAt, boolean canOpenDefectConfirm,
+    boolean hiddenFromCounterpart) { // 공유를 그만둔 뒤 등록해 상대가 볼 수 없는 기록(8-3)
 
   public Answerable defect() {
     return new Answerable(registeredBy, defectAck, contentNo, lastRerequestAt);

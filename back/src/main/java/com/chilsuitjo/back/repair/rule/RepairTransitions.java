@@ -62,17 +62,25 @@ public class RepairTransitions implements Transitions<RepairState> {
         action.actorSide(),
         1,
         null,
-        now.canOpenDefectConfirm());
+        now.canOpenDefectConfirm(),
+        now.hiddenFromCounterpart());
   }
 
   /**
    * 하자 응답(06 REP-2a~d·f, REP-9a): 상대 측만, 본 판 번호가 지금 판과 같아야 하고, 맞아요는 끝이며, 보류·이견에서는 맞아요로만, 보류·이견은 사유
    * 필수({@code AnswerSupport.answer}). 수리 진행은 그대로다(REP-2a). 사유는 행동 기록의 {@code reason}이다(#155).
    *
+   * <p>상대가 볼 수 없는 기록(어느 쪽이든 공유를 그만둔 뒤 등록한 하자, 03 불변식 18)에는 상대가 답할 수 없다: {@code INVALID_STATE}(안내서
+   * 8-3). 그만둔 사람 자신은 pipeline이 {@code SHARING_STOPPED}로 먼저 막지만, 남은 사람이 상대의 "나만 보는 기록"에 답하는 것은 여기서
+   * 막는다. 등록한 측이 부르면 그대로 {@code NOT_COUNTERPART_SIDE}다.
+   *
    * <p>거주 종료 뒤에도 정산 완료 전까지 답할 수 있다(늦은 답, decisions 2026-11-19). 정산 완료는 pipeline이 막는다.
    */
   private static RepairState respond(RepairState now, ActionEntry action) {
     requireExists(now);
+    if (now.hiddenFromCounterpart() && action.actorSide() != now.registeredBy()) {
+      throw new BusinessException(ErrorCode.INVALID_STATE);
+    }
     AnswerPayload in = action.payloadAs(AnswerPayload.class);
     AckState next =
         AnswerSupport.answer(

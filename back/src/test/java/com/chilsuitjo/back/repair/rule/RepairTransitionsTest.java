@@ -50,6 +50,7 @@ class RepairTransitionsTest {
                 PartySide.LANDLORD,
                 1,
                 null,
+                false,
                 false));
     assertThat(next.exists()).isTrue();
   }
@@ -155,6 +156,23 @@ class RepairTransitionsTest {
         () -> rules.apply(RepairState.NONE, respond(PartySide.LANDLORD, Answer.ACK, null, 1)));
   }
 
+  @Test
+  void 상대가_볼_수_없는_하자에는_상대가_답할_수_없다() {
+    assertError(
+        ErrorCode.INVALID_STATE,
+        () ->
+            rules.apply(
+                registered(AckState.PENDING, true),
+                respond(PartySide.LANDLORD, Answer.ACK, null, 1)));
+    // 등록한 측이 부르면 볼 수 있는지와 상관없이 상대 측이 아니라서 거절된다
+    assertError(
+        ErrorCode.NOT_COUNTERPART_SIDE,
+        () ->
+            rules.apply(
+                registered(AckState.PENDING, true),
+                respond(PartySide.TENANT, Answer.ACK, null, 1)));
+  }
+
   // ---- 보충하고 다시 확인 요청(REP-2e) ----
 
   @ParameterizedTest
@@ -196,6 +214,7 @@ class RepairTransitionsTest {
             PartySide.TENANT,
             1,
             null,
+            false,
             false);
 
     assertError(
@@ -240,8 +259,12 @@ class RepairTransitionsTest {
         () -> rules.apply(RepairState.NONE, entry(ActionType.HIDE_PART, PartySide.TENANT)));
   }
 
-  /** 세입자가 등록한 판 #1 수리 건. 하자 확인 요청은 열 수 있다. */
+  /** 세입자가 등록한 판 #1 수리 건. 하자 확인 요청은 열 수 있고 상대에게 보인다. */
   private static RepairState registered(AckState defectAck) {
+    return registered(defectAck, false);
+  }
+
+  private static RepairState registered(AckState defectAck, boolean hiddenFromCounterpart) {
     return new RepairState(
         RepairStatus.NOT_STARTED,
         defectAck,
@@ -249,7 +272,8 @@ class RepairTransitionsTest {
         PartySide.TENANT,
         1,
         null,
-        true);
+        true,
+        hiddenFromCounterpart);
   }
 
   private static void assertError(ErrorCode code, Runnable call) {

@@ -17,6 +17,8 @@ import java.time.Instant;
  * @param lastRerequestAt 마지막으로 보충한 시각(행동 기록 {@code SUPPLEMENT}가 원본). 보충한 적이 없으면 null
  * @param canOpenDefectConfirm 지금 호실 단계에서 하자 확인 요청을 열 수 있는지({@code waitService.canOpen}, 03 K). 거주
  *     종료 뒤에는 거짓이라 보충이 막힌다
+ * @param hiddenFromCounterpart 상대 측이 이 기록을 볼 수 없는지. 어느 쪽이든 공유를 그만둔 뒤에 등록한 기록이면 참이다(03 불변식 18 "그만둔 뒤
+ *     남긴 기록은 상대에게 보이지 않는다(양방향)"). 볼 수 없는 기록에는 답할 수 없다(안내서 8-3)
  */
 public record RepairState(
     RepairStatus status,
@@ -25,10 +27,12 @@ public record RepairState(
     PartySide registeredBy,
     Integer contentNo,
     Instant lastRerequestAt,
-    boolean canOpenDefectConfirm) {
+    boolean canOpenDefectConfirm,
+    boolean hiddenFromCounterpart) {
 
   /** 아직 없는 기록. 하자 등록의 지금 상태이고 재계산의 시작점이다. */
-  public static final RepairState NONE = new RepairState(null, null, null, null, null, null, false);
+  public static final RepairState NONE =
+      new RepairState(null, null, null, null, null, null, false, false);
 
   public boolean exists() {
     return status != null;
@@ -41,11 +45,25 @@ public record RepairState(
 
   public RepairState withDefectAck(AckState next) {
     return new RepairState(
-        status, next, moneyStatus, registeredBy, contentNo, lastRerequestAt, canOpenDefectConfirm);
+        status,
+        next,
+        moneyStatus,
+        registeredBy,
+        contentNo,
+        lastRerequestAt,
+        canOpenDefectConfirm,
+        hiddenFromCounterpart);
   }
 
   public RepairState withLastRerequestAt(Instant at) {
     return new RepairState(
-        status, defectAck, moneyStatus, registeredBy, contentNo, at, canOpenDefectConfirm);
+        status,
+        defectAck,
+        moneyStatus,
+        registeredBy,
+        contentNo,
+        at,
+        canOpenDefectConfirm,
+        hiddenFromCounterpart);
   }
 }
