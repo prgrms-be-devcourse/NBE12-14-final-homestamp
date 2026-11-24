@@ -7,16 +7,26 @@
 #              photos/   복사 대상, 보기(presigned GET), 지우기(DB에 있는 키로만). 목록은 못 함
 #   운영 버킷  audit/deletions/  삭제 기록 쓰기만(읽기·지우기 없음)
 #              logs/ssm/         SSM 세션 기록 쓰기만(SSM 에이전트가 씀)
-#   Parameter Store  /homestamp/prod/{app,migration,purge}/  읽기만
+#   Parameter Store  /homestamp/prod/app/  읽기만. 그 밖의 파라미터 값 읽기는 명시적으로 거부
+#   Secrets Manager  값 읽기 명시적으로 거부(앱은 쓰지 않음)
 #   SSM        세션·명령 받기(SSH 대신)
 #
-# 받아들인 한계(#41): 앱·마이그레이션·삭제 작업 컨테이너가 이 역할 하나를 함께 쓰므로
-# 서버를 장악하면 세 경로를 모두 읽을 수 있다. 모니터링 경로(/homestamp/prod/monitoring/)는 넣지 않는다
+# AmazonSSMManagedInstanceCore가 ssm:GetParameter·GetParameters를 Resource "*"로 허용하므로
+# Allow를 좁히는 것만으로는 부족하다. app 경로 밖은 명시적 Deny로 막는다(Deny가 Core의 Allow보다 우선).
+# 앱 컨테이너도 IMDS로 이 역할을 받으므로, migration·purge 비밀값은 이 역할로 읽지 않는다.
+# kms:Decrypt는 거부하지 않는다: 앱이 SecureString을 읽을 때 SSM이 이 역할로 복호화를 요청한다.
+# 모니터링 경로(/homestamp/prod/monitoring/)는 넣지 않는다
 
 locals {
   photos_bucket = "${var.prefix}-photos"
   ops_bucket    = "${var.prefix}-ops" # 손으로 만든 운영 버킷(Terraform 밖)
   param_prefix  = "/${var.prefix}/prod"
+
+  # 계정 번호는 지금 접속한 계정에서 읽는다(개인 계정으로 옮겨도 그대로 쓴다)
+  app_parameter_arns = [
+    "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter${local.param_prefix}/app",
+    "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter${local.param_prefix}/app/*",
+  ]
 }
 
 data "aws_caller_identity" "current" {}
@@ -82,22 +92,42 @@ data "aws_iam_policy_document" "web" {
     resources = ["arn:aws:s3:::${local.ops_bucket}"]
   }
 
-  # 비밀값: 우리 경로만 읽기 (04 6장)
+  # 비밀값: 앱 경로만 읽기 (04 6장)
+  # 경로 아래 값(…/app/*)과 경로 자체(…/app) 둘 다 필요하다.
+  # GetParametersByPath는 권한을 경로 자체의 ARN으로 확인한다
   statement {
-    sid = "ReadOwnParameters"
+    sid = "ReadAppParameters"
     actions = [
       "ssm:GetParameter",
       "ssm:GetParameters",
       "ssm:GetParametersByPath",
     ]
-    # 경로 아래 값(…/app/*)과 경로 자체(…/app) 둘 다 필요하다.
-    # GetParametersByPath는 권한을 경로 자체의 ARN으로 확인한다
-    resources = flatten([
-      for p in ["app", "migration", "purge"] : [
-        "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter${local.param_prefix}/${p}",
-        "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter${local.param_prefix}/${p}/*",
-      ]
-    ])
+    resources = local.app_parameter_arns
+  }
+
+  # 앱 경로 밖의 파라미터 값은 어떤 API로도 읽지 않는다.
+  # migration·purge·다른 경로, 상위 경로(/, /homestamp, /homestamp/prod)의 재귀 조회가 모두 여기에 걸린다
+  statement {
+    sid    = "DenyNonAppParameterReads"
+    effect = "Deny"
+    actions = [
+      "ssm:GetParameter",
+      "ssm:GetParameters",
+      "ssm:GetParameterHistory",
+      "ssm:GetParametersByPath",
+    ]
+    not_resources = local.app_parameter_arns
+  }
+
+  # 앱은 Secrets Manager를 쓰지 않는다(RDS 마스터 비밀값 등)
+  statement {
+    sid    = "DenySecretsManagerValues"
+    effect = "Deny"
+    actions = [
+      "secretsmanager:GetSecretValue",
+      "secretsmanager:BatchGetSecretValue",
+    ]
+    resources = ["*"]
   }
 }
 
