@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.chilsuitjo.back.action.dto.ActionEntry;
 import com.chilsuitjo.back.action.rule.ActionType;
+import com.chilsuitjo.back.action.rule.Replay;
 import com.chilsuitjo.back.global.common.AckState;
 import com.chilsuitjo.back.global.common.Answer;
 import com.chilsuitjo.back.global.common.PartySide;
@@ -13,6 +14,7 @@ import com.chilsuitjo.back.global.error.ErrorCode;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -50,9 +52,28 @@ class RepairTransitionsTest {
                 PartySide.LANDLORD,
                 1,
                 null,
-                false,
-                false));
+                null,
+                null));
     assertThat(next.exists()).isTrue();
+  }
+
+  @Test
+  void REP_10_등록_보류_보충_맞아요_이력을_처음부터_다시_계산할_수_있다() {
+    // 행동 기록만 있고 호실 단계·공유 중단은 모른다(null). 기록된 행동은 그때 서버가 확인했으므로 다시 막지 않는다
+    List<ActionEntry> history =
+        List.of(
+            entry(ActionType.REGISTER, PartySide.TENANT),
+            respond(PartySide.LANDLORD, Answer.NEED_MORE, "사진이 흐려요", 1),
+            supplement(PartySide.TENANT, NOW.plusSeconds(60)),
+            respond(PartySide.LANDLORD, Answer.ACK, null, 1));
+
+    RepairState folded = Replay.fold(rules, history);
+
+    assertThat(folded.defectAck()).isEqualTo(AckState.ACK);
+    assertThat(folded.status()).isEqualTo(RepairStatus.NOT_STARTED);
+    assertThat(folded.lastRerequestAt()).isEqualTo(NOW.plusSeconds(60));
+    assertThat(folded.canOpenDefectConfirm()).isNull();
+    assertThat(folded.hiddenFromCounterpart()).isNull();
   }
 
   @Test

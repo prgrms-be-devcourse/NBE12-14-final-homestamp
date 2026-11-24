@@ -15,10 +15,19 @@ import java.time.Instant;
  * @param registeredBy 등록한 측. 하자에 답하는 쪽은 그 반대 측이고, 보충하는 쪽은 이 측이다(REP-2)
  * @param contentNo 지금 판 번호({@code repair_content.no}). 응답할 때 본 판 번호와 맞댄다. 아직 없는 기록이면 null
  * @param lastRerequestAt 마지막으로 보충한 시각(행동 기록 {@code SUPPLEMENT}가 원본). 보충한 적이 없으면 null
- * @param canOpenDefectConfirm 지금 호실 단계에서 하자 확인 요청을 열 수 있는지({@code waitService.canOpen}, 03 K). 거주
- *     종료 뒤에는 거짓이라 보충이 막힌다
+ *     <p><b>요청할 때만 아는 값</b>(마지막 두 칸): 호실 단계·공유 중단처럼 행동 기록 밖의 사실이라 {@code load}가 그때 읽어 채운다. 행동 기록만으로
+ *     다시 계산할 때({@code Replay.fold}, REP-10)는 알 수 없어 {@code null}이고, 그때는 검사하지 않는다(기록된 행동은 그때 서버가 이미
+ *     확인했다).
+ * @param status 수리 진행(시작 전 → 처리 중 → 종료 확인 대기 → 처리 완료)
+ * @param defectAck 하자 인정(확인 기다림 / 맞아요 / 보류 / 이견 / 확인 없음)
+ * @param moneyStatus 수리비 부담(미정에서 시작)
+ * @param registeredBy 등록한 측. 하자에 답하는 쪽은 그 반대 측이고, 보충하는 쪽은 이 측이다(REP-2)
+ * @param contentNo 지금 판 번호({@code repair_content.no}). 응답할 때 본 판 번호와 맞댄다. 아직 없는 기록이면 null
+ * @param lastRerequestAt 마지막으로 보충한 시각(행동 기록 {@code SUPPLEMENT}가 원본). 보충한 적이 없으면 null
+ * @param canOpenDefectConfirm 지금 호실 단계에서 하자 확인 요청을 열 수 있는지(03 K, {@code RequestOpening}). 거주 종료 뒤에는
+ *     거짓이라 보충이 막힌다. 재계산이면 null
  * @param hiddenFromCounterpart 상대 측이 이 기록을 볼 수 없는지. 어느 쪽이든 공유를 그만둔 뒤에 등록한 기록이면 참이다(03 불변식 18 "그만둔 뒤
- *     남긴 기록은 상대에게 보이지 않는다(양방향)"). 볼 수 없는 기록에는 답할 수 없다(안내서 8-3)
+ *     남긴 기록은 상대에게 보이지 않는다(양방향)"). 볼 수 없는 기록에는 답할 수 없다(안내서 8-3). 재계산이면 null
  */
 public record RepairState(
     RepairStatus status,
@@ -27,12 +36,22 @@ public record RepairState(
     PartySide registeredBy,
     Integer contentNo,
     Instant lastRerequestAt,
-    boolean canOpenDefectConfirm,
-    boolean hiddenFromCounterpart) {
+    Boolean canOpenDefectConfirm,
+    Boolean hiddenFromCounterpart) {
 
-  /** 아직 없는 기록. 하자 등록의 지금 상태이고 재계산의 시작점이다. */
+  /** 아직 없는 기록. 하자 등록의 지금 상태이고 재계산의 시작점이다(요청할 때만 아는 값은 모름). */
   public static final RepairState NONE =
-      new RepairState(null, null, null, null, null, null, false, false);
+      new RepairState(null, null, null, null, null, null, null, null);
+
+  /** 하자 확인 요청을 열 수 없다고 확인됐나. 모르면(재계산) 거짓이다. */
+  public boolean defectConfirmBlocked() {
+    return Boolean.FALSE.equals(canOpenDefectConfirm);
+  }
+
+  /** 상대에게 보이지 않는다고 확인됐나. 모르면(재계산) 거짓이다. */
+  public boolean hiddenFromCounterpartKnown() {
+    return Boolean.TRUE.equals(hiddenFromCounterpart);
+  }
 
   public boolean exists() {
     return status != null;

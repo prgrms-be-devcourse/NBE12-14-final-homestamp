@@ -320,8 +320,9 @@ pipeline은 진짜이고, 안쪽 부품도 아래 표처럼 하나씩 진짜로 
 // repair/rule/RepairState.java
 public record RepairState(
     RepairStatus status, AckState defectAck, MoneyStatus moneyStatus, PartySide registeredBy,
-    Integer contentNo, Instant lastRerequestAt, boolean canOpenDefectConfirm,
-    boolean hiddenFromCounterpart) { // 공유를 그만둔 뒤 등록해 상대가 볼 수 없는 기록(8-3)
+    Integer contentNo, Instant lastRerequestAt,
+    Boolean canOpenDefectConfirm,     // 요청할 때만 아는 값: load가 채우고, 재계산(Replay.fold)이면 null
+    Boolean hiddenFromCounterpart) {  // 공유를 그만둔 뒤 등록해 상대가 볼 수 없는 기록(8-3). 재계산이면 null
 
   public Answerable defect() {
     return new Answerable(registeredBy, defectAck, contentNo, lastRerequestAt);
@@ -332,7 +333,9 @@ public record RepairState(
 - **기록한 측**은 도메인이 정해요. 송금은 보낸 쪽이 기록했으면 받은 쪽이, [받았어요(혼자)]면 보낸 쪽이 답해요(SET-4).
 - **판 번호**가 없는 기록이면 `null`. 그러면 본 판 번호를 비교하지 않아요.
 - **마지막 다시 요청 시각**은 행동 기록이 원본이에요. `load`가 읽어 담아요. 첫 요청은 세지 않아요(7일은 다시 요청끼리만).
-- **요청을 열 수 있음**은 `load`가 `waitService.canOpen(호실, 종류)`로 채워요(거주 종료 뒤 닫힌 요청을 다시 열지 않게, 03 K).
+- **요청을 열 수 있음**은 `load`가 `CounterpartReader`의 호실 단계(`RoomParties.canOpen(종류)`)와 `waitService.canOpen(호실, 종류)`를 둘 다 보고 채워요(거주 종료 뒤 닫힌 요청을 다시 열지 않게, 03 K). 지금 `FakeWaitService.canOpen`은 호실 단계를 보지 않아서 호실 단계를 꼭 같이 봐요(#157).
+- **요청할 때만 아는 값**(요청을 열 수 있음, 상대에게 보이는지)은 행동 기록 밖의 사실이라 재계산(`Replay.fold`, REP-10)에서는 알 수 없어요. 칸을 `Boolean`으로 두고 처음 상태는 `null`, `apply`는 `null`이면 검사하지 않아요(기록된 행동은 그때 서버가 이미 확인했어요). `boolean false`로 두면 재계산이 등록 → 보류 → 보충에서 `INVALID_STATE`로 깨져요.
+- **도장**: 응답(맞아요·보류·이견 모두)한 판을 `save`에서 "같이 확인한 판"(`confirmed_*_id`)으로 남겨요(03 1-3). 보충으로 확인 기다림으로 돌아가도 도장은 그대로예요.
 
 ### 8-2. `apply`에서 부르기
 

@@ -9,9 +9,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.chilsuitjo.back.TestcontainersConfiguration;
+import com.chilsuitjo.back.action.dto.ActionTarget;
 import com.chilsuitjo.back.action.dto.DigestField;
 import com.chilsuitjo.back.action.dto.DigestInput;
 import com.chilsuitjo.back.action.rule.ContentDigest;
+import com.chilsuitjo.back.action.rule.Replay;
+import com.chilsuitjo.back.action.service.ActionReader;
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.notification.dto.OpenRequestCommand;
@@ -19,6 +22,8 @@ import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.rule.RequestStatus;
 import com.chilsuitjo.back.notification.service.FakeWaitService;
+import com.chilsuitjo.back.repair.rule.RepairState;
+import com.chilsuitjo.back.repair.rule.RepairTransitions;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -33,6 +38,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 06 REP-2 하자 응답·보충을 보안·pipeline·진짜 행동 기록 저장(PostgreSQL)까지 띄워 본다(#155). 응답 요청은 가짜({@code
@@ -49,6 +56,9 @@ class RepairDefectApiTest {
   @Autowired private MockMvc mvc;
   @Autowired private JdbcTemplate jdbc;
   @Autowired private FakeWaitService waits;
+  @Autowired private ActionReader actions;
+  @Autowired private RepairTransitions rules;
+  @Autowired private PlatformTransactionManager transactionManager;
 
   private UUID room;
   private UUID tenant;
@@ -347,6 +357,56 @@ class RepairDefectApiTest {
 
     supplement(caseId, tenant, "s1", "{\"description\":\"다시 찍었어요\"}")
         .andExpect(jsonPath("$.code").value("INVALID_STATE"));
+  }
+
+  @Test
+  void 거주가_끝나면_보충할_수_없다() throws Exception {
+    // 가짜 WaitService에 막아 두지 않고 호실만 거주 종료로 바꾼다(03 K: 거주 종료 뒤 하자 확인 요청은 열 수 없음, #157 리뷰)
+    UUID caseId = register();
+    respond(caseId, landlord, "r1", "NEED_MORE", "사진이 흐려요", 1).andExpect(status().isOk());
+    jdbc.update(
+        "UPDATE state.room_record SET status = 'ENDED', ended_at = CURRENT_TIMESTAMP WHERE id = ?",
+        room);
+
+    supplement(caseId, tenant, "s1", "{\"description\":\"다시 찍었어요\"}")
+        .andExpect(jsonPath("$.code").value("INVALID_STATE"));
+    assertThat(caseRow(caseId)).containsEntry("defect_ack", "NEED_MORE");
+    assertThat(countRows("record.supplement", caseId)).isZero();
+  }
+
+  @Test
+  void 응답한_판에_도장이_찍히고_보충해도_도장은_남는다() throws Exception {
+    // 맞아요뿐 아니라 보류·이견도 도장이다(03 1-3)
+    UUID caseId = register();
+    assertThat(caseRow(caseId).get("confirmed_content_id")).isNull();
+
+    respond(caseId, landlord, "r1", "NEED_MORE", "사진이 흐려요", 1).andExpect(status().isOk());
+    Map<String, Object> answered = caseRow(caseId);
+    assertThat(answered.get("confirmed_content_id")).isEqualTo(answered.get("current_content_id"));
+
+    supplement(caseId, tenant, "s1", "{\"description\":\"다시 찍었어요\"}").andExpect(status().isOk());
+    assertThat(caseRow(caseId))
+        .containsEntry("defect_ack", "PENDING")
+        .containsEntry("confirmed_content_id", answered.get("current_content_id"));
+  }
+
+  @Test
+  void REP_10_저장된_행동을_처음부터_다시_계산하면_지금_상태와_같다() throws Exception {
+    UUID caseId = register();
+    respond(caseId, landlord, "r1", "NEED_MORE", "사진이 흐려요", 1).andExpect(status().isOk());
+    supplement(caseId, tenant, "s1", "{\"description\":\"다시 찍었어요\"}").andExpect(status().isOk());
+    respond(caseId, landlord, "r2", "ACK", null, 1).andExpect(status().isOk());
+
+    RepairState folded =
+        new TransactionTemplate(transactionManager)
+            .execute(status ->
+                Replay.fold(rules, actions.findByTarget(ActionTarget.repairCase(caseId))));
+
+    Map<String, Object> row = caseRow(caseId);
+    assertThat(folded.defectAck().name()).isEqualTo(row.get("defect_ack"));
+    assertThat(folded.status().name()).isEqualTo(row.get("status"));
+    assertThat(folded.moneyStatus().name()).isEqualTo(row.get("money_status"));
+    assertThat(folded.registeredBy().name()).isEqualTo(row.get("created_by_side"));
   }
 
   @Test

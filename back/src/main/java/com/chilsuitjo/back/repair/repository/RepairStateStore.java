@@ -118,6 +118,7 @@ public class RepairStateStore {
             .map(ActionEntry::createdAt)
             .max(Instant::compareTo)
             .orElse(null);
+    RoomParties room = parties.read(row.getRoomRecordId(), row.getCreatedBySide());
     return new RepairState(
         row.getStatus(),
         row.getDefectAck(),
@@ -125,8 +126,19 @@ public class RepairStateStore {
         row.getCreatedBySide(),
         contentNo,
         lastSupplementAt,
-        waits.canOpen(command.roomRecordId(), RequestKind.DEFECT_CONFIRM),
-        hiddenFromCounterpart(row));
+        canOpenDefectConfirm(room, command.roomRecordId()),
+        hiddenFromCounterpart(room, row));
+  }
+
+  /**
+   * 지금 하자 확인 요청을 열 수 있나(03 K "거주 종료 뒤", 1-4). 호실 단계는 {@code CounterpartReader}가 실제 호실 상태로
+   * 돌려주고({@code RoomParties.canOpen} = {@code RequestOpening}), 그 위에 notification이 막아 둔 것도 함께
+   * 본다({@code WaitService.canOpen}). 지금 {@code FakeWaitService}는 호실 단계를 보지 않아서, 호실 단계를 여기서도 봐야 거주
+   * 종료 뒤 보충이 막힌다(#157 리뷰).
+   */
+  private boolean canOpenDefectConfirm(RoomParties room, UUID roomRecordId) {
+    return room.canOpen(RequestKind.DEFECT_CONFIRM)
+        && waits.canOpen(roomRecordId, RequestKind.DEFECT_CONFIRM);
   }
 
   /**
@@ -134,8 +146,7 @@ public class RepairStateStore {
    * 그만뒀든 같다. 상대가 탈퇴해 풀린 공유 중단은 보지 않는다({@code RoomParties}의 판단, 06 CONS-3p·3q). 연결 전에 남긴 기록은 연결하면
    * 보이므로(03 1-4) 연결 여부는 보지 않는다.
    */
-  private boolean hiddenFromCounterpart(RepairCase row) {
-    RoomParties room = parties.read(row.getRoomRecordId(), row.getCreatedBySide());
+  private static boolean hiddenFromCounterpart(RoomParties room, RepairCase row) {
     Instant stopped = null;
     if (room.mySharingStoppedApplies()) {
       stopped = room.mine().sharingStoppedAt();
@@ -235,13 +246,15 @@ public class RepairStateStore {
     }
 
     /**
-     * 하자 인정만 바꾼다(수리 진행은 그대로, REP-2a). 열린 하자 확인 요청이 있으면 "답함"으로 닫는다. 늦은 답이나 요청 없이 먼저 답한 경우에는
-     * notification이 아무것도 하지 않는다({@code WaitService#answered}). 내용 지문은 서비스가 넘긴 본 판이다. 등록한 측에게 가는 서비스
-     * 안 알림은 알리기 PR에서 붙인다.
+     * 하자 인정을 바꾸고(수리 진행은 그대로, REP-2a) 응답한 판에 도장을 찍는다(03 1-3 "[맞아요]·보류·이견 모두 도장", #157 리뷰). 열린 하자 확인
+     * 요청이 있으면 "답함"으로 닫는다. 늦은 답이나 요청 없이 먼저 답한 경우에는 notification이 아무것도 하지 않는다({@code
+     * WaitService#answered}). 내용 지문은 서비스가 넘긴 본 판이다. 등록한 측에게 가는 서비스 안 알림은 알리기 PR에서 붙인다.
      */
     @Override
     public SavedState save(ActionCommand command, RepairState next) {
-      row(command).changeDefectAck(next.defectAck());
+      RepairCase row = row(command);
+      row.changeDefectAck(next.defectAck());
+      row.stampCurrent();
       waits.answered(defectRequest(command), RequestKind.DEFECT_CONFIRM, command.actor().side());
       return SavedState.unchanged();
     }

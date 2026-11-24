@@ -129,4 +129,12 @@ public class RepairCase {
   public void changeDefectAck(AckState next) {
     this.defectAck = Objects.requireNonNull(next, "next");
   }
+
+  /**
+   * 상대가 응답한 판에 도장을 찍는다(03 1-3 "[맞아요]·보류·이견 모두 도장"). 응답은 지금 판에만 할 수 있어서(본 판 번호가 같아야 함) 지금 판이 도장 찍힌
+   * 판이 된다. 보충해 확인 기다림으로 돌아가도 도장은 그대로 둔다(그 모습을 봤다는 사실은 남음).
+   */
+  public void stampCurrent() {
+    this.confirmedContentId = currentContentId;
+  }
 }

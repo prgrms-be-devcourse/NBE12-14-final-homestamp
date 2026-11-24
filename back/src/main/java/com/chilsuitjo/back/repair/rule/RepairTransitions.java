@@ -78,7 +78,7 @@ public class RepairTransitions implements Transitions<RepairState> {
    */
   private static RepairState respond(RepairState now, ActionEntry action) {
     requireExists(now);
-    if (now.hiddenFromCounterpart() && action.actorSide() != now.registeredBy()) {
+    if (now.hiddenFromCounterpartKnown() && action.actorSide() != now.registeredBy()) {
       throw new BusinessException(ErrorCode.INVALID_STATE);
     }
     AnswerPayload in = action.payloadAs(AnswerPayload.class);
@@ -91,6 +91,7 @@ public class RepairTransitions implements Transitions<RepairState> {
   /**
    * 보충하고 다시 확인 요청(06 REP-2e): 등록한 측만, 보류·이견일 때만, 지금 하자 확인 요청을 열 수 있을 때만(거주 종료 뒤 막힘, 03 K), 7일에 한
    * 번({@code AnswerSupport.rerequest}). 근거(사진이나 설명)는 서비스가 pipeline 전에 본다. 하자 인정은 확인 기다림으로 돌아간다.
+   * 재계산이라 요청을 열 수 있는지 모르면 그때 서버가 확인했다고 본다({@link RepairState} "요청할 때만 아는 값").
    */
   private RepairState supplement(RepairState now, ActionEntry action) {
     requireExists(now);
@@ -99,7 +100,7 @@ public class RepairTransitions implements Transitions<RepairState> {
             now.defect(),
             action.actorSide(),
             true,
-            now.canOpenDefectConfirm(),
+            !now.defectConfirmBlocked(),
             action.createdAt(),
             rerequestInterval);
     return now.withDefectAck(result.state()).withLastRerequestAt(result.rerequestedAt());
