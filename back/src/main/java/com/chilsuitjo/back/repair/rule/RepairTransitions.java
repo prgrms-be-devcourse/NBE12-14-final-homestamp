@@ -1,10 +1,15 @@
 package com.chilsuitjo.back.repair.rule;
 
 import com.chilsuitjo.back.action.dto.ActionEntry;
+import com.chilsuitjo.back.action.rule.AnswerPayload;
+import com.chilsuitjo.back.action.rule.AnswerSupport;
 import com.chilsuitjo.back.action.rule.Transitions;
 import com.chilsuitjo.back.global.common.AckState;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
+import java.time.Duration;
+import java.util.Objects;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
@@ -14,11 +19,18 @@ import org.springframework.stereotype.Component;
  * <p>정산 완료·거주 종료·합류 전 기록·내 공유 중단은 pipeline이 먼저 막는다(09 3-1 순서 3). 거주 종료 뒤 새 수리 건은 {@code REGISTER}의
  * {@code blockedAfterEnded}로 막힌다(06 REP-1c).
  *
- * <p>지금은 하자 등록(REP-1)만 있다. 응답·보충(REP-2), 수리 진행(REP-3~5)은 그 기능을 만들 때 더한다. 그 전까지 다른 행동은 {@code
+ * <p>지금은 하자 등록(REP-1), 하자 응답·보충(REP-2)만 있다. 수리 진행(REP-3~5) 등은 그 기능을 만들 때 더한다. 그 전까지 다른 행동은 {@code
  * INVALID_STATE}다.
  */
 @Component
 public class RepairTransitions implements Transitions<RepairState> {
+
+  /** 한 기록에 보충하고 다시 확인 요청하는 간격({@code rerequest.interval}, 06 0-1). */
+  private final Duration rerequestInterval;
+
+  public RepairTransitions(@Value("${app.rerequest.interval:7d}") Duration rerequestInterval) {
+    this.rerequestInterval = Objects.requireNonNull(rerequestInterval, "rerequestInterval");
+  }
 
   @Override
   public RepairState initial() {
@@ -29,19 +41,65 @@ public class RepairTransitions implements Transitions<RepairState> {
   public RepairState apply(RepairState now, ActionEntry action) {
     return switch (action.type()) {
       case REGISTER -> register(now, action);
+      case RESPOND_DEFECT -> respond(now, action);
+      case SUPPLEMENT -> supplement(now, action);
       default -> throw new BusinessException(ErrorCode.INVALID_STATE);
     };
   }
 
   /**
    * 하자 등록: 시작 전 · 확인 기다림 · 부담 미정(06 REP-1a, 05 2-5). 등록한 측이 기록한 측이다. 측이 없는 주체(서버·운영)는 수리 건을 만들 수
-   * 없다({@code repair_case.created_by_side} NOT NULL).
+   * 없다({@code repair_case.created_by_side} NOT NULL). 판 #1이 지금 판이다.
    */
   private static RepairState register(RepairState now, ActionEntry action) {
     if (now.exists() || action.actorSide() == null) {
       throw new BusinessException(ErrorCode.INVALID_STATE);
     }
     return new RepairState(
-        RepairStatus.NOT_STARTED, AckState.PENDING, MoneyStatus.UNDECIDED, action.actorSide());
+        RepairStatus.NOT_STARTED,
+        AckState.PENDING,
+        MoneyStatus.UNDECIDED,
+        action.actorSide(),
+        1,
+        null,
+        now.canOpenDefectConfirm());
+  }
+
+  /**
+   * 하자 응답(06 REP-2a~d·f, REP-9a): 상대 측만, 본 판 번호가 지금 판과 같아야 하고, 맞아요는 끝이며, 보류·이견에서는 맞아요로만, 보류·이견은 사유
+   * 필수({@code AnswerSupport.answer}). 수리 진행은 그대로다(REP-2a). 사유는 행동 기록의 {@code reason}이다(#155).
+   *
+   * <p>거주 종료 뒤에도 정산 완료 전까지 답할 수 있다(늦은 답, decisions 2026-11-19). 정산 완료는 pipeline이 막는다.
+   */
+  private static RepairState respond(RepairState now, ActionEntry action) {
+    requireExists(now);
+    AnswerPayload in = action.payloadAs(AnswerPayload.class);
+    AckState next =
+        AnswerSupport.answer(
+            now.defect(), action.actorSide(), in.answer(), action.reason(), action.seenVersionNo());
+    return now.withDefectAck(next);
+  }
+
+  /**
+   * 보충하고 다시 확인 요청(06 REP-2e): 등록한 측만, 보류·이견일 때만, 지금 하자 확인 요청을 열 수 있을 때만(거주 종료 뒤 막힘, 03 K), 7일에 한
+   * 번({@code AnswerSupport.rerequest}). 근거(사진이나 설명)는 서비스가 pipeline 전에 본다. 하자 인정은 확인 기다림으로 돌아간다.
+   */
+  private RepairState supplement(RepairState now, ActionEntry action) {
+    requireExists(now);
+    AnswerSupport.Rerequested result =
+        AnswerSupport.rerequest(
+            now.defect(),
+            action.actorSide(),
+            true,
+            now.canOpenDefectConfirm(),
+            action.createdAt(),
+            rerequestInterval);
+    return now.withDefectAck(result.state()).withLastRerequestAt(result.rerequestedAt());
+  }
+
+  private static void requireExists(RepairState now) {
+    if (!now.exists()) {
+      throw new BusinessException(ErrorCode.INVALID_STATE);
+    }
   }
 }

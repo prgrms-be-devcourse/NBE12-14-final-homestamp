@@ -13,6 +13,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 import java.time.Instant;
+import java.util.Objects;
 import java.util.UUID;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -119,5 +120,13 @@ public class RepairCase {
     if (firstShownAt == null) {
       firstShownAt = at;
     }
+  }
+
+  /**
+   * 하자 인정을 바꾼다(응답·보충, 06 REP-2). 값은 {@code RepairTransitions.apply}가 정한 다음 상태 그대로다. 동시에 바뀌면
+   * {@code @Version}이 막는다(409 {@code VERSION_CONFLICT}).
+   */
+  public void changeDefectAck(AckState next) {
+    this.defectAck = Objects.requireNonNull(next, "next");
   }
 }

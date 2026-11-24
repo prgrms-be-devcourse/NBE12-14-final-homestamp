@@ -319,10 +319,10 @@ pipeline은 진짜이고, 안쪽 부품도 아래 표처럼 하나씩 진짜로 
 ```java
 // repair/rule/RepairState.java
 public record RepairState(
-    RepairStatus status, AckState defectAck, PartySide registeredBy, int contentNo,
-    Instant lastRerequestAt, boolean canOpenDefectConfirm) {
+    RepairStatus status, AckState defectAck, MoneyStatus moneyStatus, PartySide registeredBy,
+    Integer contentNo, Instant lastRerequestAt, boolean canOpenDefectConfirm) {
 
-  Answerable defect() {
+  public Answerable defect() {
     return new Answerable(registeredBy, defectAck, contentNo, lastRerequestAt);
   }
 }
@@ -340,7 +340,7 @@ case RESPOND_DEFECT -> {
   // 거주 종료 뒤에도 정산 완료 전까지 답할 수 있다(늦은 답, 03 3장 권한 표). 정산 완료는 pipeline이 막는다
   AnswerPayload in = action.payloadAs(AnswerPayload.class);
   AckState next = AnswerSupport.answer(
-      now.defect(), action.actorSide(), in.answer(), in.reason(), action.seenVersionNo());
+      now.defect(), action.actorSide(), in.answer(), action.reason(), action.seenVersionNo());
   yield now.withDefectAck(next);
 }
 case SUPPLEMENT -> {
@@ -354,7 +354,9 @@ case SUPPLEMENT -> {
 
 - 시각은 `action.createdAt()`, 간격(`rerequest.interval`, 7d)은 `Transitions`가 설정에서 받아 넘겨요. `Clock`을 부르지 않아요.
 - 근거(`SupplementRequest.hasEvidence()`)는 서비스가 pipeline 전에 `AnswerSupport.requireEvidence`로 보거나, payload에 담아 `apply`에서 넘겨요. 어느 쪽이든 같은 메서드를 써요.
-- 서비스는 payload를 `Map.of("answer", req.answer(), "reason", req.reason())`로 남겨요. 사유가 없으면 `"reason"` 키를 빼요(`Map.of`는 null을 받지 않아요).
+- 서비스는 답을 payload `Map.of("answer", req.answer().name())`로, **사유는 `ActionCommand`의 `reason`**(행동 기록의 `reason` 칸)으로 넘겨요. 사유를 payload에 넣지 않아요(06 REP-9 `action.reason`, 한 사실은 한 곳에, #155). 공백뿐인 사유는 `null`로 바꿔 넘겨요.
+- 응답은 본 판에 대고 하는 행동이라 내용 지문은 **본 판**이에요(3-3). 판은 고칠 수 없으니 서비스가 pipeline 전에 `seenVersionNo`의 판을 읽어 `ActionCommand`의 `content`로 넘겨요. 그런 판이 없으면 `null`로 두면 `apply`가 `VERSION_CONFLICT`로 막아요(예: `RepairStateStore.seenContent`).
+- 보충 설명은 `action`의 `SupplementWriter.write(호실, 대상, 측, 설명)`로 `save`에서 남겨요(`record.supplement`, V8). 돌려받은 지문 재료를 `SavedState`의 `content`로 넘기면 보충 행동의 내용 지문이 돼요. 수리 건 하자·지불·점검 항목이 같은 창구를 써요. 사진은 `PhotoService.attach` → `withPhotos`로 따로 붙여요.
 
 ### 8-3. 도메인이 먼저 막는 것 (`AnswerSupport`는 모름)
 
