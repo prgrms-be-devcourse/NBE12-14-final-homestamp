@@ -5,9 +5,14 @@ import { CONNECTED_APIS, isConnected } from "../src/api/connected"
 afterEach(() => vi.unstubAllGlobals())
 
 describe("HTTP 모드는 연결을 마친 API만 서버로 보내요", () => {
-  it("이번 PR에서는 연결을 마친 API가 없어요(실제 연동은 다음 PR)", () => {
-    expect(CONNECTED_APIS).toEqual([])
-    expect(isConnected("POST", "/api/auth/login")).toBe(false)
+  it("로그인·재발급·로그아웃·내 정보만 연결했어요(회원가입·내 정보 아래 주소는 아직)", () => {
+    expect(CONNECTED_APIS.length).toBeGreaterThan(0)
+    expect(isConnected("POST", "/api/auth/login")).toBe(true)
+    expect(isConnected("POST", "/api/auth/refresh")).toBe(true)
+    expect(isConnected("POST", "/api/auth/logout")).toBe(true)
+    expect(isConnected("GET", "/api/me")).toBe(true)
+    expect(isConnected("GET", "/api/me/home")).toBe(false)
+    expect(isConnected("POST", "/api/auth/signup")).toBe(false)
   })
   it("연결 전 API는 서버로 보내지 않고 NOT_CONNECTED로 알려요", async () => {
     const fetch = vi.fn()

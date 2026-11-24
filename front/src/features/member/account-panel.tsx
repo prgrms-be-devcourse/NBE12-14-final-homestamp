@@ -39,7 +39,7 @@ export function AccountPanel({
           </div>
           <div>
             <dt>인증한 휴대폰</dt>
-            <dd>{maskPhone(account.phone)}</dd>
+            <dd>{maskPhone(account.phone) || "인증한 번호가 없어요"}</dd>
           </div>
         </dl>
         <p className="muted">
