@@ -75,9 +75,27 @@ export const DEV_ACCOUNTS = [
     phone: "01012341234",
   },
 ] as const
-export const PASSWORD_RULE = "8자 이상, 영문과 숫자를 함께 써 주세요."
+// 06 0-1 password.rule: 8자 이상, 영문·숫자 포함, UTF-8 72바이트 이하(해시가 받는 최대 길이, 한글은 한 글자에 3바이트)
+export const PASSWORD_RULE =
+  "8자 이상, 영문과 숫자를 함께 써 주세요. 72바이트(한글은 한 글자에 3바이트)까지 쓸 수 있어요."
+export const PASSWORD_MAX_BYTES = 72
 export const validPassword = (p: string) =>
-  p.length >= 8 && /[A-Za-z]/.test(p) && /\d/.test(p)
+  p.length >= 8 &&
+  /[A-Za-z]/.test(p) &&
+  /\d/.test(p) &&
+  new TextEncoder().encode(p).length <= PASSWORD_MAX_BYTES
+// 06 0-1 휴대폰 인증 설정값(verify.*)
+export const VERIFY_CODE_TTL_MS = 5 * 60_000
+export const VERIFY_RESEND_INTERVAL_S = 60
+export const VERIFY_DAILY_PER_PHONE = 5
+export const VERIFY_ATTEMPTS_MAX = 5
+// 06 4-10 화면 문구
+export const CODE_REPLACED_MESSAGE =
+  "새 인증번호를 보냈어요. 가장 최근 문자의 번호를 넣어 주세요. 다른 기기에서 받았다면 그 기기에서 넣어 주세요"
+export const DAILY_LIMIT_MESSAGE =
+  "오늘은 더 받을 수 없어요. 내일 다시 해 주세요"
+export const SMS_SEND_FAILED_MESSAGE =
+  "문자를 보내지 못했어요. 잠시 뒤 다시 받아 주세요"
 
 /* ── 백엔드 연결 ── */
 export function createHttpAuth(
@@ -147,7 +165,18 @@ export function createLocalAuth(): AuthApi {
   const accounts: LocalAccount[] = DEV_ACCOUNTS.map((a) => ({ ...a }))
   const codes = new Map<
     string,
-    { phone: string; code: string; expires: number; tries: number }
+    {
+      phone: string
+      code: string
+      expires: number
+      tries: number
+      replaced?: boolean
+    }
+  >()
+  // 같은 번호의 인증 진행(ACC-1g): 마지막 보낸 시각, 오늘 보낸 횟수, 지금 쓸 수 있는 인증
+  const sends = new Map<
+    string,
+    { lastAt: number; day: string; count: number; current?: string }
   >()
   const tokens = new Map<string, string>()
   let current: Account | null = null
@@ -170,44 +199,69 @@ export function createLocalAuth(): AuthApi {
           "VALIDATION_FAILED",
           "010으로 시작하는 휴대폰 번호 11자리를 입력해 주세요.",
         )
-      if (accounts.some((a) => a.phone === n))
-        fail(
-          "PHONE_TAKEN",
-          "이미 가입에 쓰인 번호예요. 로그인하거나 비밀번호를 재설정해 주세요.",
-          409,
-        )
+      // 이미 가입에 쓰인 번호도 막지 않아요. 새 계정이 인증하면 이전 계정의 번호 인증이 풀려요(ACC-3a)
+      const now = Date.now()
+      const day = new Date(now).toDateString()
+      const s = sends.get(n)
+      const count = s && s.day === day ? s.count : 0
+      if (count >= VERIFY_DAILY_PER_PHONE)
+        fail("DAILY_LIMIT", DAILY_LIMIT_MESSAGE, 429)
+      const wait = s
+        ? Math.ceil((s.lastAt + VERIFY_RESEND_INTERVAL_S * 1000 - now) / 1000)
+        : 0
+      if (wait > 0)
+        throw new ApiError({
+          status: 429,
+          code: "RATE_LIMITED",
+          detail: `${wait}초 뒤 다시 받을 수 있어요.`,
+          retryAfter: wait,
+        })
+      // 다시 받으면 이전 번호는 쓸 수 없어요(ACC-1g)
+      const prev = s?.current ? codes.get(s.current) : undefined
+      if (prev) prev.replaced = true
       const verificationId = crypto.randomUUID()
+      sends.set(n, {
+        lastAt: now,
+        day,
+        count: count + 1,
+        current: verificationId,
+      })
       // 임시(개발용): 확인을 쉽게 하려고 인증번호를 123456으로 고정해요. 서버 연결 전에 아래 무작위 코드로 되돌려 주세요.
       // const code = String(Math.floor(100000 + Math.random() * 900000))
       const code = DEV_FIXED_CODE
       codes.set(verificationId, {
         phone: n,
         code,
-        expires: Date.now() + 3 * 60_000,
+        expires: now + VERIFY_CODE_TTL_MS,
         tries: 0,
       })
       console.info(`[HomeStamp 개발 서버] ${n} 인증번호: ${code}`)
       return {
         verificationId,
-        expiresAt: new Date(Date.now() + 3 * 60_000).toISOString(),
+        expiresAt: new Date(now + VERIFY_CODE_TTL_MS).toISOString(),
         delivered: false,
       }
     },
     async verifyPhoneCode(vid, code) {
       const v = codes.get(vid)
+      // 다시 받은 뒤 이전 번호로 넣으면 틀린 횟수는 그대로 두고 알려요(ACC-1g)
+      if (v?.replaced) fail("CODE_REPLACED", CODE_REPLACED_MESSAGE)
       if (!v || v.expires < Date.now())
         fail(
           "CODE_EXPIRED",
-          "인증번호 유효 시간(3분)이 지났어요. 다시 받아 주세요.",
+          "인증번호 유효 시간(5분)이 지났어요. 다시 받아 주세요.",
         )
-      if (v!.tries >= 5)
+      if (v!.tries >= VERIFY_ATTEMPTS_MAX)
         fail(
           "CODE_EXPIRED",
-          "5번 틀려서 이 인증번호는 쓸 수 없어요. 다시 받아 주세요.",
+          `${VERIFY_ATTEMPTS_MAX}번 틀려서 이 인증번호는 쓸 수 없어요. 다시 받아 주세요.`,
         )
       if (v!.code !== code.trim()) {
         v!.tries++
-        fail("CODE_INVALID", `인증번호가 맞지 않아요. (${v!.tries}/5)`)
+        fail(
+          "CODE_INVALID",
+          `인증번호가 맞지 않아요. (${v!.tries}/${VERIFY_ATTEMPTS_MAX})`,
+        )
       }
       codes.delete(vid)
       const phoneToken = crypto.randomUUID()
@@ -236,6 +290,10 @@ export function createLocalAuth(): AuthApi {
         phone: phone!,
         password: input.password,
       }
+      // 같은 번호로 인증한 다른 계정은 번호 인증이 풀려요(ACC-3a)
+      accounts.forEach((a) => {
+        if (a.phone === account.phone) a.phone = ""
+      })
       accounts.push(account)
       tokens.delete(input.phoneToken)
       current = strip(account)

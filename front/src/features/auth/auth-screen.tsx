@@ -19,10 +19,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Logo } from "@/components/common/blocks"
-import { errorMessage } from "@/api/errors"
+import { ApiError, errorMessage } from "@/api/errors"
 import {
   DEV_FIXED_CODE,
   PASSWORD_RULE,
+  VERIFY_RESEND_INTERVAL_S,
   validPassword,
   type Account,
   type AuthApi,
@@ -234,6 +235,9 @@ function SignupForm({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
   const [now, setNow] = useState(() => Date.now())
+  // [다시 받기]를 누를 수 있는 시각(verify.resend.interval)과 하루 횟수를 다 썼는지(DAILY_LIMIT)
+  const [resendAt, setResendAt] = useState(0)
+  const [dailyLimit, setDailyLimit] = useState(false)
   useEffect(() => {
     if (!verification || phoneToken) return
     const t = window.setInterval(() => setNow(Date.now()), 1000)
@@ -242,6 +246,7 @@ function SignupForm({
   const left = verification
     ? Math.max(0, Math.ceil((verification.expiresAt - now) / 1000))
     : 0
+  const resendLeft = Math.max(0, Math.ceil((resendAt - now) / 1000))
   async function run(task: () => Promise<void>) {
     setBusy(true)
     setError("")
@@ -253,18 +258,34 @@ function SignupForm({
       setBusy(false)
     }
   }
+  // 휴대폰 인증 화면(08 "휴대폰 인증 화면" 표): 보낸 뒤 60초는 다시 받기를 기다리고, 하루 횟수를 다 쓰면 [다시 받기]를 숨겨요
   const sendCode = () =>
     run(async () => {
       if (!isMobilePhone(phone))
         throw new Error("010으로 시작하는 휴대폰 번호 11자리를 입력해 주세요.")
-      const v = await auth.requestPhoneCode(phone)
-      setVerification({
-        id: v.verificationId,
-        expiresAt: Date.parse(v.expiresAt),
-        delivered: v.delivered,
-      })
-      setNow(Date.now())
-      setCode("")
+      try {
+        const v = await auth.requestPhoneCode(phone)
+        setVerification({
+          id: v.verificationId,
+          expiresAt: Date.parse(v.expiresAt),
+          delivered: v.delivered,
+        })
+        setResendAt(Date.now() + VERIFY_RESEND_INTERVAL_S * 1000)
+        setNow(Date.now())
+        setCode("")
+      } catch (e) {
+        if (e instanceof ApiError && e.code === "RATE_LIMITED")
+          setResendAt(
+            Date.now() + (e.retryAfter ?? VERIFY_RESEND_INTERVAL_S) * 1000,
+          )
+        // 보내지 못했으면 바로 다시 받을 수 있어요(ACC-1j)
+        if (e instanceof ApiError && e.code === "SMS_SEND_FAILED")
+          setResendAt(0)
+        if (e instanceof ApiError && e.code === "DAILY_LIMIT")
+          setDailyLimit(true)
+        setNow(Date.now())
+        throw e
+      }
     })
   const verify = () =>
     run(async () => {
@@ -339,27 +360,33 @@ function SignupForm({
                   setVerification(undefined)
                 }}
               />
-              <Button
-                type="button"
-                variant="outline"
-                className="shrink-0"
-                disabled={busy || !phone}
-                onClick={sendCode}
-              >
-                {verification ? "다시 받기" : "인증번호 받기"}
-              </Button>
+              {!dailyLimit && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="shrink-0"
+                  disabled={busy || !phone || resendLeft > 0}
+                  onClick={sendCode}
+                >
+                  {verification ? "다시 받기" : "인증번호 받기"}
+                </Button>
+              )}
             </div>
+            {resendLeft > 0 && !dailyLimit && (
+              <small className="muted" aria-live="polite">
+                {resendLeft}초 뒤 다시 받을 수 있어요
+              </small>
+            )}
             <small className="muted">
-              번호 하나로는 계정 하나만 만들 수 있어요. 상대가 이 번호로
-              초대하면 연결할 수 있어요.
+              상대가 이 번호로 초대하면 연결할 수 있어요.
             </small>
           </div>
           {verification && (
             <>
               <Notice tone={verification.delivered ? "info" : "amber"}>
                 {verification.delivered
-                  ? `${maskPhone(phone)}로 인증 문자를 보냈어요.`
-                  : `개발 환경이라 문자를 보내지 않았어요. 인증번호 ${DEV_FIXED_CODE}을 입력해 주세요.`}
+                  ? `${maskPhone(phone)}로 인증번호를 보냈어요 · 5분 안에 넣어 주세요. 문자가 오지 않으면 다시 받아 주세요.`
+                  : `개발 환경이라 문자를 보내지 않았어요. 인증번호 ${DEV_FIXED_CODE}을 5분 안에 넣어 주세요.`}
               </Notice>
               <div className="field">
                 <label htmlFor="su-code">

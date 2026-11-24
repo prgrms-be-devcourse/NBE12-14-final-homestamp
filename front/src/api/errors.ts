@@ -5,14 +5,18 @@ export interface ProblemDetail {
   status: number
   code?: string
   detail?: string
+  // RATE_LIMITED의 Retry-After(초)
+  retryAfter?: number
 }
 export class ApiError extends Error {
   readonly status: number
   readonly code?: string
+  readonly retryAfter?: number
   constructor(problem: ProblemDetail) {
     super(problem.detail || problem.title || "요청을 처리하지 못했어요.")
     this.status = problem.status
     this.code = problem.code
+    this.retryAfter = problem.retryAfter
   }
 }
 // VERSION_CONFLICT·INVALID_STATE는 화면이 다시 불러온 뒤 한 줄 안내(명세 5장)

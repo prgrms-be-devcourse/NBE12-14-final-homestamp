@@ -44,7 +44,12 @@ export function createHttpClient({ baseUrl, getToken }: HttpClientOptions) {
       const problem = (await res
         .json()
         .catch(() => ({}))) as Partial<ProblemDetail>
-      throw new ApiError({ status: res.status, ...problem })
+      const retry = Number(res.headers.get("Retry-After"))
+      throw new ApiError({
+        status: res.status,
+        ...problem,
+        retryAfter: Number.isFinite(retry) && retry > 0 ? retry : undefined,
+      })
     }
     return res.status === 204 ? (undefined as T) : ((await res.json()) as T)
   }
