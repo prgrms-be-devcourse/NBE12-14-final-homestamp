@@ -13,6 +13,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 import java.time.Instant;
+import java.util.Objects;
 import java.util.UUID;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -119,5 +120,21 @@ public class RepairCase {
     if (firstShownAt == null) {
       firstShownAt = at;
     }
+  }
+
+  /**
+   * 하자 인정을 바꾼다(응답·보충, 06 REP-2). 값은 {@code RepairTransitions.apply}가 정한 다음 상태 그대로다. 동시에 바뀌면
+   * {@code @Version}이 막는다(409 {@code VERSION_CONFLICT}).
+   */
+  public void changeDefectAck(AckState next) {
+    this.defectAck = Objects.requireNonNull(next, "next");
+  }
+
+  /**
+   * 상대가 응답한 판에 도장을 찍는다(03 1-3 "[맞아요]·보류·이견 모두 도장"). 응답은 지금 판에만 할 수 있어서(본 판 번호가 같아야 함) 지금 판이 도장 찍힌
+   * 판이 된다. 보충해 확인 기다림으로 돌아가도 도장은 그대로 둔다(그 모습을 봤다는 사실은 남음).
+   */
+  public void stampCurrent() {
+    this.confirmedContentId = currentContentId;
   }
 }
