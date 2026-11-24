@@ -4,8 +4,9 @@
 
 aws_account_id = "000000000000"
 
-# RDS 인스턴스 클래스(기본값 없음). PostgreSQL 18을 서울 리전에서 주문할 수 있는지 먼저 확인한다
+# RDS 인스턴스 클래스. 기본값은 과정 계정의 db.t4g.micro(2026-11-25 서울 18.6 주문 가능 확인).
+# 개인 계정에서 바꿀 때만 채운다. 다른 클래스·리전은 PostgreSQL 18을 주문할 수 있는지 먼저 확인한다
 #   aws rds describe-orderable-db-instance-options --engine postgres --engine-version 18.6 \
 #     --db-instance-class <클래스> --region ap-northeast-2 --profile homestamp --query 'OrderableDBInstanceOptions[].AvailabilityZones'
-# 과정 계정은 RDS small까지 문의 없이 만들 수 있다(04 3장). 확인 전에는 채우지 않는다
+# 과정 계정은 RDS small 1대까지 문의 없이 만들 수 있다(과정 공지, 04 3장)
 # db_instance_class = "db.t4g.micro"

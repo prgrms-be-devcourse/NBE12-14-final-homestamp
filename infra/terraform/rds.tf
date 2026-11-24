@@ -9,11 +9,13 @@
 # - 마스터 비밀번호는 Terraform이 만들거나 받지 않는다. RDS가 Secrets Manager에 만들고 돌린다
 #   (manage_master_user_password). 상태 파일에는 비밀값이 아니라 비밀의 ARN만 남는다.
 #   마스터 계정은 Role Bootstrap(infra/db/bootstrap_roles.sql, #185)을 돌리는 신뢰된 DB 관리자만 쓴다.
-#   앱 EC2 역할은 Secrets Manager 값 읽기가 명시적으로 거부돼 있다(iam_web.tf DenySecretsManagerValues)
-#   ⚠ 이 방식은 아직 결정 전이다(04 6장 "DB 비밀번호"는 password_wo 또는 Parameter Store 직접 입력만 적음,
-#     Secrets Manager의 과정 허용 여부 미확인). 결정 전에는 apply하지 않는다
-# - 인스턴스 클래스는 기본값이 없다. AWS 지원표에서 PostgreSQL 18이 db.t3·db.t4g에 적혀 있지 않아,
-#   서울 리전에서 실제로 주문 가능한지와 과정 한도(RDS small까지)를 확인한 뒤 tfvars에 넣는다
+#   앱 EC2 역할은 Secrets Manager 값 읽기가 명시적으로 거부돼 있다(iam_web.tf DenySecretsManagerValues).
+#   그 Secret을 읽는 운영 관리자 권한은 별도 PR이다(decisions 2026-11-25). Secrets Manager는 과정 사용 가능 서비스
+# - RDS가 만드는 Secret은 Terraform이 관리하지 않아 default_tags(Team)가 붙는지 보장되지 않는다.
+#   apply 뒤 Secret 메타데이터의 태그만 확인하고(값은 읽지 않음), 없으면 붙인다(04 13-1 RDS 단계)
+# - 인스턴스 클래스 기본값은 과정 계정의 db.t4g.micro, 개인 계정은 tfvars로 바꾼다. 서울 리전에서 PostgreSQL 18.1~18.6이
+#   db.t4g·db.t3의 micro·small로 주문 가능함을 확인했다(2026-11-25 describe-orderable-db-instance-options. AWS 문서
+#   지원표는 이 클래스들을 17까지만 적어 늦게 갱신됨). 과정 기본 허용은 RDS small 1대까지(과정 공지, 04 3장)
 
 locals {
   db_identifier = "${var.prefix}-db"
@@ -64,7 +66,7 @@ resource "aws_db_instance" "main" {
   identifier = local.db_identifier
 
   engine                     = "postgres"
-  engine_version             = "18" # 주 버전만 고정, 마이너는 RDS 최신 18.x(17장 고정 버전)
+  engine_version             = "18" # 주 버전만 고정. 만들 때 마이너는 RDS가 정하고 이후 자동으로 올라간다(17장)
   auto_minor_version_upgrade = true
   instance_class             = var.db_instance_class
   parameter_group_name       = aws_db_parameter_group.postgres18.name

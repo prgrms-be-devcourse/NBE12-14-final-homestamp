@@ -25,12 +25,12 @@ variable "aws_account_id" {
 # ---------- RDS (rds.tf) ----------
 # 계정·팀마다 다를 수 있는 값만 변수로 둔다. 이름은 prefix에서 만든다
 
-# 기본값을 두지 않는다: PostgreSQL 18을 주문할 수 있는 클래스를 서울 리전에서 확인하고, 과정 한도(RDS small까지)나
-# 개인 계정 비용에 맞춰 tfvars에 넣는다(04 3장 "위치"는 db.t4g.micro 또는 db.t3.micro를 적었지만, AWS 지원표에는
-# 두 클래스에 18이 적혀 있지 않다. 확인 전에는 plan·apply가 멈추게 한다)
+# 기본값은 과정 계정의 db.t4g.micro(04 3장 "위치", 과정 기본 허용 RDS small까지. 서울 리전 PostgreSQL 18 주문 가능,
+# 2026-11-25 확인). 개인 계정은 비용·리전에 맞춰 tfvars로 바꾸고, 주문 가능 여부를 먼저 확인한다(terraform.tfvars.example)
 variable "db_instance_class" {
-  description = "RDS 인스턴스 클래스 (예: db.t4g.micro). PostgreSQL 18 주문 가능 여부를 먼저 확인한다"
+  description = "RDS 인스턴스 클래스 (과정 계정: db.t4g.micro). PostgreSQL 18 주문 가능 여부를 먼저 확인한다"
   type        = string
+  default     = "db.t4g.micro"
 
   validation {
     condition     = can(regex("^db\\.[a-z0-9]+\\.[a-z0-9]+$", var.db_instance_class))
