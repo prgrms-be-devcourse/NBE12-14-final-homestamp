@@ -311,6 +311,137 @@ class RoomPartApiTest {
         .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
   }
 
+  // ---- 공유를 그만둔 뒤 보이는 범위 (03 6-6 9번, 3-1, 불변식 18, #180 리뷰)
+
+  @Test
+  void 공유를_그만두지_않았으면_asOf가_없고_지금_상태_그대로다() throws Exception {
+    connectLandlord();
+
+    JsonNode listed = listOf(member);
+    assertThat(listed.hasNonNull("asOf")).isFalse();
+    assertThat(listed.get("parts")).hasSize(29);
+  }
+
+  @Test
+  void 세입자가_그만둔_뒤_집주인이_더하고_숨기고_다시_보이고_끈_것은_세입자에게_보이지_않는다() throws Exception {
+    UUID landlord = connectLandlord();
+    UUID closet = partNamed("붙박이장");
+    UUID shoeRack = partNamed("신발장");
+    UUID fridge = partNamed("냉장고");
+    // 그만두기 전: 세입자가 신발장을 숨기고 집주인이 붙박이장을 숨김 → 양쪽 모두 보인다
+    action(shoeRack, "hide", key(), null).andExpect(status().isOk());
+    actionAs(landlord, closet, "hide", null).andExpect(status().isOk());
+    Timestamp stoppedAt = stopSharing("TENANT");
+
+    UUID added =
+        UUID.fromString(
+            body(addAs(landlord, "{\"zone\":\"방\",\"name\":\"다락\"}")
+                    .andExpect(status().isCreated()))
+                .get("id")
+                .asString());
+    actionAs(landlord, closet, "show", null).andExpect(status().isOk());
+    actionAs(landlord, partNamed("현관문·도어락"), "hide", null).andExpect(status().isOk());
+    actionAs(landlord, fridge, "toggle", "{\"enabled\":false}").andExpect(status().isOk());
+
+    JsonNode tenantView = listOf(member);
+    assertThat(tenantView.get("asOf").asString()).isEqualTo(stoppedAt.toInstant().toString());
+    JsonNode tenantParts = tenantView.get("parts");
+    assertThat(tenantParts).hasSize(29);
+    assertThat(has(tenantParts, added)).isFalse();
+    assertThat(find(tenantParts, closet).get("hidden").asBoolean()).isTrue(); // 다시 보이기가 안 보임
+    assertThat(find(tenantParts, partNamed("현관문·도어락")).get("hidden").asBoolean()).isFalse();
+    assertThat(find(tenantParts, fridge).get("enabled").asBoolean()).isTrue();
+    assertThat(find(tenantParts, shoeRack).get("hidden").asBoolean()).isTrue(); // 그만두기 전 내 행동
+
+    // 남은 집주인은 자기 행동을 본다(내 측 ○). 고정 시각은 양쪽에 같다
+    JsonNode landlordView = listOf(landlord);
+    assertThat(landlordView.get("asOf").asString()).isEqualTo(stoppedAt.toInstant().toString());
+    JsonNode landlordParts = landlordView.get("parts");
+    assertThat(landlordParts).hasSize(30);
+    assertThat(find(landlordParts, added).get("hidden").asBoolean()).isFalse();
+    assertThat(find(landlordParts, closet).get("hidden").asBoolean()).isFalse();
+    assertThat(find(landlordParts, partNamed("현관문·도어락")).get("hidden").asBoolean()).isTrue();
+    assertThat(find(landlordParts, fridge).get("enabled").asBoolean()).isFalse();
+  }
+
+  @Test
+  void 집주인이_그만둔_뒤_세입자가_바꾼_것도_집주인에게_보이지_않는다() throws Exception {
+    UUID landlord = connectLandlord();
+    UUID closet = partNamed("붙박이장");
+    action(closet, "hide", key(), null).andExpect(status().isOk());
+    stopSharing("LANDLORD");
+
+    action(closet, "show", key(), null).andExpect(status().isOk());
+    UUID added =
+        UUID.fromString(
+            body(add(key(), "{\"zone\":\"주방\",\"name\":\"식탁\"}").andExpect(status().isCreated()))
+                .get("id")
+                .asString());
+
+    JsonNode landlordParts = listOf(landlord).get("parts");
+    assertThat(find(landlordParts, closet).get("hidden").asBoolean()).isTrue();
+    assertThat(has(landlordParts, added)).isFalse();
+    assertThat(find(list(), closet).get("hidden").asBoolean()).isFalse();
+    assertThat(has(list(), added)).isTrue();
+  }
+
+  @Test
+  void 공유를_그만둔_사람은_부위를_더하거나_숨기거나_다시_보이거나_켜고_끌_수_없다() throws Exception {
+    connectLandlord();
+    UUID closet = partNamed("붙박이장");
+    action(closet, "hide", key(), null).andExpect(status().isOk());
+    stopSharing("TENANT");
+    long before = actions();
+
+    add(key(), "{\"zone\":\"방\",\"name\":\"다락\"}")
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("SHARING_STOPPED"));
+    action(partNamed("신발장"), "hide", key(), null)
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("SHARING_STOPPED"));
+    action(closet, "show", key(), null)
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("SHARING_STOPPED"));
+    action(partNamed("냉장고"), "toggle", key(), "{\"enabled\":false}")
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("SHARING_STOPPED"));
+
+    assertThat(actions()).isEqualTo(before);
+  }
+
+  @Test
+  void 상대가_탈퇴했으면_그만둔_시각이_남아_있어도_고정하지_않는다() throws Exception {
+    UUID landlord = connectLandlord();
+    stopSharing("TENANT");
+    UUID closet = partNamed("붙박이장");
+    actionAs(landlord, closet, "hide", null).andExpect(status().isOk());
+    jdbc.update(
+        "UPDATE state.party SET status = 'WITHDRAWN' WHERE room_record_id = ? AND side = 'LANDLORD'",
+        room);
+
+    JsonNode listed = listOf(member);
+    assertThat(listed.hasNonNull("asOf")).isFalse();
+    assertThat(find(listed.get("parts"), closet).get("hidden").asBoolean()).isTrue();
+  }
+
+  @Test
+  void 다시_공유하면_그만둔_동안의_변경도_보인다() throws Exception {
+    UUID landlord = connectLandlord();
+    stopSharing("TENANT");
+    UUID closet = partNamed("붙박이장");
+    actionAs(landlord, closet, "hide", null).andExpect(status().isOk());
+    assertThat(find(list(), closet).get("hidden").asBoolean()).isFalse();
+
+    jdbc.update(
+        "UPDATE state.party SET status = 'CONNECTED', sharing_stopped_at = NULL"
+            + " WHERE room_record_id = ? AND side = 'TENANT'",
+        room);
+
+    JsonNode listed = listOf(member);
+    assertThat(listed.hasNonNull("asOf")).isFalse();
+    assertThat(find(listed.get("parts"), closet).get("hidden").asBoolean()).isTrue();
+  }
+
   // ---- 준비물
 
   private ResultActions add(String key, String body) throws Exception {
@@ -349,9 +480,74 @@ class RoomPartApiTest {
   }
 
   private JsonNode list() throws Exception {
+    return listOf(member).get("parts");
+  }
+
+  /** {@code {asOf, parts}} 전체. */
+  private JsonNode listOf(UUID viewer) throws Exception {
     return body(
-        mvc.perform(get("/api/rooms/{id}/parts", room).with(loginAs(member)))
+        mvc.perform(get("/api/rooms/{id}/parts", room).with(loginAs(viewer)))
             .andExpect(status().isOk()));
+  }
+
+  private static boolean has(JsonNode parts, UUID id) {
+    for (JsonNode part : parts) {
+      if (part.get("id").asString().equals(id.toString())) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** 집주인 자리에 회원을 연결한다(초대·연결 API는 아직 없음, #163). */
+  private UUID connectLandlord() {
+    UUID landlord = member();
+    jdbc.update(
+        "UPDATE state.party SET member_id = ?, status = 'CONNECTED',"
+            + " connected_at = CURRENT_TIMESTAMP WHERE room_record_id = ? AND side = 'LANDLORD'",
+        landlord,
+        room);
+    return landlord;
+  }
+
+  /**
+   * 이 측이 공유를 그만둔다. 시각은 이 호실의 마지막 행동 시각이라(앱 시계) 그때까지의 행동은 보이고 그 뒤 요청은 모두 뒤가 된다. 공유 그만두기 API는 아직 없어
+   * 행만 바꾼다.
+   */
+  private Timestamp stopSharing(String side) {
+    Timestamp at =
+        jdbc.queryForObject(
+            "SELECT max(created_at) FROM record.action WHERE room_record_id = ?",
+            Timestamp.class,
+            room);
+    jdbc.update(
+        "UPDATE state.party SET status = 'SHARING_STOPPED', sharing_stopped_at = ?"
+            + " WHERE room_record_id = ? AND side = ?",
+        at,
+        room,
+        side);
+    return at;
+  }
+
+  private ResultActions actionAs(UUID actor, UUID partId, String verb, String body)
+      throws Exception {
+    var request =
+        post("/api/rooms/{room}/parts/{part}/" + verb, room, partId)
+            .with(loginAs(actor))
+            .header("Idempotency-Key", key());
+    if (body != null) {
+      request = request.contentType(MediaType.APPLICATION_JSON).content(body);
+    }
+    return mvc.perform(request);
+  }
+
+  private ResultActions addAs(UUID actor, String body) throws Exception {
+    return mvc.perform(
+        post("/api/rooms/{id}/parts", room)
+            .with(loginAs(actor))
+            .header("Idempotency-Key", key())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body));
   }
 
   private JsonNode body(ResultActions result) throws Exception {

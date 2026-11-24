@@ -16,6 +16,11 @@ public record PartState(boolean exists, boolean toggleable, boolean enabled, boo
   /** 직접 더한 부위: 켬, 보임, 켜고 끌 수 없음. */
   public static final PartState ADDED = new PartState(true, false, true, false);
 
+  /** 호실을 만들 때 기본 목록에서 복사한 부위: 켬, 보임(행동 없이 생긴다). */
+  public static PartState copied(boolean toggleable) {
+    return new PartState(true, toggleable, true, false);
+  }
+
   public PartState withHidden(boolean newHidden) {
     return new PartState(exists, toggleable, enabled, newHidden);
   }

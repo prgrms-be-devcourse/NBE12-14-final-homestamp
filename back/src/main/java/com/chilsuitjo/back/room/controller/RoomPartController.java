@@ -3,11 +3,11 @@ package com.chilsuitjo.back.room.controller;
 import com.chilsuitjo.back.global.security.LoginMember;
 import com.chilsuitjo.back.room.dto.AddPartRequest;
 import com.chilsuitjo.back.room.dto.PartChanged;
+import com.chilsuitjo.back.room.dto.RoomPartList;
 import com.chilsuitjo.back.room.dto.RoomPartView;
 import com.chilsuitjo.back.room.dto.TogglePartRequest;
 import com.chilsuitjo.back.room.service.RoomPartService;
 import jakarta.validation.Valid;
-import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -31,9 +31,12 @@ public class RoomPartController {
 
   private final RoomPartService parts;
 
-  /** 부위 목록. 숨긴 부위도 {@code hidden: true}로 들어 있다(ROOM-3a). */
+  /**
+   * 부위 목록 {@code {asOf, parts}}. 숨긴 부위도 {@code hidden: true}로 들어 있다(ROOM-3a). 공유를 그만둔 뒤면 그 시각으로
+   * 고정하고 {@code asOf}에 그 시각을 준다(03 6-6 9번).
+   */
   @GetMapping("/api/rooms/{roomId}/parts")
-  public List<RoomPartView> list(@PathVariable UUID roomId, @LoginMember UUID memberId) {
+  public RoomPartList list(@PathVariable UUID roomId, @LoginMember UUID memberId) {
     return parts.list(roomId, memberId);
   }
 

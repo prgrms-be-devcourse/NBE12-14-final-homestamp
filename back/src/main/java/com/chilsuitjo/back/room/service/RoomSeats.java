@@ -42,6 +42,17 @@ record RoomSeats(RoomRecord room, List<Party> parties) {
   }
 
   /**
+   * 이 회원에게 보이는 범위를 고정하는 시각(03 6-6 9번, 3-1 "모든 줄에 같게", 불변식 18). 두 측 중 이른 공유 중단 시각이고, 상대가 탈퇴했으면 함께 볼
+   * 상대가 없어 고정하지 않는다(null). 수리 건의 {@code RepairStateStore.sharingCutoff}와 같은 기준이다(#175).
+   */
+  Instant visibleCutoffFor(Party mine) {
+    if (counterpartOf(mine).getStatus() == PartyStatus.WITHDRAWN) {
+      return null;
+    }
+    return earliestSharingStoppedAt();
+  }
+
+  /**
    * 이 회원이 공유를 그만둔 채라 막혀야 하는지. 상대가 탈퇴했으면 함께 볼 상대가 없어 제한이 풀린다(03 B, 06 CONS-3p). 판단은 상대 자리 상태로 하고 남아
    * 있는 {@code sharing_stopped_at}은 보지 않는다.
    */
