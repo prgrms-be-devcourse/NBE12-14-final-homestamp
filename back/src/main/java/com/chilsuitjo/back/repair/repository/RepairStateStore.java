@@ -114,14 +114,21 @@ public class RepairStateStore {
     if (target.kind() != TargetKind.REPAIR_CASE) {
       throw new IllegalArgumentException("수리 건이 아닌 대상이에요: " + target);
     }
-    RepairCase row = row(command);
+    return current(row(command));
+  }
+
+  /**
+   * 이 수리 건 행의 지금 상태({@link #load}와 같은 값). 상세 조회가 {@code availableActions}를 계산할 때도 쓴다(06 4-0 "서버의 같은
+   * 함수"). 트랜잭션 안에서 부른다(행동 기록 읽기가 {@code MANDATORY}).
+   */
+  public RepairState current(RepairCase row) {
     int contentNo =
         contents
             .findById(row.getCurrentContentId())
             .orElseThrow(() -> new IllegalStateException("지금 판이 없어요: " + row.getId()))
             .getNo();
     Instant lastSupplementAt =
-        actions.findByTarget(target).stream()
+        actions.findByTarget(ActionTarget.repairCase(row.getId())).stream()
             .filter(entry -> entry.type() == ActionType.SUPPLEMENT)
             .map(ActionEntry::createdAt)
             .max(Instant::compareTo)
@@ -134,7 +141,7 @@ public class RepairStateStore {
         row.getCreatedBySide(),
         contentNo,
         lastSupplementAt,
-        canOpenDefectConfirm(room, command.roomRecordId()),
+        canOpenDefectConfirm(room, row.getRoomRecordId()),
         hiddenFromCounterpart(room, row));
   }
 
@@ -155,6 +162,25 @@ public class RepairStateStore {
    * 보이므로(03 1-4) 연결 여부는 보지 않는다.
    */
   private static boolean hiddenFromCounterpart(RoomParties room, RepairCase row) {
+    Instant stopped = sharingCutoff(room);
+    return stopped != null && row.getCreatedAt().isAfter(stopped);
+  }
+
+  /**
+   * 이 호실에서 보이는 범위를 고정하는 시각(03 6-6 9번 "그만둔 시각 기준으로 고정", 3-1 "모든 줄에 같게"). 제한이 살아 있는 공유 중단 시각 중 이른
+   * 것이고, 없으면 비어 있다. 공유 중단은 양방향이라 어느 쪽이 그만뒀든 같다. 상대가 탈퇴해 풀린 공유 중단은 보지 않는다({@code RoomParties}, 06
+   * CONS-3p·3q). 이 시각보다 뒤에 남은 상대 측 행동은 보는 사람에게 보이지 않는다(불변식 18).
+   *
+   * <p>탈퇴로 풀리는지는 <b>보는 사람 기준</b>이다({@code RoomParties}가 "내 측"에서 판단): 보는 사람의 상대가 탈퇴했으면 두 측의 중단 모두 보지
+   * 않는다(#175).
+   *
+   * @param viewer 보는 사람의 측
+   */
+  public Optional<Instant> sharingCutoff(RepairCase row, PartySide viewer) {
+    return Optional.ofNullable(sharingCutoff(parties.read(row.getRoomRecordId(), viewer)));
+  }
+
+  private static Instant sharingCutoff(RoomParties room) {
     Instant stopped = null;
     if (room.mySharingStoppedApplies()) {
       stopped = room.mine().sharingStoppedAt();
@@ -163,7 +189,7 @@ public class RepairStateStore {
       Instant theirs = room.counterpart().sharingStoppedAt();
       stopped = stopped == null || theirs.isBefore(stopped) ? theirs : stopped;
     }
-    return stopped != null && row.getCreatedAt().isAfter(stopped);
+    return stopped;
   }
 
   private RepairCase row(ActionCommand command) {

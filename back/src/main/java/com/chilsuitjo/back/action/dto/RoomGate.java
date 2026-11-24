@@ -1,6 +1,10 @@
 package com.chilsuitjo.back.action.dto;
 
+import com.chilsuitjo.back.action.rule.ActionType;
+import com.chilsuitjo.back.action.rule.ActionType.Allow;
 import com.chilsuitjo.back.global.common.PartySide;
+import com.chilsuitjo.back.global.error.ErrorCode;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -24,6 +28,29 @@ public record RoomGate(
     boolean joinedAway,
     boolean mySharingStopped,
     boolean ended) {
+
+  /**
+   * 이 호실에서 회원·링크 주체가 이 행동을 할 수 없는 이유(pipeline 3단계, 09 3-1). 할 수 있으면 비어 있다. 여럿이 겹치면 정산 완료 → 거주 종료 →
+   * 합류 전 기록 → 공유 중단 순서로 앞의 것을 돌려준다(정산 완료면 거주 종료도 참이라 {@code SETTLED}가 먼저).
+   *
+   * <p>pipeline과 상세 조회의 {@code availableActions}(06 4-0 "할 수 있는 행동")가 함께 쓴다. 그래서 화면에 보이는 버튼과 실제 요청의
+   * 거절이 같은 판단에서 나온다. 서버·운영 행동은 pipeline이 이 검사를 건너뛴다.
+   */
+  public Optional<ErrorCode> rejection(ActionType type) {
+    if (settled && !type.allows(Allow.AFTER_SETTLED)) {
+      return Optional.of(ErrorCode.SETTLED);
+    }
+    if (ended && type.blockedAfterEnded()) {
+      return Optional.of(ErrorCode.ROOM_ENDED);
+    }
+    if (joinedAway && !type.allows(Allow.ON_JOINED)) {
+      return Optional.of(ErrorCode.JOINED_RECORD);
+    }
+    if (mySharingStopped && !type.allows(Allow.WHILE_SHARING_STOPPED)) {
+      return Optional.of(ErrorCode.SHARING_STOPPED);
+    }
+    return Optional.empty();
+  }
 
   /** 거주 중이고 막히는 것이 없는 호실. */
   public static RoomGate open(UUID roomRecordId, PartySide side) {
