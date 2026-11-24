@@ -2,7 +2,7 @@ import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { ActionDialog } from "@/components/action-dialog"
+import { ActionDialog } from "@/components/common/action-dialog"
 import { readPhotos } from "@/lib/photos"
 
 // 보류·이견을 받은 쪽의 [보충하고 다시 확인 요청] / (이대로 둘게요)(08-화면-기본-틀 2장, 03 G '응답과 그 뒤').

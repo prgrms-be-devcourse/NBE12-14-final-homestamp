@@ -18,7 +18,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Logo } from "@/components/prototype"
+import { Logo } from "@/components/common/blocks"
 import { errorMessage } from "@/api/errors"
 import {
   DEV_FIXED_CODE,
@@ -29,7 +29,7 @@ import {
   type Account,
   type AuthApi,
 } from "@/api/auth"
-import { Notice } from "@/components/notice"
+import { Notice } from "@/components/common/notice"
 
 type Mode = "login" | "signup"
 // S-01 가입(휴대폰 → 계정 → 확인 항목) · S-02 로그인

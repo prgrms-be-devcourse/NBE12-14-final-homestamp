@@ -1,7 +1,7 @@
 import { post, settlementIdOf, type RecordRequest } from "@/api/records"
 import { endpoints } from "@/api/endpoints"
 import { Button } from "@/components/ui/button"
-import { Panel, Status } from "@/components/prototype"
+import { Panel, Status } from "@/components/common/blocks"
 import {
   uid,
   won,

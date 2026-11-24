@@ -2,10 +2,10 @@ import type { RecordRequest } from "@/api/records"
 import { useRef, type ReactNode } from "react"
 import { Link2, ShieldCheck } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Empty, Panel, Status, Timeline } from "@/components/prototype"
-import { Notice } from "@/components/notice"
-import { PhotoGallery } from "@/components/photo-gallery"
-import { RecordDescription } from "@/components/record-description"
+import { Empty, Panel, Status, Timeline } from "@/components/common/blocks"
+import { Notice } from "@/components/common/notice"
+import { PhotoGallery } from "@/features/photo/photo-gallery"
+import { RecordDescription } from "@/components/common/record-description"
 import type {
   DemoState,
   Inspection,
@@ -35,8 +35,8 @@ import {
   WrongPhotos,
   RepairMaskedNotes,
 } from "@/features/repair/repair-records"
-import { CauseNotes, CostAgreement } from "@/features/repair/repair-discussions"
-import { RepairPayments } from "@/features/repair/repair-payments"
+import { CauseNotes, CostAgreement } from "@/features/proposal/repair-discussions"
+import { RepairPayments } from "@/features/payment/repair-payments"
 import { afterMasks, beforeMasks, type maskOf } from "@/lib/photo-privacy"
 import { safeSharedText } from "@/lib/service-rules"
 import { plainText } from "@/lib/plain-words"

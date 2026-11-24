@@ -9,7 +9,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Art } from "@/components/prototype"
+import { Art } from "@/components/common/blocks"
 import type { PhotoMask } from "@/data/demo"
 import { maskLabel } from "@/lib/photo-privacy"
 

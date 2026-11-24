@@ -11,8 +11,8 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { Choice, Status } from "@/components/prototype"
-import { ActionDialog } from "@/components/action-dialog"
+import { Choice, Status } from "@/components/common/blocks"
+import { ActionDialog } from "@/components/common/action-dialog"
 import {
   CorrectionHistory,
   CorrectionPanel,
@@ -51,8 +51,8 @@ import {
   RespondButtons,
   type RespondAnswer,
 } from "@/components/common/respond-buttons"
-import { Fold } from "@/components/fold"
-import { MaskedPhotoNotes, PhotoManageList } from "@/components/photo-masks"
+import { Fold } from "@/components/common/fold"
+import { MaskedPhotoNotes, PhotoManageList } from "@/features/photo/photo-masks"
 import { maskOf, maskPhoto, objectToMask } from "@/lib/photo-privacy"
 import {
   Camera,
@@ -61,7 +61,7 @@ import {
   Link2,
   Pencil,
 } from "lucide-react"
-import { MoreMenu } from "@/components/more-menu"
+import { MoreMenu } from "@/components/common/more-menu"
 
 export type OnInspectionAct = (
   request: RecordRequest,

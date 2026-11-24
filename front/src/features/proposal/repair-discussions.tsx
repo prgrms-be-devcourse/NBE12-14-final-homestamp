@@ -5,12 +5,12 @@ import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { Choice, Panel, Status } from "@/components/prototype"
-import { ActionDialog } from "@/components/action-dialog"
+import { Choice, Panel, Status } from "@/components/common/blocks"
+import { ActionDialog } from "@/components/common/action-dialog"
 import { tryOn } from "@/lib/try-on"
-import { MoneyInput } from "@/components/money-input"
-import { PhotoGallery } from "@/components/photo-gallery"
-import { RecordDescription } from "@/components/record-description"
+import { MoneyInput } from "@/components/common/money-input"
+import { PhotoGallery } from "@/features/photo/photo-gallery"
+import { RecordDescription } from "@/components/common/record-description"
 import {
   won,
   type BurdenLine,
@@ -36,9 +36,9 @@ import {
   workTotal,
 } from "@/lib/repair-rules"
 import { sideName, sideText } from "@/lib/words"
-import { Fold } from "@/components/fold"
+import { Fold } from "@/components/common/fold"
 import { History } from "lucide-react"
-import { Notice } from "@/components/notice"
+import { Notice } from "@/components/common/notice"
 import type { RepairCommand } from "@/features/repair/use-repair-case"
 
 // request는 06 4장의 주소(api/records), text·update는 목업이 서버 대신 쓰는 값이에요

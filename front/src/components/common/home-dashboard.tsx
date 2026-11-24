@@ -18,8 +18,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { Status, Timeline } from "@/components/prototype"
-import { EmptyState } from "@/components/states"
+import { Status, Timeline } from "@/components/common/blocks"
+import { EmptyState } from "@/components/common/states"
 import type { Event, Notice, Repair, Role, Room } from "@/data/demo"
 import type { Page } from "@/lib/router"
 import { myTurn } from "@/lib/turn"

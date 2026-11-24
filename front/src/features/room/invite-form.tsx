@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { Input } from "@/components/ui/input"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Notice } from "@/components/notice"
+import { Notice } from "@/components/common/notice"
 import { FormDialog } from "@/components/common/form-dialog"
 import { ConsentList } from "@/components/common/consent-list"
 import { post } from "@/api/records"

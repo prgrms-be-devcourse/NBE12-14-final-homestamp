@@ -1,6 +1,6 @@
 import { test, expect } from "vitest"
 import { fireEvent, render, screen } from "@testing-library/react"
-import { MoneyInput } from "../src/components/money-input"
+import { MoneyInput } from "../src/components/common/money-input"
 import { formatMoneyInput, formatWon, parseMoney } from "../src/lib/money"
 
 test("원화 입력은 즉시 쉼표를 표시하고 파서는 숫자로 복원한다", () => {

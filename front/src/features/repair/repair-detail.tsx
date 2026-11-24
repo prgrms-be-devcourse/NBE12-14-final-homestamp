@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
-import { DetailMoreContext, type MoreItem } from "@/components/detail-more"
+import { DetailMoreContext, type MoreItem } from "@/features/repair/detail-more"
 import {
   ArrowLeft,
   Camera,
@@ -12,7 +12,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { type Event, type Repair, type Role, type Room } from "@/data/demo"
-import { StatusTag, TurnBadge } from "@/components/home-dashboard"
+import { StatusTag, TurnBadge } from "@/components/common/home-dashboard"
 import { repairSummary } from "@/features/repair/repair-summary"
 import { cn } from "cn"
 import { myTurn } from "@/lib/turn"

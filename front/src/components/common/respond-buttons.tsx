@@ -2,7 +2,7 @@ import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
-import { ActionDialog } from "@/components/action-dialog"
+import { ActionDialog } from "@/components/common/action-dialog"
 
 // 응답 두 버튼(08-화면-기본-틀 2장, 09 5장 "같은 뜻은 한 부품").
 // 하자, 지불 금액, 점검 항목, 송금, 고친 내용, 상황 변화 모두 이 부품 하나로 답해요.

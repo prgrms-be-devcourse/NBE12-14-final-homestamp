@@ -2,8 +2,8 @@ import { expect, test } from "vitest"
 import { fireEvent, render, screen } from "@testing-library/react"
 import { createDemo, type Repair } from "../src/data/demo"
 import { maskOf, maskPhoto, objectToMask } from "../src/lib/photo-privacy"
-import { PhotoManageList } from "../src/components/photo-masks"
-import { PhotoGallery } from "../src/components/photo-gallery"
+import { PhotoManageList } from "../src/features/photo/photo-masks"
+import { PhotoGallery } from "../src/features/photo/photo-gallery"
 
 const repair = (): Repair => ({
   ...structuredClone(createDemo().repairs[0]),

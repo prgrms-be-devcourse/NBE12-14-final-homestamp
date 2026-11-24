@@ -1,8 +1,8 @@
 import type { PartPhoto } from "@/data/demo"
 import { safeSharedText } from "@/lib/service-rules"
 import { sideName } from "@/lib/words"
-import { PhotoGallery } from "@/components/photo-gallery"
-import { RecordDescription } from "@/components/record-description"
+import { PhotoGallery } from "@/features/photo/photo-gallery"
+import { RecordDescription } from "@/components/common/record-description"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 

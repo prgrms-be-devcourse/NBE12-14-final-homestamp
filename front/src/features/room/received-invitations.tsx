@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button"
-import { Panel, Status } from "@/components/prototype"
+import { Panel, Status } from "@/components/common/blocks"
 import { inviteeSide, isSettlementInvitation } from "@/lib/workflows"
 import { maskPhone } from "@/api/auth"
 import type { Room } from "@/data/demo"

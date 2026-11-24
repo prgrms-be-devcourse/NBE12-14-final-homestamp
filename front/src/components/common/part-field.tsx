@@ -1,5 +1,5 @@
 import { Input } from "@/components/ui/input"
-import { Choice } from "@/components/prototype"
+import { Choice } from "@/components/common/blocks"
 import { partGroups } from "@/data/demo"
 
 // 구역 · 부위 칸(하자 등록 · 점검). 퇴거 때 같은 부위끼리 비교하는 기준이에요.

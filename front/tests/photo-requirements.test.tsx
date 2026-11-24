@@ -6,7 +6,7 @@ import {
   requestClose,
   soloClose,
 } from "../src/lib/repair-rules"
-import { RepairPayments } from "../src/features/repair/repair-payments"
+import { RepairPayments } from "../src/features/payment/repair-payments"
 import { paymentAvailableActions } from "../src/api/mock/repair-actions"
 
 const doing = (afterPhotos?: string[]): Repair => ({

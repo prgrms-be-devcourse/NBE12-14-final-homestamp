@@ -15,10 +15,10 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog"
-import { MoneyInput } from "@/components/money-input"
-import { Panel, Status, Choice } from "@/components/prototype"
-import { CountChip } from "@/components/fold"
-import { MoreMenu } from "@/components/more-menu"
+import { MoneyInput } from "@/components/common/money-input"
+import { Panel, Status, Choice } from "@/components/common/blocks"
+import { CountChip } from "@/components/common/fold"
+import { MoreMenu } from "@/components/common/more-menu"
 import { cn } from "cn"
 import { parseMoney } from "@/lib/money"
 import { newAmountOffer, respondToOffer, roomTransfers } from "@/lib/workflows"

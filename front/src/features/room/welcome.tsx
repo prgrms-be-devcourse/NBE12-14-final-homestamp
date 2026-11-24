@@ -1,7 +1,7 @@
 import { Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
-import { Notice } from "@/components/notice"
+import { Notice } from "@/components/common/notice"
 
 // 첫 화면(S-03 빈 화면): 호실 기록이 없을 때는 만들기 하나만 크게
 export function Welcome({

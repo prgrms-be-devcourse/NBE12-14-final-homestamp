@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button"
-import { Notice } from "@/components/notice"
+import { Notice } from "@/components/common/notice"
 import { other, type Role, type Room } from "@/data/demo"
 import { sideName } from "@/lib/words"
 

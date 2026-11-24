@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { Input } from "@/components/ui/input"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
-import { Notice } from "@/components/notice"
+import { Notice } from "@/components/common/notice"
 import { AddressSearch } from "@/components/address-search"
 import { FormDialog } from "@/components/common/form-dialog"
 import { post } from "@/api/records"

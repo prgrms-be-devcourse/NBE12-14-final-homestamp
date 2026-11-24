@@ -1,6 +1,6 @@
 import { test, expect } from "vitest"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
-import { PhotoGallery } from "../src/components/photo-gallery"
+import { PhotoGallery } from "../src/features/photo/photo-gallery"
 
 const photos = [
   "data:image/png;base64,first",

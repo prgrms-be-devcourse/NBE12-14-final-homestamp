@@ -21,7 +21,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog"
-import { Status, Logo, Panel, Empty, Choice } from "@/components/prototype"
+import { Status, Logo, Panel, Empty, Choice } from "@/components/common/blocks"
 import {
   partGroups,
   type Role,
@@ -33,7 +33,7 @@ import {
   type RecordTarget,
 } from "@/data/demo"
 import { useRouter, type Page } from "@/lib/router"
-import { LoadingState, NotFoundState } from "@/components/states"
+import { LoadingState, NotFoundState } from "@/components/common/states"
 import { NotificationsPage } from "@/pages/notifications-page"
 import { RepairDetailPage } from "@/pages/repair-detail-page"
 import { InspectionPage } from "@/pages/inspection-page"
@@ -58,17 +58,17 @@ import {
 } from "@/api/records"
 import { endpoints } from "@/api/endpoints"
 import { createAuth, type Account } from "@/api/auth"
-import { AuthScreen } from "@/components/auth-screen"
-import { PhotoGallery } from "@/components/photo-gallery"
-import { ReceivedInvitations } from "@/components/received-invitations"
-import { PartPhotoContent } from "@/components/part-photo-content"
-import { RecordDescription } from "@/components/record-description"
+import { AuthScreen } from "@/features/auth/auth-screen"
+import { PhotoGallery } from "@/features/photo/photo-gallery"
+import { ReceivedInvitations } from "@/features/room/received-invitations"
+import { PartPhotoContent } from "@/features/photo/part-photo-content"
+import { RecordDescription } from "@/components/common/record-description"
 import { maskOf } from "@/lib/photo-privacy"
-import { MoneyLeftNotice } from "@/features/repair/money-left"
+import { MoneyLeftNotice } from "@/features/payment/money-left"
 import { RepairAfterForm } from "@/features/repair/repair-after-form"
-import { PhoneForm } from "@/features/connection/phone-form"
-import { ConnectForm } from "@/features/connection/connect-form"
-import { InviteForm } from "@/features/connection/invite-form"
+import { PhoneForm } from "@/features/room/phone-form"
+import { ConnectForm } from "@/features/room/connect-form"
+import { InviteForm } from "@/features/room/invite-form"
 import { SettlementItemForm } from "@/features/settlement/settlement-item-form"
 import { RoomForm } from "@/features/room/room-form"
 import { InspectionItemForm } from "@/features/inspection/inspection-item-form"
@@ -76,7 +76,7 @@ import {
   RepairCreateForm,
   type RepairPrefill,
 } from "@/features/repair/repair-create-form"
-import { AccountPanel } from "@/features/account/account-panel"
+import { AccountPanel } from "@/features/member/account-panel"
 import { InspectionItemCorrections } from "@/features/inspection/inspection-corrections"
 import { syncRepairSettlements } from "@/lib/repair-rules"
 import {
@@ -101,10 +101,10 @@ import "./App.css"
 import "./readability.css"
 import "./service.css"
 import { sideText } from "@/lib/words"
-import { Notice } from "@/components/notice"
-import { Welcome } from "@/components/welcome"
-import { SideMenu } from "@/components/side-menu"
-import { nav, pageIntro } from "@/components/app-nav"
+import { Notice } from "@/components/common/notice"
+import { Welcome } from "@/features/room/welcome"
+import { SideMenu } from "@/components/common/side-menu"
+import { nav, pageIntro } from "@/components/common/app-nav"
 import {
   Sheet,
   SheetContent,

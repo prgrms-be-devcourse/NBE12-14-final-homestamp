@@ -4,8 +4,8 @@ import { useImperativeHandle, useState, type Ref } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { Choice } from "@/components/prototype"
-import { ActionDialog } from "@/components/action-dialog"
+import { Choice } from "@/components/common/blocks"
+import { ActionDialog } from "@/components/common/action-dialog"
 import { tryOn } from "@/lib/try-on"
 import { CorrectionPanel } from "@/components/common/correction-box"
 import {
@@ -33,8 +33,8 @@ import { versionOf } from "@/lib/versions"
 import type { RepairCommand } from "@/features/repair/use-repair-case"
 import type { CorrectionAction } from "@/api/actions"
 import { sideText } from "@/lib/words"
-import { Fold } from "@/components/fold"
-import { MaskedPhotoNotes, PhotoManageList } from "@/components/photo-masks"
+import { Fold } from "@/components/common/fold"
+import { MaskedPhotoNotes, PhotoManageList } from "@/features/photo/photo-masks"
 import {
   maskOf,
   maskPhoto,

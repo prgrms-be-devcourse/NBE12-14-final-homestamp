@@ -1,6 +1,6 @@
 import { Wallet } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Status } from "@/components/prototype"
+import { Status } from "@/components/common/blocks"
 import { won, type Repair, type Role } from "@/data/demo"
 import { moneyLeftDetail } from "@/lib/repair-rules"
 

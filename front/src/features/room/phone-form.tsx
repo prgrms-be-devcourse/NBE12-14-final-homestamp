@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { Input } from "@/components/ui/input"
-import { Notice } from "@/components/notice"
+import { Notice } from "@/components/common/notice"
 import { FormDialog } from "@/components/common/form-dialog"
 import { notInSpec } from "@/api/records"
 import { maskPhone } from "@/api/auth"

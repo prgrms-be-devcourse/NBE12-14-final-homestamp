@@ -5,12 +5,12 @@ import {
   useState,
   type ComponentType,
 } from "react"
-import { DetailMoreContext } from "@/components/detail-more"
+import { DetailMoreContext } from "@/features/repair/detail-more"
 import { Camera, Clock, RotateCcw, Wrench } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import { Choice, Status } from "@/components/prototype"
-import { ActionDialog } from "@/components/action-dialog"
+import { Choice, Status } from "@/components/common/blocks"
+import { ActionDialog } from "@/components/common/action-dialog"
 import type { Repair, Role, Room } from "@/data/demo"
 import { hasAction, type RepairAction } from "@/api/actions"
 import {

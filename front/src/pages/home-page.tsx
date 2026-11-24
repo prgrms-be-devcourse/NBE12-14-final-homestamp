@@ -1,7 +1,7 @@
 import type { ComponentProps } from "react"
 import { ClipboardCheck, Wrench } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { HomeDashboard } from "@/components/home-dashboard"
+import { HomeDashboard } from "@/components/common/home-dashboard"
 
 // S-03 홈(호실 요약). 처음 쓰는 사람에게는 할 일 하나를 먼저 보여 줘요(06 5-0 '빈 화면').
 type HomePageProps = ComponentProps<typeof HomeDashboard> & {

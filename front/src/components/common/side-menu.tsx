@@ -1,9 +1,9 @@
 import { LogOut } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Logo, Status } from "@/components/prototype"
+import { Logo, Status } from "@/components/common/blocks"
 import type { Room } from "@/data/demo"
 import type { Page } from "@/lib/router"
-import { nav } from "@/components/app-nav"
+import { nav } from "@/components/common/app-nav"
 
 export function SideMenu({
   page,

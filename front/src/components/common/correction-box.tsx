@@ -1,8 +1,8 @@
 import type { ReactNode } from "react"
 import { PencilLine } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Status } from "@/components/prototype"
-import { Fold } from "@/components/fold"
+import { Status } from "@/components/common/blocks"
+import { Fold } from "@/components/common/fold"
 import { LongText } from "@/components/common/long-text"
 import {
   RespondButtons,

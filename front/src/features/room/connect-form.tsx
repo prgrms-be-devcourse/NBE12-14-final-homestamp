@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
-import { Choice } from "@/components/prototype"
+import { Choice } from "@/components/common/blocks"
 import { FormDialog } from "@/components/common/form-dialog"
 import { ConsentList } from "@/components/common/consent-list"
 import { post } from "@/api/records"
