@@ -26,6 +26,7 @@ import com.chilsuitjo.back.notification.service.WaitService;
 import com.chilsuitjo.back.repair.entity.RepairCase;
 import com.chilsuitjo.back.repair.entity.RepairContent;
 import com.chilsuitjo.back.repair.rule.RepairState;
+import com.chilsuitjo.back.repair.rule.RepairStatus;
 import com.chilsuitjo.back.room.service.RoomQueryService;
 import java.time.Instant;
 import java.util.List;
@@ -89,6 +90,14 @@ public class RepairStateStore {
   }
 
   /**
+   * 수리 진행(06 REP-4·5: 시작·종료 요청·종료 확인·아직 안 됐어요)의 저장 방법. 수리 진행과 끝낸 측을 바꾸고, 종료 요청이면 종료 확인 요청을 열고, 종료
+   * 확인·아직 안 됐어요면 그 요청을 "답함"으로 닫는다.
+   */
+  public StateStore<RepairState> progressing() {
+    return new Progressing();
+  }
+
+  /**
    * 응답할 때 본 판의 내용 지문 재료(본 판에 대고 하는 행동은 그 판, 안내서 3-3). 판은 고칠 수 없어서(B) pipeline 잠금 전에 읽어도 값이 같다. 그런
    * 판이 없으면 빈 값이고, 그때는 {@code apply}가 판 번호가 달라 {@code VERSION_CONFLICT}로 막는다.
    */
@@ -127,8 +136,9 @@ public class RepairStateStore {
             .findById(row.getCurrentContentId())
             .orElseThrow(() -> new IllegalStateException("지금 판이 없어요: " + row.getId()))
             .getNo();
+    List<ActionEntry> history = actions.findByTarget(ActionTarget.repairCase(row.getId()));
     Instant lastSupplementAt =
-        actions.findByTarget(ActionTarget.repairCase(row.getId())).stream()
+        history.stream()
             .filter(entry -> entry.type() == ActionType.SUPPLEMENT)
             .map(ActionEntry::createdAt)
             .max(Instant::compareTo)
@@ -141,19 +151,38 @@ public class RepairStateStore {
         row.getCreatedBySide(),
         contentNo,
         lastSupplementAt,
-        canOpenDefectConfirm(room, row.getRoomRecordId()),
+        row.getClosedBy(),
+        closeRequestedBy(row, history),
+        canOpen(room, row.getRoomRecordId(), RequestKind.DEFECT_CONFIRM),
+        canOpen(room, row.getRoomRecordId(), RequestKind.CLOSE_CONFIRM),
         hiddenFromCounterpart(room, row));
   }
 
   /**
-   * 지금 하자 확인 요청을 열 수 있나(03 K "거주 종료 뒤", 1-4). 호실 단계는 {@code CounterpartReader}가 실제 호실 상태로
+   * 지금 종료를 요청한 측: 종료 확인 대기일 때 마지막 {@code REQUEST_CLOSE}의 측(행동 기록이 원본, 상태 행에 칸이 없음). 대기가 아니면 null.
+   * 행동은 {@code room_seq} 순이라 마지막 것이 지금 요청이다.
+   */
+  private static PartySide closeRequestedBy(RepairCase row, List<ActionEntry> history) {
+    if (row.getStatus() != RepairStatus.CLOSE_WAIT) {
+      return null;
+    }
+    PartySide side = null;
+    for (ActionEntry entry : history) {
+      if (entry.type() == ActionType.REQUEST_CLOSE) {
+        side = entry.actorSide();
+      }
+    }
+    return side;
+  }
+
+  /**
+   * 지금 이 종류의 확인 요청을 열 수 있나(03 K "거주 종료 뒤", 1-4). 호실 단계는 {@code CounterpartReader}가 실제 호실 상태로
    * 돌려주고({@code RoomParties.canOpen} = {@code RequestOpening}), 그 위에 notification이 막아 둔 것도 함께
    * 본다({@code WaitService.canOpen}). 지금 {@code FakeWaitService}는 호실 단계를 보지 않아서, 호실 단계를 여기서도 봐야 거주
-   * 종료 뒤 보충이 막힌다(#157 리뷰).
+   * 종료 뒤 보충·종료 요청이 막힌다(#157 리뷰).
    */
-  private boolean canOpenDefectConfirm(RoomParties room, UUID roomRecordId) {
-    return room.canOpen(RequestKind.DEFECT_CONFIRM)
-        && waits.canOpen(roomRecordId, RequestKind.DEFECT_CONFIRM);
+  private boolean canOpen(RoomParties room, UUID roomRecordId, RequestKind kind) {
+    return room.canOpen(kind) && waits.canOpen(roomRecordId, kind);
   }
 
   /**
@@ -300,6 +329,41 @@ public class RepairStateStore {
       waits.answered(defectRequest(command), RequestKind.DEFECT_CONFIRM, command.actor().side());
       return SavedState.unchanged();
     }
+  }
+
+  private final class Progressing implements StateStore<RepairState> {
+
+    @Override
+    public RepairState load(ActionCommand command) {
+      return RepairStateStore.this.load(command);
+    }
+
+    /**
+     * 수리 진행만 바꾼다(하자 인정은 그대로). 종료 확인 요청은 종료를 요청한 측이 연 요청이고, 받는 쪽이 답하면 닫힌다. 판을 보지 않는 행동이라 내용 지문은
+     * 없다(안내서 3-3). 수리 시작·종료 확인·아직 안 됐어요의 서비스 안 알림은 알리기 PR에서 붙인다.
+     */
+    @Override
+    public SavedState save(ActionCommand command, RepairState next) {
+      row(command).changeProgress(next.status(), next.closedBy());
+      PartySide side = command.actor().side();
+      switch (command.type()) {
+        case REQUEST_CLOSE ->
+            waits.open(
+                new OpenRequestCommand(
+                    command.roomRecordId(),
+                    RequestKind.CLOSE_CONFIRM,
+                    closeRequest(command),
+                    side));
+        case CONFIRM_CLOSE, NOT_YET ->
+            waits.answered(closeRequest(command), RequestKind.CLOSE_CONFIRM, side);
+        default -> {}
+      }
+      return SavedState.unchanged();
+    }
+  }
+
+  private static RequestTarget closeRequest(ActionCommand command) {
+    return RequestTarget.of(TargetKind.REPAIR_CASE, command.target().id());
   }
 
   private final class Supplementing implements StateStore<RepairState> {

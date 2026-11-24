@@ -1,6 +1,7 @@
 package com.chilsuitjo.back.repair.controller;
 
 import static com.chilsuitjo.back.global.security.SecurityTestSupport.loginAs;
+import static org.hamcrest.Matchers.contains;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -79,7 +80,7 @@ class RepairDetailApiTest {
         .andExpect(jsonPath("$.defect.nextRerequestAt").doesNotExist())
         .andExpect(jsonPath("$.money.status").value("UNDECIDED"))
         .andExpect(jsonPath("$.asOf").doesNotExist())
-        .andExpect(jsonPath("$.availableActions").isEmpty());
+        .andExpect(jsonPath("$.availableActions").value(contains("start")));
   }
 
   @Test
@@ -188,8 +189,7 @@ class RepairDetailApiTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.mySide").value("LANDLORD"))
         .andExpect(jsonPath("$.registeredBy").value("TENANT"))
-        .andExpect(jsonPath("$.availableActions.length()").value(1))
-        .andExpect(jsonPath("$.availableActions[0]").value("respond"));
+        .andExpect(jsonPath("$.availableActions").value(contains("respond", "start")));
   }
 
   @Test
@@ -199,11 +199,9 @@ class RepairDetailApiTest {
 
     detail(caseId, tenant)
         .andExpect(jsonPath("$.defect.ack").value("NEED_MORE"))
-        .andExpect(jsonPath("$.availableActions.length()").value(1))
-        .andExpect(jsonPath("$.availableActions[0]").value("supplement"));
+        .andExpect(jsonPath("$.availableActions").value(contains("supplement", "start")));
     detail(caseId, landlord)
-        .andExpect(jsonPath("$.availableActions.length()").value(1))
-        .andExpect(jsonPath("$.availableActions[0]").value("respond"));
+        .andExpect(jsonPath("$.availableActions").value(contains("respond", "start")));
   }
 
   @Test
@@ -213,8 +211,8 @@ class RepairDetailApiTest {
 
     detail(caseId, landlord)
         .andExpect(jsonPath("$.defect.ack").value("ACK"))
-        .andExpect(jsonPath("$.availableActions").isEmpty());
-    detail(caseId, tenant).andExpect(jsonPath("$.availableActions").isEmpty());
+        .andExpect(jsonPath("$.availableActions").value(contains("start")));
+    detail(caseId, tenant).andExpect(jsonPath("$.availableActions").value(contains("start")));
   }
 
   @Test
@@ -236,7 +234,7 @@ class RepairDetailApiTest {
         .andExpect(
             jsonPath("$.defect.nextRerequestAt")
                 .value(supplementedAt.plus(Duration.ofDays(7)).toString()))
-        .andExpect(jsonPath("$.availableActions").isEmpty());
+        .andExpect(jsonPath("$.availableActions").value(contains("start")));
     // 실제 요청도 같은 판단으로 거절된다
     supplement(caseId, tenant, "한 번 더 찍었어요").andExpect(jsonPath("$.code").value("ASKED_RECENTLY"));
   }
@@ -249,8 +247,9 @@ class RepairDetailApiTest {
         "UPDATE state.room_record SET status = 'ENDED', ended_at = CURRENT_TIMESTAMP WHERE id = ?",
         room);
 
-    detail(caseId, tenant).andExpect(jsonPath("$.availableActions").isEmpty());
-    detail(caseId, landlord).andExpect(jsonPath("$.availableActions[0]").value("respond"));
+    detail(caseId, tenant).andExpect(jsonPath("$.availableActions").value(contains("start")));
+    detail(caseId, landlord)
+        .andExpect(jsonPath("$.availableActions").value(contains("respond", "start")));
   }
 
   @Test

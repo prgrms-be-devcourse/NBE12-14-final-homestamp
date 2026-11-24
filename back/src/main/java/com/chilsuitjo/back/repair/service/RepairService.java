@@ -1,21 +1,29 @@
 package com.chilsuitjo.back.repair.service;
 
+import com.chilsuitjo.back.action.dto.ActionBatch;
 import com.chilsuitjo.back.action.dto.ActionCommand;
+import com.chilsuitjo.back.action.dto.ActionStep;
 import com.chilsuitjo.back.action.dto.ActionTarget;
 import com.chilsuitjo.back.action.dto.Actor;
 import com.chilsuitjo.back.action.dto.PipelineResult;
 import com.chilsuitjo.back.action.rule.ActionType;
 import com.chilsuitjo.back.action.rule.AnswerSupport;
 import com.chilsuitjo.back.action.service.ActionPipeline;
+import com.chilsuitjo.back.global.common.AckState;
+import com.chilsuitjo.back.global.common.Answer;
 import com.chilsuitjo.back.global.common.ResidentIdGuard;
 import com.chilsuitjo.back.global.common.dto.AnswerResult;
+import com.chilsuitjo.back.global.common.dto.ReasonRequest;
 import com.chilsuitjo.back.global.common.dto.RespondRequest;
 import com.chilsuitjo.back.global.common.dto.SupplementRequest;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
+import com.chilsuitjo.back.repair.dto.ConfirmCloseRequest;
 import com.chilsuitjo.back.repair.dto.DefectAckChanged;
 import com.chilsuitjo.back.repair.dto.RegisterRepairRequest;
 import com.chilsuitjo.back.repair.dto.RepairCaseCreated;
+import com.chilsuitjo.back.repair.dto.RepairProgressChanged;
+import com.chilsuitjo.back.repair.entity.RepairCase;
 import com.chilsuitjo.back.repair.repository.RepairCaseRepository;
 import com.chilsuitjo.back.repair.repository.RepairStateStore;
 import com.chilsuitjo.back.repair.rule.RepairState;
@@ -158,6 +166,92 @@ public class RepairService {
   /**
    * 수리 건의 호실. 없는 ID면 {@code NOT_FOUND}. 남의 수리 건도 pipeline 잠금의 당사자 확인에서 같은 {@code NOT_FOUND}가 된다.
    */
+  /** 수리 시작(06 REP-4a). 시작 전이 아니면 {@code INVALID_STATE}. */
+  public RepairProgressChanged start(UUID repairCaseId, UUID memberId, String idempotencyKey) {
+    return progress(repairCaseId, memberId, idempotencyKey, ActionType.START_REPAIR, null);
+  }
+
+  /**
+   * 종료 요청(06 REP-5). 처리 중이 아니거나 지금 종료 확인 요청을 열 수 없으면(거주 종료 뒤) {@code INVALID_STATE}. 종료 확인 요청을 연다.
+   */
+  public RepairProgressChanged requestClose(
+      UUID repairCaseId, UUID memberId, String idempotencyKey) {
+    return progress(repairCaseId, memberId, idempotencyKey, ActionType.REQUEST_CLOSE, null);
+  }
+
+  /**
+   * 아직 안 됐어요(06 REP-5b). 사유에 주민등록번호 형태가 있으면 {@code RESIDENT_ID_BLOCKED}(pipeline 전, 03 6-1), 종료 확인
+   * 대기가 아니면 {@code INVALID_STATE}, 요청한 측이면 {@code NOT_COUNTERPART_SIDE}, 사유가 없으면 {@code
+   * REASON_REQUIRED}다. 사유는 행동 기록의 {@code reason}에 남는다.
+   */
+  public RepairProgressChanged notYet(
+      UUID repairCaseId, UUID memberId, String idempotencyKey, ReasonRequest request) {
+    String reason = request == null ? null : blankToNull(request.reason());
+    ResidentIdGuard.check(reason);
+    return progress(repairCaseId, memberId, idempotencyKey, ActionType.NOT_YET, reason);
+  }
+
+  /**
+   * 종료 확인(06 REP-5a). 종료 확인 대기가 아니면 {@code INVALID_STATE}, 요청한 측이면 {@code NOT_COUNTERPART_SIDE}.
+   * {@code alsoAckDefect}면 하자 인정이 확인 기다림일 때만 같은 요청에 하자 "맞아요"를 남긴다({@code CONFIRM_CLOSE} → {@code
+   * RESPOND_DEFECT}, REP-3a, decisions 2026-11-17): 어느 단계든 거절되면 둘 다 남지 않는다. 하자 응답 단계의 내용 지문은 본
+   * 판이다(안내서 3-3).
+   */
+  public RepairProgressChanged confirmClose(
+      UUID repairCaseId, UUID memberId, String idempotencyKey, ConfirmCloseRequest request) {
+    boolean ackDefect = request != null && request.ackDefect();
+    UUID roomRecordId = roomOf(repairCaseId);
+    ActionTarget target = ActionTarget.repairCase(repairCaseId);
+    ActionBatch batch =
+        ActionBatch.of(roomRecordId, Actor.member(memberId), idempotencyKey)
+            .step(
+                ActionStep.of(
+                    ActionType.CONFIRM_CLOSE, done -> target, store.progressing(), rules));
+    if (ackDefect) {
+      Integer seen = request.seenVersionNo();
+      batch.step(
+          ActionStep.of(ActionType.RESPOND_DEFECT, done -> target, store.responding(), rules)
+              .when(state -> state.defectAck() == AckState.PENDING)
+              .withSeenVersionNo(seen)
+              .withContent(store.seenContent(repairCaseId, seen).orElse(null))
+              .withPayload(Map.of("answer", Answer.ACK.name())));
+    }
+    boolean replayed = pipeline.executeAll(batch).replayed();
+    // executeAll은 상태를 돌려주지 않아 커밋된 행을 다시 읽는다(같은 키로 다시 왔으면 지금 값, 06 4-0)
+    RepairCase row =
+        cases
+            .findById(repairCaseId)
+            .orElseThrow(() -> new IllegalStateException("수리 건이 없어요: " + repairCaseId));
+    return new RepairProgressChanged(
+        row.getId(), row.getStatus(), row.getClosedBy(), row.getDefectAck(), replayed);
+  }
+
+  private RepairProgressChanged progress(
+      UUID repairCaseId, UUID memberId, String idempotencyKey, ActionType type, String reason) {
+    UUID roomRecordId = roomOf(repairCaseId);
+    PipelineResult<RepairState> result =
+        pipeline.execute(
+            new ActionCommand(
+                roomRecordId,
+                Actor.member(memberId),
+                type,
+                idempotencyKey,
+                ActionTarget.repairCase(repairCaseId),
+                null,
+                null,
+                reason,
+                Map.of()),
+            store.progressing(),
+            rules);
+    RepairState state = result.state();
+    return new RepairProgressChanged(
+        repairCaseId,
+        state.status(),
+        state.closedBy(),
+        state.defectAck(),
+        result.action().replayed());
+  }
+
   private UUID roomOf(UUID repairCaseId) {
     return cases
         .findRoomRecordIdById(repairCaseId)
