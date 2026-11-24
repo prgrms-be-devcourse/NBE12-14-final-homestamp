@@ -36,7 +36,9 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     ResponseEntity.BodyBuilder response = ResponseEntity.status(code.status());
     e.retryAfter()
         .ifPresent(wait -> response.header(HttpHeaders.RETRY_AFTER, String.valueOf(seconds(wait))));
-    return response.body(problem(code, code.status(), null));
+    ProblemDetail body = problem(code, code.status(), null);
+    e.photoIndex().ifPresent(index -> body.setProperty("photoIndex", index));
+    return response.body(body);
   }
 
   /** 초 단위로 올림하고, 0초 이하는 1초로 둔다(바로 다시 눌러 같은 오류가 나지 않게). */
