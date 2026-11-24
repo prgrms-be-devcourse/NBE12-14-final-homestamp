@@ -1022,6 +1022,149 @@
               "body": "{\n  \"detail\": \"로그인이 필요해요. 다시 로그인해 주세요\",\n  \"instance\": \"/api/auth/logout\",\n  \"status\": 401,\n  \"title\": \"Unauthorized\",\n  \"code\": \"LOGIN_REQUIRED\"\n}"
             }
           ]
+        },
+        {
+          "name": "내 정보",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{bearer_token_15h5}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "me"
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "200 내 정보",
+              "originalRequest": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bearer_token_15h5}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/me",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "me"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"id\": \"<회원 ID>\",\n  \"email\": \"<가입한 이메일>\",\n  \"displayName\": \"<이름>\",\n  \"phone\": \"<인증한 번호, 숫자만>\",\n  \"smsEnabled\": true\n}"
+            },
+            {
+              "name": "200 개발용 토큰 회원(DB에 바로 넣은 행)",
+              "originalRequest": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bearer_token_15h5}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/me",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "me"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"id\": \"0190b6c6-0000-7000-8000-000000000001\",\n  \"email\": null,\n  \"displayName\": null,\n  \"phone\": null,\n  \"smsEnabled\": true\n}"
+            },
+            {
+              "name": "401 토큰 없음·만료·탈퇴한 회원",
+              "originalRequest": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bearer_token_15h5}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/me",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "me"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/problem+json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"detail\": \"로그인이 필요해요. 다시 로그인해 주세요\",\n  \"instance\": \"/api/me\",\n  \"status\": 401,\n  \"title\": \"Unauthorized\",\n  \"code\": \"LOGIN_REQUIRED\"\n}"
+            }
+          ]
         }
       ]
     },
@@ -1029,8 +1172,431 @@
       "name": "02 room",
       "item": [
         {
+          "name": "법정동 찾기",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 && pm.response.json().length > 0) {",
+                  "  pm.collectionVariables.set('regionCode', pm.response.json()[0].code);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{bearer_token_15h5}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/regions/search?q=청운",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "regions",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "청운"
+                }
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "200 동 이름 앞부분 일치",
+              "originalRequest": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bearer_token_15h5}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/regions/search?q=청운",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "regions",
+                    "search"
+                  ],
+                  "query": [
+                    {
+                      "key": "q",
+                      "value": "청운"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "[\n  {\n    \"code\": \"1111010100\",\n    \"sido\": \"서울특별시\",\n    \"sigungu\": \"종로구\",\n    \"dong\": \"청운동\"\n  },\n  {\n    \"code\": \"4183037000\",\n    \"sido\": \"경기도\",\n    \"sigungu\": \"양평군\",\n    \"dong\": \"청운면\"\n  }\n]"
+            },
+            {
+              "name": "400 q가 비었거나 30자 넘음",
+              "originalRequest": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bearer_token_15h5}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/regions/search?q=청운",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "regions",
+                    "search"
+                  ],
+                  "query": [
+                    {
+                      "key": "q",
+                      "value": "청운"
+                    }
+                  ]
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/problem+json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"detail\": \"입력한 내용을 확인해 주세요\",\n  \"instance\": \"/api/regions/search\",\n  \"status\": 400,\n  \"title\": \"Bad Request\",\n  \"code\": \"VALIDATION_FAILED\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "법정동 단계 선택",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 && pm.response.json().length > 0) {",
+                  "  const code = pm.response.json()[0].code;",
+                  "  if (code.length === 10) {",
+                  "    pm.collectionVariables.set('regionCode', code);",
+                  "  } else {",
+                  "    pm.collectionVariables.set('regionParent', code);",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{bearer_token_15h5}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/regions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "regions"
+              ],
+              "query": [
+                {
+                  "key": "parent",
+                  "value": "{{regionParent}}",
+                  "disabled": true
+                }
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "200 시·도(parent 없음, 일부)",
+              "originalRequest": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bearer_token_15h5}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/regions",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "regions"
+                  ],
+                  "query": [
+                    {
+                      "key": "parent",
+                      "value": "{{regionParent}}",
+                      "disabled": true
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "[\n  {\n    \"code\": \"11\",\n    \"name\": \"서울특별시\"\n  },\n  {\n    \"code\": \"26\",\n    \"name\": \"부산광역시\"\n  },\n  {\n    \"code\": \"36\",\n    \"name\": \"세종특별자치시\"\n  },\n  {\n    \"code\": \"41\",\n    \"name\": \"경기도\"\n  }\n]"
+            },
+            {
+              "name": "200 시·군·구(parent=11, 일부)",
+              "originalRequest": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bearer_token_15h5}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/regions?parent=11",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "regions"
+                  ],
+                  "query": [
+                    {
+                      "key": "parent",
+                      "value": "11"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "[\n  {\n    \"code\": \"11110\",\n    \"name\": \"종로구\"\n  },\n  {\n    \"code\": \"11140\",\n    \"name\": \"중구\"\n  },\n  {\n    \"code\": \"11170\",\n    \"name\": \"용산구\"\n  }\n]"
+            },
+            {
+              "name": "200 읍·면·동(parent=11110, 일부)",
+              "originalRequest": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bearer_token_15h5}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/regions?parent=11110",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "regions"
+                  ],
+                  "query": [
+                    {
+                      "key": "parent",
+                      "value": "11110"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "[\n  {\n    \"code\": \"1111010100\",\n    \"name\": \"청운동\"\n  },\n  {\n    \"code\": \"1111010200\",\n    \"name\": \"신교동\"\n  },\n  {\n    \"code\": \"1111010300\",\n    \"name\": \"궁정동\"\n  }\n]"
+            },
+            {
+              "name": "200 세종은 이름 없는 시·군·구 하나(parent=36)",
+              "originalRequest": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bearer_token_15h5}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/regions?parent=36",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "regions"
+                  ],
+                  "query": [
+                    {
+                      "key": "parent",
+                      "value": "36"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "[\n  {\n    \"code\": \"36110\",\n    \"name\": null\n  }\n]"
+            },
+            {
+              "name": "400 parent가 숫자 2·5자리가 아님",
+              "originalRequest": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bearer_token_15h5}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/regions?parent=1",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "regions"
+                  ],
+                  "query": [
+                    {
+                      "key": "parent",
+                      "value": "1"
+                    }
+                  ]
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/problem+json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"detail\": \"입력한 내용을 확인해 주세요\",\n  \"instance\": \"/api/regions\",\n  \"status\": 400,\n  \"title\": \"Bad Request\",\n  \"code\": \"VALIDATION_FAILED\"\n}"
+            }
+          ]
+        },
+        {
           "name": "호실 만들기",
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('regionCode')) pm.collectionVariables.set('regionCode', '1111010100');"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
@@ -1061,7 +1627,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\"side\":\"TENANT\",\"regionCode\":\"1111010100\",\"alias\":\"우리집\",\"moveInDate\":\"2026-03-01\"}",
+              "raw": "{\"side\":\"TENANT\",\"regionCode\":\"{{regionCode}}\",\"alias\":\"우리집\",\"moveInDate\":\"2026-03-01\"}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1102,7 +1668,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\"side\":\"TENANT\",\"regionCode\":\"1111010100\",\"alias\":\"우리집\",\"moveInDate\":\"2026-03-01\"}",
+                  "raw": "{\"side\":\"TENANT\",\"regionCode\":\"{{regionCode}}\",\"alias\":\"우리집\",\"moveInDate\":\"2026-03-01\"}",
                   "options": {
                     "raw": {
                       "language": "json"
@@ -1154,7 +1720,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\"side\":\"TENANT\",\"regionCode\":\"1111010100\",\"alias\":\"우리집\",\"moveInDate\":\"2026-03-01\"}",
+                  "raw": "{\"side\":\"TENANT\",\"regionCode\":\"{{regionCode}}\",\"alias\":\"우리집\",\"moveInDate\":\"2026-03-01\"}",
                   "options": {
                     "raw": {
                       "language": "json"
@@ -1210,7 +1776,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\"side\":\"TENANT\",\"regionCode\":\"1111010100\",\"alias\":\"우리집\",\"moveInDate\":\"2026-03-01\"}",
+                  "raw": "{\"side\":\"TENANT\",\"regionCode\":\"{{regionCode}}\",\"alias\":\"우리집\",\"moveInDate\":\"2026-03-01\"}",
                   "options": {
                     "raw": {
                       "language": "json"
@@ -1262,7 +1828,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\"side\":\"TENANT\",\"regionCode\":\"1111010100\",\"alias\":\"우리집\",\"moveInDate\":\"2026-03-01\"}",
+                  "raw": "{\"side\":\"TENANT\",\"regionCode\":\"{{regionCode}}\",\"alias\":\"우리집\",\"moveInDate\":\"2026-03-01\"}",
                   "options": {
                     "raw": {
                       "language": "json"
@@ -1291,6 +1857,1270 @@
               ],
               "cookie": [],
               "body": "{\n  \"detail\": \"로그인이 필요해요. 다시 로그인해 주세요\",\n  \"instance\": \"/api/rooms\",\n  \"status\": 401,\n  \"title\": \"Unauthorized\",\n  \"code\": \"LOGIN_REQUIRED\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "내 호실 목록",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  pm.collectionVariables.set('roomCursor', pm.response.json().nextCursor || '');",
+                  "  const items = pm.response.json().items;",
+                  "  if (!pm.collectionVariables.get('roomId') && items.length > 0) pm.collectionVariables.set('roomId', items[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{bearer_token_15h5}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/rooms?size=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "rooms"
+              ],
+              "query": [
+                {
+                  "key": "size",
+                  "value": "20"
+                },
+                {
+                  "key": "cursor",
+                  "value": "{{roomCursor}}",
+                  "disabled": true
+                }
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "200 새것부터(마지막 쪽이면 nextCursor가 null)",
+              "originalRequest": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bearer_token_15h5}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/rooms?size=20",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "rooms"
+                  ],
+                  "query": [
+                    {
+                      "key": "size",
+                      "value": "20"
+                    },
+                    {
+                      "key": "cursor",
+                      "value": "{{roomCursor}}",
+                      "disabled": true
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"items\": [\n    {\n      \"id\": \"<호실 기록 ID>\",\n      \"alias\": \"우리집\",\n      \"region\": {\n        \"code\": \"1111010100\",\n        \"sido\": \"서울특별시\",\n        \"sigungu\": \"종로구\",\n        \"dong\": \"청운동\"\n      },\n      \"status\": \"LIVING\",\n      \"mySide\": \"TENANT\",\n      \"counterpartStatus\": \"EMPTY\",\n      \"joinedAway\": false,\n      \"nextStep\": \"NONE\",\n      \"createdAt\": \"2026-11-24T12:35:02.085948Z\"\n    }\n  ],\n  \"nextCursor\": null\n}"
+            },
+            {
+              "name": "400 size가 1~100 밖이거나 cursor가 틀림",
+              "originalRequest": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bearer_token_15h5}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/rooms?size=20",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "rooms"
+                  ],
+                  "query": [
+                    {
+                      "key": "size",
+                      "value": "20"
+                    },
+                    {
+                      "key": "cursor",
+                      "value": "{{roomCursor}}",
+                      "disabled": true
+                    }
+                  ]
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/problem+json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"detail\": \"입력한 내용을 확인해 주세요\",\n  \"instance\": \"/api/rooms\",\n  \"status\": 400,\n  \"title\": \"Bad Request\",\n  \"code\": \"VALIDATION_FAILED\"\n}"
+            },
+            {
+              "name": "401 토큰 없음·만료",
+              "originalRequest": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bearer_token_15h5}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/rooms?size=20",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "rooms"
+                  ],
+                  "query": [
+                    {
+                      "key": "size",
+                      "value": "20"
+                    },
+                    {
+                      "key": "cursor",
+                      "value": "{{roomCursor}}",
+                      "disabled": true
+                    }
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/problem+json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"detail\": \"로그인이 필요해요. 다시 로그인해 주세요\",\n  \"instance\": \"/api/rooms\",\n  \"status\": 401,\n  \"title\": \"Unauthorized\",\n  \"code\": \"LOGIN_REQUIRED\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "호실 상세",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{bearer_token_15h5}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/rooms/{{roomId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "rooms",
+                "{{roomId}}"
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "200 호실 상세",
+              "originalRequest": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bearer_token_15h5}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/rooms/{{roomId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "rooms",
+                    "{{roomId}}"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"id\": \"<호실 기록 ID>\",\n  \"alias\": \"우리집\",\n  \"region\": {\n    \"code\": \"1111010100\",\n    \"sido\": \"서울특별시\",\n    \"sigungu\": \"종로구\",\n    \"dong\": \"청운동\"\n  },\n  \"moveInDate\": \"2026-03-01\",\n  \"status\": \"LIVING\",\n  \"mySide\": \"TENANT\",\n  \"createdBySide\": \"TENANT\",\n  \"myStatus\": \"CONNECTED\",\n  \"counterpartStatus\": \"EMPTY\",\n  \"joinedAway\": false,\n  \"asOf\": null,\n  \"createdAt\": \"2026-11-24T12:35:02.085948Z\",\n  \"availableActions\": [\n    \"repair-cases\"\n  ]\n}"
+            },
+            {
+              "name": "404 없거나 남의 호실",
+              "originalRequest": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bearer_token_15h5}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/rooms/{{roomId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "rooms",
+                    "{{roomId}}"
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/problem+json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"detail\": \"찾을 수 없는 기록이에요\",\n  \"instance\": \"/api/rooms/<호실 기록 ID>\",\n  \"status\": 404,\n  \"title\": \"Not Found\",\n  \"code\": \"NOT_FOUND\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "부위 목록",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const parts = pm.response.json().parts;",
+                  "  const visible = parts.filter((p) => !p.hidden);",
+                  "  const current = pm.collectionVariables.get('partId');",
+                  "  if (visible.length > 0 && !visible.some((p) => p.id === current)) {",
+                  "    pm.collectionVariables.set('partId', visible[0].id);",
+                  "  }",
+                  "  const toggleable = parts.find((p) => p.toggleable);",
+                  "  if (toggleable) pm.collectionVariables.set('togglePartId', toggleable.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{bearer_token_15h5}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/rooms/{{roomId}}/parts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "rooms",
+                "{{roomId}}",
+                "parts"
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "200 부위 목록(일부, 숨긴 부위 포함)",
+              "originalRequest": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bearer_token_15h5}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/rooms/{{roomId}}/parts",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "rooms",
+                    "{{roomId}}",
+                    "parts"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"asOf\": null,\n  \"parts\": [\n    {\n      \"id\": \"<부위 ID>\",\n      \"zone\": \"현관\",\n      \"name\": \"현관문·도어락\",\n      \"enabled\": true,\n      \"hidden\": false,\n      \"toggleable\": false\n    },\n    {\n      \"id\": \"<부위 ID>\",\n      \"zone\": \"방\",\n      \"name\": \"벽\",\n      \"enabled\": true,\n      \"hidden\": false,\n      \"toggleable\": false\n    },\n    {\n      \"id\": \"<부위 ID>\",\n      \"zone\": \"방\",\n      \"name\": \"작은방 벽지\",\n      \"enabled\": true,\n      \"hidden\": true,\n      \"toggleable\": false\n    },\n    {\n      \"id\": \"<부위 ID>\",\n      \"zone\": \"설비·가전\",\n      \"name\": \"보일러\",\n      \"enabled\": false,\n      \"hidden\": false,\n      \"toggleable\": true\n    },\n    {\n      \"id\": \"<부위 ID>\",\n      \"zone\": \"설비·가전\",\n      \"name\": \"에어컨\",\n      \"enabled\": true,\n      \"hidden\": false,\n      \"toggleable\": true\n    },\n    {\n      \"id\": \"<부위 ID>\",\n      \"zone\": \"기타\",\n      \"name\": \"기타\",\n      \"enabled\": true,\n      \"hidden\": false,\n      \"toggleable\": false\n    }\n  ]\n}"
+            },
+            {
+              "name": "404 없거나 남의 호실",
+              "originalRequest": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bearer_token_15h5}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/rooms/{{roomId}}/parts",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "rooms",
+                    "{{roomId}}",
+                    "parts"
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/problem+json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"detail\": \"찾을 수 없는 기록이에요\",\n  \"instance\": \"/api/rooms/<호실 기록 ID>/parts\",\n  \"status\": 404,\n  \"title\": \"Not Found\",\n  \"code\": \"NOT_FOUND\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "부위 추가",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) pm.collectionVariables.set('partId', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{bearer_token_15h5}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/rooms/{{roomId}}/parts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "rooms",
+                "{{roomId}}",
+                "parts"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"zone\": \"방\",\n  \"name\": \"작은방 벽지\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "201 만든 부위(그 구역 맨 뒤)",
+              "originalRequest": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bearer_token_15h5}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/rooms/{{roomId}}/parts",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "rooms",
+                    "{{roomId}}",
+                    "parts"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"zone\": \"방\",\n  \"name\": \"작은방 벽지\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"id\": \"<부위 ID>\",\n  \"zone\": \"방\",\n  \"name\": \"작은방 벽지\",\n  \"enabled\": true,\n  \"hidden\": false,\n  \"toggleable\": false\n}"
+            },
+            {
+              "name": "201 같은 Idempotency-Key로 다시 보냄",
+              "originalRequest": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bearer_token_15h5}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/rooms/{{roomId}}/parts",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "rooms",
+                    "{{roomId}}",
+                    "parts"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"zone\": \"방\",\n  \"name\": \"작은방 벽지\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                },
+                {
+                  "key": "Idempotent-Replayed",
+                  "value": "true"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"id\": \"<부위 ID>\",\n  \"zone\": \"방\",\n  \"name\": \"작은방 벽지\",\n  \"enabled\": true,\n  \"hidden\": false,\n  \"toggleable\": false\n}"
+            },
+            {
+              "name": "400 6구역이 아니거나 이름이 비었거나 50자 넘음",
+              "originalRequest": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bearer_token_15h5}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/rooms/{{roomId}}/parts",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "rooms",
+                    "{{roomId}}",
+                    "parts"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"zone\": \"거실\",\n  \"name\": \"벽\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/problem+json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"detail\": \"입력한 내용을 확인해 주세요\",\n  \"instance\": \"/api/rooms/<호실 기록 ID>/parts\",\n  \"status\": 400,\n  \"title\": \"Bad Request\",\n  \"code\": \"VALIDATION_FAILED\"\n}"
+            },
+            {
+              "name": "404 없거나 남의 호실",
+              "originalRequest": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bearer_token_15h5}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/rooms/{{roomId}}/parts",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "rooms",
+                    "{{roomId}}",
+                    "parts"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"zone\": \"방\",\n  \"name\": \"작은방 벽지\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/problem+json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"detail\": \"찾을 수 없는 기록이에요\",\n  \"instance\": \"/api/rooms/<호실 기록 ID>/parts\",\n  \"status\": 404,\n  \"title\": \"Not Found\",\n  \"code\": \"NOT_FOUND\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "부위 숨기기",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{bearer_token_15h5}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/rooms/{{roomId}}/parts/{{partId}}/hide",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "rooms",
+                "{{roomId}}",
+                "parts",
+                "{{partId}}",
+                "hide"
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "200 숨긴 뒤 부위",
+              "originalRequest": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bearer_token_15h5}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/rooms/{{roomId}}/parts/{{partId}}/hide",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "rooms",
+                    "{{roomId}}",
+                    "parts",
+                    "{{partId}}",
+                    "hide"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"id\": \"<부위 ID>\",\n  \"zone\": \"방\",\n  \"name\": \"작은방 벽지\",\n  \"enabled\": true,\n  \"hidden\": true,\n  \"toggleable\": false\n}"
+            },
+            {
+              "name": "409 이미 숨김",
+              "originalRequest": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bearer_token_15h5}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/rooms/{{roomId}}/parts/{{partId}}/hide",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "rooms",
+                    "{{roomId}}",
+                    "parts",
+                    "{{partId}}",
+                    "hide"
+                  ]
+                }
+              },
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/problem+json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"detail\": \"이미 상태가 바뀌었어요. 다시 불러올게요\",\n  \"instance\": \"/api/rooms/<호실 기록 ID>/parts/<부위 ID>/hide\",\n  \"status\": 409,\n  \"title\": \"Conflict\",\n  \"code\": \"INVALID_STATE\"\n}"
+            },
+            {
+              "name": "404 그 호실의 부위가 아님",
+              "originalRequest": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bearer_token_15h5}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/rooms/{{roomId}}/parts/{{partId}}/hide",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "rooms",
+                    "{{roomId}}",
+                    "parts",
+                    "{{partId}}",
+                    "hide"
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/problem+json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"detail\": \"찾을 수 없는 기록이에요\",\n  \"instance\": \"/api/rooms/<호실 기록 ID>/parts/<부위 ID>/hide\",\n  \"status\": 404,\n  \"title\": \"Not Found\",\n  \"code\": \"NOT_FOUND\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "부위 다시 보이기",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{bearer_token_15h5}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/rooms/{{roomId}}/parts/{{partId}}/show",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "rooms",
+                "{{roomId}}",
+                "parts",
+                "{{partId}}",
+                "show"
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "200 다시 보이게 한 뒤 부위",
+              "originalRequest": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bearer_token_15h5}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/rooms/{{roomId}}/parts/{{partId}}/show",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "rooms",
+                    "{{roomId}}",
+                    "parts",
+                    "{{partId}}",
+                    "show"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"id\": \"<부위 ID>\",\n  \"zone\": \"방\",\n  \"name\": \"작은방 벽지\",\n  \"enabled\": true,\n  \"hidden\": false,\n  \"toggleable\": false\n}"
+            },
+            {
+              "name": "409 숨기지 않은 부위",
+              "originalRequest": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bearer_token_15h5}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/rooms/{{roomId}}/parts/{{partId}}/show",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "rooms",
+                    "{{roomId}}",
+                    "parts",
+                    "{{partId}}",
+                    "show"
+                  ]
+                }
+              },
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/problem+json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"detail\": \"이미 상태가 바뀌었어요. 다시 불러올게요\",\n  \"instance\": \"/api/rooms/<호실 기록 ID>/parts/<부위 ID>/show\",\n  \"status\": 409,\n  \"title\": \"Conflict\",\n  \"code\": \"INVALID_STATE\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "설비·가전 켜고 끄기",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{bearer_token_15h5}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/rooms/{{roomId}}/parts/{{togglePartId}}/toggle",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "rooms",
+                "{{roomId}}",
+                "parts",
+                "{{togglePartId}}",
+                "toggle"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "200 바꾼 뒤 부위",
+              "originalRequest": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bearer_token_15h5}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/rooms/{{roomId}}/parts/{{togglePartId}}/toggle",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "rooms",
+                    "{{roomId}}",
+                    "parts",
+                    "{{togglePartId}}",
+                    "toggle"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"enabled\": false\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"id\": \"<부위 ID>\",\n  \"zone\": \"설비·가전\",\n  \"name\": \"보일러\",\n  \"enabled\": false,\n  \"hidden\": false,\n  \"toggleable\": true\n}"
+            },
+            {
+              "name": "400 설비·가전이 아님",
+              "originalRequest": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bearer_token_15h5}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/rooms/{{roomId}}/parts/{{togglePartId}}/toggle",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "rooms",
+                    "{{roomId}}",
+                    "parts",
+                    "{{togglePartId}}",
+                    "toggle"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"enabled\": false\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/problem+json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"detail\": \"입력한 내용을 확인해 주세요\",\n  \"instance\": \"/api/rooms/<호실 기록 ID>/parts/<부위 ID>/toggle\",\n  \"status\": 400,\n  \"title\": \"Bad Request\",\n  \"code\": \"VALIDATION_FAILED\"\n}"
+            },
+            {
+              "name": "400 enabled 없음",
+              "originalRequest": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bearer_token_15h5}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/rooms/{{roomId}}/parts/{{togglePartId}}/toggle",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "rooms",
+                    "{{roomId}}",
+                    "parts",
+                    "{{togglePartId}}",
+                    "toggle"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"enabled\": false\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/problem+json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"detail\": \"입력한 내용을 확인해 주세요\",\n  \"instance\": \"/api/rooms/<호실 기록 ID>/parts/<부위 ID>/toggle\",\n  \"status\": 400,\n  \"title\": \"Bad Request\",\n  \"code\": \"VALIDATION_FAILED\",\n  \"errors\": [\n    {\n      \"message\": \"널이어서는 안됩니다\",\n      \"field\": \"enabled\"\n    }\n  ]\n}"
+            },
+            {
+              "name": "409 이미 그 값",
+              "originalRequest": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{bearer_token_15h5}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/rooms/{{roomId}}/parts/{{togglePartId}}/toggle",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "rooms",
+                    "{{roomId}}",
+                    "parts",
+                    "{{togglePartId}}",
+                    "toggle"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"enabled\": false\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/problem+json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"detail\": \"이미 상태가 바뀌었어요. 다시 불러올게요\",\n  \"instance\": \"/api/rooms/<호실 기록 ID>/parts/<부위 ID>/toggle\",\n  \"status\": 409,\n  \"title\": \"Conflict\",\n  \"code\": \"INVALID_STATE\"\n}"
             }
           ]
         }
@@ -1523,7 +3353,23 @@
       "value": ""
     },
     {
+      "key": "regionCode",
+      "value": ""
+    },
+    {
+      "key": "regionParent",
+      "value": ""
+    },
+    {
+      "key": "roomCursor",
+      "value": ""
+    },
+    {
       "key": "partId",
+      "value": ""
+    },
+    {
+      "key": "togglePartId",
       "value": ""
     },
     {
