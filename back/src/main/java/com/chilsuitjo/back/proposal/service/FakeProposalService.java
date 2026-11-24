@@ -21,8 +21,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.stereotype.Service;
 
 /**
- * 돈 안건 장치 가짜(#111). DB·pipeline 없이 메모리에 안건만 적는다. repair·link가 {@link ProposalService}를 부르는 모양과 첫
- * 제안·합의 뒤 새 제안·{@link #rebase}의 결과는 진짜와 같다.
+ * 돈 안건 장치 가짜(#111). DB·pipeline 없이 메모리에 안건만 적는다. repair·settlement가 {@link ProposalService}를 부르는
+ * 모양과 첫 제안·합의 뒤 새 제안·{@link #rebase}의 결과는 진짜와 같다.
  *
  * <p>진짜와 다른 것: 회원의 측은 pipeline 대신 {@link #seedParty}로 적은 값을 쓴다. 동의는 행동이 아니라 {@link #agree}로 정한다.
  * 기다리는 안이 있을 때의 새 제안(바꾸기·역제안)은 2주차 "돈 안건 장치 완성"에서 만들고, 가짜는 {@code INVALID_STATE}로 거절한다.
