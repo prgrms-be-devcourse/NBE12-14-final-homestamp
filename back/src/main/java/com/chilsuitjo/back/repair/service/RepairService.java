@@ -36,18 +36,26 @@ public class RepairService {
   /** 보충 설명 길이(하자 등록의 설명과 같음, 06 4-6). */
   static final int MAX_DESCRIPTION = 2000;
 
+  /** 한 번에 붙이는 사진(업로드 표 1~10개, 06 4-0 업로드). 하자 등록은 요청 본문의 검증 표시가 같은 값으로 막는다. */
+  static final int MAX_PHOTOS = 10;
+
   private final ActionPipeline pipeline;
   private final RepairStateStore store;
   private final RepairTransitions rules;
   private final RepairCaseRepository cases;
 
   /**
-   * 하자 등록(06 REP-1). 제목·설명에 주민등록번호 형태가 있으면 {@code RESIDENT_ID_BLOCKED}(pipeline 전, 03 6-1), 당사자가
-   * 아니면 {@code NOT_FOUND}, 거주 종료면 {@code ROOM_ENDED}(pipeline), 잘못된 키면 {@code VALIDATION_FAILED}다.
-   * 내용 지문은 {@code save}가 만든 판 #1로 남는다(새 판을 만드는 행동, 안내서 3-3).
+   * 하자 등록(06 REP-1). pipeline 전에 사진이 없으면 {@code PHOTO_REQUIRED}(REP-1d), 제목·설명에 주민등록번호 형태가 있으면
+   * {@code RESIDENT_ID_BLOCKED}(03 6-1). 그 뒤 당사자가 아니면 {@code NOT_FOUND}, 거주 종료면 {@code
+   * ROOM_ENDED}(pipeline), 잘못된 키면 {@code VALIDATION_FAILED}, 사진 검사에 실패하면 {@code
+   * PHOTO_CHECK_FAILED}·{@code UPLOAD_TICKET_*}(사진 번호와 함께, 수리 건·판도 남지 않음)다. 내용 지문은 {@code save}가 만든
+   * 판 #1로 남고(새 판을 만드는 행동, 안내서 3-3), 사진 지문은 행동 payload {@code photos}로 남는다(05 2-3).
    */
   public RepairCaseCreated register(
       UUID roomRecordId, UUID memberId, String idempotencyKey, RegisterRepairRequest request) {
+    if (request.uploadTickets().isEmpty()) {
+      throw new BusinessException(ErrorCode.PHOTO_REQUIRED);
+    }
     ResidentIdGuard.check(request.title(), request.description());
     PipelineResult<RepairState> result =
         pipeline.create(
@@ -61,7 +69,11 @@ public class RepairService {
                 null,
                 null,
                 Map.of()),
-            store.registering(request.roomPartId(), request.title(), request.description()),
+            store.registering(
+                request.roomPartId(),
+                request.title(),
+                request.description(),
+                request.uploadTickets()),
             rules);
     return new RepairCaseCreated(result.action().target().id(), result.action().replayed());
   }
@@ -104,15 +116,18 @@ public class RepairService {
   }
 
   /**
-   * 보충하고 다시 확인 요청(06 REP-2e). pipeline 전에 입력을 본다: 사진 칸은 아직 받지 않아 {@code VALIDATION_FAILED}, 설명이
-   * 2,000자를 넘으면 {@code VALIDATION_FAILED}, 주민등록번호 형태면 {@code RESIDENT_ID_BLOCKED}, 근거가 없으면 {@code
+   * 보충하고 다시 확인 요청(06 REP-2e). pipeline 전에 입력을 본다: 사진이 10장을 넘거나 빈 표가 있거나 설명이 2,000자를 넘으면 {@code
+   * VALIDATION_FAILED}, 주민등록번호 형태면 {@code RESIDENT_ID_BLOCKED}, 사진도 설명도 없으면 {@code
    * EVIDENCE_REQUIRED}. 그 뒤는 {@code AnswerSupport.rerequest} 순서다(등록 측 → 보류·이견이고 요청을 열 수 있음 → 7일).
+   * 사진 검사 실패는 {@code PHOTO_CHECK_FAILED}·{@code UPLOAD_TICKET_*}(사진 번호와 함께)이고 그때는 보충도 남지 않는다.
    *
-   * <p>사진(업로드 표)은 #153 {@code PhotoService}와 #112 실제 업로드 뒤에 붙인다. 그 전에 사진이 오면 조용히 버리지 않고 거절한다.
+   * <p>사진만으로도 보충할 수 있다(설명은 선택). 사진은 수리 건에 붙는다(#167).
    */
   public DefectAckChanged supplement(
       UUID repairCaseId, UUID memberId, String idempotencyKey, SupplementRequest request) {
-    if (request == null || !request.uploadTickets().isEmpty()) {
+    if (request == null
+        || request.uploadTickets().size() > MAX_PHOTOS
+        || request.uploadTickets().stream().anyMatch(t -> t == null || t.isBlank())) {
       throw new BusinessException(ErrorCode.VALIDATION_FAILED);
     }
     String description = blankToNull(request.description());
@@ -120,7 +135,7 @@ public class RepairService {
       throw new BusinessException(ErrorCode.VALIDATION_FAILED);
     }
     ResidentIdGuard.check(description);
-    AnswerSupport.requireEvidence(description != null);
+    AnswerSupport.requireEvidence(request.hasEvidence());
     UUID roomRecordId = roomOf(repairCaseId);
     PipelineResult<RepairState> result =
         pipeline.execute(
@@ -134,7 +149,7 @@ public class RepairService {
                 null,
                 null,
                 Map.of()),
-            store.supplementing(description),
+            store.supplementing(description, request.uploadTickets()),
             rules);
     return new DefectAckChanged(
         repairCaseId, result.state().defectAck(), result.action().replayed());
