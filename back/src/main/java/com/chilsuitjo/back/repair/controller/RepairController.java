@@ -35,9 +35,9 @@ public class RepairController {
    * 하자 등록(REP-1). 처음 성공과 다시 온 요청 모두 201과 만든 ID를 돌려준다. 다시 온 요청이면 {@code Idempotent-Replayed: true}를
    * 붙인다(06 4-0). {@code Idempotency-Key}가 없으면 400이다.
    *
-   * <p><b>아직 06과 다르다</b>: 사진(업로드 표 1~10개 필수, {@code PHOTO_REQUIRED})과 알리기(응답 요청·문자)는 만들지 않았다. 지금은
-   * 사진 없이 등록되고 상대에게 알림이 가지 않는다. {@code uploadTickets}가 오면 조용히 버리지 않고 400으로 거절한다. 사진 PR·알리기 PR에서
-   * 06대로 맞춘다(#134).
+   * <p>사진은 업로드 표 1~10개가 필수다({@code PHOTO_REQUIRED}, #167). 실제 업로드 검사(#112) 전에는 가짜 사진 창구가 받는다.
+   *
+   * <p><b>아직 06과 다르다</b>: 알리기(응답 요청·문자)는 만들지 않아 상대에게 알림이 가지 않는다. 알리기 PR에서 06대로 맞춘다(#134).
    */
   @PostMapping("/api/rooms/{roomId}/repair-cases")
   public ResponseEntity<CreatedResponse> register(
@@ -68,10 +68,8 @@ public class RepairController {
   }
 
   /**
-   * 보충하고 다시 확인 요청(REP-2e). 처음 성공과 다시 온 요청 모두 200이다.
-   *
-   * <p><b>아직 06과 다르다</b>: 사진은 받지 않는다. {@code uploadTickets}가 오면 400으로 거절하고, 설명으로만 보충한다. 사진은 {@code
-   * PhotoService}(#153)·실제 업로드(#112) 뒤에 붙인다(#155).
+   * 보충하고 다시 확인 요청(REP-2e). 처음 성공과 다시 온 요청 모두 200이다. 사진·설명 중 하나 이상이 필요하고, 사진은 한 번에 10장까지 수리 건에
+   * 붙는다(#167).
    */
   @PostMapping("/api/repair-cases/{id}/supplement")
   public ResponseEntity<DefectAckResponse> supplement(
