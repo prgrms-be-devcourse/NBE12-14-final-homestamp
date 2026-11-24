@@ -35,6 +35,7 @@ import { sideName, sideText } from "@/lib/words"
 import { Fold } from "@/components/common/fold"
 import { History } from "lucide-react"
 import { Notice } from "@/components/common/notice"
+import { WaitStatus } from "@/components/common/wait-status"
 import {
   CurrentProposal,
   PastProposal,
@@ -180,9 +181,7 @@ export function CostAgreement({
       </p>
       <div className="badges">
         <Status>{p?.status || "미정"}</Status>
-        {stage && (
-          <Status>{stage === "미확인" ? "확인 없음" : "다시 알렸어요"}</Status>
-        )}
+        <WaitStatus stage={stage} />
       </div>
       {p ? (
         <CurrentProposal

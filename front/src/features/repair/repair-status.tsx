@@ -26,11 +26,8 @@ import {
   soloReasonText,
 } from "@/lib/repair-rules"
 import { versionOf } from "@/lib/versions"
-import { ackText, sideName } from "@/lib/words"
+import { ackText, sideName, waitLabel } from "@/lib/words"
 import type { RepairCommand } from "@/features/repair/use-repair-case"
-
-const waitText = (stage?: string) =>
-  stage === "재통지" ? "다시 알렸어요" : stage === "미확인" ? "확인 없음" : ""
 
 // 수리 상태·하자 인정 표시(상태와 규칙 D). 비회원 링크 화면에서도 같은 표시를 씁니다.
 // compact: 상세 화면 제목 옆에 수리 상태·하자 인정·수리 시작 표시가 이미 있어 겹치는 배지를 뺍니다.
@@ -70,7 +67,7 @@ export function RepairBadges({
         {r.closeBy && (
           <Status>
             종료 확인 대기 · {r.closeBy} 요청
-            {r.waits?.close ? ` · ${waitText(r.waits.close)}` : ""}
+            {r.waits?.close ? ` · ${waitLabel(r.waits.close)}` : ""}
           </Status>
         )}
         {r.soloReason && (
@@ -79,7 +76,7 @@ export function RepairBadges({
           </Status>
         )}
         {r.confirmRequested && (
-          <Status>{`종료 확인 요청됨 · 상대 연결 뒤${r.waits?.soloclose ? ` · ${waitText(r.waits.soloclose)}` : ""}`}</Status>
+          <Status>{`종료 확인 요청됨 · 상대 연결 뒤${r.waits?.soloclose ? ` · ${waitLabel(r.waits.soloclose)}` : ""}`}</Status>
         )}
         {/* 상대가 아직 없으면 줄마다 붙이지 않고 호실 맨 위에 한 번만 보여요(08-화면-기본-틀 8장). */}
         {!r.soloReason &&
@@ -351,7 +348,7 @@ export function RepairActions({
         <p className="muted">
           <Clock size={14} className="inline mr-1" />
           상대 쪽의 종료 확인을 기다리고 있어요
-          {r.waits?.close ? ` · ${waitText(r.waits.close)}` : ""}.
+          {r.waits?.close ? ` · ${waitLabel(r.waits.close)}` : ""}.
         </p>
       )}
       {error && (

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Choice, Panel, Status } from "@/components/common/blocks"
+import { WaitStatus } from "@/components/common/wait-status"
 import { ActionDialog } from "@/components/common/action-dialog"
 import { tryOn } from "@/lib/try-on"
 import { CorrectionRow } from "@/components/common/correction-box"
@@ -300,11 +301,7 @@ export function RepairPayments({
                   </small>
                   {stage || open ? (
                     <div className="badges">
-                      {stage && (
-                        <Status>
-                          {stage === "미확인" ? "확인 없음" : "다시 알렸어요"}
-                        </Status>
-                      )}
+                      <WaitStatus stage={stage} />
                       {open ? (
                         <Status>
                           {open.kind === "보류" ? "보충 요청됨" : "이견"}

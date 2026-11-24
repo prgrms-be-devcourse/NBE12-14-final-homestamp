@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Choice, Status } from "@/components/common/blocks"
+import { WaitStatus } from "@/components/common/wait-status"
 import { ActionDialog } from "@/components/common/action-dialog"
 import {
   CorrectionHistory,
@@ -242,13 +243,7 @@ export function InspectionItemCorrections({
           {i.photoAdds?.some((p) => p.afterConfirm) && (
             <Status>확인 뒤 사진 추가</Status>
           )}
-          {i.wait && (
-            <Status>
-              {i.wait === "미확인"
-                ? "확인 없음 · 72시간 동안 답이 오지 않았어요"
-                : "확인 요청 · 다시 알렸어요"}
-            </Status>
-          )}
+          <WaitStatus stage={i.wait} long remindPrefix="확인 요청" />
         </div>
       )}
       {add && add.status === "확인 대기" && (

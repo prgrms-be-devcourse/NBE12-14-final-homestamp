@@ -38,3 +38,21 @@ export function proposalHead(
 ) {
   return [`${label} ${round || 1}회`, who, ...more].filter(Boolean).join(" · ")
 }
+
+// 기다림 단계의 화면 말(03 1-1): 재통지 → "다시 알렸어요", 미확인 → "확인 없음"
+export interface WaitLabelOptions {
+  // "세입자"처럼 누가 답하지 않았는지
+  who?: string
+  // 미확인에 "72시간 동안 답이 오지 않았어요"를 붙일 때
+  long?: boolean
+  // 재통지 앞에 붙일 말(예: "확인 요청")
+  remindPrefix?: string
+}
+export function waitLabel(
+  stage: "재통지" | "미확인",
+  { who, long, remindPrefix }: WaitLabelOptions = {},
+) {
+  if (stage === "재통지")
+    return remindPrefix ? `${remindPrefix} · 다시 알렸어요` : "다시 알렸어요"
+  return `${who ? `${who} ` : ""}확인 없음${long ? " · 72시간 동안 답이 오지 않았어요" : ""}`
+}

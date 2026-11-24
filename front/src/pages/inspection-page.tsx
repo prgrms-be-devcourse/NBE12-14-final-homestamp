@@ -53,7 +53,7 @@ import {
 } from "@/lib/inspection-rules"
 import { activeSettlementLink, sendSettlementLink } from "@/lib/workflows"
 import type { maskOf } from "@/lib/photo-privacy"
-import { ackText, sideName, sideText } from "@/lib/words"
+import { ackText, sideName, sideText, waitLabel } from "@/lib/words"
 import { reaskWaitDays } from "@/lib/reask"
 import {
   hasAction,
@@ -751,8 +751,8 @@ export function InspectionPage({
             {room.endRequested && role === "임대인" && (
               <small className="muted">
                 {room.endWait === "미확인"
-                  ? "세입자 확인 없음 · 72시간 동안 답이 오지 않았어요"
-                  : `세입자의 답을 기다려요${room.endWait ? " · 다시 알렸어요" : ""}`}
+                  ? waitLabel("미확인", { who: "세입자", long: true })
+                  : `세입자의 답을 기다려요${room.endWait ? ` · ${waitLabel(room.endWait)}` : ""}`}
               </small>
             )}
             {roomHas("move-out-alone") && (
