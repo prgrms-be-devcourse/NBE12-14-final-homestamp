@@ -272,6 +272,7 @@
   min-height: 44px;
 }
 .guest-banner h1 {
+  font-weight: 750;
   font-size: 30px;
   line-height: 1.4;
 }
@@ -282,6 +283,7 @@
   line-height: 1.75;
 }
 .guest-cta h2 {
+  font-weight: 700;
   font-size: 22px;
 }
 
@@ -348,9 +350,6 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
-.gallery-cover .photo-cover {
-  grid-column: 1/-1;
-}
 .gallery-strip {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
@@ -383,6 +382,7 @@
   display: block;
 }
 .gallery-cover .photo-cover {
+  grid-column: 1/-1;
   height: 190px;
 }
 .gallery-cover .photo-trigger:not(.photo-cover) {

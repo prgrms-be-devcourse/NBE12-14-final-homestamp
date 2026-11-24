@@ -786,9 +786,6 @@ main {
 .guest-banner > svg {
   color: #7b9fd6;
 }
-.guest-banner h1 {
-  font-weight: 750;
-}
 .guest-banner p {
   color: #8ea1bb;
   margin-top: 8px;
@@ -799,9 +796,6 @@ main {
   align-items: center;
   background: #f1f6ff;
   text-align: center;
-}
-.guest-cta h2 {
-  font-weight: 700;
 }
 .guest-cta p,
 .guest-foot {
@@ -934,9 +928,6 @@ main {
   .top-left {
     gap: 6px;
   }
-  .breadcrumb > strong {
-    text-overflow: ellipsis;
-  }
   .breadcrumb {
     color: transparent;
     font-size: 0;
@@ -946,6 +937,7 @@ main {
     display: none;
   }
   .breadcrumb > strong {
+    text-overflow: ellipsis;
     color: #647a99;
   }
   .top-actions > .avatar {
@@ -1000,14 +992,12 @@ main {
   .info-box p {
     font-size: 14px;
   }
-  .person-card {
-    padding: 20px 10px;
-  }
   .connection-flow {
     gap: 10px;
     flex-direction: column;
   }
   .person-card {
+    padding: 20px 10px;
     width: 100%;
   }
   .connection-line {
