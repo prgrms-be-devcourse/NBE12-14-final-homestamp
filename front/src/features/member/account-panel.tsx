@@ -1,4 +1,6 @@
-import { LogOut } from "lucide-react"
+import { useState } from "react"
+import { Loader2, LogOut } from "lucide-react"
+import { errorMessage } from "@/api/errors"
 import { Button } from "@/components/ui/button"
 import { FormDialog } from "@/components/common/form-dialog"
 import type { Account } from "@/api/auth"
@@ -15,15 +17,28 @@ export function AccountPanel({
   account: Account
   roomCount: number
   invitationCount: number
-  onLogout: () => void
+  onLogout: () => Promise<void>
   onCancel: () => void
 }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState("")
+  // 로그아웃에 성공하면 App이 로그인 화면으로 바꿔요. 실패하면 이 창에 남아 안내하고, 같은 버튼으로 다시 시도해요.
+  async function logout() {
+    setBusy(true)
+    setError("")
+    try {
+      await onLogout()
+    } catch (e) {
+      setError(`로그아웃하지 못했어요. ${errorMessage(e)}`)
+      setBusy(false)
+    }
+  }
   return (
     <FormDialog
       title="내 계정"
       description="세입자 쪽·집주인 쪽은 호실마다 연결로 정해져요."
-      error=""
-      onError={() => {}}
+      error={error}
+      onError={setError}
       onCancel={onCancel}
       footer={false}
     >
@@ -49,9 +64,10 @@ export function AccountPanel({
           type="button"
           variant="outline"
           className="w-full"
-          onClick={onLogout}
+          disabled={busy}
+          onClick={() => void logout()}
         >
-          <LogOut />
+          {busy ? <Loader2 className="animate-spin" /> : <LogOut />}
           로그아웃
         </Button>
       </div>

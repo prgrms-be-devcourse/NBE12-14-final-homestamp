@@ -98,6 +98,7 @@ export const SMS_SEND_FAILED_MESSAGE =
   "문자를 보내지 못했어요. 잠시 뒤 다시 받아 주세요"
 
 /* ── 백엔드 연결 ── */
+const isUnauthorized = (e: unknown) => e instanceof ApiError && e.status === 401
 // GET /api/me 응답(06 4-1). smsEnabled(ACC-6)는 아직 쓰는 화면이 없어 Account로 옮기지 않아요.
 interface MeResponse {
   id: string
@@ -184,19 +185,25 @@ export function createHttpAuth(
       })()
       return restoring
     },
+    // 로그아웃이 서버에서 끝났을 때만 토큰을 지워요. 연결 오류·서버 오류로 실패하면 토큰을 남기고 오류를 그대로 알려,
+    // 화면이 로그인 상태를 지키고 다시 누를 수 있게 해요(실패를 삼키면 리프레시 쿠키가 남아 새로고침할 때 다시 로그인돼요).
     async logout() {
       try {
         await revoke()
       } catch (e) {
-        // 액세스 토큰이 없거나 만료(auth.access.ttl 15분)되면 401이라 서버 쪽 묶음과 쿠키가 남아요.
-        // 리프레시 쿠키로 새 토큰을 받아 한 번 더 보내고, 그래도 안 되면(쿠키도 없음) 이미 로그아웃된 것으로 봐요.
-        if (!(e instanceof ApiError && e.status === 401)) throw e
-        await refresh()
-          .then(revoke)
-          .catch(() => undefined)
-      } finally {
-        token.set(undefined)
+        if (!isUnauthorized(e)) throw e
+        // 액세스 토큰이 없거나 만료(auth.access.ttl 15분)되면 401이에요. 리프레시 쿠키로 새 토큰을 받아 한 번 더 보내요.
+        try {
+          await refresh()
+        } catch (e2) {
+          // 재발급도 401(LOGIN_REQUIRED·REFRESH_REUSED)이면 쿠키가 없거나 폐기된 것이라 이미 끝난 세션이에요
+          if (!isUnauthorized(e2)) throw e2
+          token.set(undefined)
+          return
+        }
+        await revoke()
       }
+      token.set(undefined)
     },
   }
 }

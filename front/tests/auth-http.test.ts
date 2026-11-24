@@ -192,3 +192,90 @@ describe("createHttpAuth", () => {
     expect(store.get()).toBeUndefined()
   })
 })
+
+// 로그아웃이 실패했는데 화면만 로그아웃되면 리프레시 쿠키·서버 세션이 남아 새로고침하면 다시 로그인돼요.
+// 이미 끝난 세션(재발급도 401)만 로그아웃으로 보고, 일시적인 실패는 오류로 알려 다시 누를 수 있게 해요.
+describe("로그아웃 실패와 이미 끝난 세션", () => {
+  const offline = () => {
+    throw new TypeError("Failed to fetch")
+  }
+  const noContent = () => new Response(null, { status: 204 })
+
+  it("연결이 끊겨 로그아웃을 못 보내면 실패로 알리고 토큰을 남겨, 다시 누르면 같은 토큰으로 보낸다", async () => {
+    let logouts = 0
+    const calls = fakeServer({
+      "POST /api/auth/logout": () =>
+        ++logouts === 1 ? offline() : noContent(),
+    })
+    const { auth, store } = setup()
+    store.set("A1")
+
+    await expect(auth.logout()).rejects.toMatchObject({ code: "NETWORK" })
+    expect(store.get()).toBe("A1")
+
+    await auth.logout()
+    expect(calls.map((c) => c.headers.Authorization)).toEqual([
+      "Bearer A1",
+      "Bearer A1",
+    ])
+    expect(store.get()).toBeUndefined()
+  })
+
+  it("서버 오류(500)도 실패로 알리고 토큰을 남긴다", async () => {
+    fakeServer({
+      "POST /api/auth/logout": () => problem(500, "INTERNAL_ERROR"),
+    })
+    const { auth, store } = setup()
+    store.set("A1")
+
+    await expect(auth.logout()).rejects.toMatchObject({ status: 500 })
+    expect(store.get()).toBe("A1")
+  })
+
+  it("토큰 만료(401) 뒤 재발급이 연결 오류로 실패하면 세션이 끝났다고 보지 않고 실패로 알린다", async () => {
+    fakeServer({
+      "POST /api/auth/logout": () => problem(401, "LOGIN_REQUIRED"),
+      "POST /api/auth/refresh": offline,
+    })
+    const { auth } = setup()
+
+    await expect(auth.logout()).rejects.toMatchObject({ code: "NETWORK" })
+  })
+
+  it("재발급은 됐는데 다시 보낸 로그아웃이 실패하면 실패로 알리고 새 토큰으로 다시 보낼 수 있다", async () => {
+    let logouts = 0
+    const calls = fakeServer({
+      "POST /api/auth/logout": () => {
+        logouts++
+        if (logouts === 1) return problem(401, "LOGIN_REQUIRED")
+        if (logouts === 2) return offline()
+        return noContent()
+      },
+      "POST /api/auth/refresh": () => json({ accessToken: "A2" }),
+    })
+    const { auth, store } = setup()
+    store.set("A1-expired")
+
+    await expect(auth.logout()).rejects.toMatchObject({ code: "NETWORK" })
+    expect(store.get()).toBe("A2")
+
+    await auth.logout()
+    expect(calls.at(-1)).toMatchObject({
+      key: "POST /api/auth/logout",
+      headers: { Authorization: "Bearer A2" },
+    })
+    expect(store.get()).toBeUndefined()
+  })
+
+  it("재발급이 REFRESH_REUSED(401)면 이미 끝난 세션이라 로그아웃된 것으로 본다", async () => {
+    fakeServer({
+      "POST /api/auth/logout": () => problem(401, "LOGIN_REQUIRED"),
+      "POST /api/auth/refresh": () => problem(401, "REFRESH_REUSED"),
+    })
+    const { auth, store } = setup()
+    store.set("A1-expired")
+
+    await expect(auth.logout()).resolves.toBeUndefined()
+    expect(store.get()).toBeUndefined()
+  })
+})
