@@ -1,12 +1,15 @@
 ---
 name: git-convention
-description: 브랜치 이름과 커밋 메시지를 팀 규칙대로 만든다. 사람이 /git-convention 또는 $git-convention으로 부를 때만 쓴다
-disable-model-invocation: true
+description: 브랜치 이름과 커밋 메시지를 팀 규칙대로 만든다. 새 브랜치를 만들거나 커밋할 때, 또는 사람이 이름·메시지를 물을 때 쓴다
 ---
 
 # git-convention
 
-브랜치 이름이나 커밋 메시지 **초안만** 보여 준다. `git switch -c`, `git commit`은 실행하지 않는다. 사람이 확인하고 직접 한다.
+브랜치 이름이나 커밋 메시지 초안을 만든다.
+
+- 사람이 실행까지 맡겼으면("커밋해줘", "브랜치 만들어줘") 초안대로 `git switch -c`·`git commit`을 실행하고 결과(브랜치 이름, 커밋 해시·메시지)를 보여 준다. 실행 전에 `git branch --show-current`로 지금 브랜치를 확인한다(`docs/failure-memory.md` 2026-11-18). `main`·`dev`에 바로 커밋하지 않는다
+- 맡기지 않았으면 **초안만** 보여 주고 실행하지 않는다
+- push는 이 스킬이 하지 않는다. 사람이 "푸쉬해줘"라고 하거나 `pr-body`가 승인받았을 때만 한다
 
 ## 브랜치 이름
 

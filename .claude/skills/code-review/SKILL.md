@@ -1,7 +1,6 @@
 ---
 name: code-review
-description: 바뀐 코드가 프로젝트 규칙을 지키는지 검토한다. 번호가 없으면 내 브랜치, PR 번호가 있으면 그 PR을 본다. 사람이 부를 때만 쓴다
-disable-model-invocation: true
+description: 바뀐 코드가 프로젝트 규칙을 지키는지 검토한다. 번호가 없으면 내 브랜치, PR 번호가 있으면 그 PR을 본다. 사람이 리뷰를 부탁하거나(PR 번호 포함), 코드를 바꾼 작업을 끝내고 PR을 만들기 전에 쓴다
 ---
 
 # code-review

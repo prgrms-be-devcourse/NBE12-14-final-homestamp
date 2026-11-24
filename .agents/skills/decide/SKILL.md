@@ -1,7 +1,6 @@
 ---
 name: decide
-description: 회의 결정을 docs/decisions.md에 한 줄 추가한다. 사람이 /decide 결정 / 이유 로 부를 때만 쓴다
-disable-model-invocation: true
+description: 정한 것을 docs/decisions.md에 한 줄 추가한다. 사람이 /decide 결정 / 이유 로 부르거나, 대화에서 팀 규칙·공통 계약·문서끼리 다른 곳의 기준을 정했을 때 쓴다(사람이 직접 부르지 않았으면 줄을 먼저 보여 주고 승인받는다)
 ---
 
 # decide
@@ -18,6 +17,7 @@ disable-model-invocation: true
 ## 하는 일
 
 1. 오늘 날짜를 `YYYY-MM-DD`로 구한다 (추측하지 말고 `date +%F` 등으로 확인)
+   - 사람이 `/decide`로 부르지 않고 AI가 대화를 보고 이 스킬을 골랐으면, 2로 가기 전에 넣을 줄을 먼저 보여 주고 사람이 승인한 뒤에만 넣는다. 결정과 이유는 대화에서 사람이 정한 말로 쓰고, AI가 추측한 결정은 넣지 않는다
 2. `docs/decisions.md` 표 맨 아래에 `| 날짜 | 결정 | 이유 |` 한 줄을 추가한다
    - 문장 안의 `|`는 `\|`로 바꾼다
    - 사람이 쓴 말을 최대한 그대로 쓰고, 길면 한 문장으로 줄인다

@@ -13,7 +13,7 @@
 
 ## 2. GitHub CLI (선택, 추천)
 
-`/issue`·`/pr-body`(Codex는 `$issue`·`$pr-body`)로 AI가 이슈와 PR을 **직접 올리게** 하려면 필요하다.
+AI가 `issue`·`pr-body` 스킬로 이슈와 PR을 **직접 올리게** 하려면 필요하다. 스킬은 AI가 때를 보고 스스로 부르고, 사람이 `/issue`·`/pr-body`(Codex는 `$issue`·`$pr-body`)로 불러도 된다.
 
 ```
 # 설치

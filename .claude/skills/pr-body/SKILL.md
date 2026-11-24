@@ -1,7 +1,6 @@
 ---
 name: pr-body
-description: PR 제목과 본문을 템플릿대로 만들고, 사람이 승인하면 push와 PR 생성(이미 열린 PR이면 본문 갱신)까지 한다. 사람이 /pr-body 또는 $pr-body로 부를 때만 쓴다
-disable-model-invocation: true
+description: PR 제목과 본문을 템플릿대로 만들고, 사람이 승인하면 push와 PR 생성(이미 열린 PR이면 본문 갱신)까지 한다. 작업 브랜치의 일을 끝내 PR을 올릴 때, 열린 PR에 커밋을 더해 본문을 맞출 때, 또는 사람이 PR을 부탁할 때 쓴다
 ---
 
 # pr-body

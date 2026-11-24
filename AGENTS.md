@@ -23,7 +23,7 @@ Java 25 · Spring Boot 4.1 · PostgreSQL · Flyway | React 19 · Vite · TypeScr
 - 커밋: `타입: 내용` (한국어 한 줄, 50자 이내, 범위 표시 없음)
   - 타입 = `feat` `fix` `test` `docs` `refactor` `chore`
   - 한 커밋에는 한 가지 일만
-- 브랜치·커밋은 `git-convention` 스킬로, 이슈는 `issue` 스킬로, PR은 `pr-body` 스킬로 만든다 (모두 사람이 부를 때만)
+- 브랜치·커밋은 `git-convention` 스킬로, 이슈는 `issue` 스킬로, PR은 `pr-body` 스킬로 만든다. 스킬은 사람이 부르지 않아도 AI가 때를 보고 스스로 쓴다(사람이 `/스킬`·`$스킬`로 불러도 된다). 올리는 일은 아래 "AI가 지킬 것"대로 사람이 확인한 뒤에만 한다
 - 이슈는 `.github/ISSUE_TEMPLATE/task.md`를 따르고, PR 본문의 `closes #번호`로 이슈와 연결한다
 - 이슈·PR에는 제목 타입과 같은 라벨(`feat` `fix` `test` `docs` `refactor` `chore`) 하나를 붙이고, UI 스타일·CSS만 바꾸면 `style`을 더한다
 - PR 본문은 `.github/pull_request_template.md`를 따른다
@@ -34,7 +34,7 @@ Java 25 · Spring Boot 4.1 · PostgreSQL · Flyway | React 19 · Vite · TypeScr
 - 작업을 시작하기 전에 `docs/failure-memory.md`를 읽는다. 같은 실수를 반복하면 기록을 제안하고, 사람이 승인한 뒤에만 추가한다
 - 문서를 근거로 답할 때는 근거 위치(`파일` + 장·표 이름)를 함께 적는다. 문서의 일부만 읽었으면 읽은 범위를 밝힌다
 - 문서끼리 내용이 다르면 한쪽을 조용히 고르지 않는다. 어디가 다른지 알리고, 어떻게 고칠지는 `docs/rules/06-요구사항-명세.md` 0장 "문서끼리 다르면"을 따른다
-- `git commit`, `git push`, 이슈·PR 생성은 사람이 확인한 뒤에만 한다. `issue`·`pr-body` 스킬은 초안을 먼저 보여 주고 승인을 받은 뒤에 올린다
+- `git commit`, `git push`, 이슈·PR 생성은 사람이 확인한 뒤에만 한다("커밋해줘"·"푸쉬해줘"·"올려줘"처럼 그 일을 맡긴 말이 확인이다). `issue`·`pr-body` 스킬은 초안을 먼저 보여 주고 승인을 받은 뒤에 올린다. AI가 스스로 스킬을 불러도 이 확인은 줄이지 않는다
 - 커밋 메시지·이슈·PR 본문에 AI 도구 서명(`Co-Authored-By: Claude ...`, `Generated with ...` 등)을 넣지 않는다 (Claude·Codex 공통)
 - 비밀값 파일(`.env*`, `*.pem`, `*.key`, `application-prod*`, `application-local*`)은 읽거나 고치지 않는다
 - 이미 `dev`에 들어간 Flyway 마이그레이션(`V*.sql`)은 고치지 않는다. 바꿀 게 있으면 새 V 파일을 만든다
