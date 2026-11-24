@@ -1,7 +1,12 @@
 package com.chilsuitjo.back.repair.controller;
 
+import com.chilsuitjo.back.global.common.dto.AnswerResult;
+import com.chilsuitjo.back.global.common.dto.RespondRequest;
+import com.chilsuitjo.back.global.common.dto.SupplementRequest;
 import com.chilsuitjo.back.global.response.CreatedResponse;
 import com.chilsuitjo.back.global.security.LoginMember;
+import com.chilsuitjo.back.repair.dto.DefectAckChanged;
+import com.chilsuitjo.back.repair.dto.DefectAckResponse;
 import com.chilsuitjo.back.repair.dto.RegisterRepairRequest;
 import com.chilsuitjo.back.repair.dto.RepairCaseCreated;
 import com.chilsuitjo.back.repair.service.RepairService;
@@ -46,5 +51,44 @@ public class RepairController {
       response.header(REPLAYED, "true");
     }
     return response.body(new CreatedResponse(created.id()));
+  }
+
+  /**
+   * 하자 응답(REP-2·3·9). 맞아요·더 필요해요(보류)·사실과 달라요(이견). 처음 성공과 다시 온 요청 모두 200과 {@code AnswerResult}다. 다시
+   * 온 요청이면 {@code Idempotent-Replayed: true}를 붙인다(06 4-0).
+   */
+  @PostMapping("/api/repair-cases/{id}/respond")
+  public ResponseEntity<AnswerResult> respond(
+      @PathVariable UUID id,
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey,
+      @RequestBody RespondRequest request) {
+    AnswerResult result = repairs.respond(id, memberId, idempotencyKey, request);
+    return withReplayed(ResponseEntity.ok(), result.replayed()).body(result);
+  }
+
+  /**
+   * 보충하고 다시 확인 요청(REP-2e). 처음 성공과 다시 온 요청 모두 200이다.
+   *
+   * <p><b>아직 06과 다르다</b>: 사진은 받지 않는다. {@code uploadTickets}가 오면 400으로 거절하고, 설명으로만 보충한다. 사진은 {@code
+   * PhotoService}(#153)·실제 업로드(#112) 뒤에 붙인다(#155).
+   */
+  @PostMapping("/api/repair-cases/{id}/supplement")
+  public ResponseEntity<DefectAckResponse> supplement(
+      @PathVariable UUID id,
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey,
+      @RequestBody SupplementRequest request) {
+    DefectAckChanged changed = repairs.supplement(id, memberId, idempotencyKey, request);
+    return withReplayed(ResponseEntity.ok(), changed.replayed())
+        .body(new DefectAckResponse(changed.id(), changed.defectAck()));
+  }
+
+  private static ResponseEntity.BodyBuilder withReplayed(
+      ResponseEntity.BodyBuilder response, boolean replayed) {
+    if (replayed) {
+      response.header(REPLAYED, "true");
+    }
+    return response;
   }
 }

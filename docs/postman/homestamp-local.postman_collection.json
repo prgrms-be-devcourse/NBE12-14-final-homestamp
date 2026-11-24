@@ -128,6 +128,94 @@
             }
           },
           "response": []
+        },
+        {
+          "name": "하자응답(상대 측)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{counterpart_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"answer\":\"NEED_MORE\",\"reason\":\"사진이 흐려요\",\"seenVersionNo\":1}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/repair-cases/{{repairCaseId}}/respond",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "repair-cases",
+                "{{repairCaseId}}",
+                "respond"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "보충하고 다시 확인 요청",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{bearer_token_15h5}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"description\":\"밝은 데서 다시 찍었어요\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/repair-cases/{{repairCaseId}}/supplement",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "repair-cases",
+                "{{repairCaseId}}",
+                "supplement"
+              ]
+            }
+          },
+          "response": []
         }
       ]
     },
@@ -190,6 +278,10 @@
     },
     {
       "key": "bearer_token_15h5",
+      "value": ""
+    },
+    {
+      "key": "counterpart_token",
       "value": ""
     }
   ]
