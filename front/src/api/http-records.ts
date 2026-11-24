@@ -1,5 +1,5 @@
+import { notConnected } from "./connected"
 import { emptyState, type DemoState, type Notice, type Room } from "@/data/demo"
-import { ApiError } from "./errors"
 import { endpoints } from "./endpoints"
 import type { HttpRequest } from "./http-client"
 import { isMissing, isNone, type RecordsApi } from "./records"
@@ -33,12 +33,7 @@ export function createHttpRecords(request: HttpRequest): RecordsApi {
     load,
     send: async (_s, c) => {
       if (isNone(c.request)) return {}
-      if (isMissing(c.request))
-        throw new ApiError({
-          status: 0,
-          code: "NOT_CONNECTED",
-          detail: "아직 서버에 연결되지 않은 기능이에요.",
-        })
+      if (isMissing(c.request)) throw notConnected()
       const list = Array.isArray(c.request) ? c.request : [c.request]
       let made: { id?: string } | undefined
       for (const r of list)
