@@ -483,6 +483,11 @@ class DatabaseRoleBootstrapIntegrationTest {
     assertTrue(hasColumnPrivilege(postgres, PERSON, "state.member", "status"));
     executeAsAdmin(postgres, "REVOKE SELECT (status) ON state.member FROM " + PERSON);
 
+    // 6개 카탈로그 밖의 직접 권한도 pg_shdepend로 잡는다
+    executeAsAdmin(postgres, "GRANT USAGE ON LANGUAGE plpgsql TO " + PERSON);
+    assertAuditFails(postgres, "(pg_shdepend)");
+    executeAsAdmin(postgres, "REVOKE USAGE ON LANGUAGE plpgsql FROM " + PERSON);
+
     executeAsAdmin(postgres, "GRANT pg_read_all_data TO " + PERSON);
     assertAuditFails(postgres, "membership other than the human read group");
     executeAsAdmin(postgres, "REVOKE pg_read_all_data FROM " + PERSON);
@@ -494,10 +499,28 @@ class DatabaseRoleBootstrapIntegrationTest {
     assertNotEquals(0, runBootstrap(postgres).getExitCode());
     executeAsAdmin(postgres, "REVOKE " + HUMAN + " FROM " + PERSON);
     executeAsAdmin(
+        postgres, "GRANT " + HUMAN + " TO " + PERSON + " WITH INHERIT TRUE, SET FALSE, ADMIN TRUE");
+    assertAuditFails(postgres, "must be INHERIT TRUE, SET FALSE, ADMIN FALSE");
+    executeAsAdmin(postgres, "REVOKE " + HUMAN + " FROM " + PERSON);
+    executeAsAdmin(
         postgres,
         "GRANT " + HUMAN + " TO " + PERSON + " WITH INHERIT TRUE, SET FALSE, ADMIN FALSE");
 
-    assertEquals(0, runHumanAudit(postgres).getExitCode());
+    // 관리자 예외는 CREATEROLE·superuser의 ADMIN 전용 멤버십만이다. 일반 LOGIN 역할의 ADMIN 전용은 실패
+    String adminOnly = "homestamp_admin_only_test";
+    executeAsAdmin(
+        postgres, "CREATE ROLE " + adminOnly + " LOGIN NOINHERIT VALID UNTIL '2999-01-01'");
+    executeAsAdmin(
+        postgres,
+        "GRANT " + HUMAN + " TO " + adminOnly + " WITH INHERIT FALSE, SET FALSE, ADMIN TRUE");
+    assertAuditFails(postgres, "person role " + adminOnly + " membership must be");
+    executeAsAdmin(postgres, "DROP ROLE " + adminOnly);
+
+    var restored = runHumanAudit(postgres);
+    assertEquals(0, restored.getExitCode(), restored.getStderr());
+    assertTrue(
+        restored.getStderr().contains("ADMIN-only grants: {" + BOOTSTRAP + "}"),
+        restored.getStderr());
   }
 
   private static void assertAuditFails(PostgreSQLContainer postgres, String message)

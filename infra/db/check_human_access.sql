@@ -5,6 +5,9 @@
 -- Required psql variable: human_role (the NOLOGIN read group, e.g. homestamp_human_read).
 -- Run as a trusted DB administrator after adding or removing a person and before each
 -- production deployment. It changes nothing; any violation fails with a non-zero exit code.
+-- People are identified as the members of the group. It does not check PUBLIC privileges (they are
+-- handled by bootstrap_roles.sql and grants.sql) or LOGIN roles that were removed from the group
+-- without being dropped.
 SELECT set_config('homestamp.audit.human_role', :'human_role', false);
 
 BEGIN READ ONLY;
@@ -15,6 +18,7 @@ DECLARE
     group_id oid;
     person record;
     people integer := 0;
+    administrators text[] := '{}';
 BEGIN
     SELECT oid INTO group_id FROM pg_roles WHERE rolname = human_role;
     IF group_id IS NULL THEN
@@ -41,6 +45,7 @@ BEGIN
         -- That is the trusted administrator, not a person. ADMIN on anyone else is a violation.
         IF person.admin_option AND NOT person.inherit_option AND NOT person.set_option
            AND (person.rolsuper OR person.rolcreaterole) THEN
+            administrators := administrators || person.rolname::text;
             CONTINUE;
         END IF;
         people := people + 1;
@@ -100,9 +105,19 @@ BEGIN
             RAISE EXCEPTION 'person role % has direct privileges; grant only through the human read group',
                 person.rolname;
         END IF;
+        -- pg_shdepend is cluster-wide: it also covers other catalogs (languages, types, large objects,
+        -- parameters, ...), policies, and objects in other databases of the same cluster.
+        IF EXISTS (
+            SELECT 1 FROM pg_shdepend
+            WHERE refclassid = 'pg_authid'::regclass AND refobjid = person.oid
+        ) THEN
+            RAISE EXCEPTION 'person role % owns objects or holds direct privileges or policies (pg_shdepend)',
+                person.rolname;
+        END IF;
     END LOOP;
 
-    RAISE NOTICE 'human access audit passed: % person role(s) in %', people, human_role;
+    RAISE NOTICE 'human access audit passed: % person role(s) in %; administrator ADMIN-only grants: %',
+        people, human_role, administrators;
 END
 $$;
 
