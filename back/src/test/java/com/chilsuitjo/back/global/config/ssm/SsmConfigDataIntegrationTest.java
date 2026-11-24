@@ -47,7 +47,6 @@ class SsmConfigDataIntegrationTest {
               .toString()
               .contains("db-password-secret"));
       assertEquals(1, SsmTestParameterSource.calls());
-      assertEquals(0, SsmTestParameterSource.migrationCalls());
     }
   }
 
@@ -57,7 +56,6 @@ class SsmConfigDataIntegrationTest {
       SsmTestParameterSource.reset();
       try (ConfigurableApplicationContext context = run(profile)) {
         assertEquals(0, SsmTestParameterSource.calls());
-        assertEquals(0, SsmTestParameterSource.migrationCalls());
         assertEquals("http://localhost:5173", context.getEnvironment().getProperty("app.origin"));
       }
     }
@@ -71,7 +69,6 @@ class SsmConfigDataIntegrationTest {
       assertEquals(
           "db-password-secret", context.getBean(DriverManagerDataSource.class).getPassword());
       assertEquals(1, SsmTestParameterSource.calls());
-      assertEquals(0, SsmTestParameterSource.migrationCalls());
     }
   }
 

@@ -6,8 +6,8 @@ import org.springframework.core.env.EnumerablePropertySource;
 /** An SSM-backed property source that never prints its property values. */
 final class RedactedSsmPropertySource extends EnumerablePropertySource<Map<String, Object>> {
 
-  RedactedSsmPropertySource(String name, Map<String, Object> properties) {
-    super(name, properties);
+  RedactedSsmPropertySource(Map<String, Object> properties) {
+    super("homestampSsmApp", properties);
   }
 
   @Override

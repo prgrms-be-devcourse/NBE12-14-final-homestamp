@@ -4,118 +4,78 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.List;
-import java.util.Map;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.context.ConfigurableApplicationContext;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.core.env.EnumerablePropertySource;
-import org.springframework.jdbc.datasource.DriverManagerDataSource;
-import software.amazon.awssdk.core.exception.ApiCallTimeoutException;
 
+/**
+ * Migration 설정은 SSM·Spring ConfigData로 공급하지 않는다(파일 → {@code MigrationMode} 직접 구성).
+ *
+ * <p>앱 쪽 Spring 설정에서 {@code homestamp-ssm:migration}을 import해도 SSM을 부르지 않고 시작 단계에서 거절되는지, 앱 경로는
+ * 그대로인지 본다. DB·AWS에 연결하지 않는다.
+ */
 class MigrationSsmConfigDataIntegrationTest {
 
-  private static final String PASSWORD = "fake-migration-password-for-tests";
-
-  @AfterEach
-  void resetSource() {
-    SsmTestParameterSource.reset();
-  }
-
-  @Test
-  void migrationConfigDataSuppliesSettingsBeforeDataSourceBeanCreation() {
-    SsmTestParameterSource.setMigrationParameters(
-        SsmTestParameterSource.migrationParameters(
-            "jdbc:postgresql://db.example.test:5432/homestamp",
-            "migration_login_test",
-            PASSWORD,
-            "homestamp_owner"));
-
-    try (ConfigurableApplicationContext context = runMigrationConfig()) {
-      DriverManagerDataSource dataSource = context.getBean(DriverManagerDataSource.class);
-      assertThat(context.getEnvironment().getActiveProfiles()).containsExactly("migrate");
-      assertThat(dataSource.getUrl()).isEqualTo("jdbc:postgresql://db.example.test:5432/homestamp");
-      assertThat(dataSource.getUsername()).isEqualTo("migration_login_test");
-      assertThat(dataSource.getPassword()).isEqualTo(PASSWORD);
-      assertThat(context.getEnvironment().getProperty("app.migration.owner-role"))
-          .isEqualTo("homestamp_owner");
-      assertThat(context.getEnvironment().getProperty("app.keys.access-token")).isBlank();
-      var migrationProperties =
-          context.getEnvironment().getPropertySources().get("homestampSsmMigration");
-      assertThat(((EnumerablePropertySource<?>) migrationProperties).getPropertyNames())
-          .containsExactlyInAnyOrder(
-              "spring.datasource.url",
-              "spring.datasource.username",
-              "spring.datasource.password",
-              "app.migration.owner-role");
-      assertThat(migrationProperties.containsProperty("app.keys.access-token")).isFalse();
-      assertThat(migrationProperties.toString()).doesNotContain(PASSWORD);
-      assertThat(SsmTestParameterSource.migrationCalls()).isEqualTo(1);
-      assertThat(SsmTestParameterSource.calls()).isZero();
-    }
-  }
-
-  @Test
-  void missingSettingsFailDuringConfigDataLoadingWithoutSecretDisclosure() {
-    SsmTestParameterSource.setMigrationParameters(List.of());
-
-    assertThatThrownBy(MigrationSsmConfigDataIntegrationTest::runMigrationConfig)
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("필수 Migration SSM 설정이 없다")
-        .hasMessageNotContaining(PASSWORD);
-    assertThat(SsmTestParameterSource.migrationCalls()).isEqualTo(1);
-    assertThat(SsmTestParameterSource.calls()).isZero();
-  }
-
-  @Test
-  void accessDeniedAndKmsFailureAreSanitizedAndFailClosed() {
-    for (String failure : List.of("AccessDenied fake-secret", "KMS Decrypt denied fake-secret")) {
-      SsmTestParameterSource.setMigrationFailure(new IllegalStateException(failure));
-
-      assertThatThrownBy(MigrationSsmConfigDataIntegrationTest::runMigrationConfig)
-          .isInstanceOf(IllegalStateException.class)
-          .hasMessage("운영 SSM 설정을 불러오거나 검증하지 못했다")
-          .hasMessageNotContaining("fake-secret");
-      assertThat(SsmTestParameterSource.migrationCalls()).isEqualTo(1);
-      SsmTestParameterSource.reset();
-    }
-    assertThat(SsmTestParameterSource.calls()).isZero();
-  }
-
-  @Test
-  void timeoutFailsClosedWithoutEchoingTheUnderlyingMessage() {
-    SsmTestParameterSource.setMigrationFailure(
-        ApiCallTimeoutException.create("timeout with fake-secret", null));
-
-    assertThatThrownBy(MigrationSsmConfigDataIntegrationTest::runMigrationConfig)
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessage("운영 Migration SSM 설정 조회 시간이 초과됐다")
-        .hasMessageNotContaining("fake-secret");
-    assertThat(SsmTestParameterSource.migrationCalls()).isEqualTo(1);
-    assertThat(SsmTestParameterSource.calls()).isZero();
-  }
-
-  private static ConfigurableApplicationContext runMigrationConfig() {
-    SpringApplication application = new SpringApplication(MigrationConfigProbe.class);
-    application.setWebApplicationType(WebApplicationType.NONE);
-    application.setDefaultProperties(Map.of("spring.main.banner-mode", "off"));
-    return application.run(
-        "--spring.profiles.active=migrate", "--spring.config.import=homestamp-ssm:migration");
-  }
-
   @Configuration(proxyBeanMethods = false)
-  static class MigrationConfigProbe {
+  static class Empty {}
 
-    @Bean
-    DriverManagerDataSource dataSource(org.springframework.core.env.Environment environment) {
-      DriverManagerDataSource dataSource = new DriverManagerDataSource();
-      dataSource.setUrl(environment.getRequiredProperty("spring.datasource.url"));
-      dataSource.setUsername(environment.getRequiredProperty("spring.datasource.username"));
-      dataSource.setPassword(environment.getRequiredProperty("spring.datasource.password"));
-      return dataSource;
+  /** 호출 횟수를 세는 SSM 출처. */
+  static final class CountingSsm implements SsmParameterSource {
+    int calls;
+
+    @Override
+    public List<SsmConfigParameter> loadAppParameters() {
+      calls++;
+      return SsmTestParameterSource.validParameters();
+    }
+  }
+
+  static ConfigurableApplicationContext run(SsmParameterSource ssm, String... args) {
+    SpringApplication application = new SpringApplication(Empty.class);
+    application.setWebApplicationType(WebApplicationType.NONE);
+    application.addBootstrapRegistryInitializer(
+        registry -> registry.register(SsmParameterSource.class, ignored -> ssm));
+    return application.run(args);
+  }
+
+  @Test
+  void migration_경로_import는_SSM을_부르지_않고_거절된다() {
+    CountingSsm ssm = new CountingSsm();
+    assertThatThrownBy(() ->
+            run(
+                ssm,
+                "--spring.config.location=optional:classpath:/migration-none.properties",
+                "--spring.config.import=homestamp-ssm:migration"))
+        .hasStackTraceContaining("SSM ConfigData 위치에는 추가 경로를 지정할 수 없다");
+    assertThat(ssm.calls).isZero();
+  }
+
+  @Test
+  void optional_접두어나_on_not_found_ignore로도_migration_경로는_열리지_않는다() {
+    CountingSsm ssm = new CountingSsm();
+    assertThatThrownBy(() ->
+            run(
+                ssm,
+                "--spring.config.location=optional:classpath:/migration-none.properties",
+                "--spring.config.on-not-found=ignore",
+                "--spring.config.import=optional:homestamp-ssm:migration"))
+        .hasStackTraceContaining("SSM ConfigData 위치에는 추가 경로를 지정할 수 없다");
+    assertThat(ssm.calls).isZero();
+  }
+
+  @Test
+  void 앱_경로는_그대로_SSM_앱_설정만_읽는다() {
+    CountingSsm ssm = new CountingSsm();
+    try (ConfigurableApplicationContext context =
+        run(
+            ssm,
+            "--spring.config.location=optional:classpath:/migration-none.properties",
+            "--spring.config.import=homestamp-ssm:")) {
+      assertThat(ssm.calls).isEqualTo(1);
+      assertThat(context.getEnvironment().getProperty("app.migration.owner-role")).isNull();
+      assertThat(context.getEnvironment().getProperty("spring.datasource.url")).isNotBlank();
     }
   }
 }

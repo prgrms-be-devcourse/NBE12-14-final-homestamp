@@ -71,44 +71,11 @@ tasks.register('localAccessToken', JavaExec) {
     mainClass = 'com.chilsuitjo.back.global.security.LocalAccessToken'
 }
 
-def migrationTestFactories = layout.buildDirectory.file('migration-test-resources/META-INF/spring.factories')
-
-tasks.register('prepareMigrationTestFactories') {
-    outputs.file(migrationTestFactories)
-    doLast {
-        def factories = migrationTestFactories.get().asFile
-        factories.parentFile.mkdirs()
-        factories.text = '''\
-org.springframework.boot.context.config.ConfigDataLocationResolver=com.chilsuitjo.back.global.config.ssm.SsmConfigDataLocationResolver
-org.springframework.boot.context.config.ConfigDataLoader=com.chilsuitjo.back.global.config.ssm.SsmConfigDataLoader
-org.springframework.boot.bootstrap.BootstrapRegistryInitializer=com.chilsuitjo.back.global.config.ssm.SsmTestBootstrapRegistryInitializer
-'''
-    }
-}
-
-tasks.register('migrationTestBootJar', org.springframework.boot.gradle.tasks.bundling.BootJar) {
-    group = 'verification'
-    description = 'Test-only executable JAR containing the in-memory SSM source.'
-    dependsOn tasks.named('testClasses'), tasks.named('prepareMigrationTestFactories')
-    archiveClassifier = 'migration-test'
-    mainClass = 'com.chilsuitjo.back.BackApplication'
-    targetJavaVersion = JavaVersion.toVersion(java.toolchain.languageVersion.get().asInt())
-    classpath = tasks.named('bootJar').get().classpath
-    exclude 'META-INF/spring.factories'
-    from(sourceSets.test.output) {
-        into 'BOOT-INF/classes'
-        exclude 'META-INF/spring.factories'
-    }
-    from(migrationTestFactories) {
-        into 'BOOT-INF/classes/META-INF'
-    }
-}
-
 tasks.named('test') {
     useJUnitPlatform()
-    dependsOn tasks.named('bootJar'), tasks.named('migrationTestBootJar')
+    // MigrationRunnerIntegrationTest가 운영 bootJar를 UID 10002 컨테이너에서 --migrate로 실행한다
+    dependsOn tasks.named('bootJar')
     doFirst {
-        systemProperty 'migration.test.boot-jar', tasks.named('migrationTestBootJar').get().archiveFile.get().asFile.absolutePath
         systemProperty 'migration.test.production-boot-jar', tasks.named('bootJar').get().archiveFile.get().asFile.absolutePath
     }
     finalizedBy 'jacocoTestReport'
