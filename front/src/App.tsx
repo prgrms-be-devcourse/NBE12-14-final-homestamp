@@ -1,19 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from "react"
-import {
-  ArrowRight,
-  Bell,
-  Building2,
-  ChevronRight,
-  CircleCheck,
-  Link2,
-  Menu,
-  Plus,
-  ShieldCheck,
-  X,
-} from "lucide-react"
+import { Plus, ShieldCheck } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { Card } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -21,7 +8,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog"
-import { Status, Logo, Panel, Empty, Choice } from "@/components/common/blocks"
+import { Panel } from "@/components/common/blocks"
 import {
   partGroups,
   type Role,
@@ -43,6 +30,7 @@ import { HomePage } from "@/pages/home-page"
 import { CounterpartNotice } from "@/components/common/counterpart-notice"
 import { RoomsPage } from "@/pages/rooms-page"
 import { RepairsPage } from "@/pages/repairs-page"
+import { SharePage, type SharedKind } from "@/pages/share-page"
 import { hasAction, type RoomAction } from "@/api/actions"
 import { ApiProvider } from "@/api"
 import { useApi } from "@/api/hooks"
@@ -62,7 +50,6 @@ import { AuthScreen } from "@/features/auth/auth-screen"
 import { PhotoGallery } from "@/features/photo/photo-gallery"
 import { ReceivedInvitations } from "@/features/room/received-invitations"
 import { PartPhotoContent } from "@/features/photo/part-photo-content"
-import { RecordDescription } from "@/components/common/record-description"
 import { maskOf } from "@/lib/photo-privacy"
 import { MoneyLeftNotice } from "@/features/payment/money-left"
 import { RepairAfterForm } from "@/features/repair/repair-after-form"
@@ -77,7 +64,6 @@ import {
   type RepairPrefill,
 } from "@/features/repair/repair-create-form"
 import { AccountPanel } from "@/features/member/account-panel"
-import { InspectionItemCorrections } from "@/features/inspection/inspection-corrections"
 import { syncRepairSettlements } from "@/lib/repair-rules"
 import {
   inspectionStatus,
@@ -96,7 +82,7 @@ import {
   inviteeSide,
 } from "@/lib/workflows"
 import { myTurn } from "@/lib/turn"
-import { hasUnsettledMoney, safeSharedText } from "@/lib/service-rules"
+import { hasUnsettledMoney } from "@/lib/service-rules"
 import "./App.css"
 import "./readability.css"
 import "./service.css"
@@ -104,6 +90,9 @@ import { sideText } from "@/lib/words"
 import { Notice } from "@/components/common/notice"
 import { Welcome } from "@/features/room/welcome"
 import { SideMenu } from "@/components/common/side-menu"
+import { AppTopbar } from "@/components/common/app-topbar"
+import { PageHeading } from "@/components/common/page-heading"
+import { Toast } from "@/components/common/toast"
 import { nav, pageIntro } from "@/components/common/app-nav"
 import {
   Sheet,
@@ -250,9 +239,7 @@ function HomeStampApp({
   const setRepairId = (id: string) =>
     navigate((r) => ({ ...r, repairId: id }), false)
   const [guest, setGuest] = useState(isShareLink())
-  const [sharedKind, setSharedKind] = useState<
-    "repair" | "inspection" | "part-photo" | "invite" | "settlement"
-  >(
+  const [sharedKind, setSharedKind] = useState<SharedKind>(
     query.has("photo")
       ? "part-photo"
       : query.has("inspection")
@@ -890,163 +877,45 @@ function HomeStampApp({
       onPrefillUsed={() => setMoneyPrefill(undefined)}
     />
   )
+  // 옆 메뉴: 넓은 화면은 옆에, 좁은 화면은 [메뉴]로 여는 시트에 같은 메뉴를 보여요
+  const sideMenu = (
+    <SideMenu
+      page={page}
+      repairCount={repairs.length}
+      openCount={openCount}
+      room={hasRoomAccess ? room : undefined}
+      account={account}
+      roleText={sideText(role)}
+      onGo={(p) => {
+        if (p === "inspection") setKind("in")
+        go(p)
+      }}
+      onAccount={() => open("account")}
+    />
+  )
   return (
     <>
       {guest ? (
-        <div className="guest-shell">
-          <header>
-            <Logo />
-            <div className="flex items-center gap-2">
-              <Badge variant="secondary">
-                {account ? "로그인됨 · 호실 연결 전" : "읽기 전용 · 비회원"}
-              </Badge>
-              {account ? (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => {
-                    setGuest(false)
-                    replaceUrl(null, "", "/")
-                    navigate((r) => ({ ...r, page: "home", roomId: "" }))
-                  }}
-                >
-                  내 홈으로
-                </Button>
-              ) : (
-                <Button size="sm" variant="outline" onClick={onRequireAuth}>
-                  로그인
-                </Button>
-              )}
-            </div>
-          </header>
-          <div className="guest-banner">
-            <Link2 size={22} />
-            <div>
-              <h1>
-                {sharedKind === "inspection"
-                  ? "공유된 점검 하자 항목 · 읽기 전용"
-                  : sharedKind === "part-photo"
-                    ? "공유된 부위 사진 · 읽기 전용"
-                    : sharedKind === "invite"
-                      ? "호실 연결 초대"
-                      : sharedKind === "settlement"
-                        ? "퇴거 정산 확인 요청"
-                        : "공유된 수리 기록 · 읽기 전용"}
-              </h1>
-              <p>
-                이 링크에 지정된 기록 한 건만 표시합니다. 다른 점검·수리 기록과
-                호실 전체 기록은 공개되지 않아요.
-              </p>
-            </div>
-          </div>
-          {sharedKind === "settlement" ? (
-            sharedRoom && isSettlementInvitation(sharedRoom) ? (
-              <Card className="guest-cta">
-                <h2>퇴거 정산 확인 요청이 있어요</h2>
-                <p>
-                  정산 금액과 항목은 가입하고 호실에 연결한 뒤에 볼 수 있어요.
-                </p>
-                {account ? (
-                  <Button onClick={() => open("connect")}>
-                    호실 연결 확인
-                    <ArrowRight />
-                  </Button>
-                ) : (
-                  <Button onClick={onRequireAuth}>
-                    가입하고 확인하기
-                    <ArrowRight />
-                  </Button>
-                )}
-              </Card>
-            ) : (
-              <Empty text="유효하지 않은 정산 초대 링크예요." />
-            )
-          ) : sharedRoom?.status === "거주 중" &&
-            sharedRoom.connection !== "거절됨" &&
-            (sharedKind === "invite" ||
-              (sharedKind === "repair" && sharedRepair) ||
-              (sharedKind === "inspection" &&
-                sharedInspection &&
-                sharedInspection.publication !== "draft") ||
-              (sharedKind === "part-photo" && sharedPhoto?.sharedOnLink)) ? (
-            <>
-              {sharedKind === "repair" &&
-                sharedRepair &&
-                detailView(sharedRepair, true)}
-              {sharedKind === "inspection" && sharedInspection && (
-                <Panel title={safeSharedText(sharedInspection.title)}>
-                  <Badge variant="secondary">
-                    기존 하자 기록 · 응답은 연결 후 가능
-                  </Badge>
-                  <p className="muted">
-                    {sharedInspection.kind === "in" ? "입주 당시" : "퇴거 당시"}{" "}
-                    점검에 남긴 하자 항목 한 건입니다. 사실 확인과 비용 부담
-                    동의는 별개입니다.
-                  </p>
-                  <RecordDescription
-                    text={safeSharedText(sharedInspection.description)}
-                  />
-                  <PhotoGallery
-                    title={safeSharedText(sharedInspection.title)}
-                    description={safeSharedText(sharedInspection.description)}
-                    photos={sharedInspection.photos}
-                    masks={itemMasks(sharedInspection)}
-                    art={sharedInspection.art}
-                  />
-                  <Status>{sharedInspection.ack}</Status>
-                  <InspectionItemCorrections
-                    i={sharedInspection}
-                    db={db}
-                    role={role}
-                    readOnly
-                    guest
-                    actions={[]}
-                    correctionActionsOf={() => []}
-                    onAct={inspectionAct}
-                  />
-                  <p className="muted">
-                    현재 확인 상태만 표시합니다. 확인·이견 응답은 가입·번호
-                    확인·호실 연결을 마친 뒤 회원 화면에서 남길 수 있어요.
-                  </p>
-                </Panel>
-              )}
-              {sharedKind === "part-photo" && sharedPhoto && (
-                <Panel title="공유된 부위 사진 한 건">
-                  <PartPhotoContent record={sharedPhoto} shared />
-                </Panel>
-              )}
-              <Card className="guest-cta">
-                <h2>
-                  {sharedKind === "part-photo"
-                    ? "호실의 기록을 함께 보려면"
-                    : "연결한 뒤 기록에 응답할 수 있어요"}
-                </h2>
-                <p>
-                  {sharedKind === "part-photo"
-                    ? "이 사진은 상대 확인 대상이 아닙니다. 호실 전체 기록을 함께 보려면 가입·번호 확인·연결 수락이 필요해요."
-                    : "가입·로그인만으로 호실 전체가 열리지는 않습니다. 초대 번호 확인과 명시적인 연결 수락을 마쳐야 해요."}
-                </p>
-                {account ? (
-                  <Button onClick={() => open("connect")}>
-                    호실 연결 확인
-                    <ArrowRight />
-                  </Button>
-                ) : (
-                  <Button onClick={onRequireAuth}>
-                    가입·로그인하고 연결하기
-                    <ArrowRight />
-                  </Button>
-                )}
-              </Card>
-            </>
-          ) : (
-            <Empty text="공유되지 않았거나 유효하지 않은 기록입니다." />
-          )}
-          <p className="guest-foot">
-            공유 범위는 이 기록 한 건입니다. 읽음·열람은 하자 확인이나 합의가
-            아닙니다.{" "}
-          </p>
-        </div>
+        <SharePage
+          account={account}
+          sharedKind={sharedKind}
+          sharedRoom={sharedRoom}
+          sharedRepair={sharedRepair}
+          sharedInspection={sharedInspection}
+          sharedPhoto={sharedPhoto}
+          db={db}
+          role={role}
+          renderRepair={(r) => detailView(r, true)}
+          itemMasks={itemMasks}
+          onAct={inspectionAct}
+          onHome={() => {
+            setGuest(false)
+            replaceUrl(null, "", "/")
+            navigate((r) => ({ ...r, page: "home", roomId: "" }))
+          }}
+          onConnect={() => open("connect")}
+          onRequireAuth={onRequireAuth}
+        />
       ) : (
         <div className="app-shell">
           <Sheet open={mobile} onOpenChange={setMobile}>
@@ -1055,86 +924,27 @@ function HomeStampApp({
                 <SheetTitle>메뉴</SheetTitle>
                 <SheetDescription>화면 이동과 내 계정</SheetDescription>
               </SheetHeader>
-              <SideMenu
-                page={page}
-                repairCount={repairs.length}
-                openCount={openCount}
-                room={hasRoomAccess ? room : undefined}
-                account={account}
-                roleText={sideText(role)}
-                onGo={(p) => {
-                  if (p === "inspection") setKind("in")
-                  go(p)
-                }}
-                onAccount={() => open("account")}
-              />
+              {sideMenu}
             </SheetContent>
           </Sheet>
-          <aside className="sidebar">
-            <SideMenu
-              page={page}
-              repairCount={repairs.length}
-              openCount={openCount}
-              room={hasRoomAccess ? room : undefined}
-              account={account}
-              roleText={sideText(role)}
-              onGo={(p) => {
-                if (p === "inspection") setKind("in")
-                go(p)
-              }}
+          <aside className="sidebar">{sideMenu}</aside>
+          <div className="main-shell">
+            <AppTopbar
+              title={
+                page === "detail"
+                  ? "하자 상세"
+                  : page === "notifications"
+                    ? "알림"
+                    : nav.find((n) => n.id === page)?.label
+              }
+              invitations={receivedInvitations.length}
+              unread={unread}
+              accountInitial={account?.name.slice(0, 1) || "나"}
+              onMenu={() => setMobile(true)}
+              onInvitations={() => go("connection")}
+              onNotifications={() => go("notifications")}
               onAccount={() => open("account")}
             />
-          </aside>
-          <div className="main-shell">
-            <header className="topbar">
-              <div className="top-left">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="mobile-menu"
-                  aria-label="메뉴 열기"
-                  onClick={() => setMobile(true)}
-                >
-                  <Menu />
-                </Button>
-                <span className="breadcrumb">
-                  내 공간 <ChevronRight size={13} />{" "}
-                  <strong>
-                    {page === "detail"
-                      ? "하자 상세"
-                      : page === "notifications"
-                        ? "알림"
-                        : nav.find((n) => n.id === page)?.label}
-                  </strong>
-                </span>
-              </div>
-              <div className="top-actions">
-                {receivedInvitations.length > 0 && (
-                  <Button variant="outline" onClick={() => go("connection")}>
-                    받은 초대 {receivedInvitations.length}건
-                  </Button>
-                )}
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="bell"
-                  aria-label={`알림 ${unread}개`}
-                  onClick={() => go("notifications")}
-                >
-                  <Bell />
-                  {unread > 0 && <span>{unread}</span>}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="avatar small"
-                  aria-label="내 계정"
-                  onClick={() => open("account")}
-                >
-                  {account?.name.slice(0, 1) || "나"}
-                </Button>
-              </div>
-            </header>
             <main>
               {(page === "connection" || !hasRoomAccess) && (
                 <ReceivedInvitations
@@ -1157,55 +967,43 @@ function HomeStampApp({
               ) : hasRoomAccess ? (
                 <>
                   {page !== "detail" && (
-                    <div className="page-heading">
-                      <div>
-                        <div className="eyebrow">
-                          {page === "rooms"
-                            ? `내 호실 ${accessibleRooms.length}곳`
-                            : `${room.name} · ${room.status}`}
-                        </div>
-                        <h1>
-                          {page === "home"
-                            ? `${account?.name ?? ""}님, 안녕하세요`
-                            : page === "notifications"
-                              ? "내 알림"
-                              : nav.find((n) => n.id === page)?.label}
-                          {page === "home" && (
-                            <span className="greeting-dot">.</span>
-                          )}
-                        </h1>
-                        <p
-                          className={
-                            page === "home" ? "max-md:hidden" : undefined
-                          }
-                        >
-                          {page === "home"
-                            ? "답할 일과 진행 중인 기록을 먼저 보여 드려요."
-                            : (pageIntro[page] ??
-                              "사실과 합의를 구분하고, 서로의 행동을 기록으로 남겨요.")}
-                        </p>
-                      </div>
-                      <div className="heading-actions">
-                        <div className="room-select">
-                          <Building2 size={16} />
-                          <Choice
-                            label="현재 호실 선택"
-                            value={room.name}
-                            values={accessibleRooms.map((r) => r.name)}
-                            onChange={(v) => {
-                              setRoomId(db.rooms.find((r) => r.name === v)!.id)
-                              go(page)
-                            }}
-                          />
-                        </div>
-                        {roomHas("repair-cases") && page === "repairs" && (
+                    <PageHeading
+                      eyebrow={
+                        page === "rooms"
+                          ? `내 호실 ${accessibleRooms.length}곳`
+                          : `${room.name} · ${room.status}`
+                      }
+                      title={
+                        page === "home"
+                          ? `${account?.name ?? ""}님, 안녕하세요`
+                          : page === "notifications"
+                            ? "내 알림"
+                            : nav.find((n) => n.id === page)?.label
+                      }
+                      greeting={page === "home"}
+                      intro={
+                        page === "home"
+                          ? "답할 일과 진행 중인 기록을 먼저 보여 드려요."
+                          : (pageIntro[page] ??
+                            "사실과 합의를 구분하고, 서로의 행동을 기록으로 남겨요.")
+                      }
+                      hideIntroOnMobile={page === "home"}
+                      roomName={room.name}
+                      roomNames={accessibleRooms.map((r) => r.name)}
+                      onRoom={(v) => {
+                        setRoomId(db.rooms.find((r) => r.name === v)!.id)
+                        go(page)
+                      }}
+                      action={
+                        roomHas("repair-cases") &&
+                        page === "repairs" && (
                           <Button onClick={() => open("repair")}>
                             <Plus />
                             하자 등록
                           </Button>
-                        )}
-                      </div>
-                    </div>
+                        )
+                      }
+                    />
                   )}
                   {readOnly && (
                     <Notice className="mb-5" icon={<ShieldCheck aria-hidden />}>
@@ -1508,20 +1306,7 @@ function HomeStampApp({
           </div>
         </DialogContent>
       </Dialog>
-      {message && (
-        <div className="toast" role="status">
-          <CircleCheck size={19} />
-          {message}
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label="알림 닫기"
-            onClick={() => setMessage("")}
-          >
-            <X />
-          </Button>
-        </div>
-      )}
+      <Toast message={message} onClose={() => setMessage("")} />
     </>
   )
 }
