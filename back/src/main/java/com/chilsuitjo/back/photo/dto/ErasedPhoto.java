@@ -13,4 +13,10 @@ import java.time.Instant;
  * @param at 지운 시각
  * @param reason 지운 이유
  */
-public record ErasedPhoto(PartySide side, Instant at, EraseReason reason) {}
+public record ErasedPhoto(PartySide side, Instant at, EraseReason reason) {
+  public ErasedPhoto {
+    if (reason == EraseReason.THIRD_PARTY) {
+      side = null;
+    }
+  }
+}

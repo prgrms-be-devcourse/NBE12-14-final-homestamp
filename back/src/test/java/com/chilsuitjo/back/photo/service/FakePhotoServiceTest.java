@@ -26,6 +26,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** 이슈 110: 다른 도메인 테스트가 가짜로 사진을 붙일 수 있다. */
 class FakePhotoServiceTest {
@@ -54,6 +56,31 @@ class FakePhotoServiceTest {
     List<PhotoDigest> more = service.attach(command(List.of("t3")));
 
     assertThat(more).extracting(PhotoDigest::sortOrder).containsExactly(2);
+  }
+
+  @Test
+  void 행동_트랜잭션이_롤백되면_그때_붙인_사진만_지운다() {
+    List<PhotoDigest> before = service.attach(command(List.of("before")));
+    TransactionSynchronizationManager.initSynchronization();
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    try {
+      service.attach(command(List.of("rolled-back")));
+      assertThat(service.cards(tenant, List.of(repairCase)).get(repairCase)).hasSize(2);
+
+      for (TransactionSynchronization synchronization :
+          TransactionSynchronizationManager.getSynchronizations()) {
+        synchronization.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
+      }
+    } finally {
+      TransactionSynchronizationManager.clear();
+    }
+
+    assertThat(service.cards(tenant, List.of(repairCase)).get(repairCase))
+        .extracting(PhotoCard::id)
+        .containsExactly(before.getFirst().photoId());
+    assertThat(service.attach(command(List.of("next"))))
+        .extracting(PhotoDigest::sortOrder)
+        .containsExactly(1);
   }
 
   @Test
@@ -204,6 +231,19 @@ class FakePhotoServiceTest {
     assertThat(service.cards(tenant, List.of(repairCase)).get(repairCase)).containsExactly(card);
     assertThat(service.linkPhotos(tenant.roomRecordId(), List.of(repairCase)).get(repairCase))
         .containsExactly(new LinkPhoto(card.id(), repairCase, 0, null, null, null, erased));
+  }
+
+  @Test
+  void 다른_사람의_요청으로_지운_사진은_흔적에서_올린_측을_숨긴다() {
+    ErasedPhoto erased = new ErasedPhoto(PartySide.TENANT, at, EraseReason.THIRD_PARTY);
+    service.put(tenant.roomRecordId(), card(0, PartySide.TENANT, at, false, erased));
+
+    assertThat(
+            service.cards(tenant, List.of(repairCase)).get(repairCase).getFirst().erased().side())
+        .isNull();
+    assertThat(service.linkPhotos(tenant.roomRecordId(), List.of(repairCase)).get(repairCase))
+        .singleElement()
+        .satisfies(link -> assertThat(link.erased().side()).isNull());
   }
 
   @Test

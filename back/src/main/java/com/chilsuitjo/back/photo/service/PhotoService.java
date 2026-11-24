@@ -21,10 +21,11 @@ public interface PhotoService {
 
   /**
    * 업로드 표 목록을 검사하고 대상 하나에 사진 카드를 만든다. 부르는 쪽 행동의 {@code StateStore.save} 안에서 부른다. 이 메서드는 트랜잭션을 따로 열지
-   * 않는다.
+   * 않는다. 실제 구현(#112)은 {@code @Transactional(propagation = MANDATORY)}로 호출자의 트랜잭션을 요구한다.
    *
    * <p>실패하면 사진을 한 장도 붙이지 않고 그 사진의 번호({@code uploadTickets}의 0부터 시작하는 위치, {@code photoIndex})와 함께
-   * 거절한다.
+   * 거절한다. 한 행동에서 여러 대상에 붙일 때는 대상마다 {@code attach}를 부른 결과를 하나로 합친 뒤 {@code SavedState.withPhotos}를 한
+   * 번만 부른다. 같은 payload 키를 두 번 더하면 거절되기 때문이다.
    *
    * <ul>
    *   <li>{@code UPLOAD_TICKET_INVALID}: 서명이 다르거나, 남의 표거나, 다른 호실 기록의 표(06 PHO-1b)
@@ -33,7 +34,7 @@ public interface PhotoService {
    * </ul>
    *
    * @return 붙인 사진. {@code (sortOrder, photoId)} 오름차순이다. 부르는 쪽 {@code save}가 {@code
-   *     SavedState.withPhotos}로 그대로 넘긴다(05 2-3 "사진 지문은 행동 payload에")
+   *     SavedState.withPhotos}로 넘긴다(05 2-3 "사진 지문은 행동 payload에")
    */
   List<PhotoDigest> attach(PhotoAttachCommand command);
 

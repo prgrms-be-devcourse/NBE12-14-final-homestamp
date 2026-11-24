@@ -25,11 +25,14 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * 사진 창구 가짜(이슈 110). 업로드 표를 검사하지 않고 메모리에 사진 카드만 만든다.
  *
- * <p>실제 구현(검사·S3 복사·주소, #112)이 들어오면 이 클래스를 지운다. 다른 도메인은 {@link PhotoService}만 쓰므로 바뀌지 않는다.
+ * <p>트랜잭션 안에서 붙인 사진은 롤백 때 메모리에서도 지운다. 실제 구현(검사·S3 복사·주소, #112)이 들어오면 이 클래스를 지운다. 다른 도메인은 {@link
+ * PhotoService}만 쓰므로 바뀌지 않는다.
  */
 @Service
 public class FakePhotoService implements PhotoService {
@@ -93,6 +96,25 @@ public class FakePhotoService implements PhotoService {
       stored.add(new Stored(command.uploader().roomRecordId(), card));
       attached.add(new PhotoDigest(card.id(), originalSha256, nextOrder));
       nextOrder++;
+    }
+    if (!attached.isEmpty()
+        && TransactionSynchronizationManager.isActualTransactionActive()
+        && TransactionSynchronizationManager.isSynchronizationActive()) {
+      List<UUID> addedIds = attached.stream().map(PhotoDigest::photoId).toList();
+      TransactionSynchronizationManager.registerSynchronization(
+          new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+              if (status == STATUS_ROLLED_BACK) {
+                synchronized (FakePhotoService.this) {
+                  stored.removeIf(photo -> addedIds.contains(photo.card().id()));
+                  if (stored.isEmpty()) {
+                    photos.remove(command.target(), stored);
+                  }
+                }
+              }
+            }
+          });
     }
     return List.copyOf(attached);
   }
