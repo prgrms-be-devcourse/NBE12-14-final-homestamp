@@ -119,6 +119,7 @@ public class RepairQueryService {
         gate.side(),
         row.getCreatedBySide(),
         shown.status(),
+        shown.closeRequestedBy(),
         row.isSolo(),
         row.getCreatedAt(),
         asOf,

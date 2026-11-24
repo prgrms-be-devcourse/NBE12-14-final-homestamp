@@ -242,19 +242,25 @@ class RepairProgressApiTest {
     UUID caseId = register();
     respond(caseId, landlord, "ACK", null);
 
-    detail(caseId, tenant).andExpect(jsonPath("$.availableActions[0]").value("start"));
+    detail(caseId, tenant)
+        .andExpect(jsonPath("$.availableActions[0]").value("start"))
+        .andExpect(jsonPath("$.closeRequestedBy").doesNotExist());
     act(caseId, tenant, "start", null).andExpect(status().isOk());
     detail(caseId, landlord).andExpect(jsonPath("$.availableActions[0]").value("request-close"));
     act(caseId, landlord, "request-close", null).andExpect(status().isOk());
-    // 요청한 쪽에는 버튼이 없고 상대에게는 종료 확인·아직 안 됐어요가 보인다
-    detail(caseId, landlord).andExpect(jsonPath("$.availableActions").isEmpty());
+    // 요청한 쪽에는 버튼이 없고 상대에게는 종료 확인·아직 안 됐어요가 보인다. 누가 요청했는지는 양쪽 모두 본다
+    detail(caseId, landlord)
+        .andExpect(jsonPath("$.availableActions").isEmpty())
+        .andExpect(jsonPath("$.closeRequestedBy").value("LANDLORD"));
     detail(caseId, tenant)
+        .andExpect(jsonPath("$.closeRequestedBy").value("LANDLORD"))
         .andExpect(jsonPath("$.availableActions.length()").value(2))
         .andExpect(jsonPath("$.availableActions[0]").value("confirm-close"))
         .andExpect(jsonPath("$.availableActions[1]").value("not-yet"));
     act(caseId, tenant, "confirm-close", null).andExpect(status().isOk());
     detail(caseId, tenant)
         .andExpect(jsonPath("$.status").value("DONE"))
+        .andExpect(jsonPath("$.closeRequestedBy").doesNotExist())
         .andExpect(jsonPath("$.availableActions").isEmpty());
   }
 
