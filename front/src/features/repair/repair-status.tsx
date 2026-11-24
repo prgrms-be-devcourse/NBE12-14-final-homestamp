@@ -218,7 +218,7 @@ export function RepairActions({
       label: "수리 종료 확인",
       onClick: () => {
         if (r.author !== role && ackPending) {
-          setCloseAck("네, 하자도 확인해요")
+          setCloseAck(CLOSE_WITH_ACK)
           setMode("close-ack")
         } else exec((api, s) => api.confirmClose(s, r.id))
       },
