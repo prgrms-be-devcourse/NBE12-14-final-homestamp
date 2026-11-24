@@ -2,6 +2,8 @@
 \set QUIET 1
 
 -- Required psql variables: owner_role, migration_role, app_role, purge_role, human_role.
+-- human_role is the NOLOGIN Human read group (e.g. homestamp_human_read). Per-person LOGIN roles
+-- are created by the separate admin procedure in docs/runbooks, never by this script.
 -- Role names are deployment inputs; credentials are intentionally not handled here.
 SELECT set_config('homestamp.bootstrap.owner_role', :'owner_role', false);
 SELECT set_config('homestamp.bootstrap.migration_role', :'migration_role', false);
@@ -69,7 +71,7 @@ BEGIN
             (migration_role, true),
             (app_role, true),
             (purge_role, true),
-            (human_role, true)
+            (human_role, false)
         ) AS expected(role_name, can_login)
     LOOP
         SELECT * INTO existing_role FROM pg_roles WHERE rolname = role_spec.role_name;
@@ -122,6 +124,17 @@ BEGIN
            AND NOT membership.inherit_option
            AND NOT membership.set_option
            AND membership.admin_option THEN
+            CONTINUE;
+        END IF;
+        -- A per-person LOGIN role may belong to the Human read group with INHERIT TRUE, SET FALSE,
+        -- ADMIN FALSE only. Its other memberships and direct privileges are checked by
+        -- infra/db/check_human_access.sql.
+        IF membership.granted_name = human_role
+           AND membership.member_name NOT IN (owner_role, migration_role, app_role, purge_role, human_role)
+           AND membership.member_name <> current_user
+           AND membership.inherit_option
+           AND NOT membership.set_option
+           AND NOT membership.admin_option THEN
             CONTINUE;
         END IF;
         RAISE EXCEPTION 'unexpected role membership between % and %; refusing to change it',
@@ -179,6 +192,19 @@ BEGIN
     SELECT oid INTO public_schema_id FROM pg_namespace WHERE nspname = 'public';
     IF public_schema_id IS NULL THEN
         RAISE EXCEPTION 'public schema is missing';
+    END IF;
+
+    -- The ACL check below skips the schema owner's implicit privileges, so an application or
+    -- Human role must never own public. Ownership is not transferred automatically.
+    IF EXISTS (
+        SELECT 1 FROM pg_namespace n JOIN pg_roles r ON r.oid = n.nspowner
+        WHERE n.oid = public_schema_id
+          AND (r.rolname IN (migration_role, app_role, purge_role, human_role)
+               OR EXISTS (
+                   SELECT 1 FROM pg_auth_members m JOIN pg_roles g ON g.oid = m.roleid
+                   WHERE m.member = r.oid AND g.rolname = human_role))
+    ) THEN
+        RAISE EXCEPTION 'public schema is owned by a migration, app, purge, or human role; ownership migration is not performed';
     END IF;
 
     IF EXISTS (

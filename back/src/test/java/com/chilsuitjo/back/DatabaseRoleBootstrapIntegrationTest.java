@@ -24,10 +24,16 @@ class DatabaseRoleBootstrapIntegrationTest {
   private static final String MIGRATION = "homestamp_migration";
   private static final String APP = "homestamp_app";
   private static final String PURGE = "homestamp_purge";
-  private static final String HUMAN = "homestamp_human";
+
+  /** NOLOGIN Human 읽기 그룹(decisions 2026-11-25). grants.sql은 이 그룹에만 권한을 준다. */
+  private static final String HUMAN = "homestamp_human_read";
+
+  /** 관리자 절차로 따로 만드는 사람별 LOGIN 역할(테스트 전용 이름, 실제 사람 이름이 아님). */
+  private static final String PERSON = "homestamp_person_test";
+
   private static final String BOOTSTRAP = "homestamp_bootstrap_test";
   private static final String FAKE_PASSWORD = UUID.randomUUID().toString();
-  private static final List<String> LOGIN_ROLES = List.of(MIGRATION, APP, PURGE, HUMAN);
+  private static final List<String> LOGIN_ROLES = List.of(MIGRATION, APP, PURGE);
 
   @Test
   void bootstrapIsLeastPrivilegeRepeatableAndSupportsFlywayAndGrants() throws Exception {
@@ -49,6 +55,8 @@ class DatabaseRoleBootstrapIntegrationTest {
       for (String role : LOGIN_ROLES) {
         assertTrue(roleExists(postgres, role));
       }
+      assertTrue(roleExists(postgres, HUMAN));
+      assertFalse(roleExists(postgres, PERSON));
       assertRoleAttributes(postgres);
       assertOwnerMembership(postgres);
       assertOwnerCannotLogin(postgres);
@@ -61,9 +69,10 @@ class DatabaseRoleBootstrapIntegrationTest {
       assertTrue(roleExists(postgres, OWNER));
 
       setFakePasswords(postgres);
+      createPerson(postgres);
 
       var repeatRun = runBootstrap(postgres);
-      assertEquals(0, repeatRun.getExitCode());
+      assertEquals(0, repeatRun.getExitCode(), repeatRun.getStderr());
       for (String role : LOGIN_ROLES) {
         assertTrue(roleHasPassword(postgres, role));
       }
@@ -71,7 +80,8 @@ class DatabaseRoleBootstrapIntegrationTest {
       assertCanAssumeOwner(postgres);
       assertCannotAssumeOwner(postgres, APP);
       assertCannotAssumeOwner(postgres, PURGE);
-      assertCannotAssumeOwner(postgres, HUMAN);
+      assertCannotAssumeOwner(postgres, PERSON);
+      assertPersonCannotSetHumanGroup(postgres);
       assertDatabaseAndSchemaBoundary(postgres);
 
       migrateAndApplyGrants(postgres);
@@ -80,11 +90,14 @@ class DatabaseRoleBootstrapIntegrationTest {
       assertActualApplicationPrivileges(postgres);
       assertHumanMinimalRead(postgres);
       assertGrantsAreRepeatableAndAtomic(postgres);
+      assertHumanAccessAudit(postgres);
+      assertValidUntilDoesNotEndOpenSessions(postgres);
 
       assertBootstrapFailureRollsBack(postgres);
       assertBootstrapRejectsDriftWithoutRepair(postgres);
       assertBootstrapRejectsUnexpectedOwnerMembership(postgres);
       assertBootstrapRejectsDirectPublicAccessWithoutRevokingIt(postgres);
+      assertBootstrapRejectsPublicSchemaOwnedByApplicationRole(postgres);
 
       assertEquals(0, runBootstrap(postgres).getExitCode());
     } finally {
@@ -153,6 +166,7 @@ class DatabaseRoleBootstrapIntegrationTest {
 
   private static void assertRoleAttributes(PostgreSQLContainer postgres) throws Exception {
     assertRole(postgres, OWNER, false);
+    assertRole(postgres, HUMAN, false);
     for (String role : LOGIN_ROLES) {
       assertRole(postgres, role, true);
     }
@@ -220,7 +234,7 @@ class DatabaseRoleBootstrapIntegrationTest {
       throws Exception {
     try (Connection connection = adminConnection(postgres)) {
       assertTrue(hasDatabasePrivilege(connection, OWNER, "CREATE"));
-      for (String role : List.of(MIGRATION, APP, PURGE, HUMAN)) {
+      for (String role : List.of(MIGRATION, APP, PURGE, HUMAN, PERSON)) {
         assertFalse(hasDatabasePrivilege(connection, role, "CREATE"), role + " database CREATE");
         assertFalse(hasDatabasePrivilege(connection, role, "TEMP"), role + " database TEMP");
       }
@@ -228,7 +242,7 @@ class DatabaseRoleBootstrapIntegrationTest {
       assertFalse(hasSchemaPrivilege(connection, "public", "CREATE"));
       assertTrue(hasSchemaPrivilege(connection, OWNER, "USAGE"));
       assertTrue(hasSchemaPrivilege(connection, OWNER, "CREATE"));
-      for (String role : List.of(MIGRATION, APP, PURGE, HUMAN)) {
+      for (String role : List.of(MIGRATION, APP, PURGE, HUMAN, PERSON)) {
         assertFalse(hasSchemaPrivilege(connection, role, "USAGE"), role + " public USAGE");
         assertFalse(hasSchemaPrivilege(connection, role, "CREATE"), role + " public CREATE");
       }
@@ -380,7 +394,7 @@ class DatabaseRoleBootstrapIntegrationTest {
       assertPermissionDenied(statement, "CREATE TEMP TABLE app_must_not_create (id integer)");
       assertPermissionDenied(statement, "DELETE FROM record.action WHERE false");
     }
-    try (Connection connection = roleConnection(postgres, HUMAN);
+    try (Connection connection = roleConnection(postgres, PERSON);
         Statement statement = connection.createStatement()) {
       assertEquals(0, scalarInt(statement, "SELECT count(*) FROM record.supplement"));
       assertPermissionDenied(
@@ -395,15 +409,16 @@ class DatabaseRoleBootstrapIntegrationTest {
     assertTrue(hasFunctionPrivilege(postgres, PURGE, "state.purge_room_record(uuid)"));
     assertFalse(hasFunctionPrivilege(postgres, APP, "state.purge_room_record(uuid)"));
     assertFalse(hasFunctionPrivilege(postgres, HUMAN, "state.purge_room_record(uuid)"));
+    assertFalse(hasFunctionPrivilege(postgres, PERSON, "state.purge_room_record(uuid)"));
     try (Connection connection = roleConnection(postgres, PURGE);
         Statement statement = connection.createStatement()) {
       assertPermissionDenied(statement, "DELETE FROM record.action WHERE false");
     }
   }
 
-  /** #156 Human 최소 조회: 민감 컬럼은 권한 오류(42501), 허용 컬럼만 읽는다. */
+  /** #156 Human 최소 조회: 사람 역할은 그룹 권한만 받아 허용 컬럼만 읽고, 민감 컬럼은 42501. */
   private static void assertHumanMinimalRead(PostgreSQLContainer postgres) throws Exception {
-    try (Connection connection = roleConnection(postgres, HUMAN);
+    try (Connection connection = roleConnection(postgres, PERSON);
         Statement statement = connection.createStatement()) {
       assertEquals(
           0,
@@ -429,6 +444,139 @@ class DatabaseRoleBootstrapIntegrationTest {
               "DELETE FROM state.member WHERE false")) {
         assertPermissionDenied(statement, sql);
       }
+    }
+  }
+
+  /** 사람 역할: LOGIN·NOINHERIT·만료일, 그룹 멤버십은 INHERIT TRUE·SET FALSE·ADMIN FALSE. */
+  private static void createPerson(PostgreSQLContainer postgres) throws Exception {
+    try (Connection connection = adminConnection(postgres);
+        Statement statement = connection.createStatement()) {
+      statement.execute(
+          "CREATE ROLE "
+              + PERSON
+              + " LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
+              + " PASSWORD '"
+              + FAKE_PASSWORD
+              + "' VALID UNTIL '2999-01-01'");
+      statement.execute(
+          "GRANT " + HUMAN + " TO " + PERSON + " WITH INHERIT TRUE, SET FALSE, ADMIN FALSE");
+    }
+  }
+
+  private static void assertPersonCannotSetHumanGroup(PostgreSQLContainer postgres)
+      throws Exception {
+    try (Connection connection = roleConnection(postgres, PERSON);
+        Statement statement = connection.createStatement()) {
+      assertPermissionDenied(statement, "SET ROLE " + HUMAN);
+      assertEquals(PERSON, scalar(connection, "SELECT current_user"));
+    }
+  }
+
+  /** 점검 스크립트: 정상이면 통과, 직접 권한·위험 멤버십·SET 가능 멤버십은 실패. 아무것도 고치지 않는다. */
+  private static void assertHumanAccessAudit(PostgreSQLContainer postgres) throws Exception {
+    var passed = runHumanAudit(postgres);
+    assertEquals(0, passed.getExitCode(), passed.getStderr());
+    assertTrue(passed.getStderr().contains("1 person role(s)"), passed.getStderr());
+
+    executeAsAdmin(postgres, "GRANT SELECT (status) ON state.member TO " + PERSON);
+    assertAuditFails(postgres, "has direct privileges");
+    assertTrue(hasColumnPrivilege(postgres, PERSON, "state.member", "status"));
+    executeAsAdmin(postgres, "REVOKE SELECT (status) ON state.member FROM " + PERSON);
+
+    executeAsAdmin(postgres, "GRANT pg_read_all_data TO " + PERSON);
+    assertAuditFails(postgres, "membership other than the human read group");
+    executeAsAdmin(postgres, "REVOKE pg_read_all_data FROM " + PERSON);
+
+    executeAsAdmin(postgres, "REVOKE " + HUMAN + " FROM " + PERSON);
+    executeAsAdmin(
+        postgres, "GRANT " + HUMAN + " TO " + PERSON + " WITH INHERIT TRUE, SET TRUE, ADMIN FALSE");
+    assertAuditFails(postgres, "must be INHERIT TRUE, SET FALSE, ADMIN FALSE");
+    assertNotEquals(0, runBootstrap(postgres).getExitCode());
+    executeAsAdmin(postgres, "REVOKE " + HUMAN + " FROM " + PERSON);
+    executeAsAdmin(
+        postgres,
+        "GRANT " + HUMAN + " TO " + PERSON + " WITH INHERIT TRUE, SET FALSE, ADMIN FALSE");
+
+    assertEquals(0, runHumanAudit(postgres).getExitCode());
+  }
+
+  private static void assertAuditFails(PostgreSQLContainer postgres, String message)
+      throws Exception {
+    var result = runHumanAudit(postgres);
+    assertNotEquals(0, result.getExitCode());
+    assertTrue(result.getStderr().contains(message), result.getStderr());
+  }
+
+  /** VALID UNTIL은 그 뒤의 비밀번호 로그인만 막는다. 이미 열린 세션은 남으므로 회수 때 pg_terminate_backend를 따로 한다. */
+  private static void assertValidUntilDoesNotEndOpenSessions(PostgreSQLContainer postgres)
+      throws Exception {
+    try (Connection open = roleConnection(postgres, PERSON);
+        Statement statement = open.createStatement()) {
+      String pid = scalar(open, "SELECT pg_backend_pid()::text");
+      executeAsAdmin(postgres, "ALTER ROLE " + PERSON + " VALID UNTIL '2000-01-01'");
+      assertThrows(SQLException.class, () -> roleConnection(postgres, PERSON).close());
+      assertEquals(0, scalarInt(statement, "SELECT count(id) FROM state.member"));
+
+      executeAsAdmin(postgres, "SELECT pg_terminate_backend(" + pid + ")");
+      assertThrows(SQLException.class, () -> statement.execute("SELECT 1"));
+    } finally {
+      executeAsAdmin(postgres, "ALTER ROLE " + PERSON + " VALID UNTIL '2999-01-01'");
+    }
+    roleConnection(postgres, PERSON).close();
+  }
+
+  /** public 소유자 검사는 ACL 검사가 소유자를 건너뛰므로 따로 한다. 소유권은 바꾸지 않고 실패한다. */
+  private static void assertBootstrapRejectsPublicSchemaOwnedByApplicationRole(
+      PostgreSQLContainer postgres) throws Exception {
+    String originalOwner = schemaOwner(postgres, "public");
+    executeAsAdmin(postgres, "ALTER SCHEMA public OWNER TO " + APP);
+    var result = runBootstrap(postgres);
+    assertNotEquals(0, result.getExitCode());
+    assertTrue(result.getStderr().contains("public schema is owned by"), result.getStderr());
+    assertEquals(APP, schemaOwner(postgres, "public"));
+
+    executeAsAdmin(postgres, "ALTER SCHEMA public OWNER TO " + PERSON);
+    assertNotEquals(0, runBootstrap(postgres).getExitCode());
+    assertEquals(PERSON, schemaOwner(postgres, "public"));
+    executeAsAdmin(postgres, "ALTER SCHEMA public OWNER TO " + originalOwner);
+  }
+
+  private static org.testcontainers.containers.Container.ExecResult runHumanAudit(
+      PostgreSQLContainer postgres) throws Exception {
+    Path script = Path.of("../infra/db/check_human_access.sql").toAbsolutePath().normalize();
+    postgres.copyFileToContainer(MountableFile.forHostPath(script), "/tmp/check_human_access.sql");
+    return postgres.execInContainer(
+        "env",
+        "PGPASSWORD=" + FAKE_PASSWORD,
+        "psql",
+        "-X",
+        "-h",
+        "localhost",
+        "-U",
+        BOOTSTRAP,
+        "-d",
+        postgres.getDatabaseName(),
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-v",
+        "human_role=" + HUMAN,
+        "-f",
+        "/tmp/check_human_access.sql");
+  }
+
+  private static boolean hasColumnPrivilege(
+      PostgreSQLContainer postgres, String role, String table, String column) throws Exception {
+    try (Connection connection = adminConnection(postgres)) {
+      return Boolean.parseBoolean(
+          scalar(
+              connection,
+              "SELECT has_column_privilege('"
+                  + role
+                  + "', '"
+                  + table
+                  + "', '"
+                  + column
+                  + "', 'SELECT')::text"));
     }
   }
 
