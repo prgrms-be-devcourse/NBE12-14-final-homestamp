@@ -318,7 +318,7 @@ class RoomPartApiTest {
     connectLandlord();
 
     JsonNode listed = listOf(member);
-    assertThat(listed.hasNonNull("asOf")).isFalse();
+    assertThat(listed.has("asOf") && listed.get("asOf").isNull()).isTrue();
     assertThat(listed.get("parts")).hasSize(29);
   }
 
@@ -420,7 +420,7 @@ class RoomPartApiTest {
         room);
 
     JsonNode listed = listOf(member);
-    assertThat(listed.hasNonNull("asOf")).isFalse();
+    assertThat(listed.has("asOf") && listed.get("asOf").isNull()).isTrue();
     assertThat(find(listed.get("parts"), closet).get("hidden").asBoolean()).isTrue();
   }
 
@@ -438,7 +438,7 @@ class RoomPartApiTest {
         room);
 
     JsonNode listed = listOf(member);
-    assertThat(listed.hasNonNull("asOf")).isFalse();
+    assertThat(listed.has("asOf") && listed.get("asOf").isNull()).isTrue();
     assertThat(find(listed.get("parts"), closet).get("hidden").asBoolean()).isTrue();
   }
 
