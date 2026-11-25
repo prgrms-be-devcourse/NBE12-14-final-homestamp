@@ -64,7 +64,9 @@ public class RepairQueryService {
           ActionType.START_REPAIR, "start",
           ActionType.REQUEST_CLOSE, "request-close",
           ActionType.CONFIRM_CLOSE, "confirm-close",
-          ActionType.NOT_YET, "not-yet");
+          ActionType.NOT_YET, "not-yet",
+          ActionType.ASK_PROGRESS, "ask-progress",
+          ActionType.NOTE_PROGRESS, "progress-notes");
 
   /** 원인 설명 남기기·고치기의 {@code availableActions} 이름(06 4-6 {@code cause-notes}). */
   static final String CAUSE_NOTES = "cause-notes";

@@ -31,7 +31,7 @@ class RepairTransitionsTest {
   private static final Instant NOW = Instant.parse("2026-11-23T00:00:00Z");
   private static final Duration INTERVAL = Duration.ofDays(7);
 
-  private final RepairTransitions rules = new RepairTransitions(INTERVAL);
+  private final RepairTransitions rules = new RepairTransitions(INTERVAL, INTERVAL);
 
   @Test
   void 처음_상태는_아직_없는_기록이다() {
@@ -52,6 +52,8 @@ class RepairTransitionsTest {
                 MoneyStatus.UNDECIDED,
                 PartySide.LANDLORD,
                 1,
+                null,
+                null,
                 null,
                 null,
                 null,
@@ -241,7 +243,9 @@ class RepairTransitionsTest {
             null,
             null,
             null,
+            null,
             false,
+            true,
             true,
             false);
 
@@ -309,8 +313,10 @@ class RepairTransitionsTest {
             null,
             null,
             null,
+            null,
             false,
             false,
+            true,
             false);
     assertError(
         ErrorCode.INVALID_STATE,
@@ -409,6 +415,123 @@ class RepairTransitionsTest {
     return registered(AckState.ACK).withProgress(RepairStatus.CLOSE_WAIT, side, null);
   }
 
+  // ---- 진행 상황 묻기·남기기(REP-6) ----
+
+  @Test
+  void 진행_상황을_물으면_물은_시각만_남고_수리_진행과_하자_인정은_그대로다() {
+    RepairState next =
+        rules.apply(inProgress(), entry(ActionType.ASK_PROGRESS, PartySide.LANDLORD));
+
+    assertThat(next.lastProgressAskAt()).isEqualTo(NOW);
+    assertThat(next.withLastProgressAskAt(null)).isEqualTo(inProgress());
+    assertThat(rules.nextProgressAskAt(next)).isEqualTo(NOW.plus(INTERVAL));
+  }
+
+  @Test
+  void REP_6b_누가_물었든_7일_안에_다시_물으면_ASKED_RECENTLY이고_7일이_지나면_된다() {
+    RepairState asked = inProgress().withLastProgressAskAt(NOW.minus(Duration.ofDays(3)));
+
+    assertError(
+        ErrorCode.ASKED_RECENTLY,
+        () -> rules.apply(asked, entry(ActionType.ASK_PROGRESS, PartySide.TENANT)));
+    assertError(
+        ErrorCode.ASKED_RECENTLY,
+        () -> rules.apply(asked, entry(ActionType.ASK_PROGRESS, PartySide.LANDLORD)));
+    RepairState weekAgo = inProgress().withLastProgressAskAt(NOW.minus(INTERVAL));
+    assertThat(
+            rules
+                .apply(weekAgo, entry(ActionType.ASK_PROGRESS, PartySide.TENANT))
+                .lastProgressAskAt())
+        .isEqualTo(NOW);
+  }
+
+  @Test
+  void 진행_상황은_시작_전과_처리_중에만_물을_수_있다() {
+    assertThat(
+            rules
+                .apply(
+                    registered(AckState.PENDING), entry(ActionType.ASK_PROGRESS, PartySide.TENANT))
+                .lastProgressAskAt())
+        .isEqualTo(NOW);
+    assertError(
+        ErrorCode.INVALID_STATE,
+        () ->
+            rules.apply(
+                closeRequestedBy(PartySide.TENANT),
+                entry(ActionType.ASK_PROGRESS, PartySide.LANDLORD)));
+    RepairState done = inProgress().withProgress(RepairStatus.DONE, null, ClosedBy.BOTH);
+    assertError(
+        ErrorCode.INVALID_STATE,
+        () -> rules.apply(done, entry(ActionType.ASK_PROGRESS, PartySide.LANDLORD)));
+  }
+
+  @Test
+  void 진행_상황_묻기_요청을_열_수_없으면_거주_종료_뒤라_물을_수_없다() {
+    RepairState s = inProgress();
+    RepairState ended =
+        new RepairState(
+            s.status(),
+            s.defectAck(),
+            s.moneyStatus(),
+            s.registeredBy(),
+            s.contentNo(),
+            null,
+            null,
+            null,
+            null,
+            false,
+            false,
+            false,
+            false);
+
+    assertError(
+        ErrorCode.INVALID_STATE,
+        () -> rules.apply(ended, entry(ActionType.ASK_PROGRESS, PartySide.TENANT)));
+    // 남기기는 언제든 된다(03 D)
+    assertThat(rules.apply(ended, entry(ActionType.NOTE_PROGRESS, PartySide.TENANT)))
+        .isEqualTo(ended);
+  }
+
+  @Test
+  void 진행_상황은_처리_완료_뒤에도_남길_수_있고_상태는_그대로다() {
+    RepairState done = inProgress().withProgress(RepairStatus.DONE, null, ClosedBy.BOTH);
+
+    assertThat(rules.apply(done, entry(ActionType.NOTE_PROGRESS, PartySide.LANDLORD)))
+        .isEqualTo(done);
+  }
+
+  @Test
+  void 상대가_볼_수_없는_기록에는_상대가_진행_상황을_묻거나_남길_수_없다() {
+    RepairState hidden = registered(AckState.PENDING, true);
+
+    assertError(
+        ErrorCode.INVALID_STATE,
+        () -> rules.apply(hidden, entry(ActionType.NOTE_PROGRESS, PartySide.LANDLORD)));
+    assertError(
+        ErrorCode.INVALID_STATE,
+        () -> rules.apply(hidden, entry(ActionType.ASK_PROGRESS, PartySide.LANDLORD)));
+    assertThat(rules.apply(hidden, entry(ActionType.NOTE_PROGRESS, PartySide.TENANT)))
+        .isEqualTo(hidden);
+  }
+
+  @Test
+  void REP_10_진행_상황_묻기도_처음부터_다시_계산하면_7일_간격을_지킨_기록이다() {
+    List<ActionEntry> history =
+        List.of(
+            entry(ActionType.REGISTER, PartySide.TENANT),
+            entry(ActionType.ASK_PROGRESS, PartySide.TENANT, null, null, Map.of(), NOW),
+            entry(ActionType.NOTE_PROGRESS, PartySide.LANDLORD),
+            entry(
+                ActionType.ASK_PROGRESS,
+                PartySide.LANDLORD,
+                null,
+                null,
+                Map.of(),
+                NOW.plus(INTERVAL)));
+
+    assertThat(Replay.fold(rules, history).lastProgressAskAt()).isEqualTo(NOW.plus(INTERVAL));
+  }
+
   // ---- 할 수 있는 행동(availableActions) ----
 
   /**
@@ -426,19 +549,25 @@ class RepairTransitionsTest {
             for (boolean hidden : new boolean[] {true, false}) {
               for (boolean canOpen : new boolean[] {true, false}) {
                 for (Instant last : lastSupplements) {
-                  cases.add(
-                      new RepairState(
-                          status,
-                          ack,
-                          MoneyStatus.UNDECIDED,
-                          PartySide.TENANT,
-                          1,
-                          last,
-                          status == RepairStatus.DONE ? ClosedBy.BOTH : null,
-                          requester,
-                          canOpen,
-                          canOpenClose,
-                          hidden));
+                  for (Instant lastAsk : lastSupplements) {
+                    for (boolean canAsk : new boolean[] {true, false}) {
+                      cases.add(
+                          new RepairState(
+                              status,
+                              ack,
+                              MoneyStatus.UNDECIDED,
+                              PartySide.TENANT,
+                              1,
+                              last,
+                              status == RepairStatus.DONE ? ClosedBy.BOTH : null,
+                              requester,
+                              lastAsk,
+                              canOpen,
+                              canOpenClose,
+                              canAsk,
+                              hidden));
+                    }
+                  }
                 }
               }
             }
@@ -463,7 +592,10 @@ class RepairTransitionsTest {
                 ActionType.REQUEST_CLOSE, entry(ActionType.REQUEST_CLOSE, side),
                 ActionType.CONFIRM_CLOSE, entry(ActionType.CONFIRM_CLOSE, side),
                 ActionType.NOT_YET,
-                    entry(ActionType.NOT_YET, side, null, "아직 물이 새요", Map.of(), NOW));
+                    entry(ActionType.NOT_YET, side, null, "아직 물이 새요", Map.of(), NOW),
+                ActionType.ASK_PROGRESS,
+                    entry(ActionType.ASK_PROGRESS, side, null, null, Map.of(), NOW),
+                ActionType.NOTE_PROGRESS, entry(ActionType.NOTE_PROGRESS, side));
         tries.forEach((type, action) ->
             assertThat(available.contains(type))
                 .as("%s %s %s", type, side, state)
@@ -508,7 +640,9 @@ class RepairTransitionsTest {
             ActionType.START_REPAIR,
             ActionType.REQUEST_CLOSE,
             ActionType.CONFIRM_CLOSE,
-            ActionType.NOT_YET);
+            ActionType.NOT_YET,
+            ActionType.ASK_PROGRESS,
+            ActionType.NOTE_PROGRESS);
     return Arrays.stream(ActionType.values())
         .filter(type -> type.area() == ActionType.Area.REPAIR && !done.contains(type));
   }
@@ -543,6 +677,8 @@ class RepairTransitionsTest {
         null,
         null,
         null,
+        null,
+        true,
         true,
         true,
         hiddenFromCounterpart);

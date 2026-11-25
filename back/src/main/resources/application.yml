@@ -34,6 +34,10 @@ app:
   # 한 기록에 [보충하고 다시 확인 요청]·[사진 더해서 다시 요청]·[상황이 바뀌었어요] 간격(06 0-1 rerequest.interval)
   rerequest:
     interval: 7d
+  # 한 건에 진행 상황 다시 묻기 간격(누가 물었든, 06 0-1 progress.ask.interval)
+  progress:
+    ask:
+      interval: 7d
   # 아웃박스 문자 작업자(04 4-2). 테스트처럼 작업자를 직접 부를 때만 끈다
   outbox:
     worker:
