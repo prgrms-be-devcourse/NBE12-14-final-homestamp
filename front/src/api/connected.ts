@@ -13,6 +13,13 @@ export const CONNECTED_APIS: readonly {
   { method: "POST", path: /^\/api\/auth\/refresh$/ },
   { method: "POST", path: /^\/api\/auth\/logout$/ },
   { method: "GET", path: /^\/api\/me$/ },
+  // 휴대폰 인증 문자·인증번호 확인·가입(06 4-1, ACC-1, #208)
+  { method: "POST", path: /^\/api\/auth\/phone-verifications$/ },
+  {
+    method: "POST",
+    path: /^\/api\/auth\/phone-verifications\/[^/]+\/verify$/,
+  },
+  { method: "POST", path: /^\/api\/auth\/signup$/ },
 ]
 
 export const NOT_CONNECTED_MESSAGE = "아직 서버에 연결되지 않은 기능이에요."
