@@ -20,7 +20,6 @@ import java.util.List;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.unit.DataSize;
 
 /** 사진 업로드 표와 S3 업로드 폼을 발급한다(06 4-5). */
@@ -52,10 +51,13 @@ public class PhotoUploadService {
     this.maxFileBytes = maxFileSize.toBytes();
   }
 
-  @Transactional
+  /**
+   * 폼과 표를 모두 만든 뒤 한도를 센다. 서명은 트랜잭션 밖에서 한다: 운영의 임시 자격 증명은 갱신할 때 네트워크를 타는데, 그동안 DB 연결과 같은 회원의 한도
+   * 행({@code rate_counter}) 잠금을 쥐고 있지 않게 한다. 서명에 실패하면 한도를 세지 않고, 한도를 넘으면 만든 폼과 표는 버린다(폼은 5분 뒤 만료,
+   * 표는 붙일 때 다시 검사).
+   */
   public UploadTicketsResponse issue(UUID roomId, UUID memberId, UploadTicketsRequest request) {
     validateIssueRequest(roomId, memberId, request);
-    quota.reserve(memberId, request.files().size());
 
     // JWT 만료는 초 단위이므로 응답의 만료 시각도 같은 정밀도로 맞춘다.
     Instant expiresAt = clock.instant().plus(ticketTtl).truncatedTo(ChronoUnit.SECONDS);
@@ -70,6 +72,7 @@ public class PhotoUploadService {
       String ticket = ticketSigner.sign(roomId, memberId, originalKey, thumbKey, file, expiresAt);
       slots.add(new UploadSlotResponse(slots.size(), ticket, expiresAt, original, thumb));
     }
+    quota.reserve(memberId, request.files().size());
     return new UploadTicketsResponse(List.copyOf(slots));
   }
 
