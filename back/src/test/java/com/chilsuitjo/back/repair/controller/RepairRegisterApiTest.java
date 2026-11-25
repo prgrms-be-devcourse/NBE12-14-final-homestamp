@@ -63,6 +63,7 @@ class RepairRegisterApiTest {
 
   private UUID room;
   private UUID tenant;
+  private UUID landlord;
   private UUID part;
 
   @BeforeEach
@@ -72,10 +73,54 @@ class RepairRegisterApiTest {
             + " ON CONFLICT DO NOTHING");
     room = room();
     tenant = member();
+    landlord = member();
     part = part(room, false);
     // 잠금·당사자 확인은 진짜(JpaRoomGateReader)라 party 행으로 정한다: 세입자(나)와 집주인 모두 연결됨
     seat(PartySide.TENANT, tenant, "CONNECTED");
-    seat(PartySide.LANDLORD, member(), "CONNECTED");
+    seat(PartySide.LANDLORD, landlord, "CONNECTED");
+  }
+
+  // ---- 공유를 그만둔 뒤 상대가 바꾼 부위 (#183, 03 6-6 9번·불변식 18) ----
+  // 세입자가 공유를 그만둔 뒤 집주인이 부위를 바꿔도, 세입자의 하자 등록은 세입자에게 보이는 부위 목록(#180)과 같게 판단한다
+
+  @Test
+  void 그만둔_뒤_상대가_숨긴_부위는_내게는_보이는_부위라_등록된다() throws Exception {
+    stopSharing(PartySide.TENANT);
+    partAction(landlord, part, "hide").andExpect(status().isOk());
+
+    register("hidden-by-other", body(part, "누수", null)).andExpect(status().isCreated());
+  }
+
+  @Test
+  void 그만둔_뒤_상대가_다시_보이게_한_부위는_내게는_숨긴_부위라_VALIDATION_FAILED() throws Exception {
+    partAction(tenant, part, "hide").andExpect(status().isOk());
+    stopSharing(PartySide.TENANT);
+    partAction(landlord, part, "show").andExpect(status().isOk());
+
+    register("shown-by-other", body(part, "누수", null))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    assertThat(count("state.repair_case")).isZero();
+  }
+
+  @Test
+  void 그만둔_뒤_상대가_더한_부위는_내게_없는_부위라_NOT_FOUND() throws Exception {
+    stopSharing(PartySide.TENANT);
+    UUID added = addPart(landlord, "다락");
+
+    register("added-by-other", body(added, "누수", null))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+    assertThat(count("state.repair_case")).isZero();
+  }
+
+  @Test
+  void 상대가_그만뒀어도_그_뒤_내가_더한_부위에는_등록된다() throws Exception {
+    // 보는 사람 자신의 행동은 고정 시각 뒤에도 보인다(PartVisibility). 남은 사람은 부위를 바꿀 수 있다
+    stopSharing(PartySide.LANDLORD);
+    UUID added = addPart(tenant, "다락");
+
+    register("added-by-me", body(added, "누수", null)).andExpect(status().isCreated());
   }
 
   @Test
@@ -533,18 +578,62 @@ class RepairRegisterApiTest {
         side.name());
   }
 
+  /**
+   * 호실을 만들 때 기본 목록(V7)에서 복사된 부위. 공유를 그만둔 뒤에는 부위 행동으로 보이는 상태를 다시 계산하는데(#180), 복사된 부위는 행동 없이
+   * "있음·보임"에서 시작하므로 템플릿을 가리켜야 실제 호실과 같다.
+   */
   private UUID part(UUID roomId, boolean hidden) {
     UUID id = UUID.randomUUID();
     jdbc.update(
         """
         INSERT INTO state.room_part
-          (id, room_record_id, zone, name, sort_order, hidden_at, created_at, version)
-        VALUES (?, ?, '안방', '천장', 0, ?, CURRENT_TIMESTAMP, 0)
+          (id, room_record_id, template_id, zone, name, sort_order, hidden_at, created_at, version)
+        SELECT ?, ?, t.id, t.zone, t.name, t.sort_order, ?, CURRENT_TIMESTAMP, 0
+        FROM state.part_template t WHERE t.zone <> '설비·가전' ORDER BY t.sort_order LIMIT 1
         """,
         id,
         roomId,
         hidden ? Timestamp.from(STOPPED) : null);
     return id;
+  }
+
+  /**
+   * 이 측이 지금 공유를 그만둔 것으로 만든다. 시각은 이 호실의 마지막 행동 시각(없으면 {@link #STOPPED})이라 그때까지의 행동은 양쪽에 보이고, 그 뒤 남은
+   * 행동은 상대에게 보이지 않는다.
+   */
+  private void stopSharing(PartySide side) {
+    jdbc.update(
+        "UPDATE state.party SET status = 'SHARING_STOPPED', sharing_stopped_at = COALESCE("
+            + "(SELECT max(created_at) FROM record.action WHERE room_record_id = ?), ?)"
+            + " WHERE room_record_id = ? AND side = ?",
+        room,
+        Timestamp.from(STOPPED),
+        room,
+        side.name());
+  }
+
+  /** 부위 숨기기·다시 보이기(진짜 부위 API, 행동이 남는다). */
+  private ResultActions partAction(UUID memberId, UUID partId, String verb) throws Exception {
+    return mvc.perform(
+        post("/api/rooms/{id}/parts/{partId}/" + verb, room, partId)
+            .with(loginAs(memberId))
+            .header("Idempotency-Key", verb + "-" + UUID.randomUUID()));
+  }
+
+  /** 부위 추가(진짜 부위 API). 새 부위 ID를 돌려준다. */
+  private UUID addPart(UUID memberId, String name) throws Exception {
+    String body =
+        mvc.perform(
+                post("/api/rooms/{id}/parts", room)
+                    .with(loginAs(memberId))
+                    .header("Idempotency-Key", "add-" + UUID.randomUUID())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"zone\":\"방\",\"name\":\"" + name + "\"}"))
+            .andExpect(status().isCreated())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    return UUID.fromString(body.replaceAll(".*\"id\":\"([^\"]+)\".*", "$1"));
   }
 
   private long count(String table) {
