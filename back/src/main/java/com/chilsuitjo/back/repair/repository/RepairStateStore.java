@@ -286,7 +286,8 @@ public class RepairStateStore {
     public SavedState save(ActionCommand command, RepairState next) {
       UUID roomRecordId = command.roomRecordId();
       // 남의 부위·없는 부위는 NOT_FOUND(RoomQueryService). 숨긴 부위는 목록에서 빠지니 새 기록을 받지 않는다(06 ROOM-3a).
-      if (rooms.findPart(roomRecordId, roomPartId).hidden()) {
+      // 공유를 그만둔 뒤에는 등록하는 사람에게 보이는 부위 상태로 본다: 그 뒤 상대가 바꾼 부위가 드러나지 않게(03 6-6 9번, 불변식 18, #183)
+      if (rooms.findPartAsSeenBy(roomRecordId, roomPartId, command.actor().memberId()).hidden()) {
         throw new BusinessException(ErrorCode.VALIDATION_FAILED);
       }
       Instant at = requestContext.at();
