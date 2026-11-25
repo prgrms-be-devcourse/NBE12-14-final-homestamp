@@ -80,7 +80,9 @@ class RepairDetailApiTest {
         .andExpect(jsonPath("$.defect.nextRerequestAt").doesNotExist())
         .andExpect(jsonPath("$.money.status").value("UNDECIDED"))
         .andExpect(jsonPath("$.asOf").doesNotExist())
-        .andExpect(jsonPath("$.availableActions").value(contains("start")));
+        .andExpect(
+            jsonPath("$.availableActions")
+                .value(contains("start", "ask-progress", "progress-notes")));
   }
 
   @Test
@@ -106,7 +108,7 @@ class RepairDetailApiTest {
         .andExpect(jsonPath("$.money.status").value("UNDECIDED"))
         .andExpect(jsonPath("$.status").value("NOT_STARTED"))
         .andExpect(jsonPath("$.content.no").value(1))
-        .andExpect(jsonPath("$.availableActions").isEmpty());
+        .andExpect(jsonPath("$.availableActions").value(contains("progress-notes")));
     // 양방향: 남은 쪽도 같은 시각으로 고정되지만, 자기가 남긴 답은 자기에게 보인다
     detail(caseId, landlord)
         .andExpect(jsonPath("$.asOf").value(stoppedAt.toInstant().toString()))
@@ -189,7 +191,9 @@ class RepairDetailApiTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.mySide").value("LANDLORD"))
         .andExpect(jsonPath("$.registeredBy").value("TENANT"))
-        .andExpect(jsonPath("$.availableActions").value(contains("respond", "start")));
+        .andExpect(
+            jsonPath("$.availableActions")
+                .value(contains("respond", "start", "ask-progress", "progress-notes")));
   }
 
   @Test
@@ -199,9 +203,13 @@ class RepairDetailApiTest {
 
     detail(caseId, tenant)
         .andExpect(jsonPath("$.defect.ack").value("NEED_MORE"))
-        .andExpect(jsonPath("$.availableActions").value(contains("supplement", "start")));
+        .andExpect(
+            jsonPath("$.availableActions")
+                .value(contains("supplement", "start", "ask-progress", "progress-notes")));
     detail(caseId, landlord)
-        .andExpect(jsonPath("$.availableActions").value(contains("respond", "start")));
+        .andExpect(
+            jsonPath("$.availableActions")
+                .value(contains("respond", "start", "ask-progress", "progress-notes")));
   }
 
   @Test
@@ -211,8 +219,13 @@ class RepairDetailApiTest {
 
     detail(caseId, landlord)
         .andExpect(jsonPath("$.defect.ack").value("ACK"))
-        .andExpect(jsonPath("$.availableActions").value(contains("start")));
-    detail(caseId, tenant).andExpect(jsonPath("$.availableActions").value(contains("start")));
+        .andExpect(
+            jsonPath("$.availableActions")
+                .value(contains("start", "ask-progress", "progress-notes")));
+    detail(caseId, tenant)
+        .andExpect(
+            jsonPath("$.availableActions")
+                .value(contains("start", "ask-progress", "progress-notes")));
   }
 
   @Test
@@ -234,7 +247,9 @@ class RepairDetailApiTest {
         .andExpect(
             jsonPath("$.defect.nextRerequestAt")
                 .value(supplementedAt.plus(Duration.ofDays(7)).toString()))
-        .andExpect(jsonPath("$.availableActions").value(contains("start")));
+        .andExpect(
+            jsonPath("$.availableActions")
+                .value(contains("start", "ask-progress", "progress-notes")));
     // 실제 요청도 같은 판단으로 거절된다
     supplement(caseId, tenant, "한 번 더 찍었어요").andExpect(jsonPath("$.code").value("ASKED_RECENTLY"));
   }
@@ -247,9 +262,11 @@ class RepairDetailApiTest {
         "UPDATE state.room_record SET status = 'ENDED', ended_at = CURRENT_TIMESTAMP WHERE id = ?",
         room);
 
-    // 수리 시작은 거주 종료 뒤 막힌다(03 A, #177 리뷰)
-    detail(caseId, tenant).andExpect(jsonPath("$.availableActions").isEmpty());
-    detail(caseId, landlord).andExpect(jsonPath("$.availableActions").value(contains("respond")));
+    // 수리 시작·진행 상황 묻기는 거주 종료 뒤 막히고 남기기만 된다(03 A·D, #177 리뷰)
+    detail(caseId, tenant)
+        .andExpect(jsonPath("$.availableActions").value(contains("progress-notes")));
+    detail(caseId, landlord)
+        .andExpect(jsonPath("$.availableActions").value(contains("respond", "progress-notes")));
   }
 
   @Test
@@ -267,7 +284,8 @@ class RepairDetailApiTest {
 
   @Test
   void 공유를_그만둔_쪽에게는_하자_응답_버튼이_없다() throws Exception {
-    // 집주인이 공유를 그만뒀다. 그 전에 남긴 하자는 계속 보이지만 집주인은 새 행동을 할 수 없다(pipeline SHARING_STOPPED)
+    // 집주인이 공유를 그만뒀다. 그 전에 남긴 하자는 계속 보이지만 집주인은 새 행동을 할 수 없다(pipeline SHARING_STOPPED).
+    // 나만 보는 진행 상황 남기기만 된다(03 B)
     UUID caseId = register();
     jdbc.update(
         "UPDATE state.party SET status = 'SHARING_STOPPED', sharing_stopped_at ="
@@ -278,7 +296,7 @@ class RepairDetailApiTest {
 
     detail(caseId, landlord)
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.availableActions").isEmpty());
+        .andExpect(jsonPath("$.availableActions").value(contains("progress-notes")));
     respond(caseId, landlord, "ACK", null).andExpect(jsonPath("$.code").value("SHARING_STOPPED"));
   }
 

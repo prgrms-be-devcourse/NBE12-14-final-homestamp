@@ -22,10 +22,14 @@ import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.repair.dto.ConfirmCloseRequest;
 import com.chilsuitjo.back.repair.dto.DefectAckChanged;
+import com.chilsuitjo.back.repair.dto.ProgressAsked;
+import com.chilsuitjo.back.repair.dto.ProgressNoteCreated;
+import com.chilsuitjo.back.repair.dto.ProgressNoteRequest;
 import com.chilsuitjo.back.repair.dto.RegisterRepairRequest;
 import com.chilsuitjo.back.repair.dto.RepairCaseCreated;
 import com.chilsuitjo.back.repair.dto.RepairProgressChanged;
 import com.chilsuitjo.back.repair.entity.RepairCase;
+import com.chilsuitjo.back.repair.repository.ProgressNoteRepository;
 import com.chilsuitjo.back.repair.repository.RepairCaseRepository;
 import com.chilsuitjo.back.repair.repository.RepairStateStore;
 import com.chilsuitjo.back.repair.rule.RepairState;
@@ -54,6 +58,7 @@ public class RepairService {
   private final RepairTransitions rules;
   private final RepairCaseRepository cases;
   private final RoomGateReader gates;
+  private final ProgressNoteRepository notes;
 
   /**
    * 하자 등록(06 REP-1). pipeline 전에 사진이 없으면 {@code PHOTO_REQUIRED}(REP-1d), 제목·설명에 주민등록번호 형태가 있으면
@@ -233,6 +238,76 @@ public class RepairService {
             .orElseThrow(() -> new IllegalStateException("수리 건이 없어요: " + repairCaseId));
     return new RepairProgressChanged(
         row.getId(), row.getStatus(), row.getClosedBy(), row.getDefectAck(), replayed);
+  }
+
+  /**
+   * 진행 상황 묻기(06 REP-6b). 시작 전·처리 중이 아니거나 거주 중이 아니면 {@code INVALID_STATE}, 한 건에 7일 안에 누가 이미 물었으면
+   * {@code ASKED_RECENTLY}. 상대에게 진행 상황 묻기 요청을 연다. 상대가 그 건에 무엇이든 남기면 닫힌다(REP-6c).
+   */
+  public ProgressAsked askProgress(UUID repairCaseId, UUID memberId, String idempotencyKey) {
+    UUID roomRecordId = roomOf(repairCaseId);
+    PipelineResult<RepairState> result =
+        pipeline.execute(
+            new ActionCommand(
+                roomRecordId,
+                Actor.member(memberId),
+                ActionType.ASK_PROGRESS,
+                idempotencyKey,
+                ActionTarget.repairCase(repairCaseId),
+                null,
+                null,
+                null,
+                Map.of()),
+            store.askingProgress(),
+            rules);
+    return new ProgressAsked(
+        repairCaseId, rules.nextProgressAskAt(result.state()), result.action().replayed());
+  }
+
+  /**
+   * 진행 상황 남기기(06 REP-6). pipeline 전에 입력을 본다: 사진이 10장을 넘거나 빈 표가 있거나 글이 2,000자를 넘으면 {@code
+   * VALIDATION_FAILED}, [상황이 바뀌었어요]({@code asksCheck})는 아직 없어 {@code VALIDATION_FAILED}, 주민등록번호 형태면
+   * {@code RESIDENT_ID_BLOCKED}, 글도 사진도 없으면 {@code EVIDENCE_REQUIRED}. 사진만이면 글은 빈 글자로 남는다({@code
+   * progress_note.text} NOT NULL). 공유를 그만둔 사람도 남길 수 있다({@code Allow.WHILE_SHARING_STOPPED}, 03 B).
+   */
+  public ProgressNoteCreated noteProgress(
+      UUID repairCaseId, UUID memberId, String idempotencyKey, ProgressNoteRequest request) {
+    if (request == null
+        || Boolean.TRUE.equals(request.asksCheck())
+        || request.uploadTickets().size() > MAX_PHOTOS
+        || request.uploadTickets().stream().anyMatch(t -> t == null || t.isBlank())) {
+      throw new BusinessException(ErrorCode.VALIDATION_FAILED);
+    }
+    String text = blankToNull(request.text());
+    if (text != null && text.length() > MAX_DESCRIPTION) {
+      throw new BusinessException(ErrorCode.VALIDATION_FAILED);
+    }
+    ResidentIdGuard.check(text);
+    AnswerSupport.requireEvidence(request.hasEvidence());
+    UUID roomRecordId = roomOf(repairCaseId);
+    RepairStateStore.NotingProgress noting =
+        store.notingProgress(text == null ? "" : text, request.uploadTickets());
+    PipelineResult<RepairState> result =
+        pipeline.execute(
+            new ActionCommand(
+                roomRecordId,
+                Actor.member(memberId),
+                ActionType.NOTE_PROGRESS,
+                idempotencyKey,
+                ActionTarget.repairCase(repairCaseId),
+                null,
+                null,
+                null,
+                Map.of()),
+            noting,
+            rules);
+    UUID noteId =
+        noting
+            .createdId()
+            .or(() -> notes.findIdByAction(result.action().actionId()))
+            .orElseThrow(
+                () -> new IllegalStateException("진행 상황이 없어요: " + result.action().actionId()));
+    return new ProgressNoteCreated(noteId, result.action().replayed());
   }
 
   private RepairProgressChanged progress(

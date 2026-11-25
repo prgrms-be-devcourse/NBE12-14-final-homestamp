@@ -9,6 +9,10 @@ import com.chilsuitjo.back.global.security.LoginMember;
 import com.chilsuitjo.back.repair.dto.ConfirmCloseRequest;
 import com.chilsuitjo.back.repair.dto.DefectAckChanged;
 import com.chilsuitjo.back.repair.dto.DefectAckResponse;
+import com.chilsuitjo.back.repair.dto.ProgressAskResponse;
+import com.chilsuitjo.back.repair.dto.ProgressAsked;
+import com.chilsuitjo.back.repair.dto.ProgressNoteCreated;
+import com.chilsuitjo.back.repair.dto.ProgressNoteRequest;
 import com.chilsuitjo.back.repair.dto.RegisterRepairRequest;
 import com.chilsuitjo.back.repair.dto.RepairCaseCreated;
 import com.chilsuitjo.back.repair.dto.RepairCaseDetail;
@@ -140,6 +144,38 @@ public class RepairController {
       @RequestHeader("Idempotency-Key") String idempotencyKey,
       @RequestBody(required = false) ReasonRequest request) {
     return progressed(repairs.notYet(id, memberId, idempotencyKey, request));
+  }
+
+  /**
+   * 진행 상황 묻기(REP-6b). 누구든, 시작 전·처리 중이고 거주 중일 때. 한 건에 7일에 한 번(누가 물었든). 처음 성공과 다시 온 요청 모두 200이다.
+   *
+   * <p><b>아직 06과 다르다</b>: 알리기(문자)는 만들지 않아 상대에게 알림이 가지 않는다(#134).
+   */
+  @PostMapping("/api/repair-cases/{id}/ask-progress")
+  public ResponseEntity<ProgressAskResponse> askProgress(
+      @PathVariable UUID id,
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey) {
+    ProgressAsked asked = repairs.askProgress(id, memberId, idempotencyKey);
+    return withReplayed(ResponseEntity.ok(), asked.replayed()).body(asked.response());
+  }
+
+  /**
+   * 진행 상황 남기기(REP-6). 누구든, 언제든(처리 완료 뒤에도). 글·사진 중 하나 이상, 사진은 한 번에 10장까지 그 진행 상황에 붙는다. 처음 성공과 다시 온
+   * 요청 모두 201과 만든 진행 상황 ID다.
+   *
+   * <p><b>아직 06과 다르다</b>: [상황이 바뀌었어요]({@code asksCheck: true})는 다음 PR에서 만든다(#219). 그 전에는 {@code
+   * VALIDATION_FAILED}다.
+   */
+  @PostMapping("/api/repair-cases/{id}/progress-notes")
+  public ResponseEntity<CreatedResponse> noteProgress(
+      @PathVariable UUID id,
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey,
+      @RequestBody ProgressNoteRequest request) {
+    ProgressNoteCreated created = repairs.noteProgress(id, memberId, idempotencyKey, request);
+    return withReplayed(ResponseEntity.status(HttpStatus.CREATED), created.replayed())
+        .body(new CreatedResponse(created.id()));
   }
 
   private static ResponseEntity<RepairProgressResponse> progressed(RepairProgressChanged changed) {
