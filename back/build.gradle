@@ -52,6 +52,9 @@ dependencies {
     testCompileOnly 'org.projectlombok:lombok'
     testAnnotationProcessor 'org.projectlombok:lombok'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+    implementation platform('software.amazon.awssdk:bom:2.58.0')
+    implementation 'software.amazon.awssdk:s3'
 }
 
 // 로컬 실행(bootRun)은 기본으로 local 프로필로 띄운다. Swagger UI가 local·test에서만 켜지기 때문(docs/rules/04 API 문서). 운영 jar에는 영향 없음
