@@ -19,10 +19,13 @@ import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.notification.dto.OpenRequestCommand;
 import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.dto.RoomParties;
+import com.chilsuitjo.back.notification.dto.SoloCheck;
+import com.chilsuitjo.back.notification.dto.SoloQuery;
 import com.chilsuitjo.back.notification.rule.PartyPresence;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.service.CounterpartReader;
 import com.chilsuitjo.back.notification.service.WaitService;
+import com.chilsuitjo.back.repair.entity.CauseNote;
 import com.chilsuitjo.back.repair.entity.ProgressNote;
 import com.chilsuitjo.back.repair.entity.RepairCase;
 import com.chilsuitjo.back.repair.entity.RepairContent;
@@ -31,6 +34,7 @@ import com.chilsuitjo.back.repair.rule.RepairStatus;
 import com.chilsuitjo.back.repair.rule.RepairTransitions;
 import com.chilsuitjo.back.room.service.RoomQueryService;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -55,9 +59,13 @@ public class RepairStateStore {
   /** 진행 상황 내용 지문의 판 종류(05 2-3 「해시 입력 형식」 내용 지문). */
   static final String PROGRESS_KIND = "progress_note";
 
+  /** 혼자 종료 행동 payload의 혼자 진행 이유 키(05 2-3, 값은 {@code SoloReason} 이름). */
+  public static final String SOLO_REASON = "solo_reason";
+
   private final RepairCaseRepository cases;
   private final RepairContentRepository contents;
   private final ProgressNoteRepository notes;
+  private final CauseNoteRepository causeNotes;
   private final RoomQueryService rooms;
   private final CounterpartReader parties;
   private final ActionRequestContext requestContext;
@@ -101,6 +109,11 @@ public class RepairStateStore {
    */
   public StateStore<RepairState> progressing() {
     return new Progressing();
+  }
+
+  /** 혼자 종료(06 REP-5e)의 저장 방법. 요청마다 새로 부른다. */
+  public StateStore<RepairState> closingAlone() {
+    return new ClosingAlone();
   }
 
   /** 진행 상황 묻기(06 REP-6b)의 저장 방법. 상대에게 진행 상황 묻기 요청을 연다. */
@@ -172,7 +185,55 @@ public class RepairStateStore {
         canOpen(room, row.getRoomRecordId(), RequestKind.DEFECT_CONFIRM),
         canOpen(room, row.getRoomRecordId(), RequestKind.CLOSE_CONFIRM),
         canOpen(room, row.getRoomRecordId(), RequestKind.PROGRESS_CHECK),
-        hiddenFromCounterpart(room, row));
+        hiddenFromCounterpart(room, row),
+        null);
+  }
+
+  /**
+   * 이 측이 지금 이 수리 건을 혼자 종료할 수 있나(06 REP-5e, 03 1-4 "물을 상대가 없는 건의 종료"). 상세 조회의 버튼과 실제 혼자 종료가 같은 판단을
+   * 쓴다(06 4-0). 수리 진행 상태는 보지 않는다(그건 {@code RepairTransitions}).
+   */
+  public boolean canCloseAlone(RepairCase row, PartySide side) {
+    return soloAllowed(row, side, soloCheck(row, side));
+  }
+
+  /**
+   * 바로 혼자 진행 판단({@code WaitService.canGoSoloDirectly}, 대신하는 요청은 {@code CLOSE_CONFIRM}). 수리는 이 결과의
+   * 이유를 다시 거르지 않는다(#113 ③', 03 1-1 "함수 하나").
+   */
+  private SoloCheck soloCheck(RepairCase row, PartySide side) {
+    return waits.canGoSoloDirectly(
+        new SoloQuery(
+            row.getRoomRecordId(),
+            RequestKind.CLOSE_CONFIRM,
+            RequestTarget.of(TargetKind.REPAIR_CASE, row.getId()),
+            side));
+  }
+
+  /**
+   * 허용이고, 이유가 성립한 시각({@code SoloCheck.since})이 있으면 그 뒤 이 건에 행동하는 측에게 보이는 상대 행동이 없을 때만 참이다(03 1-4 "그
+   * 뒤로 이 건에 상대 행동이 없으면", {@code SoloCheck} 설명). 이 건의 행동은 수리 건 대상 행동(진행 상황 포함)과 그 건의 원인 설명 대상 행동이다.
+   * 보이는 범위는 상세와 같이 공유 중단 시각으로 고정한다(3-1). 서버 행동은 상대 행동이 아니다.
+   */
+  private boolean soloAllowed(RepairCase row, PartySide side, SoloCheck check) {
+    if (side == null || !check.allowed()) {
+      return false;
+    }
+    if (check.since() == null) {
+      return true;
+    }
+    Instant cutoff = sharingCutoff(row, side).orElse(null);
+    List<ActionEntry> history =
+        new ArrayList<>(actions.findByTarget(ActionTarget.repairCase(row.getId())));
+    for (CauseNote note : causeNotes.findByRepairCaseIdOrderByCreatedAtAscIdAsc(row.getId())) {
+      history.addAll(actions.findByTarget(ActionTarget.of(TargetKind.CAUSE_NOTE, note.getId())));
+    }
+    return history.stream()
+        .noneMatch(entry ->
+            entry.actorSide() != null
+                && entry.actorSide() != side
+                && entry.createdAt().isAfter(check.since())
+                && (cutoff == null || !entry.createdAt().isAfter(cutoff)));
   }
 
   /** 이 종류의 마지막 행동 시각(행동 기록이 원본, 안내서 8-1). 없으면 null. */
@@ -376,6 +437,43 @@ public class RepairStateStore {
       waits.answered(defectRequest(command), RequestKind.DEFECT_CONFIRM, command.actor().side());
       answerProgressCheck(command);
       return SavedState.unchanged();
+    }
+  }
+
+  /**
+   * 혼자 종료(06 REP-5e)의 저장 방법. 요청마다 새로 만든다({@code load}에서 받은 혼자 진행 판단을 {@code save}가 행동 기록에 남김).
+   *
+   * <p>{@code load}는 pipeline이 호실을 잠근 뒤 같은 트랜잭션에서 불러서({@code ActionPipeline} 1 → 5), {@code
+   * canGoSoloDirectly}의 "호실을 잠근 뒤" 전제를 지킨다. 판단 결과는 {@code canCloseAlone}에 담고 규칙이 막는다.
+   */
+  private final class ClosingAlone implements StateStore<RepairState> {
+
+    private SoloCheck check;
+
+    @Override
+    public RepairState load(ActionCommand command) {
+      RepairState state = RepairStateStore.this.load(command);
+      PartySide side = command.actor().side();
+      if (side == null) {
+        return state.withCanCloseAlone(false);
+      }
+      RepairCase row = row(command);
+      check = soloCheck(row, side);
+      return state.withCanCloseAlone(soloAllowed(row, side, check));
+    }
+
+    /**
+     * 처리 완료(○○ 확인)로 바꾸고 혼자 진행 이유를 payload {@code solo_reason}에 남긴다(05 2-3, {@code SoloReason}). 요청은
+     * 만들지 않는다. 상대에게 가는 서비스 안 알림(문자 없음)은 알리기 PR에서 붙인다. 보류·이견이 열린 채면 강행 표시도 남긴다.
+     */
+    @Override
+    public SavedState save(ActionCommand command, RepairState next) {
+      row(command).changeProgress(next.status(), next.closedBy());
+      answerProgressCheck(command);
+      SavedState saved = SavedState.unchanged().withPayload(SOLO_REASON, check.reason().name());
+      return RepairTransitions.openObjection(command.type(), next)
+          .map(ack -> saved.withPayload(RepairTransitions.WHILE_OPEN_OBJECTION, ack.name()))
+          .orElse(saved);
     }
   }
 
