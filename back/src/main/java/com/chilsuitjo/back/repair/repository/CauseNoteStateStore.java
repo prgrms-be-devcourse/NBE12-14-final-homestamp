@@ -234,10 +234,12 @@ public class CauseNoteStateStore {
 
     /**
      * 새 설명 한 줄을 남긴다(그 행이 이 행동의 대상이자 내용 지문). 시각은 행동 기록과 같은 {@code at()}이다. 근거 사진은 설명을 DB에 내보낸 뒤 그
-     * 설명에 붙이고(사진 행이 설명을 가리키므로), 지문은 행동 payload {@code photos}로 남는다. 사진이 실패하면 설명도 함께 되돌려진다.
+     * 설명에 붙이고(사진 행이 설명을 가리키므로), 지문은 행동 payload {@code photos}로 남는다. 사진이 실패하면 설명도 함께 되돌려진다. 상대가 물어 둔
+     * 진행 상황 묻기는 이 설명으로 닫힌다(06 REP-6c).
      */
     @Override
     public SavedState save(ActionCommand command, CauseNoteState next) {
+      repairs.answerProgressCheck(repairCaseId, command.actor().side());
       CauseNote note =
           notes.saveAndFlush(
               new CauseNote(
@@ -280,8 +282,13 @@ public class CauseNoteStateStore {
       return responseState(note);
     }
 
+    /** 응답은 행동 기록에만 남는다. 상대가 물어 둔 부모 수리 건의 진행 상황 묻기는 이 응답으로 닫힌다(06 REP-6c). */
     @Override
     public SavedState save(ActionCommand command, CauseNoteState next) {
+      notes
+          .findById(command.target().id())
+          .ifPresent(
+              note -> repairs.answerProgressCheck(note.getRepairCaseId(), command.actor().side()));
       return SavedState.unchanged();
     }
   }

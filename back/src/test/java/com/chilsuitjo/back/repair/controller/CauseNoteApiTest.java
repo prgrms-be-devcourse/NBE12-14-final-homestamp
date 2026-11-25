@@ -6,6 +6,8 @@ import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.nullValue;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -17,11 +19,23 @@ import com.chilsuitjo.back.action.dto.DigestField;
 import com.chilsuitjo.back.action.dto.DigestInput;
 import com.chilsuitjo.back.action.rule.ContentDigest;
 import com.chilsuitjo.back.global.common.PartySide;
+import com.chilsuitjo.back.global.common.TargetKind;
+import com.chilsuitjo.back.notification.dto.RequestTarget;
+import com.chilsuitjo.back.notification.rule.RequestKind;
+import com.chilsuitjo.back.notification.rule.RequestStatus;
+import com.chilsuitjo.back.notification.service.FakeWaitService;
+import com.chilsuitjo.back.photo.dto.PhotoAttachCommand;
+import com.chilsuitjo.back.photo.dto.PhotoTarget;
+import com.chilsuitjo.back.photo.rule.PhotoTargetType;
+import com.chilsuitjo.back.photo.service.PhotoService;
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -29,6 +43,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 
@@ -46,6 +61,8 @@ class CauseNoteApiTest {
 
   @Autowired private MockMvc mvc;
   @Autowired private JdbcTemplate jdbc;
+  @Autowired private FakeWaitService waits;
+  @MockitoSpyBean private PhotoService photoService;
 
   private UUID room;
   private UUID tenant;
@@ -298,7 +315,148 @@ class CauseNoteApiTest {
     detail(tenant).andExpect(jsonPath("$.availableActions", not(hasItem("cause-notes"))));
   }
 
+  @Test
+  void 공유를_그만둔_사람에게는_그_뒤_상대가_남긴_설명과_응답이_보이지_않는다() throws Exception {
+    UUID mine = created(note(tenant, "n1", "{\"text\":\"윗집 배관\",\"basis\":\"GUESS\"}"));
+    // 수리 건·내 설명보다 뒤, 상대의 설명·응답보다 앞
+    stopSharing(PartySide.TENANT, Instant.now());
+
+    created(note(landlord, "n2", "{\"text\":\"배관 노후\",\"basis\":\"GUESS\"}"));
+    respond(mine, landlord, "r1", "DISPUTE", "우리 배관은 새것이에요").andExpect(status().isOk());
+
+    detail(tenant)
+        .andExpect(jsonPath("$.causeNotes", hasSize(1)))
+        .andExpect(jsonPath("$.causeNotes[0].id").value(mine.toString()))
+        .andExpect(jsonPath("$.causeNotes[0].response").value(nullValue()));
+    detail(landlord)
+        .andExpect(jsonPath("$.causeNotes", hasSize(2)))
+        .andExpect(jsonPath("$.causeNotes[0].response.answer").value("DISPUTE"));
+  }
+
+  @Test
+  void 거주가_끝나도_정산_완료_전까지는_남기고_답할_수_있다() throws Exception {
+    // 03 A 거주 종료 표 "원인 설명(근거 사진 포함) 남기기·고치기·응답도 정산 완료 전까지"(decisions 2026-11-25, #228)
+    UUID noteId = created(note(tenant, "n1", "{\"text\":\"윗집 배관\",\"basis\":\"GUESS\"}"));
+    jdbc.update(
+        "UPDATE state.room_record SET status = 'ENDED', ended_at = CURRENT_TIMESTAMP WHERE id = ?",
+        room);
+
+    note(
+            landlord,
+            "n2",
+            "{\"text\":\"이사 뒤 업체가 봤어요\",\"basis\":\"EXPERT\",\"uploadTickets\":[\""
+                + UUID.randomUUID()
+                + "\"]}")
+        .andExpect(status().isCreated());
+    respond(noteId, landlord, "r1", "ACK", null).andExpect(status().isOk());
+  }
+
+  @Test
+  void 정산이_끝나면_남기지도_답하지도_못한다() throws Exception {
+    UUID noteId = created(note(tenant, "n1", "{\"text\":\"윗집 배관\",\"basis\":\"GUESS\"}"));
+    jdbc.update(
+        "UPDATE state.room_record SET status = 'SETTLED', ended_at = CURRENT_TIMESTAMP,"
+            + " settled_at = CURRENT_TIMESTAMP WHERE id = ?",
+        room);
+
+    note(landlord, "n2", "{\"text\":\"배관 노후\",\"basis\":\"GUESS\"}")
+        .andExpect(jsonPath("$.code").value("SETTLED"));
+    respond(noteId, landlord, "r1", "ACK", null).andExpect(jsonPath("$.code").value("SETTLED"));
+    assertThat(count("record.cause_note")).isEqualTo(1);
+  }
+
+  @Test
+  void 근거_사진은_수리_건_카드_한도에_진행_상황_사진과_함께_세진다() throws Exception {
+    UUID progressId =
+        created(
+            mvc.perform(
+                    post("/api/repair-cases/{id}/progress-notes", caseId)
+                        .with(loginAs(landlord))
+                        .header("Idempotency-Key", "p1-" + caseId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"uploadTickets\":[\"" + UUID.randomUUID() + "\"]}"))
+                .andExpect(status().isCreated()));
+    UUID first = created(note(tenant, "n1", "{\"text\":\"윗집 배관\",\"basis\":\"GUESS\"}"));
+    clearInvocations(photoService);
+
+    UUID second =
+        created(
+            note(
+                    tenant,
+                    "n2",
+                    "{\"text\":\"업체 소견\",\"basis\":\"EXPERT\",\"previousId\":\""
+                        + first
+                        + "\",\"uploadTickets\":[\""
+                        + UUID.randomUUID()
+                        + "\"]}")
+                .andExpect(status().isCreated()));
+
+    ArgumentCaptor<PhotoAttachCommand> attach = ArgumentCaptor.forClass(PhotoAttachCommand.class);
+    verify(photoService).attach(attach.capture());
+    assertThat(attach.getValue().target())
+        .isEqualTo(new PhotoTarget.Ref(PhotoTargetType.CAUSE_NOTE, second));
+    assertThat(attach.getValue().quota().max()).isEqualTo(30);
+    assertThat(attach.getValue().quota().countedTargets())
+        .containsExactlyInAnyOrder(
+            new PhotoTarget.Ref(PhotoTargetType.REPAIR_CASE, caseId),
+            new PhotoTarget.Ref(PhotoTargetType.PROGRESS_NOTE, progressId),
+            new PhotoTarget.Ref(PhotoTargetType.CAUSE_NOTE, first),
+            new PhotoTarget.Ref(PhotoTargetType.CAUSE_NOTE, second));
+  }
+
+  // ---- REP-6c: 상대가 원인 설명을 남기거나 답해도 진행 상황 물음이 닫힌다 ----
+
+  @Test
+  void REP_6c_상대가_원인_설명을_남기면_묻기_요청이_닫힌다() throws Exception {
+    ask(tenant).andExpect(status().isOk());
+
+    // 물은 사람이 남긴 것은 답이 아니다
+    note(tenant, "n1", "{\"text\":\"윗집 배관\",\"basis\":\"GUESS\"}").andExpect(status().isCreated());
+    assertThat(waits.statusOf(caseRequest(), RequestKind.PROGRESS_CHECK))
+        .contains(RequestStatus.WAITING);
+
+    note(landlord, "n2", "{\"text\":\"배관 노후\",\"basis\":\"GUESS\"}")
+        .andExpect(status().isCreated());
+    assertThat(waits.statusOf(caseRequest(), RequestKind.PROGRESS_CHECK))
+        .contains(RequestStatus.ANSWERED);
+  }
+
+  @Test
+  void REP_6c_상대가_원인_설명에_답하면_묻기_요청이_닫힌다() throws Exception {
+    UUID tenantNote = created(note(tenant, "n1", "{\"text\":\"윗집 배관\",\"basis\":\"GUESS\"}"));
+    UUID landlordNote = created(note(landlord, "n2", "{\"text\":\"배관 노후\",\"basis\":\"GUESS\"}"));
+    ask(tenant).andExpect(status().isOk());
+
+    respond(landlordNote, tenant, "r1", "DISPUTE", "새 배관이에요").andExpect(status().isOk());
+    assertThat(waits.statusOf(caseRequest(), RequestKind.PROGRESS_CHECK))
+        .contains(RequestStatus.WAITING);
+
+    respond(tenantNote, landlord, "r2", "ACK", null).andExpect(status().isOk());
+    assertThat(waits.statusOf(caseRequest(), RequestKind.PROGRESS_CHECK))
+        .contains(RequestStatus.ANSWERED);
+  }
+
   // ---- 준비물 ----
+
+  private ResultActions ask(UUID memberId) throws Exception {
+    return mvc.perform(
+        post("/api/repair-cases/{id}/ask-progress", caseId)
+            .with(loginAs(memberId))
+            .header("Idempotency-Key", "ask-" + UUID.randomUUID()));
+  }
+
+  private RequestTarget caseRequest() {
+    return RequestTarget.of(TargetKind.REPAIR_CASE, caseId);
+  }
+
+  private void stopSharing(PartySide side, Instant at) {
+    jdbc.update(
+        "UPDATE state.party SET status = 'SHARING_STOPPED', sharing_stopped_at = ?"
+            + " WHERE room_record_id = ? AND side = ?",
+        Timestamp.from(at),
+        room,
+        side.name());
+  }
 
   private ResultActions note(UUID memberId, String key, String json) throws Exception {
     return mvc.perform(
