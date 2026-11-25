@@ -70,4 +70,40 @@ public class RoomPart {
     part.createdAt = Objects.requireNonNull(at);
     return part;
   }
+
+  /**
+   * 이 호실에만 직접 더한 부위(06 ROOM-3, {@code ADD_PART}). 템플릿이 없고 켬·보임으로 시작한다. 구역·이름 검사는 부르는 쪽이 먼저 한다.
+   *
+   * @param sortOrder 호실 안의 순서. 화면은 구역 순서 다음 이 값으로 줄 세운다
+   */
+  public static RoomPart added(
+      UUID roomRecordId, String zone, String name, int sortOrder, Instant at) {
+    RoomPart part = new RoomPart();
+    part.roomRecordId = Objects.requireNonNull(roomRecordId);
+    part.zone = Objects.requireNonNull(zone);
+    part.name = Objects.requireNonNull(name);
+    part.sortOrder = sortOrder;
+    part.enabled = true;
+    part.createdAt = Objects.requireNonNull(at);
+    return part;
+  }
+
+  public boolean isHidden() {
+    return hiddenAt != null;
+  }
+
+  /** 숨긴다({@code HIDE_PART}). 이미 숨겼는지는 {@code PartTransitions}가 먼저 본다. */
+  public void hide(Instant at) {
+    this.hiddenAt = Objects.requireNonNull(at);
+  }
+
+  /** 다시 보이게 한다({@code SHOW_PART}, #136). */
+  public void show() {
+    this.hiddenAt = null;
+  }
+
+  /** 켜고 끈다({@code TOGGLE_PART}). 숨김과 따로 움직인다. */
+  public void changeEnabled(boolean newEnabled) {
+    this.enabled = newEnabled;
+  }
 }
