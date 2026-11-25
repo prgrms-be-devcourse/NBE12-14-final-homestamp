@@ -1,5 +1,9 @@
 import { API_BASE_URL, API_MODE } from "@/config"
-import { isMobilePhone, normalizePhone } from "@/lib/phone"
+import {
+  isMobilePhone,
+  MOBILE_PHONE_MESSAGE,
+  normalizePhone,
+} from "@/lib/phone"
 import { ApiError } from "./errors"
 import { endpoints } from "./endpoints"
 import { createHttpClient, type HttpRequest } from "./http-client"
@@ -89,6 +93,13 @@ export const VERIFY_CODE_TTL_MS = 5 * 60_000
 export const VERIFY_RESEND_INTERVAL_S = 60
 export const VERIFY_DAILY_PER_PHONE = 5
 export const VERIFY_ATTEMPTS_MAX = 5
+// 가입 확인 항목의 문구 판(06 4-1 ageTextVersion·termsTextVersion·privacyNoticeTextVersion).
+// 서버에 지금 판을 정한 곳이 아직 없어 v1로 보내고, 정식 관리는 CONS-4에서 해요(#208).
+export const ACK_TEXT_VERSIONS = {
+  age14: "v1",
+  terms: "v1",
+  privacyNotice: "v1",
+} as const
 // 06 4-10 화면 문구
 export const CODE_REPLACED_MESSAGE =
   "새 인증번호를 보냈어요. 가장 최근 문자의 번호를 넣어 주세요. 다른 기기에서 받았다면 그 기기에서 넣어 주세요"
@@ -139,21 +150,51 @@ export function createHttpAuth(
   return {
     mode: "http",
     getToken: token.get,
+    // 인증 문자(06 4-1): 서버는 201 + 인증 ID(id)만 줘요. 만료 시각은 받은 때부터 verify.code.ttl(5분)로 계산해요.
+    // 가입·인증 문자는 행동 기록을 남기지 않아 Idempotency-Key를 보내지 않아요(06 4-0).
     async requestPhoneCode(phone) {
-      const r = await request<{ verificationId: string; expiresAt: string }>(
+      const r = await request<{ id: string }>(
         "POST",
         endpoints.phoneVerifications,
-        { body: { phone: normalizePhone(phone), purpose: "SIGNUP" } },
+        {
+          body: { phone: normalizePhone(phone), purpose: "SIGNUP" },
+          idempotent: false,
+        },
       )
-      return { ...r, delivered: true }
+      return {
+        verificationId: r.id,
+        expiresAt: new Date(Date.now() + VERIFY_CODE_TTL_MS).toISOString(),
+        delivered: true,
+      }
     },
-    verifyPhoneCode: (vid, code) =>
-      request<{ phoneToken: string }>("POST", endpoints.verifyPhone(vid), {
-        body: { code },
-      }),
+    // 인증번호 확인: 서버의 인증 표(ticket)를 화면의 phoneToken으로 넘겨요
+    async verifyPhoneCode(vid, code) {
+      const r = await request<{ ticket: string; expiresAt: string }>(
+        "POST",
+        endpoints.verifyPhone(vid),
+        { body: { code: code.trim() }, idempotent: false },
+      )
+      return { phoneToken: r.ticket }
+    },
+    // 가입(06 4-1): 201 + 회원 ID만 오고 로그인은 되지 않아서, 같은 이메일·비밀번호로 이어서 로그인해요
     async signup(input) {
-      await request("POST", endpoints.signup, { body: input })
-      return this.login(input.email, input.password)
+      const email = input.email.trim()
+      await request<{ id: string }>("POST", endpoints.signup, {
+        body: {
+          email,
+          password: input.password,
+          displayName: input.name.trim(),
+          verificationTicket: input.phoneToken,
+          ageConfirmed: input.agreements.age14,
+          ageTextVersion: ACK_TEXT_VERSIONS.age14,
+          termsAgreed: input.agreements.terms,
+          termsTextVersion: ACK_TEXT_VERSIONS.terms,
+          privacyNoticeAcknowledged: input.agreements.privacyNotice,
+          privacyNoticeTextVersion: ACK_TEXT_VERSIONS.privacyNotice,
+        },
+        idempotent: false,
+      })
+      return this.login(email, input.password)
     },
     async login(email, password) {
       const r = await request<{ accessToken: string }>(
@@ -210,7 +251,7 @@ export function createHttpAuth(
 
 /* ── 서버 없이 개발할 때: 브라우저 메모리 계정 저장소 ──
    문자를 실제로 보내지 않으므로 delivered=false를 돌려주고, 화면은 '문자를 보내지 않았어요'를 그대로 알립니다.
-   인증번호는 개발자 콘솔에만 남깁니다. 규칙(3분·5회, 이메일·번호 중복, 비밀번호)은 명세와 같게 검사해요. */
+   인증번호는 개발자 콘솔에만 남깁니다. 규칙(5분·5회, 이메일·번호 중복, 비밀번호)은 명세와 같게 검사해요. */
 interface LocalAccount extends Account {
   password: string
 }
@@ -247,11 +288,7 @@ export function createLocalAuth(): AuthApi {
     getToken: () => current?.id,
     async requestPhoneCode(phone) {
       const n = normalizePhone(phone)
-      if (!isMobilePhone(n))
-        fail(
-          "VALIDATION_FAILED",
-          "010으로 시작하는 휴대폰 번호 11자리를 입력해 주세요.",
-        )
+      if (!isMobilePhone(n)) fail("VALIDATION_FAILED", MOBILE_PHONE_MESSAGE)
       // 이미 가입에 쓰인 번호도 막지 않아요. 새 계정이 인증하면 이전 계정의 번호 인증이 풀려요(ACC-3a)
       const now = Date.now()
       const day = new Date(now).toDateString()

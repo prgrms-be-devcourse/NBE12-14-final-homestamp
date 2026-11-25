@@ -28,7 +28,7 @@ import {
   type Account,
   type AuthApi,
 } from "@/api/auth"
-import { isMobilePhone, maskPhone } from "@/lib/phone"
+import { isMobilePhone, maskPhone, MOBILE_PHONE_MESSAGE } from "@/lib/phone"
 import { Notice } from "@/components/common/notice"
 
 type Mode = "login" | "signup"
@@ -261,8 +261,7 @@ function SignupForm({
   // 휴대폰 인증 화면(08 "휴대폰 인증 화면" 표): 보낸 뒤 60초는 다시 받기를 기다리고, 하루 횟수를 다 쓰면 [다시 받기]를 숨겨요
   const sendCode = () =>
     run(async () => {
-      if (!isMobilePhone(phone))
-        throw new Error("010으로 시작하는 휴대폰 번호 11자리를 입력해 주세요.")
+      if (!isMobilePhone(phone)) throw new Error(MOBILE_PHONE_MESSAGE)
       try {
         const v = await auth.requestPhoneCode(phone)
         setVerification({
@@ -313,17 +312,32 @@ function SignupForm({
       setError("만 14세 이상만 가입할 수 있어요.")
       return
     }
-    run(async () =>
-      onDone(
-        await auth.signup({
-          email: account.email,
-          password: account.password,
-          name: account.name,
-          phoneToken,
-          agreements: agree,
-        }),
-      ),
-    )
+    run(async () => {
+      try {
+        onDone(
+          await auth.signup({
+            email: account.email,
+            password: account.password,
+            name: account.name,
+            phoneToken,
+            agreements: agree,
+          }),
+        )
+      } catch (e) {
+        // 인증 표가 만료됐거나 이미 쓰였으면(CODE_EXPIRED, 06 ACC-1f·1l) 휴대폰 인증부터 다시 해요. 입력한 계정 정보는 남겨요
+        if (e instanceof ApiError && e.code === "CODE_EXPIRED") {
+          setPhoneToken("")
+          setVerification(undefined)
+          setCode("")
+          setStep(1)
+          throw new Error(
+            "휴대폰 인증 시간이 지났어요. 인증번호를 다시 받아 주세요.",
+            { cause: e },
+          )
+        }
+        throw e
+      }
+    })
   }
 
   return (
