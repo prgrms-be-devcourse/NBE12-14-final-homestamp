@@ -373,6 +373,35 @@ class InspectionApiTest {
         .andExpect(jsonPath("$.items").doesNotExist());
   }
 
+  // ---- 호실 상세의 입주일(#190, 불변식 18) ----
+
+  @Test
+  void 공유를_그만둔_뒤_상대가_채운_입주일은_그만둔_사람에게_보이지_않는다() throws Exception {
+    clearMoveInDate();
+    stopSharing(PartySide.LANDLORD, Instant.now().minusSeconds(3600));
+
+    created(start(tenant, "after-stop", "MOVE_IN", "2026-02-15"));
+
+    roomDetail(landlord)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.moveInDate").doesNotExist());
+    // 채운 사람에게는 보인다
+    roomDetail(tenant)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.moveInDate").value("2026-02-15"));
+  }
+
+  @Test
+  void 공유를_그만두기_전에_채운_입주일은_그대로_보인다() throws Exception {
+    clearMoveInDate();
+    created(start(tenant, "before-stop", "MOVE_IN", "2026-02-15"));
+    stopSharing(PartySide.LANDLORD, Instant.now().plusSeconds(3600));
+
+    roomDetail(landlord)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.moveInDate").value("2026-02-15"));
+  }
+
   // ---- 준비물 ----
 
   private ResultActions start(UUID member, String key, String kind, String moveInDate)
@@ -411,6 +440,10 @@ class InspectionApiTest {
 
   private ResultActions detail(UUID member, UUID inspection) throws Exception {
     return mvc.perform(get("/api/inspections/{id}", inspection).with(loginAs(member)));
+  }
+
+  private ResultActions roomDetail(UUID member) throws Exception {
+    return mvc.perform(get("/api/rooms/{id}", room).with(loginAs(member)));
   }
 
   private static UUID created(ResultActions result) throws Exception {
