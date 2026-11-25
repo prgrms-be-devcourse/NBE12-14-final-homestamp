@@ -124,11 +124,15 @@ class InspectionTransitionsTest {
 
     assertThat(Replay.fold(rules, history).status()).isEqualTo(InspectionStatus.REQUESTED);
     assertThat(Replay.fold(longer, history).status()).isEqualTo(InspectionStatus.REQUESTED);
-    // 새 요청은 지금 설정으로 본다
-    assertThatThrownBy(() ->
-            longer.apply(
-                draft(PartySide.LANDLORD, NOW, true), request(PartySide.TENANT, eighthDay)))
+    // 새 요청과 버튼은 지금 설정으로 본다(같은 판단 함수)
+    InspectionState live = draft(PartySide.LANDLORD, NOW, true);
+    assertThatThrownBy(() -> longer.apply(live, request(PartySide.TENANT, eighthDay)))
         .hasMessage(ErrorCode.INVALID_STATE.name());
+    assertThat(longer.canRequestConfirm(live, PartySide.TENANT, eighthDay)).isFalse();
+    Instant tenthDay = NOW.plus(Duration.ofDays(10));
+    assertThat(longer.canRequestConfirm(live, PartySide.TENANT, tenthDay)).isTrue();
+    assertThat(longer.apply(live, request(PartySide.TENANT, tenthDay)).status())
+        .isEqualTo(InspectionStatus.REQUESTED);
   }
 
   @Test

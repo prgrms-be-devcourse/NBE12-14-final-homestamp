@@ -58,10 +58,25 @@ public class InspectionTransitions implements Transitions<InspectionState> {
    * @param now 지금 시각(작성 중 기간 판단). 행동이 아니라 조회라서 부르는 쪽이 {@code Clock}으로 넘긴다
    */
   public boolean canRequestConfirm(InspectionState state, PartySide side, Instant now) {
+    return requestAllowed(state, side, now);
+  }
+
+  /**
+   * 확인 요청을 받을 수 있나. 버튼({@link #canRequestConfirm})과 실제 요청({@link #apply})이 이 함수 하나를 쓴다(06 4-0 "버튼과
+   * 실제 요청은 서버의 같은 함수"). 거절은 모두 {@code INVALID_STATE}라 참·거짓으로 충분하다.
+   *
+   * <ul>
+   *   <li>있는 점검이고 작성 중이며 행동하는 측을 안다
+   *   <li>기준 측이거나, 시작 뒤 {@code inspection.draft.stale-after}가 지났다(이상). 이 기간은 요청할 때만 지금 설정으로 보고,
+   *       재계산이면 기록된 요청을 그때 유효했던 것으로 다룬다({@link InspectionState#atRequest}, #234 리뷰)
+   *   <li>지금 호실 단계에서 점검 확인 요청을 열 수 없다고 확인되지 않았다
+   * </ul>
+   */
+  private boolean requestAllowed(InspectionState state, PartySide side, Instant at) {
     return state.exists()
         && state.status() == InspectionStatus.DRAFT
         && side != null
-        && (side == state.authorSide() || draftIsStale(state, now))
+        && (side == state.authorSide() || !state.atRequest() || draftIsStale(state, at))
         && !state.confirmBlocked();
   }
 
@@ -124,19 +139,11 @@ public class InspectionTransitions implements Transitions<InspectionState> {
    * <p>누가 눌렀든 요청한 측은 기준 측이다(답하는 측의 반대가 요청한 측, {@code WaitService.answered}, #218에서 정함). 그 요청을 실제로
    * 열지는 상대가 볼 수 있는지에 따라 {@code save}가 정한다.
    *
-   * <p>작성 중 기간은 요청할 때만 지금 설정으로 본다. 재계산이면 기록된 요청을 그때 유효했던 것으로 다룬다({@link
-   * InspectionState#atRequest}): 설정을 바꾼 뒤에도 과거 점검이 같은 상태로 다시 계산돼야 해서다(#234 리뷰).
+   * <p>판단은 버튼과 같은 {@link #requestAllowed}다. 작성 중 기간은 요청할 때만 지금 설정으로 보고, 재계산이면 기록된 요청을 그때 유효했던 것으로
+   * 다룬다: 설정을 바꾼 뒤에도 과거 점검이 같은 상태로 다시 계산돼야 해서다(#234 리뷰).
    */
   private InspectionState requestConfirm(InspectionState now, ActionEntry action) {
-    if (!now.exists() || now.status() != InspectionStatus.DRAFT || action.actorSide() == null) {
-      throw new BusinessException(ErrorCode.INVALID_STATE);
-    }
-    if (now.atRequest()
-        && action.actorSide() != now.authorSide()
-        && !draftIsStale(now, action.createdAt())) {
-      throw new BusinessException(ErrorCode.INVALID_STATE);
-    }
-    if (now.confirmBlocked()) {
+    if (!requestAllowed(now, action.actorSide(), action.createdAt())) {
       throw new BusinessException(ErrorCode.INVALID_STATE);
     }
     return now.withStatus(InspectionStatus.REQUESTED);
