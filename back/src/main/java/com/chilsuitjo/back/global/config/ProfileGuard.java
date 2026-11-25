@@ -19,7 +19,8 @@ import org.springframework.core.env.Profiles;
  *   <li>prod와 local·test가 함께: 개발용 고정 키·API 문서·가짜 문자가 운영 설정에 섞이지 않게 한다
  * </ul>
  *
- * <p>Migration·GRANT({@code --migrate}·{@code --apply-grants}, #173)는 이 컨텍스트를 띄우지 않으므로 이 검사와 상관없다.
+ * <p>{@code --migrate}(#173)는 이 컨텍스트를 띄우지 않고 끝나므로 이 검사와 상관없다. {@code --apply-grants}는 아직 구현이
+ * 없어(#156) 일반 앱과 같이 검사한다.
  */
 @Configuration(proxyBeanMethods = false)
 public class ProfileGuard {
