@@ -36,7 +36,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 @Import(TestcontainersConfiguration.class)
-@SpringBootTest(properties = "spring.jpa.show-sql=true")
+@SpringBootTest
 @ActiveProfiles("test")
 class LinkConcurrencyTest {
   @Autowired private LinkRepository links;
@@ -110,12 +110,6 @@ class LinkConcurrencyTest {
 
       tx.executeWithoutResult(status -> {
         Link result = links.findById(id).orElseThrow();
-        System.out.printf(
-            "최종 상태: failedViewCount=%d, invalidatedAt=%s, reason=%s, version=%d%n",
-            result.getFailedViewCount(),
-            result.getInvalidatedAt(),
-            result.getInvalidatedReason(),
-            result.getVersion());
         assertThat(result.getInvalidatedAt()).isEqualTo(invalidatedAt);
         assertThat(result.getInvalidatedReason()).isEqualTo(LinkInvalidReason.REINVITED);
         assertThat(result.getVersion()).isEqualTo(1);
