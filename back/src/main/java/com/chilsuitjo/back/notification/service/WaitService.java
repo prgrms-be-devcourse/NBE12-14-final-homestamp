@@ -83,8 +83,9 @@ public interface WaitService {
   boolean canOpen(UUID roomRecordId, RequestKind kind);
 
   /**
-   * 상대 응답 없이 요청한 측이 혼자 진행할 수 있나와 그 이유(03 1-4 ①~⑥). <b>그 요청</b>(대상 + 종류 + 요청한 측)을 기준으로 본다. 예: 종료 확인이
-   * 미확인이 된 뒤의 [혼자 종료](06 REP-5c). 요청 없이 바로 혼자 진행은 {@link #canGoSoloDirectly}다.
+   * 상대 응답 없이 요청한 측이 혼자 진행할 수 있나와 그 이유(03 1-4 ①~⑥). <b>그 요청</b>(대상 + 종류 + 요청한 측)을 기준으로 본다. 예: 정산 끝내기
+   * 요청이 미확인이 된 뒤의 혼자 끝내기(06 SET-5d). 수리 종료는 이 함수를 쓰지 않는다(물을 상대가 있으면 미확인이 돼도 혼자 종료하지 않음, #113 ③').
+   * 요청 없이 바로 혼자 진행은 {@link #canGoSoloDirectly}다.
    */
   SoloCheck canGoSolo(SoloQuery query);
 
