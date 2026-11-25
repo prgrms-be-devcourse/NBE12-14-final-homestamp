@@ -2,10 +2,10 @@ package com.chilsuitjo.back.link.service;
 
 import com.chilsuitjo.back.action.dto.Actor;
 import com.chilsuitjo.back.action.rule.RoomGateReader;
+import com.chilsuitjo.back.global.common.LinkInvalidReason;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.link.repository.LinkRepository;
-import com.chilsuitjo.back.link.rule.LinkInvalidReason;
 import java.time.Clock;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
