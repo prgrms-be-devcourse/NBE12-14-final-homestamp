@@ -209,6 +209,34 @@ class InspectionApiTest {
     assertThat(count("state.inspection")).isZero();
   }
 
+  @Test
+  void INSP_2b_입주일을_채운_시작을_같은_키로_다시_보내면_처음_결과를_돌려준다() throws Exception {
+    // 다시 온 요청은 입주일이 이미 있어도 VALIDATION_FAILED가 아니라 처음과 같은 201이다(06 4-0)
+    clearMoveInDate();
+    UUID first = created(start(tenant, "date-again", "MOVE_IN", "2026-02-15"));
+
+    start(tenant, "date-again", "MOVE_IN", "2026-02-15")
+        .andExpect(status().isCreated())
+        .andExpect(header().string(InspectionController.REPLAYED, "true"))
+        .andExpect(jsonPath("$.id").value(first.toString()));
+    assertThat(moveInDate()).isEqualTo(LocalDate.parse("2026-02-15"));
+    assertThat(count("state.inspection")).isEqualTo(1);
+    assertThat(count("record.action")).isEqualTo(1);
+  }
+
+  @Test
+  void 거주_종료_뒤에는_입주_점검을_새로_시작할_수_없다() throws Exception {
+    jdbc.update(
+        "UPDATE state.room_record SET status = 'ENDED', ended_at = CURRENT_TIMESTAMP WHERE id = ?",
+        room);
+
+    start(tenant, "after-end", "MOVE_IN", null)
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("INVALID_STATE"));
+    assertThat(count("state.inspection")).isZero();
+    assertThat(count("record.action")).isZero();
+  }
+
   // ---- 항목 더하기 ----
 
   @Test
@@ -400,6 +428,39 @@ class InspectionApiTest {
     roomDetail(landlord)
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.moveInDate").value("2026-02-15"));
+  }
+
+  @Test
+  void 공유를_그만둔_뒤_상대가_채웠어도_상대가_탈퇴하면_입주일이_보인다() throws Exception {
+    // 상대가 탈퇴하면 함께 볼 상대가 없어 보이는 범위를 고정하지 않는다(RoomSeats.visibleCutoffFor, 06 CONS-3p)
+    clearMoveInDate();
+    stopSharing(PartySide.LANDLORD, Instant.now().minusSeconds(3600));
+    created(start(tenant, "then-withdraw", "MOVE_IN", "2026-02-15"));
+    jdbc.update(
+        "UPDATE state.party SET status = 'WITHDRAWN', member_id = NULL"
+            + " WHERE room_record_id = ? AND side = 'TENANT'",
+        room);
+
+    roomDetail(landlord)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.asOf").doesNotExist())
+        .andExpect(jsonPath("$.moveInDate").value("2026-02-15"));
+  }
+
+  @Test
+  void 공유를_그만둔_사람은_점검을_시작해_입주일을_채울_수_없다() throws Exception {
+    // 그만둔 사람이 채운 입주일이 상대에게 드러나는 경우가 생기지 않는 이유: pipeline이 먼저 막는다(09 3-1 순서 3)
+    clearMoveInDate();
+    stopSharing(PartySide.LANDLORD, Instant.now().minusSeconds(3600));
+
+    start(landlord, "stopper", "MOVE_IN", "2026-02-15")
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("SHARING_STOPPED"));
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT move_in_date FROM state.room_record WHERE id = ?", Date.class, room))
+        .isNull();
+    roomDetail(tenant).andExpect(jsonPath("$.moveInDate").doesNotExist());
   }
 
   // ---- 준비물 ----
