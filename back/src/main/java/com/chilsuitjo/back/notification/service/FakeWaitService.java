@@ -10,6 +10,7 @@ import com.chilsuitjo.back.notification.dto.SoloQuery;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.rule.RequestStatus;
 import com.chilsuitjo.back.notification.rule.SoloReason;
+import com.chilsuitjo.back.notification.rule.SoloRule;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -25,6 +26,10 @@ import org.springframework.stereotype.Service;
  * {@code ux_inspection_confirm_waiting}). 제안은 안건마다 기다리는 요청이 하나다({@code ux_proposal_waiting}). 상대의
  * 안에 낸 역제안은 이전 요청을 {@code answered}로 닫은 뒤 새로 연다(05 {@code proposal} ③). 닫지 않고 상대 쪽이 열면 거절한다.
  *
+ * <p><b>바로 혼자 진행({@link #canGoSoloDirectly})은 가짜가 아니다.</b> 진짜 {@link CounterpartReader}로 읽은 자리 사실을
+ * {@link SoloRule}에 넘긴다. 메모리 요청·{@link #seedSolo}·{@link #markUnconfirmed}은 보지 않는다. 이 클래스가 운영에서도
+ * 쓰이는 동안(진짜 구현 전) 테스트에서 만든 근거로 혼자 진행이 열리지 않게 하려고다.
+ *
  * <p>실제 구현(NOTI-1·5, 기다림 타이머)이 들어오면 이 클래스를 지운다. 다른 도메인은 {@link WaitService}만 쓰므로 바뀌지 않는다.
  */
 @Service
@@ -33,6 +38,11 @@ public class FakeWaitService implements WaitService {
   private final Map<Key, Request> requests = new ConcurrentHashMap<>();
   private final Set<Key> blocked = ConcurrentHashMap.newKeySet();
   private final Map<Key, SoloCheck> soloChecks = new ConcurrentHashMap<>();
+  private final CounterpartReader counterparts;
+
+  public FakeWaitService(CounterpartReader counterparts) {
+    this.counterparts = counterparts;
+  }
 
   @Override
   public RequestHandle open(OpenRequestCommand command) {
@@ -143,6 +153,12 @@ public class FakeWaitService implements WaitService {
     return SoloCheck.notYet(null);
   }
 
+  @Override
+  public SoloCheck canGoSoloDirectly(SoloQuery query) {
+    return SoloRule.direct(
+        counterparts.read(query.roomRecordId(), query.requestedBySide()), query.kind());
+  }
+
   // ---- 테스트·로컬에서 상황을 만드는 도구 ----
   // 점검 확인은 방향이 둘이라 요청한 측을 받는 쪽을 쓴다. 방향 없이 물으면 어느 쪽인지 정할 수 없어 거절한다
 
@@ -195,7 +211,7 @@ public class FakeWaitService implements WaitService {
     blocked.add(Key.opening(roomRecordId, kind));
   }
 
-  /** 혼자 진행 판단 결과를 정해 둔다(상대 탈퇴·수신 거부 등 가짜가 계산하지 않는 이유). */
+  /** 요청 기준 혼자 진행({@link #canGoSolo}) 결과를 정해 둔다. 바로 혼자 진행({@link #canGoSoloDirectly})에는 쓰이지 않는다. */
   public void seedSolo(RequestTarget target, RequestKind kind, SoloCheck check) {
     seedSolo(target, kind, requireNoDirection(kind), check);
   }
