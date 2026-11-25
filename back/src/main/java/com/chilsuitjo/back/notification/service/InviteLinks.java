@@ -23,12 +23,26 @@ public interface InviteLinks {
    * 초대 링크를 만들고 ID를 돌려준다. 같은 호실·같은 받는 자리·같은 기록에 아직 유효한 초대 링크가 있으면 새로 만들지 않고 그 ID를 돌려준다(같은 번호로 다시
    * 보내기는 같은 링크, #163).
    *
+   * <p><b>다시 쓰는 기준</b>은 호실·받는 자리·기록(없으면 호실 초대 화면)뿐이다. 받는 번호와 발급자({@code issuedByMemberId})는 기준이
+   * 아니다. 다시 쓰면 그 링크 행을 바꾸지 않아 처음 발급자와 만든 시각이 그대로 남는다. 지금 초대는 호실을 만든 측만 하고 한 측의 자리는 하나라서(03 B "상대
+   * 초대하기", V1 {@code uq_party_room_side}) 같은 자리에 초대하는 회원은 늘 같다. 발급자가 바뀌는 흐름(당사자 교체 등)은 지원하지 않으며,
+   * 생기면 그때 이 계약을 다시 정한다.
+   *
+   * <p><b>번호를 고쳐 다시 초대할 때</b>: 받는 번호는 다시 쓰는 기준이 아니어서, 옛 링크를 닫지 않고 부르면 옛 번호로 보낸 링크가 그대로 돌아온다(옛 번호를
+   * 받은 사람이 계속 열 수 있음). 그래서 부르는 쪽은 같은 트랜잭션 안에서 이 순서를 지킨다: ① 다시 초대할 수 있는지와 번호가 바뀌었는지 확인(room) ②
+   * {@link #invalidateInvites(UUID, UUID, LinkInvalidReason)}로 그 자리 링크를 {@code REINVITED} 무효 ③ 이
+   * 메서드로 새 링크 ④ 통지. 이 포트는 번호를 모르므로 이 순서를 검사하지 않는다. 순서를 지키는지는 room의 번호 고치기 구현과 그 테스트에서 확인해야 한다(아직
+   * 없음, #100·#163).
+   *
+   * <p>누가 언제 초대할 수 있는지는 부르는 쪽이 이미 확인했다고 보고 다시 보지 않는다. 링크를 돌려줬다고 초대가 허락됐다는 뜻은 아니다.
+   *
    * @param roomRecordId 링크가 속한 호실(잠금에 씀)
    * @param recipientPartyId 받는 자리({@code party}). 번호는 넘기지 않고 보낼 때 자리로 읽는다. 그 호실의 자리가 아니면 저장이
    *     실패한다(DB 외래 키)
    * @param record 공유할 기록. {@code REPAIR_CASE}·{@code INSPECTION}만 받고, {@code null}이면 호실 초대 화면 링크다.
    *     그 호실의 기록이 아니면 저장이 실패한다(DB 외래 키)
-   * @param issuedByMemberId 초대한 회원(pipeline {@code Actor}의 회원). "발급한 사람 탈퇴" 무효에 쓴다
+   * @param issuedByMemberId 초대한 회원(pipeline {@code Actor}의 회원). 새로 만들 때만 저장하고 "발급한 사람 탈퇴"({@code
+   *     ISSUER_WITHDRAWN}) 무효에 쓴다. 탈퇴 때 링크를 무효로 하는 일은 탈퇴(KEEP-4)에서 한다(아직 없음)
    */
   UUID issueInvite(
       UUID roomRecordId, UUID recipientPartyId, RequestTarget record, UUID issuedByMemberId);
@@ -41,7 +55,8 @@ public interface InviteLinks {
 
   /**
    * 그 호실에서 한 자리에 보낸 유효한 초대 링크만 무효로 하고 개수를 돌려준다(번호 고쳐 다시 초대 {@code REINVITED}, 연결 {@code
-   * CONNECTED}). 나머지는 {@link #invalidateInvites(UUID, LinkInvalidReason)}와 같다.
+   * CONNECTED}). 나머지는 {@link #invalidateInvites(UUID, LinkInvalidReason)}와 같다. 번호를 고쳐 다시 초대할 때는 새
+   * 링크를 만들기 전에 이것을 먼저 부른다({@link #issueInvite} 설명의 순서 ②).
    */
   int invalidateInvites(UUID roomRecordId, UUID partyId, LinkInvalidReason reason);
 }

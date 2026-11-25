@@ -80,11 +80,49 @@ class InviteLinkServiceTest {
 
     UUID first =
         inTx(() -> inviteLinks.issueInvite(room.id(), room.counterpart(), record, room.issuer()));
+    Map<String, Object> before = jdbc.queryForMap("SELECT * FROM state.link WHERE id = ?", first);
     UUID again =
         inTx(() -> inviteLinks.issueInvite(room.id(), room.counterpart(), record, room.issuer()));
 
     assertThat(again).isEqualTo(first);
     assertThat(linkCount(room.id())).isEqualTo(1);
+    // 다시 쓰면 행을 바꾸지 않는다: 처음 발급자·만든 시각·토큰 해시·판이 그대로다
+    assertThat(jdbc.queryForMap("SELECT * FROM state.link WHERE id = ?", first))
+        .containsEntry("issued_by_member_id", room.issuer())
+        .containsEntry("created_at", before.get("created_at"))
+        .containsEntry("token_hash", before.get("token_hash"))
+        .containsEntry("version", before.get("version"));
+  }
+
+  @Test
+  void 번호를_고쳐_다시_초대하면_먼저_무효로_한_뒤_새_링크를_만들고_옛_토큰은_열리지_않는다() {
+    Room room = room();
+    content.seedRoom(
+        room.id(),
+        room.counterpart(),
+        new LinkRoom(PartySide.LANDLORD, "서울특별시", "강남구", "역삼동", false, false));
+    UUID old =
+        inTx(() -> inviteLinks.issueInvite(room.id(), room.counterpart(), null, room.issuer()));
+    String oldToken = tokenKeys.token(old);
+    assertThat(views.view(new LinkViewRequest(oldToken)).kind())
+        .isEqualTo(LinkViewKind.ROOM_INVITE);
+
+    // InviteLinks.issueInvite 설명의 순서 ②·③을 한 트랜잭션에서 한다(①·④는 room 몫이라 여기서 보지 않음)
+    UUID fresh =
+        inTx(() -> {
+          inviteLinks.invalidateInvites(room.id(), room.counterpart(), LinkInvalidReason.REINVITED);
+          return inviteLinks.issueInvite(room.id(), room.counterpart(), null, room.issuer());
+        });
+
+    assertThat(fresh).isNotEqualTo(old);
+    assertThat(reason(old)).isEqualTo("REINVITED");
+    assertThat(reason(fresh)).isNull();
+    assertThatThrownBy(() -> views.view(new LinkViewRequest(oldToken)))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            e -> assertThat(e.errorCode()).isEqualTo(ErrorCode.LINK_INVALID));
+    assertThat(views.view(new LinkViewRequest(tokenKeys.token(fresh))).kind())
+        .isEqualTo(LinkViewKind.ROOM_INVITE);
   }
 
   @Test

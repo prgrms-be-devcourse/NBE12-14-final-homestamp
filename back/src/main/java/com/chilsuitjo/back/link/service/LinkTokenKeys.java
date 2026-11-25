@@ -13,8 +13,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
- * 링크 ID로 링크 토큰을 만든다(#163): {@code token = base64url(HMAC-SHA256(키, "homestamp-link:v1:" +
- * linkId))}(43자).
+ * 링크 ID로 초대 링크({@code INVITE}) 토큰을 만든다(#163, 03 6-1 "링크 토큰"): {@code token =
+ * base64url(HMAC-SHA256(키, "homestamp-link:v1:" + linkId))}(256비트, 43자). 지금 부르는 곳은 {@link
+ * InviteLinkService}뿐이다. 정산 초대 링크(LINK-3)의 토큰 만드는 법은 그 발급을 만들 때 정한다.
  *
  * <ul>
  *   <li>같은 키와 같은 링크면 언제나 같은 토큰이라, 원래 토큰을 어디에도 저장하지 않아도 문자를 보낼 때 다시 만들 수 있다. DB에는 {@link

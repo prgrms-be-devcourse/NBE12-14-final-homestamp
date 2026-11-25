@@ -29,6 +29,8 @@ import org.springframework.transaction.annotation.Transactional;
  *   <li>모양: 자리·기록이 그 호실의 것인지는 DB 외래 키({@code fk_link_party_id_room}·{@code
  *       fk_link_repair_case_id_room}·{@code fk_link_inspection_id_room})가 막는다. 어긋나면 개발 오류라 바로
  *       flush해 부르는 쪽 트랜잭션째 실패시킨다
+ *   <li>다시 쓰기: 호실·자리·기록이 같은 유효한 초대 링크가 있으면 행을 바꾸지 않고 그 ID를 돌려준다. 발급자·번호는 보지 않는다(이유와 번호를 고칠 때의 순서는
+ *       {@link InviteLinks#issueInvite})
  *   <li>토큰: 링크 ID로 다시 만들 수 있는 HMAC 토큰의 해시만 저장한다({@link LinkTokenKeys}). 원래 토큰은 만들자마자 버린다
  * </ul>
  *
