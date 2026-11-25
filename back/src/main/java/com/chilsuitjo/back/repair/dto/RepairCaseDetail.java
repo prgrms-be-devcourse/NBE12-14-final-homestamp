@@ -20,6 +20,7 @@ import java.util.UUID;
  * @param mySide 보는 사람의 측
  * @param registeredBy 등록한 측. 하자에 답하는 쪽은 그 반대 측이다
  * @param status 수리 진행(시작 전 → 처리 중 → 종료 확인 대기 → 처리 완료)
+ * @param closeRequestedBy 종료 확인 대기면 종료를 요청한 측(화면의 "○○ 쪽이 종료를 요청했어요"). 종료 확인 대기가 아니면 null
  * @param solo 혼자 진행 가능으로 바뀐 수리 건인지(ROOM-7)
  * @param createdAt 등록한 시각
  * @param asOf 공유를 그만둬 보이는 범위를 고정한 시각(화면의 "○월 ○일 기준", 03 6-6 9번). 이때 {@code status}·{@code
@@ -37,6 +38,7 @@ public record RepairCaseDetail(
     PartySide mySide,
     PartySide registeredBy,
     RepairStatus status,
+    PartySide closeRequestedBy,
     boolean solo,
     Instant createdAt,
     Instant asOf,
