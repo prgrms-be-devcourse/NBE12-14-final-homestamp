@@ -1,9 +1,11 @@
 package com.chilsuitjo.back.room.service;
 
+import com.chilsuitjo.back.action.dto.ActionEntry;
 import com.chilsuitjo.back.action.dto.Actor;
 import com.chilsuitjo.back.action.dto.RoomGate;
 import com.chilsuitjo.back.action.rule.ActionType;
 import com.chilsuitjo.back.action.rule.RoomGateReader;
+import com.chilsuitjo.back.action.service.ActionReader;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.global.response.CursorPage;
@@ -17,6 +19,8 @@ import com.chilsuitjo.back.room.repository.PartyRepository;
 import com.chilsuitjo.back.room.repository.RegionRepository;
 import com.chilsuitjo.back.room.repository.RoomRecordRepository;
 import com.chilsuitjo.back.room.rule.NextStep;
+import java.time.Instant;
+import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -49,6 +53,7 @@ public class RoomViewService {
   private final PartyRepository parties;
   private final RegionRepository regions;
   private final RoomGateReader gates;
+  private final ActionReader actions;
 
   /**
    * 내가 당사자인 호실 기록, 새것부터 {@code size}개. 합류 전 기록도 쓴 사람에게는 보인다(03 3-1). {@code cursor}는 앞 쪽 응답의 {@code
@@ -107,20 +112,43 @@ public class RoomViewService {
             .filter(action -> gate.rejection(action.getKey()).isEmpty())
             .map(Map.Entry::getValue)
             .toList();
+    Instant cutoff = seats.visibleCutoffFor(mine);
     return new RoomDetail(
         room.getId(),
         room.getAlias(),
         region(room.getRegionCode()),
-        room.getMoveInDate(),
+        visibleMoveInDate(room, mine, cutoff),
         room.getStatus(),
         mine.getSide(),
         room.getCreatedBySide(),
         mine.getStatus(),
         seats.counterpartOf(mine).getStatus(),
         gate.joinedAway(),
-        seats.visibleCutoffFor(mine),
+        cutoff,
         room.getCreatedAt(),
         actions);
+  }
+
+  /**
+   * 보는 사람에게 보이는 입주일(불변식 18, #190). 비어 있던 입주일은 입주 점검 시작이 채우고, 그 사실은 그 행동의 payload {@value
+   * RoomMoveInDates#FILLED_PAYLOAD_KEY}에 남는다({@link RoomMoveInDates}). 보이는 범위가 고정된 뒤({@code
+   * cutoff}) 상대 측이 채운 입주일이면 보는 사람에게는 비어 있는 것으로 준다. 호실을 만들 때 적은 입주일은 공유 중단보다 늘 먼저라 그대로 보인다.
+   */
+  private LocalDate visibleMoveInDate(RoomRecord room, Party mine, Instant cutoff) {
+    if (room.getMoveInDate() == null || cutoff == null) {
+      return room.getMoveInDate();
+    }
+    boolean filledByCounterpartAfterCutoff =
+        actions.findByRoom(room.getId()).stream()
+            .filter(RoomViewService::filledMoveInDate)
+            .anyMatch(
+                entry -> entry.actorSide() != mine.getSide() && entry.createdAt().isAfter(cutoff));
+    return filledByCounterpartAfterCutoff ? null : room.getMoveInDate();
+  }
+
+  private static boolean filledMoveInDate(ActionEntry entry) {
+    return entry.type() == ActionType.START_INSPECTION
+        && entry.payload().get(RoomMoveInDates.FILLED_PAYLOAD_KEY) != null;
   }
 
   private static RoomSummary summary(
