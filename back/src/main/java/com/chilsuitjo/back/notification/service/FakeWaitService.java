@@ -10,12 +10,15 @@ import com.chilsuitjo.back.notification.dto.SoloQuery;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.rule.RequestStatus;
 import com.chilsuitjo.back.notification.rule.SoloReason;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * 응답 요청 가짜(07 D 3일차). DB·타이머·문자 없이 메모리에 요청 상태만 적는다. 다른 도메인이 {@code save}에서 부르는 모양과 "열린 요청만 닫고 닫힌
@@ -24,6 +27,9 @@ import org.springframework.stereotype.Service;
  * <p>요청을 찾는 키는 V1의 "기다리는 요청은 하나" 제약과 같다. 대부분은 대상 + 종류이고, 점검 확인만 요청한 측까지 본다(점검 × 방향마다 하나, 03 H,
  * {@code ux_inspection_confirm_waiting}). 제안은 안건마다 기다리는 요청이 하나다({@code ux_proposal_waiting}). 상대의
  * 안에 낸 역제안은 이전 요청을 {@code answered}로 닫은 뒤 새로 연다(05 {@code proposal} ③). 닫지 않고 상대 쪽이 열면 거절한다.
+ *
+ * <p>진짜 구현은 요청을 DB에 두어 부르는 쪽 트랜잭션과 함께 되돌아간다. 가짜도 같게, 트랜잭션 안에서 바꾼 요청은 그 트랜잭션이 커밋되지 않으면 바꾸기 전으로
+ * 되돌린다(한 요청의 뒤 단계가 거절되면 앞 단계가 닫은 요청도 열린 채로 남는다, #177 리뷰). 트랜잭션 밖(단위 테스트)에서는 바로 적는다.
  *
  * <p>실제 구현(NOTI-1·5, 기다림 타이머)이 들어오면 이 클래스를 지운다. 다른 도메인은 {@link WaitService}만 쓰므로 바뀌지 않는다.
  */
@@ -54,7 +60,7 @@ public class FakeWaitService implements WaitService {
             command.requestedBySide(),
             RequestStatus.WAITING,
             null);
-    requests.put(key, created);
+    write(key, created);
     return new RequestHandle(created.id(), true);
   }
 
@@ -62,12 +68,12 @@ public class FakeWaitService implements WaitService {
   public void answered(RequestTarget target, RequestKind kind, PartySide answeredBySide) {
     // 답한 측의 반대가 요청한 측이다. 점검 확인은 이것으로 방향을 고른다
     Key key = Key.of(target, kind, counterpartOf(answeredBySide));
-    requests.computeIfPresent(
-        key,
-        (k, request) ->
-            request.status().isOpen() && request.requestedBySide() != answeredBySide
-                ? request.with(RequestStatus.ANSWERED, null)
-                : request);
+    Request request = requests.get(key);
+    if (request != null
+        && request.status().isOpen()
+        && request.requestedBySide() != answeredBySide) {
+      write(key, request.with(RequestStatus.ANSWERED, null));
+    }
   }
 
   @Override
@@ -88,7 +94,7 @@ public class FakeWaitService implements WaitService {
             "상대 쪽 제안 요청이 열려 있어요. 역제안이면 answered 다음 open을 불러 주세요(05 proposal ③)");
       }
       // 낸 쪽이 바꾸면 같은 요청이 다시 기다림이 된다(05 proposal ②, 03 E). 안건마다 기다리는 요청이 하나라 새로 열 수 없다
-      requests.put(key, existing.with(RequestStatus.WAITING, null));
+      write(key, existing.with(RequestStatus.WAITING, null));
       return new RequestHandle(existing.id(), false);
     }
     // 그 밖의 열린 요청(기다림·미확인)은 상태를 그대로 두고 묶는다. 혼자 진행이 열리는 종류는 미확인이면 혼자 진행도 그대로다(03 1-4
@@ -104,7 +110,7 @@ public class FakeWaitService implements WaitService {
       Key key = entry.getKey();
       Request request = entry.getValue();
       if (key.kind() == kind && target.equals(key.target()) && request.status().isOpen()) {
-        entry.setValue(request.with(RequestStatus.CLOSED, reason));
+        write(key, request.with(RequestStatus.CLOSED, reason));
       }
     }
   }
@@ -117,7 +123,7 @@ public class FakeWaitService implements WaitService {
       if (request.roomRecordId().equals(roomRecordId)
           && kinds.contains(entry.getKey().kind())
           && request.status().isOpen()) {
-        entry.setValue(request.with(RequestStatus.CLOSED, reason));
+        write(entry.getKey(), request.with(RequestStatus.CLOSED, reason));
         closed++;
       }
     }
@@ -211,6 +217,51 @@ public class FakeWaitService implements WaitService {
       throw new IllegalArgumentException(kind + "는 방향이 둘이라 요청한 측을 함께 넘겨 주세요");
     }
     return null;
+  }
+
+  /** 요청 상태를 바꾼다. 트랜잭션 안이면 그 트랜잭션에서 처음 바꾸기 전 값을 기억해 두고, 커밋되지 않으면 되돌린다(진짜 구현의 DB 롤백과 같게). */
+  private void write(Key key, Request next) {
+    Request previous = requests.put(key, next);
+    if (TransactionSynchronizationManager.isSynchronizationActive()) {
+      journal().remember(key, previous);
+    }
+  }
+
+  /** 지금 트랜잭션의 되돌릴 목록. 없으면 만들어 그 트랜잭션에 건다(중단된 바깥 트랜잭션의 목록은 보이지 않는다). */
+  private Journal journal() {
+    for (TransactionSynchronization synchronization :
+        TransactionSynchronizationManager.getSynchronizations()) {
+      if (synchronization instanceof Journal journal && journal.owner() == this) {
+        return journal;
+      }
+    }
+    Journal journal = new Journal();
+    TransactionSynchronizationManager.registerSynchronization(journal);
+    return journal;
+  }
+
+  /** 한 트랜잭션에서 바꾼 요청의 처음 값. 커밋되지 않고 끝나면 그 값으로 되돌린다(없던 요청이면 지운다). */
+  private final class Journal implements TransactionSynchronization {
+
+    private final Map<Key, Optional<Request>> originals = new LinkedHashMap<>();
+
+    FakeWaitService owner() {
+      return FakeWaitService.this;
+    }
+
+    void remember(Key key, Request previous) {
+      originals.putIfAbsent(key, Optional.ofNullable(previous));
+    }
+
+    @Override
+    public void afterCompletion(int status) {
+      if (status == STATUS_COMMITTED) {
+        return;
+      }
+      originals.forEach((key, original) ->
+          original.ifPresentOrElse(
+              request -> requests.put(key, request), () -> requests.remove(key)));
+    }
   }
 
   // global/common의 PartySide에 메서드를 더하면 모든 도메인의 공통 계약이 바뀌어 여기에만 둔다

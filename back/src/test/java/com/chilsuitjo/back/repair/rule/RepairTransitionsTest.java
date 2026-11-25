@@ -13,6 +13,7 @@ import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -51,6 +52,9 @@ class RepairTransitionsTest {
                 MoneyStatus.UNDECIDED,
                 PartySide.LANDLORD,
                 1,
+                null,
+                null,
+                null,
                 null,
                 null,
                 null));
@@ -235,7 +239,10 @@ class RepairTransitionsTest {
             PartySide.TENANT,
             1,
             null,
+            null,
+            null,
             false,
+            true,
             false);
 
     assertError(
@@ -255,47 +262,213 @@ class RepairTransitionsTest {
         .isEqualTo(AckState.PENDING);
   }
 
-  // ---- 할 수 있는 행동(availableActions) ----
-
-  /** 하자 인정 × 측 × 상대에게 보임 × 요청을 열 수 있음 × 마지막 보충(없음·3일 전·7일 전). */
-  static Stream<RepairState> availableCases() {
-    Instant[] lastSupplements = {null, NOW.minus(Duration.ofDays(3)), NOW.minus(INTERVAL)};
-    return Arrays.stream(AckState.values())
-        .flatMap(ack ->
-            Stream.of(true, false)
-                .flatMap(hidden ->
-                    Stream.of(true, false)
-                        .flatMap(canOpen ->
-                            Arrays.stream(lastSupplements)
-                                .map(last ->
-                                    new RepairState(
-                                        RepairStatus.NOT_STARTED,
-                                        ack,
-                                        MoneyStatus.UNDECIDED,
-                                        PartySide.TENANT,
-                                        1,
-                                        last,
-                                        canOpen,
-                                        hidden)))));
-  }
+  // ---- 수리 진행(REP-4·5) ----
 
   @ParameterizedTest
-  @MethodSource("availableCases")
-  void 보여_주는_버튼은_apply가_받아_주는_행동과_같다(RepairState state) {
+  @EnumSource(AckState.class)
+  void REP_4a_하자_인정과_상관없이_누구든_수리를_시작하고_하자_인정은_그대로다(AckState ack) {
     for (PartySide side : PartySide.values()) {
-      List<ActionType> available = rules.available(state, side, NOW);
+      RepairState next = rules.apply(registered(ack), entry(ActionType.START_REPAIR, side));
 
-      // 맞아요가 되는지(보류·이견에서도 맞아요로는 바꿀 수 있어 버튼이 보인다)
-      boolean respondAccepted =
-          accepts(() -> rules.apply(state, respond(side, Answer.ACK, null, 1)));
-      boolean supplementAccepted = accepts(() -> rules.apply(state, supplement(side, NOW)));
+      assertThat(next.status()).isEqualTo(RepairStatus.IN_PROGRESS);
+      assertThat(next.defectAck()).isEqualTo(ack);
+    }
+  }
 
-      assertThat(available.contains(ActionType.RESPOND_DEFECT))
-          .as("respond %s %s", side, state)
-          .isEqualTo(respondAccepted);
-      assertThat(available.contains(ActionType.SUPPLEMENT))
-          .as("supplement %s %s", side, state)
-          .isEqualTo(supplementAccepted);
+  @Test
+  void 시작_전이_아니면_다시_시작할_수_없다() {
+    assertError(
+        ErrorCode.INVALID_STATE,
+        () -> rules.apply(inProgress(), entry(ActionType.START_REPAIR, PartySide.TENANT)));
+  }
+
+  @Test
+  void 종료를_요청하면_요청한_측을_남기고_종료_확인_대기가_된다() {
+    RepairState next =
+        rules.apply(inProgress(), entry(ActionType.REQUEST_CLOSE, PartySide.LANDLORD));
+
+    assertThat(next.status()).isEqualTo(RepairStatus.CLOSE_WAIT);
+    assertThat(next.closeRequestedBy()).isEqualTo(PartySide.LANDLORD);
+  }
+
+  @Test
+  void 처리_중이_아니거나_종료_확인_요청을_열_수_없으면_종료를_요청할_수_없다() {
+    assertError(
+        ErrorCode.INVALID_STATE,
+        () ->
+            rules.apply(
+                registered(AckState.ACK), entry(ActionType.REQUEST_CLOSE, PartySide.TENANT)));
+    // 거주 종료 뒤에는 종료 확인 요청을 열 수 없다(decisions 2026-11-19)
+    RepairState ended =
+        new RepairState(
+            RepairStatus.IN_PROGRESS,
+            AckState.ACK,
+            MoneyStatus.UNDECIDED,
+            PartySide.TENANT,
+            1,
+            null,
+            null,
+            null,
+            false,
+            false,
+            false);
+    assertError(
+        ErrorCode.INVALID_STATE,
+        () -> rules.apply(ended, entry(ActionType.REQUEST_CLOSE, PartySide.TENANT)));
+  }
+
+  @Test
+  void REP_5a_요청의_상대가_종료를_확인하면_양측_확인으로_끝난다() {
+    RepairState next =
+        rules.apply(
+            closeRequestedBy(PartySide.TENANT),
+            entry(ActionType.CONFIRM_CLOSE, PartySide.LANDLORD));
+
+    assertThat(next.status()).isEqualTo(RepairStatus.DONE);
+    assertThat(next.closedBy()).isEqualTo(ClosedBy.BOTH);
+    assertThat(next.closeRequestedBy()).isNull();
+  }
+
+  @Test
+  void REP_5b_아직_안_됐어요는_사유와_함께_처리_중으로_돌아간다() {
+    RepairState next =
+        rules.apply(
+            closeRequestedBy(PartySide.TENANT),
+            entry(ActionType.NOT_YET, PartySide.LANDLORD, null, "아직 물이 새요", Map.of(), NOW));
+
+    assertThat(next.status()).isEqualTo(RepairStatus.IN_PROGRESS);
+    assertThat(next.closeRequestedBy()).isNull();
+    assertError(
+        ErrorCode.REASON_REQUIRED,
+        () ->
+            rules.apply(
+                closeRequestedBy(PartySide.TENANT),
+                entry(ActionType.NOT_YET, PartySide.LANDLORD, null, "  ", Map.of(), NOW)));
+  }
+
+  @Test
+  void 종료를_요청한_측은_스스로_확인하거나_아직_안_됐어요를_누를_수_없다() {
+    assertError(
+        ErrorCode.NOT_COUNTERPART_SIDE,
+        () ->
+            rules.apply(
+                closeRequestedBy(PartySide.TENANT),
+                entry(ActionType.CONFIRM_CLOSE, PartySide.TENANT)));
+    assertError(
+        ErrorCode.NOT_COUNTERPART_SIDE,
+        () ->
+            rules.apply(
+                closeRequestedBy(PartySide.TENANT),
+                entry(ActionType.NOT_YET, PartySide.TENANT, null, "사유", Map.of(), NOW)));
+  }
+
+  @Test
+  void 종료_확인_대기가_아니면_종료를_확인할_수_없다() {
+    assertError(
+        ErrorCode.INVALID_STATE,
+        () -> rules.apply(inProgress(), entry(ActionType.CONFIRM_CLOSE, PartySide.LANDLORD)));
+  }
+
+  @Test
+  void 상대가_볼_수_없는_수리_건에는_상대가_수리_진행을_남길_수_없다() {
+    assertError(
+        ErrorCode.INVALID_STATE,
+        () ->
+            rules.apply(
+                registered(AckState.PENDING, true),
+                entry(ActionType.START_REPAIR, PartySide.LANDLORD)));
+    // 등록한 측은 자기 기록이라 시작할 수 있다
+    rules.apply(
+        registered(AckState.PENDING, true), entry(ActionType.START_REPAIR, PartySide.TENANT));
+  }
+
+  @Test
+  void REP_10_수리_진행_이력도_처음부터_다시_계산할_수_있다() {
+    List<ActionEntry> history =
+        List.of(
+            entry(ActionType.REGISTER, PartySide.TENANT),
+            entry(ActionType.START_REPAIR, PartySide.LANDLORD),
+            entry(ActionType.REQUEST_CLOSE, PartySide.LANDLORD),
+            entry(ActionType.NOT_YET, PartySide.TENANT, null, "아직 물이 새요", Map.of(), NOW),
+            entry(ActionType.REQUEST_CLOSE, PartySide.TENANT),
+            entry(ActionType.CONFIRM_CLOSE, PartySide.LANDLORD));
+
+    RepairState folded = Replay.fold(rules, history);
+
+    assertThat(folded.status()).isEqualTo(RepairStatus.DONE);
+    assertThat(folded.closedBy()).isEqualTo(ClosedBy.BOTH);
+    assertThat(folded.defectAck()).isEqualTo(AckState.PENDING);
+  }
+
+  /** 세입자가 등록하고 시작한 수리 건(종료 확인 요청은 열 수 있음). */
+  private static RepairState inProgress() {
+    return registered(AckState.ACK).withProgress(RepairStatus.IN_PROGRESS, null, null);
+  }
+
+  private static RepairState closeRequestedBy(PartySide side) {
+    return registered(AckState.ACK).withProgress(RepairStatus.CLOSE_WAIT, side, null);
+  }
+
+  // ---- 할 수 있는 행동(availableActions) ----
+
+  /**
+   * 수리 진행 × 종료 요청한 측 × 종료 확인 요청을 열 수 있음 × 하자 인정 × 상대에게 보임 × 하자 확인 요청을 열 수 있음 × 마지막 보충(없음·3일 전·7일
+   * 전). 처리 완료면 끝낸 측을 채운다(V1 CHECK와 같은 모양).
+   */
+  static List<RepairState> availableCases() {
+    Instant[] lastSupplements = {null, NOW.minus(Duration.ofDays(3)), NOW.minus(INTERVAL)};
+    PartySide[] requesters = {null, PartySide.TENANT, PartySide.LANDLORD};
+    List<RepairState> cases = new ArrayList<>();
+    for (RepairStatus status : RepairStatus.values()) {
+      for (PartySide requester : requesters) {
+        for (boolean canOpenClose : new boolean[] {true, false}) {
+          for (AckState ack : AckState.values()) {
+            for (boolean hidden : new boolean[] {true, false}) {
+              for (boolean canOpen : new boolean[] {true, false}) {
+                for (Instant last : lastSupplements) {
+                  cases.add(
+                      new RepairState(
+                          status,
+                          ack,
+                          MoneyStatus.UNDECIDED,
+                          PartySide.TENANT,
+                          1,
+                          last,
+                          status == RepairStatus.DONE ? ClosedBy.BOTH : null,
+                          requester,
+                          canOpen,
+                          canOpenClose,
+                          hidden));
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    return cases;
+  }
+
+  @Test
+  void 보여_주는_버튼은_apply가_받아_주는_행동과_같다() {
+    for (RepairState state : availableCases()) {
+      for (PartySide side : PartySide.values()) {
+        List<ActionType> available = rules.available(state, side, NOW);
+        // 맞아요가 되는지(보류·이견에서도 맞아요로는 바꿀 수 있어 버튼이 보인다). 아직 안 됐어요는 사유가 있다고 본다(근거를 더한다고 보는 보충과 같음)
+        Map<ActionType, ActionEntry> tries =
+            Map.of(
+                ActionType.RESPOND_DEFECT, respond(side, Answer.ACK, null, 1),
+                ActionType.SUPPLEMENT, supplement(side, NOW),
+                ActionType.START_REPAIR, entry(ActionType.START_REPAIR, side),
+                ActionType.REQUEST_CLOSE, entry(ActionType.REQUEST_CLOSE, side),
+                ActionType.CONFIRM_CLOSE, entry(ActionType.CONFIRM_CLOSE, side),
+                ActionType.NOT_YET,
+                    entry(ActionType.NOT_YET, side, null, "아직 물이 새요", Map.of(), NOW));
+        tries.forEach((type, action) ->
+            assertThat(available.contains(type))
+                .as("%s %s %s", type, side, state)
+                .isEqualTo(accepts(() -> rules.apply(state, action))));
+      }
     }
   }
 
@@ -328,7 +501,14 @@ class RepairTransitionsTest {
   /** 아직 만들지 않은 수리 행동. 새 행동을 붙이면 여기서 빼고 따로 테스트한다. */
   static Stream<ActionType> notYetRepairActions() {
     Set<ActionType> done =
-        Set.of(ActionType.REGISTER, ActionType.RESPOND_DEFECT, ActionType.SUPPLEMENT);
+        Set.of(
+            ActionType.REGISTER,
+            ActionType.RESPOND_DEFECT,
+            ActionType.SUPPLEMENT,
+            ActionType.START_REPAIR,
+            ActionType.REQUEST_CLOSE,
+            ActionType.CONFIRM_CLOSE,
+            ActionType.NOT_YET);
     return Arrays.stream(ActionType.values())
         .filter(type -> type.area() == ActionType.Area.REPAIR && !done.contains(type));
   }
@@ -361,6 +541,9 @@ class RepairTransitionsTest {
         PartySide.TENANT,
         1,
         null,
+        null,
+        null,
+        true,
         true,
         hiddenFromCounterpart);
   }
