@@ -1,0 +1,30 @@
+# homestamp-deploy 문서가 앱 EC2에서 root로 실행하는 명령(SSM Agent). 이 파일만 고치면 문서가 바뀐다(Terraform).
+# 입력은 Digest 하나이고 명령 본문에 끼워 넣지 않는다: interpolationType ENV_VAR로 SSM_Digest 환경변수로만 받는다.
+# 실행하는 것은 미리 설치하고 해시를 이 문서에 고정한 /opt/homestamp/deploy/deploy.sh 하나뿐이다.
+# 종료 코드: deploy.sh의 코드를 그대로 돌려준다(2~17). 이 명령 자체: 2 입력, 20 승인된 해시 없음, 21 파일 소유자·권한·해시 다름
+# shellcheck disable=SC2154  # SSM_Digest는 SSM Agent가 넣는다(없으면 set -u로 멈춤)
+set -euo pipefail
+set +x
+digest="$SSM_Digest"
+[[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "deploy-doc: digest 형식이 아닙니다"; exit 2; }
+
+expected="${expected_sha256}"
+[[ "$expected" =~ ^[0-9a-f]{64}$ ]] || { echo "deploy-doc: 승인된 deploy.sh 해시가 문서에 없습니다(Terraform deploy_script_sha256)"; exit 20; }
+
+dir=/opt/homestamp/deploy
+script="$dir/deploy.sh"
+config="$dir/deploy.env"
+# root 소유이고 그룹·다른 사용자가 쓸 수 없어야 한다(심볼릭 링크 거절)
+for f in /opt/homestamp "$dir" "$script" "$config"; do
+  if [[ -L "$f" || ! -e "$f" ]]; then echo "deploy-doc: $f 가 없거나 링크입니다"; exit 21; fi
+  owner="$(stat -c '%u' "$f")"
+  mode="$(stat -c '%a' "$f")"
+  if [[ "$owner" != 0 ]] || (( 8#$mode & 8#022 )); then echo "deploy-doc: $f 소유자·권한이 다릅니다"; exit 21; fi
+done
+actual="$(sha256sum "$script" | cut -d' ' -f1)"
+[[ "$actual" == "$expected" ]] || { echo "deploy-doc: deploy.sh 해시가 승인된 값과 다릅니다"; exit 21; }
+
+repo="$(grep -E '^IMAGE_REPOSITORY=' "$config" | tail -n 1 | cut -d= -f2- || true)"
+[[ -n "$repo" ]] || { echo "deploy-doc: deploy.env에 IMAGE_REPOSITORY가 없습니다"; exit 2; }
+echo "deploy-doc: deploy.sh $actual"
+exec "$script" --config "$config" "$repo@$digest"
