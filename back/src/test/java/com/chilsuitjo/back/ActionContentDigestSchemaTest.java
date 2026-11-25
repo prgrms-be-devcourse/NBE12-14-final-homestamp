@@ -16,6 +16,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
 
 /** Flyway가 만든 실제 PostgreSQL에서 내용 지문의 저장 제약을 검사한다. */
@@ -24,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
     properties =
         "spring.datasource.hikari.connection-init-sql=SET search_path TO state, record, log, public")
 @Transactional
+@ActiveProfiles("test")
 class ActionContentDigestSchemaTest {
 
   @Autowired private JdbcTemplate jdbc;

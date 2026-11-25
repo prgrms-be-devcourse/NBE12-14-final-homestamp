@@ -4,14 +4,17 @@ import com.chilsuitjo.back.notification.rule.VerificationSendResult;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 /**
  * 인증 문자 가짜 발송기(#60, 07 D 3일차). 문자를 보내지 않고, 정해 둔 결과를 돌려주며 마지막 인증번호를 메모리에만 둔다. 로그에는 아무것도 남기지 않는다.
  *
- * <p>솔라피 연동(NOTI-11)이 들어오면 실제 구현으로 바꾸고 이 클래스를 지운다.
+ * <p>{@code app.sms.mode=fake}(local·test)에서만 켜진다. prod에서는 {@code SmsModeGuard}가 기동을 막는다. 솔라피
+ * 연동(NOTI-11)이 들어오면 실제 구현으로 바꾸고 이 클래스를 지운다.
  */
 @Service
+@ConditionalOnProperty(name = "app.sms.mode", havingValue = "fake")
 public class FakeVerificationSmsSender implements VerificationSmsSender {
 
   private final Map<String, String> lastCodes = new ConcurrentHashMap<>();
