@@ -137,7 +137,10 @@ public class InspectionTransitions implements Transitions<InspectionState> {
     return now.withStatus(InspectionStatus.REQUESTED);
   }
 
-  /** 작성 중이 {@code inspection.draft.stale-after}를 넘었나. 시작 시각을 모르면 아니라고 본다. */
+  /**
+   * 점검 시작 뒤 {@code inspection.draft.stale-after}가 지났나(시작 + 기간이 된 때부터, 다른 7일 간격과 같은 이상 경계). 시작 시각을
+   * 모르면 아니라고 본다: 시작·재계산 모두 {@code START_INSPECTION}이 채워 늘 있고, 모르는 채로 상대에게 열어 주는 것보다 막는 쪽이 안전하다.
+   */
   private boolean draftIsStale(InspectionState state, Instant at) {
     Instant from = counterpartCanRequestAt(state);
     return from != null && !at.isBefore(from);
