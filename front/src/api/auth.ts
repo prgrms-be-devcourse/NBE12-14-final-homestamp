@@ -98,11 +98,44 @@ export const SMS_SEND_FAILED_MESSAGE =
   "문자를 보내지 못했어요. 잠시 뒤 다시 받아 주세요"
 
 /* ── 백엔드 연결 ── */
+const isUnauthorized = (e: unknown) => e instanceof ApiError && e.status === 401
+// GET /api/me 응답(06 4-1). smsEnabled(ACC-6)는 아직 쓰는 화면이 없어 Account로 옮기지 않아요.
+interface MeResponse {
+  id: string
+  email: string
+  displayName: string
+  phone: string | null
+  smsEnabled: boolean
+}
 export function createHttpAuth(
   request: HttpRequest,
   token: { get: () => string | undefined; set: (t?: string) => void },
 ): AuthApi {
-  const me = () => request<Account>("GET", endpoints.me)
+  // 내 정보(06 4-1 GET /api/me). 서버의 displayName을 화면의 name으로 바꿔요.
+  // phone은 다른 계정이 같은 번호를 인증하면(ACC-3a) null이라, 화면이 "번호 없음"으로 쓰는 ""로 바꿔요.
+  const me = async (): Promise<Account> => {
+    const r = await request<MeResponse>("GET", endpoints.me)
+    return {
+      id: r.id,
+      email: r.email,
+      name: r.displayName,
+      phone: r.phone ?? "",
+    }
+  }
+  // 재발급(ACC-2): 리프레시 쿠키(HttpOnly, Path=/api/auth/refresh)로 새 액세스 토큰을 받아요. 쿠키는 브라우저가 붙여요.
+  const refresh = async () => {
+    const r = await request<{ accessToken: string }>(
+      "POST",
+      endpoints.refresh,
+      { idempotent: false },
+    )
+    token.set(r.accessToken)
+  }
+  // 로그아웃: 서버가 액세스 토큰에 담긴 토큰 묶음을 폐기하고 리프레시 쿠키를 지워요.
+  const revoke = () =>
+    request<void>("POST", endpoints.logout, { idempotent: false })
+  // 개발 모드(StrictMode)처럼 restore가 겹쳐 불려도 재발급은 한 번만 보내요(리프레시 토큰은 한 번 쓰면 바뀌어요).
+  let restoring: Promise<Account | null> | undefined
   return {
     mode: "http",
     getToken: token.get,
@@ -129,28 +162,48 @@ export function createHttpAuth(
         { body: { email, password }, idempotent: false },
       )
       token.set(r.accessToken)
-      return me()
-    },
-    async restore() {
       try {
-        const r = await request<{ accessToken: string }>(
-          "POST",
-          endpoints.refresh,
-          { idempotent: false },
-        )
-        token.set(r.accessToken)
         return await me()
-      } catch {
+      } catch (e) {
+        // 내 정보를 못 받으면 로그인하지 않은 상태로 되돌려요(토큰만 남아 반쯤 로그인된 상태를 막아요)
+        await revoke().catch(() => undefined)
         token.set(undefined)
-        return null
+        throw e
       }
     },
+    restore() {
+      restoring ??= (async () => {
+        try {
+          await refresh()
+          return await me()
+        } catch {
+          token.set(undefined)
+          return null
+        } finally {
+          restoring = undefined
+        }
+      })()
+      return restoring
+    },
+    // 로그아웃이 서버에서 끝났을 때만 토큰을 지워요. 연결 오류·서버 오류로 실패하면 토큰을 남기고 오류를 그대로 알려,
+    // 화면이 로그인 상태를 지키고 다시 누를 수 있게 해요(실패를 삼키면 리프레시 쿠키가 남아 새로고침할 때 다시 로그인돼요).
     async logout() {
       try {
-        await request("POST", endpoints.logout, { idempotent: false })
-      } finally {
-        token.set(undefined)
+        await revoke()
+      } catch (e) {
+        if (!isUnauthorized(e)) throw e
+        // 액세스 토큰이 없거나 만료(auth.access.ttl 15분)되면 401이에요. 리프레시 쿠키로 새 토큰을 받아 한 번 더 보내요.
+        try {
+          await refresh()
+        } catch (e2) {
+          // 재발급도 401(LOGIN_REQUIRED·REFRESH_REUSED)이면 쿠키가 없거나 폐기된 것이라 이미 끝난 세션이에요
+          if (!isUnauthorized(e2)) throw e2
+          token.set(undefined)
+          return
+        }
+        await revoke()
       }
+      token.set(undefined)
     },
   }
 }
