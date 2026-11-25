@@ -4,6 +4,7 @@ import { Logo, Status } from "@/components/common/blocks"
 import type { Room } from "@/data/demo"
 import type { Page } from "@/lib/router"
 import { nav } from "@/components/common/app-nav"
+import { connectionText } from "@/lib/workflows"
 
 export function SideMenu({
   page,
@@ -59,7 +60,7 @@ export function SideMenu({
             <strong>{room.name}</strong>
             <span className="badges">
               <Status>{room.status}</Status>
-              <Status>{room.connection}</Status>
+              <Status>{connectionText(room)}</Status>
             </span>
           </div>
         )}
