@@ -580,6 +580,58 @@ class InspectionApiTest {
   }
 
   @Test
+  void 불변식_18_공유를_그만둔_시각과_같은_때_보낸_확인_요청은_보이고_그_직전에_그만뒀으면_가려진다() throws Exception {
+    // 경계는 "그만둔 시각까지" 포함이다(행동 시각이 asOf보다 뒤일 때만 가림, #234 리뷰)
+    UUID inspection = created(start(tenant, "s", "MOVE_IN", null));
+    UUID item = created(addItem(tenant, inspection, "i1", "벽지 찢어짐", "[]"));
+    requestConfirm(tenant, inspection, "r1").andExpect(status().isOk());
+    Instant requestedAt =
+        jdbc.queryForObject(
+                "SELECT created_at FROM record.action WHERE inspection_id = ?"
+                    + " AND type = 'REQUEST_INSPECTION_CONFIRM'",
+                Timestamp.class,
+                inspection)
+            .toInstant();
+
+    stopSharing(PartySide.LANDLORD, requestedAt);
+    detail(landlord, inspection)
+        .andExpect(jsonPath("$.asOf").exists())
+        .andExpect(jsonPath("$.status").value("REQUESTED"))
+        .andExpect(jsonPath("$.items[0].id").value(item.toString()));
+
+    stopSharing(PartySide.LANDLORD, requestedAt.minus(Duration.ofNanos(1_000)));
+    detail(landlord, inspection)
+        .andExpect(jsonPath("$.status").value("DRAFT"))
+        .andExpect(jsonPath("$.items").doesNotExist());
+  }
+
+  @Test
+  void 불변식_18_항목을_더한_시각이_그만둔_시각과_같으면_보이고_그_뒤면_빠진다() throws Exception {
+    // 지금은 작성 중에만 항목을 더해 API로는 만들 수 없는 순서라(확인 요청 뒤 더한 항목, INSP-1d·1e 후속) 항목 시각을 직접 옮겨 경계만 본다
+    UUID inspection = created(start(tenant, "s", "MOVE_IN", null));
+    UUID item = created(addItem(tenant, inspection, "i1", "벽지 찢어짐", "[]"));
+    requestConfirm(tenant, inspection, "r1").andExpect(status().isOk());
+    Instant requestedAt =
+        jdbc.queryForObject(
+                "SELECT created_at FROM record.action WHERE inspection_id = ?"
+                    + " AND type = 'REQUEST_INSPECTION_CONFIRM'",
+                Timestamp.class,
+                inspection)
+            .toInstant();
+    stopSharing(PartySide.LANDLORD, requestedAt);
+
+    moveItemCreatedAt(item, requestedAt);
+    detail(landlord, inspection)
+        .andExpect(jsonPath("$.status").value("REQUESTED"))
+        .andExpect(jsonPath("$.items[0].id").value(item.toString()));
+
+    moveItemCreatedAt(item, requestedAt.plus(Duration.ofNanos(1_000)));
+    detail(landlord, inspection)
+        .andExpect(jsonPath("$.status").value("REQUESTED"))
+        .andExpect(jsonPath("$.items").isEmpty());
+  }
+
+  @Test
   void 연결_전_상대에게도_확인_요청을_열고_처음_보인_시각은_비워_둔다() throws Exception {
     // #163 6-1: 03 1-4 "연결 전 상대" ① 링크로 알리고 기다린다. 점검은 연결할 때 보이게 된다(05 2-10)
     counterpartSeat("INVITED");
@@ -842,6 +894,11 @@ class InspectionApiTest {
         side.name(),
         memberId,
         status);
+  }
+
+  private void moveItemCreatedAt(UUID item, Instant at) {
+    jdbc.update(
+        "UPDATE state.inspection_item SET created_at = ? WHERE id = ?", Timestamp.from(at), item);
   }
 
   /** 임대인(상대) 자리를 회원 연결 없는 상태로 바꾼다. */
