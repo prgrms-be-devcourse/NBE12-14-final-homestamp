@@ -225,6 +225,9 @@ class RepairProgressApiTest {
         .containsEntry("status", "CLOSE_WAIT")
         .containsEntry("defect_ack", "PENDING");
     assertThat(countActions(caseId, "CONFIRM_CLOSE")).isZero();
+    // 첫 단계(종료 확인)가 닫은 요청도 함께 되돌아가 상대는 다시 답할 수 있다(#177 리뷰)
+    assertThat(waits.statusOf(closeRequest(caseId), RequestKind.CLOSE_CONFIRM))
+        .contains(RequestStatus.WAITING);
   }
 
   @Test
