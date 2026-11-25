@@ -1,15 +1,19 @@
 package com.chilsuitjo.back.repair.controller;
 
 import com.chilsuitjo.back.global.common.dto.AnswerResult;
+import com.chilsuitjo.back.global.common.dto.ReasonRequest;
 import com.chilsuitjo.back.global.common.dto.RespondRequest;
 import com.chilsuitjo.back.global.common.dto.SupplementRequest;
 import com.chilsuitjo.back.global.response.CreatedResponse;
 import com.chilsuitjo.back.global.security.LoginMember;
+import com.chilsuitjo.back.repair.dto.ConfirmCloseRequest;
 import com.chilsuitjo.back.repair.dto.DefectAckChanged;
 import com.chilsuitjo.back.repair.dto.DefectAckResponse;
 import com.chilsuitjo.back.repair.dto.RegisterRepairRequest;
 import com.chilsuitjo.back.repair.dto.RepairCaseCreated;
 import com.chilsuitjo.back.repair.dto.RepairCaseDetail;
+import com.chilsuitjo.back.repair.dto.RepairProgressChanged;
+import com.chilsuitjo.back.repair.dto.RepairProgressResponse;
 import com.chilsuitjo.back.repair.service.RepairQueryService;
 import com.chilsuitjo.back.repair.service.RepairService;
 import jakarta.validation.Valid;
@@ -95,6 +99,51 @@ public class RepairController {
     DefectAckChanged changed = repairs.supplement(id, memberId, idempotencyKey, request);
     return withReplayed(ResponseEntity.ok(), changed.replayed())
         .body(new DefectAckResponse(changed.id(), changed.defectAck()));
+  }
+
+  /** 수리 시작(REP-4a). 누구든, 시작 전에서만. 처음 성공과 다시 온 요청 모두 200이다. */
+  @PostMapping("/api/repair-cases/{id}/start")
+  public ResponseEntity<RepairProgressResponse> start(
+      @PathVariable UUID id,
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey) {
+    return progressed(repairs.start(id, memberId, idempotencyKey));
+  }
+
+  /** 종료 요청(REP-5). 누구든, 처리 중에서만. 상대에게 종료 확인 요청을 연다. */
+  @PostMapping("/api/repair-cases/{id}/request-close")
+  public ResponseEntity<RepairProgressResponse> requestClose(
+      @PathVariable UUID id,
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey) {
+    return progressed(repairs.requestClose(id, memberId, idempotencyKey));
+  }
+
+  /**
+   * 종료 확인(REP-5a). 요청의 상대 측만. {@code alsoAckDefect}면 하자 인정이 확인 기다림일 때 하자 맞아요까지 한 요청에 남긴다(REP-3a).
+   * 본문은 없어도 된다.
+   */
+  @PostMapping("/api/repair-cases/{id}/confirm-close")
+  public ResponseEntity<RepairProgressResponse> confirmClose(
+      @PathVariable UUID id,
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey,
+      @RequestBody(required = false) ConfirmCloseRequest request) {
+    return progressed(repairs.confirmClose(id, memberId, idempotencyKey, request));
+  }
+
+  /** 아직 안 됐어요(REP-5b). 요청의 상대 측만, 사유 필수. 처리 중으로 돌아간다. */
+  @PostMapping("/api/repair-cases/{id}/not-yet")
+  public ResponseEntity<RepairProgressResponse> notYet(
+      @PathVariable UUID id,
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey,
+      @RequestBody(required = false) ReasonRequest request) {
+    return progressed(repairs.notYet(id, memberId, idempotencyKey, request));
+  }
+
+  private static ResponseEntity<RepairProgressResponse> progressed(RepairProgressChanged changed) {
+    return withReplayed(ResponseEntity.ok(), changed.replayed()).body(changed.response());
   }
 
   private static ResponseEntity.BodyBuilder withReplayed(

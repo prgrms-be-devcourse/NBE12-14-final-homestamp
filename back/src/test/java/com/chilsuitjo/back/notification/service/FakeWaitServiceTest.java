@@ -17,6 +17,8 @@ import com.chilsuitjo.back.notification.rule.SoloReason;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class FakeWaitServiceTest {
 
@@ -359,6 +361,52 @@ class FakeWaitServiceTest {
     waits.markUnconfirmed(repairCase, RequestKind.DEFECT_CONFIRM);
 
     assertThat(waits.canGoSolo(query)).isEqualTo(SoloCheck.allowedBecause(SoloReason.UNCONFIRMED));
+  }
+
+  @Test
+  void 트랜잭션이_롤백되면_그_안에서_바꾼_요청을_처음_값으로_되돌린다() {
+    waits.open(defectConfirm());
+    RequestTarget other = RequestTarget.of(TargetKind.REPAIR_CASE, UUID.randomUUID());
+
+    inTransaction(
+        TransactionSynchronization.STATUS_ROLLED_BACK,
+        () -> {
+          waits.answered(repairCase, RequestKind.DEFECT_CONFIRM, PartySide.LANDLORD);
+          waits.close(repairCase, RequestKind.DEFECT_CONFIRM, ClosedReason.ROOM_ENDED);
+          waits.open(
+              new OpenRequestCommand(
+                  roomRecordId, RequestKind.DEFECT_CONFIRM, other, PartySide.TENANT));
+        });
+
+    assertThat(waits.statusOf(repairCase, RequestKind.DEFECT_CONFIRM))
+        .contains(RequestStatus.WAITING);
+    assertThat(waits.statusOf(other, RequestKind.DEFECT_CONFIRM)).isEmpty();
+  }
+
+  @Test
+  void 트랜잭션이_커밋되면_바꾼_요청이_그대로_남는다() {
+    waits.open(defectConfirm());
+
+    inTransaction(
+        TransactionSynchronization.STATUS_COMMITTED,
+        () -> waits.answered(repairCase, RequestKind.DEFECT_CONFIRM, PartySide.LANDLORD));
+
+    assertThat(waits.statusOf(repairCase, RequestKind.DEFECT_CONFIRM))
+        .contains(RequestStatus.ANSWERED);
+  }
+
+  /** 트랜잭션 동기화를 켠 채 일을 하고, 주어진 결과로 끝낸다(트랜잭션 관리자가 하는 일만 흉내). */
+  private static void inTransaction(int status, Runnable work) {
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      work.run();
+      for (TransactionSynchronization synchronization :
+          TransactionSynchronizationManager.getSynchronizations()) {
+        synchronization.afterCompletion(status);
+      }
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
   }
 
   private OpenRequestCommand defectConfirm() {
