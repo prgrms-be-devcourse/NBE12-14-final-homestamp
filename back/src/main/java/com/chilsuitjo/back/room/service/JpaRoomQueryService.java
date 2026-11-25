@@ -3,6 +3,7 @@ package com.chilsuitjo.back.room.service;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.room.dto.RoomPartSummary;
+import com.chilsuitjo.back.room.dto.RoomPartView;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.util.List;
@@ -20,6 +21,19 @@ import org.springframework.stereotype.Service;
 public class JpaRoomQueryService implements RoomQueryService {
 
   @PersistenceContext private EntityManager entityManager;
+
+  private final PartViews partViews;
+
+  public JpaRoomQueryService(PartViews partViews) {
+    this.partViews = partViews;
+  }
+
+  /** 부위 목록과 같은 계산({@link PartViews#one})을 쓴다. 목록과 등록 판단이 어긋나지 않게 따로 계산하지 않는다(#183). */
+  @Override
+  public RoomPartSummary findPartAsSeenBy(UUID roomRecordId, UUID roomPartId, UUID memberId) {
+    RoomPartView seen = partViews.one(roomRecordId, memberId, roomPartId);
+    return new RoomPartSummary(seen.name(), seen.hidden());
+  }
 
   @Override
   public RoomPartSummary findPart(UUID roomRecordId, UUID roomPartId) {

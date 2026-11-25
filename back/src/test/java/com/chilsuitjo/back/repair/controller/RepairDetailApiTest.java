@@ -408,13 +408,15 @@ class RepairDetailApiTest {
         memberId);
   }
 
+  /** 기본 목록(V7)에서 복사된 "방 › 천장". 공유를 그만둔 뒤 하자 등록은 보이는 부위로 판단해(#183) 실제 호실처럼 템플릿을 가리킨다. */
   private UUID part() {
     UUID id = UUID.randomUUID();
     jdbc.update(
         """
         INSERT INTO state.room_part
-          (id, room_record_id, zone, name, sort_order, created_at, version)
-        VALUES (?, ?, '안방', '천장', 0, CURRENT_TIMESTAMP, 0)
+          (id, room_record_id, template_id, zone, name, sort_order, created_at, version)
+        SELECT ?, ?, t.id, t.zone, t.name, t.sort_order, CURRENT_TIMESTAMP, 0
+        FROM state.part_template t WHERE t.zone = '방' AND t.name = '천장'
         """,
         id,
         room);
