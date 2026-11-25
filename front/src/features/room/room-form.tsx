@@ -9,7 +9,11 @@ import { uid, type Role } from "@/data/demo"
 import { RegionPicker } from "@/features/room/region-picker"
 import { todayKey } from "@/lib/workflows"
 import { type Send } from "@/lib/record-commands"
-import { isMobilePhone, normalizePhone } from "@/lib/phone"
+import {
+  isMobilePhone,
+  MOBILE_PHONE_MESSAGE,
+  normalizePhone,
+} from "@/lib/phone"
 
 // 호실 기록 만들기(S-05, ROOM-1). 꼭 적을 것(내 쪽·주소·별칭)은 위, 선택(입주일·상대 번호)은 아래 묶음.
 // initialSide: 마지막에 고른 쪽(내가 만든 가장 최근 호실의 쪽)
@@ -44,7 +48,7 @@ export function RoomForm({
         }
         const phone = normalizePhone(text("phone"))
         if (phone && !isMobilePhone(phone)) {
-          setError("선택 전화번호를 010으로 시작하는 11자리로 입력해 주세요.")
+          setError(`선택 전화번호: ${MOBILE_PHONE_MESSAGE}`)
           return
         }
         if (account.phone && phone === account.phone) {

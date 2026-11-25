@@ -1,4 +1,8 @@
-import { isMobilePhone, normalizePhone } from "@/lib/phone"
+import {
+  isMobilePhone,
+  MOBILE_PHONE_MESSAGE,
+  normalizePhone,
+} from "@/lib/phone"
 import {
   uid,
   type DemoState,
@@ -131,8 +135,7 @@ export function sendSettlementLink(room: Room, role: Role, phone: string) {
     throw new Error("거주 종료 뒤 연결되지 않은 상대에게만 보낼 수 있어요.")
   if (room.creator !== role) throw new Error("호실을 만든 쪽이 보낼 수 있어요.")
   const next = normalizePhone(phone)
-  if (!isMobilePhone(next))
-    throw new Error("010으로 시작하는 11자리 번호를 입력해 주세요.")
+  if (!isMobilePhone(next)) throw new Error(MOBILE_PHONE_MESSAGE)
   const at = new Date().toISOString()
   room.settlementLinks = (room.settlementLinks || []).map((l) =>
     l.invalidatedAt
