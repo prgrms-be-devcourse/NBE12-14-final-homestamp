@@ -123,12 +123,17 @@ public class InspectionTransitions implements Transitions<InspectionState> {
    *
    * <p>누가 눌렀든 요청한 측은 기준 측이다(답하는 측의 반대가 요청한 측, {@code WaitService.answered}, #218에서 정함). 그 요청을 실제로
    * 열지는 상대가 볼 수 있는지에 따라 {@code save}가 정한다.
+   *
+   * <p>작성 중 기간은 요청할 때만 지금 설정으로 본다. 재계산이면 기록된 요청을 그때 유효했던 것으로 다룬다({@link
+   * InspectionState#atRequest}): 설정을 바꾼 뒤에도 과거 점검이 같은 상태로 다시 계산돼야 해서다(#234 리뷰).
    */
   private InspectionState requestConfirm(InspectionState now, ActionEntry action) {
     if (!now.exists() || now.status() != InspectionStatus.DRAFT || action.actorSide() == null) {
       throw new BusinessException(ErrorCode.INVALID_STATE);
     }
-    if (action.actorSide() != now.authorSide() && !draftIsStale(now, action.createdAt())) {
+    if (now.atRequest()
+        && action.actorSide() != now.authorSide()
+        && !draftIsStale(now, action.createdAt())) {
       throw new BusinessException(ErrorCode.INVALID_STATE);
     }
     if (now.confirmBlocked()) {

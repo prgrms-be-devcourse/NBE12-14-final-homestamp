@@ -115,6 +115,23 @@ class InspectionTransitionsTest {
   }
 
   @Test
+  void 재계산은_지금_설정으로_과거_확인_요청을_다시_거절하지_않는다() {
+    // 7일일 때 8일째 받은 상대 측 확인 요청은 설정을 10일로 바꾼 뒤 다시 계산해도 확인 요청이다(#234 혜승님 리뷰 P2)
+    Instant eighthDay = NOW.plus(Duration.ofDays(8));
+    List<ActionEntry> history =
+        List.of(start(PartySide.LANDLORD, "MOVE_IN", null), request(PartySide.TENANT, eighthDay));
+    InspectionTransitions longer = new InspectionTransitions(Duration.ofDays(10));
+
+    assertThat(Replay.fold(rules, history).status()).isEqualTo(InspectionStatus.REQUESTED);
+    assertThat(Replay.fold(longer, history).status()).isEqualTo(InspectionStatus.REQUESTED);
+    // 새 요청은 지금 설정으로 본다
+    assertThatThrownBy(() ->
+            longer.apply(
+                draft(PartySide.LANDLORD, NOW, true), request(PartySide.TENANT, eighthDay)))
+        .hasMessage(ErrorCode.INVALID_STATE.name());
+  }
+
+  @Test
   void INSP_2b_입주일이_비었는데_보내지_않으면_MOVE_IN_DATE_REQUIRED() {
     assertThatThrownBy(() ->
             rules.apply(
