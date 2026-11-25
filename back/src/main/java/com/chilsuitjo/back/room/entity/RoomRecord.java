@@ -24,8 +24,9 @@ import org.hibernate.type.SqlTypes;
 /**
  * 호실 기록({@code state.room_record}, 05 2-2, C 테이블). 한 거주 기간의 기록을 모은다.
  *
- * <p>주소는 법정동 코드 하나와 별칭만 둔다(06 0-1 "주소 저장 범위"). 상태·기한·version 말고는 만들 때 한 번만 쓴다(05 0장). 지금은 호실 만들기와
- * 권한 검사에 쓰는 칸만 옮겼다. 기한 칸(자동 마감·삭제·무활동)은 그 기능을 만들 때 더한다.
+ * <p>주소는 법정동 코드 하나와 별칭만 둔다(06 0-1 "주소 저장 범위"). 상태·기한·version 말고는 만들 때 한 번만 쓴다(05 0장). 예외: 비어 있던
+ * 입주일은 입주 점검 시작이 한 번 채운다({@link #fillMoveInDate}). 지금은 호실 만들기와 권한 검사에 쓰는 칸만 옮겼다. 기한 칸(자동
+ * 마감·삭제·무활동)은 그 기능을 만들 때 더한다.
  */
 @Entity
 @Table(schema = "state", name = "room_record")
@@ -81,5 +82,16 @@ public class RoomRecord {
     this.createdBySide = Objects.requireNonNull(createdBySide);
     this.createdAt = Objects.requireNonNull(createdAt);
     this.status = RoomStatus.LIVING;
+  }
+
+  /**
+   * 비어 있는 입주일을 채운다(입주 점검 시작, 06 4-7·INSP-2b). 이미 있는 입주일을 바꾸는 것은 고치기라(03 G) 이 메서드로 하지 않는다: 이미 있으면
+   * 부르는 쪽 버그라 {@code IllegalStateException}이다.
+   */
+  public void fillMoveInDate(LocalDate date) {
+    if (moveInDate != null) {
+      throw new IllegalStateException("이미 입주일이 있는 호실이에요: " + id);
+    }
+    this.moveInDate = Objects.requireNonNull(date, "date");
   }
 }
