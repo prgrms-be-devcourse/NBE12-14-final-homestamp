@@ -47,7 +47,13 @@ public class RepairQueryService {
    * RepairTransitions.available}이 정한다.
    */
   private static final Map<ActionType, String> ACTION_NAMES =
-      Map.of(ActionType.RESPOND_DEFECT, "respond", ActionType.SUPPLEMENT, "supplement");
+      Map.of(
+          ActionType.RESPOND_DEFECT, "respond",
+          ActionType.SUPPLEMENT, "supplement",
+          ActionType.START_REPAIR, "start",
+          ActionType.REQUEST_CLOSE, "request-close",
+          ActionType.CONFIRM_CLOSE, "confirm-close",
+          ActionType.NOT_YET, "not-yet");
 
   private final RepairCaseRepository cases;
   private final RepairContentRepository contents;
@@ -113,6 +119,7 @@ public class RepairQueryService {
         gate.side(),
         row.getCreatedBySide(),
         shown.status(),
+        shown.closeRequestedBy(),
         row.isSolo(),
         row.getCreatedAt(),
         asOf,
