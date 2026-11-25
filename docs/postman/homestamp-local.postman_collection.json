@@ -1470,6 +1470,154 @@
             }
           },
           "response": []
+        },
+        {
+          "name": "수리 시작",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{bearer_token_15h5}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/repair-cases/{{repairCaseId}}/start",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "repair-cases",
+                "{{repairCaseId}}",
+                "start"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "종료 요청",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{bearer_token_15h5}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/repair-cases/{{repairCaseId}}/request-close",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "repair-cases",
+                "{{repairCaseId}}",
+                "request-close"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "종료 확인(상대 측)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{counterpart_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"alsoAckDefect\":true,\"seenVersionNo\":1}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/repair-cases/{{repairCaseId}}/confirm-close",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "repair-cases",
+                "{{repairCaseId}}",
+                "confirm-close"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "아직 안 됐어요(상대 측)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{counterpart_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"reason\":\"아직 물이 새요\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/repair-cases/{{repairCaseId}}/not-yet",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "repair-cases",
+                "{{repairCaseId}}",
+                "not-yet"
+              ]
+            }
+          },
+          "response": []
         }
       ]
     },
