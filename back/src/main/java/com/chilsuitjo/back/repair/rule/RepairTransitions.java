@@ -14,6 +14,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -29,6 +30,9 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class RepairTransitions implements Transitions<RepairState> {
+
+  /** 강행 표시의 행동 payload 키(05 2-3). */
+  public static final String WHILE_OPEN_OBJECTION = "while_open_objection";
 
   /** 한 기록에 보충하고 다시 확인 요청하는 간격({@code rerequest.interval}, 06 0-1). */
   private final Duration rerequestInterval;
@@ -84,6 +88,26 @@ public class RepairTransitions implements Transitions<RepairState> {
       case DONE -> {}
     }
     return List.copyOf(result);
+  }
+
+  /**
+   * 강행 표시(03 G "강행 표시", 05 2-3 payload {@code while_open_objection}): 보류·이견이 열린 채 수리를 시작하거나
+   * 종료(요청·확인)하면 막지 않고 그때의 하자 인정({@code NEED_MORE}/{@code DISPUTE})을 행동에 남긴다. 확인 전("○○ 님 확인 전에
+   * 시작했어요")은 하자 인정 {@code PENDING}이라 화면이 그 시각의 하자 인정으로 보이고 payload에는 넣지 않는다(05 2-3은
+   * NEED_MORE/DISPUTE만). 이 행동들은 하자 인정을 바꾸지 않으므로 {@code state}는 행동 전후 어느 쪽이어도 같다.
+   *
+   * @return 남길 값. 강행이 아니거나 강행 표시를 남기는 행동이 아니면 빈 값
+   */
+  public static Optional<AckState> openObjection(ActionType type, RepairState state) {
+    boolean marked =
+        type == ActionType.START_REPAIR
+            || type == ActionType.REQUEST_CLOSE
+            || type == ActionType.CONFIRM_CLOSE;
+    AckState ack = state.defectAck();
+    if (marked && (ack == AckState.NEED_MORE || ack == AckState.DISPUTE)) {
+      return Optional.of(ack);
+    }
+    return Optional.empty();
   }
 
   /** 다음에 보충할 수 있는 시각("○월 ○일부터 다시 요청할 수 있어요"). 보충한 적이 없으면 null. */

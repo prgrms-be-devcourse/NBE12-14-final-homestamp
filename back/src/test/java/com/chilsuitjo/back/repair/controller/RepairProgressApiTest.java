@@ -88,6 +88,39 @@ class RepairProgressApiTest {
   }
 
   @Test
+  void 보류가_열린_채_시작하고_종료하면_행동마다_강행_표시를_남긴다() throws Exception {
+    // 03 G "강행 표시", 05 2-3 payload while_open_objection
+    UUID caseId = register();
+    respond(caseId, landlord, "NEED_MORE", "사진이 흐려요");
+
+    act(caseId, tenant, "start", null).andExpect(status().isOk());
+    act(caseId, tenant, "request-close", null).andExpect(status().isOk());
+    act(caseId, landlord, "confirm-close", null).andExpect(status().isOk());
+
+    assertThat(objectionMark(caseId, "START_REPAIR")).isEqualTo("NEED_MORE");
+    assertThat(objectionMark(caseId, "REQUEST_CLOSE")).isEqualTo("NEED_MORE");
+    assertThat(objectionMark(caseId, "CONFIRM_CLOSE")).isEqualTo("NEED_MORE");
+  }
+
+  @Test
+  void 이견이_열린_채_시작하면_이견으로_남고_확인_전이나_맞아요면_남기지_않는다() throws Exception {
+    UUID disputed = register();
+    respond(disputed, landlord, "DISPUTE", "원래 있던 자국이에요");
+    act(disputed, tenant, "start", null).andExpect(status().isOk());
+    assertThat(objectionMark(disputed, "START_REPAIR")).isEqualTo("DISPUTE");
+
+    // 확인 전("○○ 님 확인 전에 시작했어요")은 하자 인정으로 보이고 payload에는 넣지 않는다(05 2-3은 NEED_MORE/DISPUTE만)
+    UUID pending = register();
+    act(pending, landlord, "start", null).andExpect(status().isOk());
+    assertThat(objectionMark(pending, "START_REPAIR")).isNull();
+
+    UUID acked = register();
+    respond(acked, landlord, "ACK", null);
+    act(acked, tenant, "start", null).andExpect(status().isOk());
+    assertThat(objectionMark(acked, "START_REPAIR")).isNull();
+  }
+
+  @Test
   void 시작_전이_아니면_다시_시작할_수_없다() throws Exception {
     UUID caseId = register();
     act(caseId, tenant, "start", null).andExpect(status().isOk());
@@ -391,6 +424,16 @@ class RepairProgressApiTest {
   private Map<String, Object> action(UUID caseId, String type) {
     return jdbc.queryForMap(
         "SELECT * FROM record.action WHERE repair_case_id = ? AND type = ?", caseId, type);
+  }
+
+  /** 그 행동의 강행 표시(payload {@code while_open_objection}). 없으면 null. */
+  private String objectionMark(UUID caseId, String type) {
+    return jdbc.queryForObject(
+        "SELECT payload ->> 'while_open_objection' FROM record.action"
+            + " WHERE repair_case_id = ? AND type = ?",
+        String.class,
+        caseId,
+        type);
   }
 
   private long countActions(UUID caseId, String type) {

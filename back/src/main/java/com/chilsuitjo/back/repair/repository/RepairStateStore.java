@@ -27,6 +27,7 @@ import com.chilsuitjo.back.repair.entity.RepairCase;
 import com.chilsuitjo.back.repair.entity.RepairContent;
 import com.chilsuitjo.back.repair.rule.RepairState;
 import com.chilsuitjo.back.repair.rule.RepairStatus;
+import com.chilsuitjo.back.repair.rule.RepairTransitions;
 import com.chilsuitjo.back.room.service.RoomQueryService;
 import java.time.Instant;
 import java.util.List;
@@ -340,7 +341,8 @@ public class RepairStateStore {
 
     /**
      * 수리 진행만 바꾼다(하자 인정은 그대로). 종료 확인 요청은 종료를 요청한 측이 연 요청이고, 받는 쪽이 답하면 닫힌다. 판을 보지 않는 행동이라 내용 지문은
-     * 없다(안내서 3-3). 수리 시작·종료 확인·아직 안 됐어요의 서비스 안 알림은 알리기 PR에서 붙인다.
+     * 없다(안내서 3-3). 보류·이견이 열린 채 시작·종료하면 강행 표시를 payload에 남긴다({@code
+     * RepairTransitions.openObjection}). 수리 시작·종료 확인·아직 안 됐어요의 서비스 안 알림은 알리기 PR에서 붙인다.
      */
     @Override
     public SavedState save(ActionCommand command, RepairState next) {
@@ -358,7 +360,10 @@ public class RepairStateStore {
             waits.answered(closeRequest(command), RequestKind.CLOSE_CONFIRM, side);
         default -> {}
       }
-      return SavedState.unchanged();
+      SavedState saved = SavedState.unchanged();
+      return RepairTransitions.openObjection(command.type(), next)
+          .map(ack -> saved.withPayload(RepairTransitions.WHILE_OPEN_OBJECTION, ack.name()))
+          .orElse(saved);
     }
   }
 
