@@ -8,6 +8,9 @@ export const CONNECTED_APIS: readonly {
   method: "GET" | "POST"
   path: RegExp
 }[] = [
+  // 법정동 찾기·단계 선택(06 4-3, ROOM-1, #193)
+  { method: "GET", path: /^\/api\/regions\/search$/ },
+  { method: "GET", path: /^\/api\/regions$/ },
   // 로그인·재발급·로그아웃·내 정보(06 4-1, ACC-2·4)
   { method: "POST", path: /^\/api\/auth\/login$/ },
   { method: "POST", path: /^\/api\/auth\/refresh$/ },
