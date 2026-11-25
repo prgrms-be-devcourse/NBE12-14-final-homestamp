@@ -40,7 +40,8 @@ class SoloRuleTest {
   @Test
   void 상대가_공유를_그만뒀으면_그만둔_시각부터_혼자_진행한다() {
     SoloCheck check =
-        SoloRule.direct(parties(seat(PartyPresence.CONNECTED, STOPPED)), RequestKind.CLOSE_CONFIRM);
+        SoloRule.direct(
+            parties(seat(PartyPresence.CONNECTED, STOPPED)), RequestKind.DEFECT_CONFIRM);
 
     assertThat(check).isEqualTo(SoloCheck.allowedSince(SoloReason.SHARING_STOPPED, STOPPED));
     assertThat(check.since()).isEqualTo(STOPPED);
@@ -49,8 +50,8 @@ class SoloRuleTest {
   @ParameterizedTest
   @EnumSource(
       value = RequestKind.class,
-      names = {"DEFECT_CONFIRM", "CLOSE_CONFIRM", "INSPECTION_CONFIRM"})
-  void 공유_중단은_하자_종료_점검_확인에_쓴다(RequestKind kind) {
+      names = {"DEFECT_CONFIRM", "INSPECTION_CONFIRM"})
+  void 공유_중단은_하자_점검_확인에_쓴다(RequestKind kind) {
     assertThat(SoloRule.direct(parties(seat(PartyPresence.CONNECTED, STOPPED)), kind))
         .isEqualTo(SoloCheck.allowedSince(SoloReason.SHARING_STOPPED, STOPPED));
   }
@@ -67,8 +68,9 @@ class SoloRuleTest {
   @ParameterizedTest
   @EnumSource(
       value = RequestKind.class,
-      names = {"SETTLE_FINISH", "END_REQUEST"})
-  void 공유_중단은_정산_끝내기와_거주_종료_요청에는_쓰지_않는다(RequestKind kind) {
+      names = {"SETTLE_FINISH", "END_REQUEST", "CLOSE_CONFIRM"})
+  void 공유_중단은_정산_끝내기_거주_종료_요청_수리_종료에는_쓰지_않는다(RequestKind kind) {
+    // 수리 종료는 물을 상대가 처음부터 없을 때만 혼자 종료한다(#113 ③')
     SoloCheck check = SoloRule.direct(parties(seat(PartyPresence.CONNECTED, STOPPED)), kind);
 
     assertThat(check).isEqualTo(SoloCheck.notYet(null));

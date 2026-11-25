@@ -55,15 +55,19 @@ class WaitServiceDirectSoloContextTest {
   }
 
   @Test
-  void 상대_자리가_공유를_그만뒀으면_그만둔_시각을_돌려준다() {
+  void 상대_자리가_공유를_그만뒀으면_하자_확인은_그만둔_시각을_돌려주고_수리_종료는_열지_않는다() {
     UUID room = room();
     party(room, "TENANT", member(), "CONNECTED", null);
     party(room, "LANDLORD", member(), "SHARING_STOPPED", STOPPED);
 
-    SoloCheck check = waits.canGoSoloDirectly(close(room));
+    SoloCheck check =
+        waits.canGoSoloDirectly(
+            new SoloQuery(room, RequestKind.DEFECT_CONFIRM, repairCase, PartySide.TENANT));
 
     assertThat(check.reason()).isEqualTo(SoloReason.SHARING_STOPPED);
     assertThat(check.since()).isEqualTo(STOPPED);
+    // 수리 종료는 공유 중단을 혼자 종료 이유로 쓰지 않는다(#113 ③')
+    assertThat(waits.canGoSoloDirectly(close(room))).isEqualTo(SoloCheck.notYet(null));
   }
 
   @Test

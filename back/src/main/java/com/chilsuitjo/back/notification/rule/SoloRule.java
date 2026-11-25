@@ -18,8 +18,8 @@ import java.util.Set;
  *   <li>상대 없음({@code EMPTY}·{@code NUMBER_ONLY}): 연다, 성립 시각 없음. 번호만 있는 자리는 첫 초대 전이라 문자·링크가 나간 적이
  *       없고(03 B "상대 초대하기"), 초대됨에서 번호만으로 돌아가는 전이가 없다. 상대가 이 호실에서 행동한 적이 없다
  *   <li>상대 공유 중단: 연다, 성립 시각 = {@code sharing_stopped_at}. 다시 공유하면 풀리고 또 그만둘 수 있어 시각을 둔다. 상대가 탈퇴했으면
- *       보지 않는다({@link RoomParties#counterpartSharingStoppedApplies()}). 정산 끝내기·거주 종료 요청에는 쓰지 않는다(03
- *       1-1 ④)
+ *       보지 않는다({@link RoomParties#counterpartSharingStoppedApplies()}). 정산 끝내기·거주 종료 요청과 수리
+ *       종료({@code CLOSE_CONFIRM})에는 쓰지 않는다(03 1-1 ④. 수리 종료는 물을 상대가 처음부터 없을 때만, #113 ③')
  *   <li>상대 탈퇴: <b>아직 열지 않는다.</b> 03은 탈퇴 뒤 토큰 폐기·링크 무효로 상대가 행동할 수 없다고 정하지만, 탈퇴(KEEP-4)와 그 접근 차단이 아직
  *       없어 확인할 수 없다. KEEP-4가 접근 차단을 넣을 때 성립 시각 없이 연다
  *   <li>수신 거부: 열지 않는다. {@code optedOut}의 출처가 정해지지 않았다(#100, {@code JpaCounterpartReader} "아직 채우지 않는
@@ -45,9 +45,12 @@ public final class SoloRule {
           RequestKind.SETTLE_FINISH,
           RequestKind.END_REQUEST);
 
-  /** 상대 공유 중단을 혼자 진행 이유로 쓰지 않는 종류(03 1-1 ④, B). */
+  /**
+   * 상대 공유 중단을 혼자 진행 이유로 쓰지 않는 종류(03 1-1 ④, B). 수리 종료는 공유 중단을 "잠시 안 봄"으로 보고 물을 상대가 있는 공유 기록으로
+   * 둔다(#113 ③').
+   */
   private static final Set<RequestKind> NOT_BY_SHARING_STOPPED =
-      EnumSet.of(RequestKind.SETTLE_FINISH, RequestKind.END_REQUEST);
+      EnumSet.of(RequestKind.SETTLE_FINISH, RequestKind.END_REQUEST, RequestKind.CLOSE_CONFIRM);
 
   /** 그 이유가 이어지는 동안 상대가 이 호실에서 행동할 수 없어 성립 시각 없이 돌려줄 수 있는 이유. */
   private static final Set<SoloReason> WITHOUT_SINCE =
