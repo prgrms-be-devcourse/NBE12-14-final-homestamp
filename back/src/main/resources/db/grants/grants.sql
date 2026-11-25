@@ -253,7 +253,9 @@ BEGIN
     IF actual_tables IS DISTINCT FROM (
         SELECT array_agg(table_name ORDER BY table_name) FROM unnest(expected_tables) table_name
     ) THEN
-        RAISE EXCEPTION 'unclassified or missing table inventory: %', actual_tables;
+        RAISE EXCEPTION 'unclassified or missing table inventory: %. If a new V file added, renamed, or dropped a table, '
+            'update expected_tables, the Human lists, and the C-table UPDATE/DELETE grants in db/grants/grants.sql together',
+            actual_tables;
     END IF;
     IF to_regclass('public.flyway_schema_history') IS NULL THEN
         RAISE EXCEPTION 'public.flyway_schema_history must exist before grants are applied';

@@ -1000,7 +1000,11 @@ class DatabaseGrantsIntegrationTest {
     }
     // 이름 변경 자체가 스냅샷을 바꾸므로 변경 뒤 상태를 기준으로 비교한다
     assertFailsAndUnchanged(
-        db, aclSnapshot(db), MIGRATION, ROLES, "unclassified or missing table inventory");
+        db,
+        aclSnapshot(db),
+        MIGRATION,
+        ROLES,
+        "C-table UPDATE/DELETE grants in db/grants/grants.sql together");
     try (Connection connection = roleConnection(db, MIGRATION);
         Statement statement = connection.createStatement()) {
       statement.execute("SET ROLE \"" + OWNER + "\"");
