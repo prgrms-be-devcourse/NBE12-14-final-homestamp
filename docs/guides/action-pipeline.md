@@ -296,7 +296,7 @@ pipeline은 진짜이고, 안쪽 부품도 아래 표처럼 하나씩 진짜로 
 |---|---|---|---|
 | 행동 기록 저장 `ActionWriter` | **진짜** `JpaActionWriter`: `record.action`에 저장, `room_seq`·해시 체인. 메모리 가짜 `FakeActionWriter`는 테스트 코드에만 있고 `ActionPipelineFixture`가 써요 | — | B |
 | 호실 잠금·읽기 `RoomGateReader` | **진짜** `JpaRoomGateReader`(#143): `room_record`를 `FOR UPDATE`로 잠그고 `party`로 당사자 확인. `FakeRoomGateReader`는 DB 없는 테스트(`ActionPipelineFixture`)가 `new`로 써요 | — | A (ROOM-2) |
-| 부위 조회 `RoomQueryService.findPart` | **진짜** `JpaRoomQueryService`: `room_part`를 읽음 | — | room (#140) |
+| 부위 조회 `RoomQueryService.findPart`·`findPartAsSeenBy` | **진짜** `JpaRoomQueryService`: `room_part`를 읽음. 보는 사람 기준은 부위 목록과 같은 `PartViews.one`(#183) | — | room (#140) |
 | 자리 상태 `CounterpartReader` | **진짜** `JpaCounterpartReader`: `room_record`·`party`·`member`를 읽음. 수신 거부(`optedOut`)·가린 이름(`maskedName`)은 아직 채우지 않음(거짓·null, 문자 보내기 PR에서 채움) | — | room (#140) |
 
 배포 서버에서 기능을 확인하려면(07 6장 끝 기준) 잠금·읽기(`RoomGateReader`)가 진짜여야 하는데, #143으로 진짜가 됐어요.
@@ -320,10 +320,12 @@ pipeline은 진짜이고, 안쪽 부품도 아래 표처럼 하나씩 진짜로 
 ```java
 // repair/rule/RepairState.java
 public record RepairState(
-    RepairStatus status, AckState defectAck, PartySide registeredBy, int contentNo,
-    Instant lastRerequestAt, boolean canOpenDefectConfirm) {
+    RepairStatus status, AckState defectAck, MoneyStatus moneyStatus, PartySide registeredBy,
+    Integer contentNo, Instant lastRerequestAt,
+    Boolean canOpenDefectConfirm,     // 요청할 때만 아는 값: load가 채우고, 재계산(Replay.fold)이면 null
+    Boolean hiddenFromCounterpart) {  // 공유를 그만둔 뒤 등록해 상대가 볼 수 없는 기록(8-3). 재계산이면 null
 
-  Answerable defect() {
+  public Answerable defect() {
     return new Answerable(registeredBy, defectAck, contentNo, lastRerequestAt);
   }
 }
@@ -332,7 +334,9 @@ public record RepairState(
 - **기록한 측**은 도메인이 정해요. 송금은 보낸 쪽이 기록했으면 받은 쪽이, [받았어요(혼자)]면 보낸 쪽이 답해요(SET-4).
 - **판 번호**가 없는 기록이면 `null`. 그러면 본 판 번호를 비교하지 않아요.
 - **마지막 다시 요청 시각**은 행동 기록이 원본이에요. `load`가 읽어 담아요. 첫 요청은 세지 않아요(7일은 다시 요청끼리만).
-- **요청을 열 수 있음**은 `load`가 `waitService.canOpen(호실, 종류)`로 채워요(거주 종료 뒤 닫힌 요청을 다시 열지 않게, 03 K).
+- **요청을 열 수 있음**은 `load`가 `CounterpartReader`의 호실 단계(`RoomParties.canOpen(종류)`)와 `waitService.canOpen(호실, 종류)`를 둘 다 보고 채워요(거주 종료 뒤 닫힌 요청을 다시 열지 않게, 03 K). 지금 `FakeWaitService.canOpen`은 호실 단계를 보지 않아서 호실 단계를 꼭 같이 봐요(#157).
+- **요청할 때만 아는 값**(요청을 열 수 있음, 상대에게 보이는지)은 행동 기록 밖의 사실이라 재계산(`Replay.fold`, REP-10)에서는 알 수 없어요. 칸을 `Boolean`으로 두고 처음 상태는 `null`, `apply`는 `null`이면 검사하지 않아요(기록된 행동은 그때 서버가 이미 확인했어요). `boolean false`로 두면 재계산이 등록 → 보류 → 보충에서 `INVALID_STATE`로 깨져요.
+- **도장**: 응답(맞아요·보류·이견 모두)한 판을 `save`에서 "같이 확인한 판"(`confirmed_*_id`)으로 남겨요(03 1-3). 보충으로 확인 기다림으로 돌아가도 도장은 그대로예요.
 
 ### 8-2. `apply`에서 부르기
 
@@ -341,7 +345,7 @@ case RESPOND_DEFECT -> {
   // 거주 종료 뒤에도 정산 완료 전까지 답할 수 있다(늦은 답, 03 3장 권한 표). 정산 완료는 pipeline이 막는다
   AnswerPayload in = action.payloadAs(AnswerPayload.class);
   AckState next = AnswerSupport.answer(
-      now.defect(), action.actorSide(), in.answer(), in.reason(), action.seenVersionNo());
+      now.defect(), action.actorSide(), in.answer(), action.reason(), action.seenVersionNo());
   yield now.withDefectAck(next);
 }
 case SUPPLEMENT -> {
@@ -355,7 +359,9 @@ case SUPPLEMENT -> {
 
 - 시각은 `action.createdAt()`, 간격(`rerequest.interval`, 7d)은 `Transitions`가 설정에서 받아 넘겨요. `Clock`을 부르지 않아요.
 - 근거(`SupplementRequest.hasEvidence()`)는 서비스가 pipeline 전에 `AnswerSupport.requireEvidence`로 보거나, payload에 담아 `apply`에서 넘겨요. 어느 쪽이든 같은 메서드를 써요.
-- 서비스는 payload를 `Map.of("answer", req.answer(), "reason", req.reason())`로 남겨요. 사유가 없으면 `"reason"` 키를 빼요(`Map.of`는 null을 받지 않아요).
+- 서비스는 답을 payload `Map.of("answer", req.answer().name())`로, **사유는 `ActionCommand`의 `reason`**(행동 기록의 `reason` 칸)으로 넘겨요. 사유를 payload에 넣지 않아요(06 REP-9 `action.reason`, 한 사실은 한 곳에, #155). 공백뿐인 사유는 `null`로 바꿔 넘겨요.
+- 응답은 본 판에 대고 하는 행동이라 내용 지문은 **본 판**이에요(3-3). 판은 고칠 수 없으니 서비스가 pipeline 전에 `seenVersionNo`의 판을 읽어 `ActionCommand`의 `content`로 넘겨요. 그런 판이 없으면 `null`로 두면 `apply`가 `VERSION_CONFLICT`로 막아요(예: `RepairStateStore.seenContent`).
+- 보충 설명은 `action`의 `SupplementWriter.write(호실, 대상, 측, 설명)`로 `save`에서 남겨요(`record.supplement`, V8). 돌려받은 지문 재료를 `SavedState`의 `content`로 넘기면 보충 행동의 내용 지문이 돼요. 수리 건 하자·지불·점검 항목이 같은 창구를 써요. 사진은 `PhotoService.attach` → `withPhotos`로 따로 붙여요.
 
 ### 8-3. 도메인이 먼저 막는 것 (`AnswerSupport`는 모름)
 

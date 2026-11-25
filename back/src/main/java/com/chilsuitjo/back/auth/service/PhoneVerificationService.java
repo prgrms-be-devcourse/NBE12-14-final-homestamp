@@ -28,9 +28,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 휴대폰 인증(06 ACC-1e~l, 05 {@code phone_verification}). 인증번호를 만들고, 확인해 인증 표를 주고, 가입·재설정·번호 변경이 표를 한
  * 번만 쓰게 한다.
  *
- * <p><b>문자 보내기는 아직 없다.</b> 04 4-2대로 {@link #issue}가 인증 행을 커밋한 뒤 notification의 인증 문자 바로 보내기(D 계약, 가칭
- * {@code VerificationSmsSender})를 불러야 한다. 그 계약이 오면 발송 흐름에서 {@link #issue} → 보내기 → 실패면 {@link
- * #forgetFailedSend}를 잇는다.
+ * <p>문자 보내기는 {@link PhoneVerificationSendService}가 맡는다(04 4-2): {@link #issue}가 인증 행을 커밋한 뒤
+ * notification의 {@code VerificationSmsSender}를 부르고, 업체가 실패로 답하면 {@link #forgetFailedSend}를 부른다.
  */
 @Service
 @RequiredArgsConstructor

@@ -28,6 +28,12 @@ public class FakeRoomGateReader implements RoomGateReader {
   private final Map<Key, RoomGate> members = new ConcurrentHashMap<>();
   private final Map<UUID, RoomGate> rooms = new ConcurrentHashMap<>();
 
+  /** 잠그지 않는 가짜라 {@link #lockAndRead}와 같다. */
+  @Override
+  public RoomGate read(UUID roomRecordId, Actor actor) {
+    return lockAndRead(roomRecordId, actor);
+  }
+
   @Override
   public RoomGate lockAndRead(UUID roomRecordId, Actor actor) {
     if (actor.isMember()) {

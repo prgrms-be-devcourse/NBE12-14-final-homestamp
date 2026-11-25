@@ -16,6 +16,7 @@ import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.UuidGenerator;
+import org.springframework.security.crypto.password.PasswordEncoder;
 
 /**
  * 회원({@code state.member}, 05 2-1, C 테이블). 이메일·비밀번호 해시·이름·번호·설정은 신원 칸이라 고치고 지울 수 있다(05 0장 신원 예외).
@@ -38,7 +39,7 @@ public class Member {
   @Column(length = 320)
   private String email;
 
-  /** 비밀번호 해시. 밖으로 내보내지 않는다(확인은 로그인을 만들 때 이 엔티티의 메서드로). */
+  /** 비밀번호 해시. 밖으로 내보내지 않는다(확인은 {@link #canLogInWith}로). */
   @Getter(AccessLevel.NONE)
   @Column(name = "password_hash")
   private String passwordHash;
@@ -88,6 +89,17 @@ public class Member {
     this.createdAt = Objects.requireNonNull(createdAt);
     this.smsEnabled = true;
     this.status = MemberStatus.ACTIVE;
+  }
+
+  /**
+   * 로그인할 수 있는 회원이고 비밀번호가 맞는지 본다(06 ACC-2). 탈퇴했거나 해시가 없으면 맞지 않다. 해시는 밖으로 내보내지 않고 이 메서드로만 확인한다.
+   *
+   * @param encoder 해시를 만든 것과 같은 인코더({@code PasswordConfig})
+   */
+  public boolean canLogInWith(String rawPassword, PasswordEncoder encoder) {
+    return status == MemberStatus.ACTIVE
+        && passwordHash != null
+        && encoder.matches(rawPassword, passwordHash);
   }
 
   /**

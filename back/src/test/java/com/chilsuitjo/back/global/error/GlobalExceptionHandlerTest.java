@@ -158,6 +158,7 @@ class GlobalExceptionHandlerTest {
     mvc.perform(post("/시험/잠시"))
         .andExpect(status().isTooManyRequests())
         .andExpect(header().string("Retry-After", "40"))
+        .andExpect(jsonPath("$.photoIndex").doesNotExist())
         .andExpect(jsonPath("$.code").value("RATE_LIMITED"));
   }
 
@@ -166,7 +167,17 @@ class GlobalExceptionHandlerTest {
     mvc.perform(post("/시험/규칙"))
         .andExpect(status().isTooManyRequests())
         .andExpect(header().doesNotExist("Retry-After"))
+        .andExpect(jsonPath("$.photoIndex").doesNotExist())
         .andExpect(jsonPath("$.code").value("DAILY_LIMIT"));
+  }
+
+  @Test
+  void 사진_번호가_있으면_0부터_시작하는_번호를_응답에_넣는다() throws Exception {
+    mvc.perform(post("/시험/사진"))
+        .andExpect(status().is(422))
+        .andExpect(jsonPath("$.code").value("PHOTO_CHECK_FAILED"))
+        .andExpect(jsonPath("$.photoIndex").value(0))
+        .andExpect(header().doesNotExist("Retry-After"));
   }
 
   @Test
@@ -225,6 +236,11 @@ class GlobalExceptionHandlerTest {
     @PostMapping("/시험/규칙")
     String 규칙() {
       throw new BusinessException(ErrorCode.DAILY_LIMIT);
+    }
+
+    @PostMapping("/시험/사진")
+    String 사진() {
+      throw new BusinessException(ErrorCode.PHOTO_CHECK_FAILED, 0);
     }
 
     @PostMapping("/시험/버전-spring")
