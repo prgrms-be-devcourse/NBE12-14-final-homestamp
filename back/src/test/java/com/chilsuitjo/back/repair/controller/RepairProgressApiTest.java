@@ -285,6 +285,26 @@ class RepairProgressApiTest {
         .andExpect(jsonPath("$.status").value("DONE"));
   }
 
+  @Test
+  void 거주가_끝나면_시작_전인_수리를_시작할_수_없고_버튼도_없다() throws Exception {
+    // 03 A "상태별로 할 수 있는 일": 거주 종료 뒤 수리 상태는 "거주 종료 시점"으로 멈춘다(#177 리뷰)
+    UUID caseId = register();
+    jdbc.update(
+        "UPDATE state.room_record SET status = 'ENDED', ended_at = CURRENT_TIMESTAMP WHERE id = ?",
+        room);
+
+    act(caseId, landlord, "start", null)
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("ROOM_ENDED"));
+    assertThat(countActions(caseId, "START_REPAIR")).isZero();
+    assertThat(caseRow(caseId)).containsEntry("status", "NOT_STARTED");
+    detail(caseId, landlord)
+        .andExpect(status().isOk())
+        // 하자 응답은 정산 완료 전까지 되므로(03 A) 그것만 남는다
+        .andExpect(jsonPath("$.availableActions.length()").value(1))
+        .andExpect(jsonPath("$.availableActions[0]").value("respond"));
+  }
+
   // ---- 상세의 버튼과 같은 키 ----
 
   @Test

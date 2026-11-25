@@ -22,8 +22,8 @@ import org.springframework.stereotype.Component;
  * 수리 건의 규칙(03 D, 09 2장 {@code rule/}). 지금 상태와 행동으로 다음 상태를 정하는 순수 함수다. Repository·{@code Clock}·다른
  * 서비스를 부르지 않는다. 시각이 필요하면 {@code action.createdAt()}을 쓴다.
  *
- * <p>정산 완료·거주 종료·합류 전 기록·내 공유 중단은 pipeline이 먼저 막는다(09 3-1 순서 3). 거주 종료 뒤 새 수리 건은 {@code REGISTER}의
- * {@code blockedAfterEnded}로 막힌다(06 REP-1c).
+ * <p>정산 완료·거주 종료·합류 전 기록·내 공유 중단은 pipeline이 먼저 막는다(09 3-1 순서 3). 거주 종료 뒤 새 수리 건과 수리 시작은 {@code
+ * blockedAfterEnded}로 막힌다(06 REP-1c, 03 A "상태별로 할 수 있는 일").
  *
  * <p>지금은 하자 등록(REP-1), 하자 응답·보충(REP-2), 수리 시작(REP-4)·종료 요청·종료 확인·아직 안 됐어요(REP-5a·5b)가 있다. 혼자 종료·다시
  * 열기(REP-5c~e) 등은 그 기능을 만들 때 더한다(#174). 그 전까지 다른 행동은 {@code INVALID_STATE}다.
@@ -190,7 +190,8 @@ public class RepairTransitions implements Transitions<RepairState> {
 
   /**
    * 수리 시작(06 REP-4a): 당사자 누구든, 시작 전에서만 처리 중으로. 하자 인정이 맞아요가 아니어도(확인 전·보류·이견) 시작한다. 강행 표시("확인 전에
-   * 시작했어요" 등)는 시작한 때의 하자 인정으로 화면이 보이므로 하자 인정은 바꾸지 않는다. 거주 종료 뒤에도 정산 완료 전까지는 사실을 남길 수 있다.
+   * 시작했어요" 등)는 시작한 때의 하자 인정으로 화면이 보이므로 하자 인정은 바꾸지 않는다. 거주 종료 뒤에는 pipeline이 {@code ROOM_ENDED}로
+   * 막는다(03 A, {@code ActionType.blockedAfterEnded}).
    */
   private static RepairState start(RepairState now, ActionEntry action) {
     requireVisible(now, action);

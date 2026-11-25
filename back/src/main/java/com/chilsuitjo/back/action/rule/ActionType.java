@@ -152,8 +152,12 @@ public enum ActionType {
     return allows.contains(allow);
   }
 
-  /** 거주가 끝난 호실에서 할 수 없는 행동: 새 수리 건 등록(03 불변식 9, 06 REP-1c {@code ROOM_ENDED}). */
+  /**
+   * 거주가 끝난 호실에서 할 수 없는 행동: 새 수리 건 등록(03 불변식 9, 06 REP-1c)과 수리 시작(03 A "상태별로 할 수 있는 일": 거주 종료 뒤 수리
+   * 상태는 "거주 종료 시점"으로 멈춤). 둘 다 {@code ROOM_ENDED}. 종료 요청은 종료 확인 요청을 열 수 없어 수리 규칙이 막고, 열린 요청에 대한 종료
+   * 확인·아직 안 됐어요는 아직 정하지 않았다(#177).
+   */
   public boolean blockedAfterEnded() {
-    return this == REGISTER;
+    return this == REGISTER || this == START_REPAIR;
   }
 }

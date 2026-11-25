@@ -258,7 +258,7 @@ assertThat(fx.actions().findByRoom(roomId))
 | 거주 중, 막히는 것 없음 | `fx.gates().member(room, memberId, side)` | 통과 |
 | 당사자가 아님 | 아무것도 넣지 않음 | `NOT_FOUND` |
 | 정산 완료 | `put(memberId, new RoomGate(room, side, true, false, false, true))` | `SETTLED` (예외: `ActionType`에 `AFTER_SETTLED` 표시) |
-| 거주 종료 | `new RoomGate(room, side, false, false, false, true)` | `REGISTER`만 `ROOM_ENDED` |
+| 거주 종료 | `new RoomGate(room, side, false, false, false, true)` | `REGISTER`·`START_REPAIR`만 `ROOM_ENDED` |
 | 합류 전 기록 | `new RoomGate(room, side, false, true, false, false)` | `JOINED_RECORD` (예외: `ON_JOINED`) |
 | 내가 공유를 그만둠 | `new RoomGate(room, side, false, false, true, false)` | `SHARING_STOPPED` (예외: `WHILE_SHARING_STOPPED`) |
 | 서버·운영 행동 | `fx.gates().putRoom(new RoomGate(room, null, …))` | 호실 단위 거절을 건너뜀 |

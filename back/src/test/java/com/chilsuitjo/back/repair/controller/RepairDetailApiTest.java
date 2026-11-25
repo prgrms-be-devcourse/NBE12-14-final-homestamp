@@ -247,9 +247,9 @@ class RepairDetailApiTest {
         "UPDATE state.room_record SET status = 'ENDED', ended_at = CURRENT_TIMESTAMP WHERE id = ?",
         room);
 
-    detail(caseId, tenant).andExpect(jsonPath("$.availableActions").value(contains("start")));
-    detail(caseId, landlord)
-        .andExpect(jsonPath("$.availableActions").value(contains("respond", "start")));
+    // 수리 시작은 거주 종료 뒤 막힌다(03 A, #177 리뷰)
+    detail(caseId, tenant).andExpect(jsonPath("$.availableActions").isEmpty());
+    detail(caseId, landlord).andExpect(jsonPath("$.availableActions").value(contains("respond")));
   }
 
   @Test
