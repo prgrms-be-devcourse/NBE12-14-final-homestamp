@@ -184,8 +184,8 @@ button:disabled {
   background: #ef866b;
 }
 main {
-  max-width: 1540px;
-  padding: 22px 38px 0;
+  max-width: 1180px;
+  padding: 20px 32px 28px;
   margin: 0 auto;
 }
 .page-heading {
@@ -940,11 +940,8 @@ main {
     text-overflow: ellipsis;
     color: #647a99;
   }
-  .top-actions > .avatar {
-    display: none;
-  }
   main {
-    padding: 17px 18px 0;
+    padding: 14px 16px calc(84px + env(safe-area-inset-bottom));
   }
   .page-heading p {
     font-size: 14px;

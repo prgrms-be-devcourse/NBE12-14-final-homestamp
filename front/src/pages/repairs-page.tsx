@@ -46,23 +46,8 @@ export function RepairsPage({
         >
           <TabsList className="flex h-auto w-auto flex-wrap items-center justify-start gap-2 rounded-none bg-transparent p-0 max-md:w-max max-md:flex-nowrap">
             {(page === "money"
-              ? [
-                  "전체",
-                  "미정",
-                  "합의 대기",
-                  "이견",
-                  "합의됨",
-                  "비용 없음",
-                  "돈이 남은 건",
-                ]
-              : [
-                  "전체",
-                  "내 차례",
-                  "확인 전",
-                  "확인 완료",
-                  "처리 중",
-                  "처리 완료",
-                ]
+              ? ["전체", "돈이 남은 건", "합의 대기", "이견", "합의됨"]
+              : ["전체", "내 차례", "진행 중", "처리 완료"]
             ).map((v) => (
               <TabsTrigger
                 key={v}
@@ -134,7 +119,9 @@ export function RepairsPage({
                     ? filter === "돈이 남은 건"
                       ? moneyLeft.some((m) => m.id === r.id)
                       : (r.proposal?.status || "미정") === filter
-                    : r.status === filter)),
+                    : filter === "진행 중"
+                      ? r.status !== "처리 완료"
+                      : r.status === filter)),
           )
           return items.length ? (
             <div className="flex flex-col gap-2">

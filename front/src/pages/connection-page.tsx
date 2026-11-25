@@ -1,4 +1,4 @@
-import { Link2, Plus } from "lucide-react"
+import { Link2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Panel, Status } from "@/components/common/blocks"
 import { maskPhone } from "@/lib/phone"
@@ -86,12 +86,6 @@ export function ConnectionPage({
               초대 번호 {maskPhone(room.phone || "")} · 상대가 이 번호로
               가입·인증한 계정에서 연결을 수락하면 연결돼요.
             </p>
-          )}
-          {room.connection === "연결됨" && (
-            <Button variant="outline" onClick={() => open("room")}>
-              <Plus />
-              상대 없이 새 호실 시작하기
-            </Button>
           )}
         </div>
       )}
