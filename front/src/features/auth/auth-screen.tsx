@@ -23,6 +23,8 @@ import { ApiError, errorMessage } from "@/api/errors"
 import {
   DEV_FIXED_CODE,
   PASSWORD_RULE,
+  SIGNED_UP_LOGIN_FAILED_MESSAGE,
+  SignedUpLoginError,
   VERIFY_RESEND_INTERVAL_S,
   validPassword,
   type Account,
@@ -47,6 +49,8 @@ export function AuthScreen({
   notice?: string
 }) {
   const [mode, setMode] = useState<Mode>(initialMode)
+  // 가입은 됐는데 이어진 로그인이 실패하면 로그인으로 옮기고 가입한 이메일을 채워 둬요
+  const [signedUpEmail, setSignedUpEmail] = useState("")
   return (
     <div className="auth-shell">
       <div className="auth-brand">
@@ -113,9 +117,17 @@ export function AuthScreen({
               auth={auth}
               onDone={onDone}
               onSignup={() => setMode("signup")}
+              defaultEmail={signedUpEmail}
             />
           ) : (
-            <SignupForm auth={auth} onDone={onDone} />
+            <SignupForm
+              auth={auth}
+              onDone={onDone}
+              onSignedUp={(email) => {
+                setSignedUpEmail(email)
+                setMode("login")
+              }}
+            />
           )}
         </CardContent>
       </Card>
@@ -127,10 +139,12 @@ function LoginForm({
   auth,
   onDone,
   onSignup,
+  defaultEmail = "",
 }: {
   auth: AuthApi
   onDone: (a: Account) => void
   onSignup: () => void
+  defaultEmail?: string
 }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
@@ -154,6 +168,7 @@ function LoginForm({
   }
   return (
     <form className="space-y-4" onSubmit={submit}>
+      {defaultEmail && <Notice>{SIGNED_UP_LOGIN_FAILED_MESSAGE}</Notice>}
       <div className="field">
         <label htmlFor="login-email">이메일</label>
         <Input
@@ -161,6 +176,7 @@ function LoginForm({
           name="email"
           type="email"
           autoComplete="email"
+          defaultValue={defaultEmail}
           required
         />
       </div>
@@ -207,9 +223,11 @@ const TERMS = [
 function SignupForm({
   auth,
   onDone,
+  onSignedUp,
 }: {
   auth: AuthApi
   onDone: (a: Account) => void
+  onSignedUp: (email: string) => void
 }) {
   const [step, setStep] = useState<1 | 2 | 3>(1)
   const [phone, setPhone] = useState("")
@@ -324,6 +342,11 @@ function SignupForm({
           }),
         )
       } catch (e) {
+        // 가입은 끝났고 이어진 로그인만 실패했으면 가입을 되풀이하지 않고 로그인으로 옮겨요
+        if (e instanceof SignedUpLoginError) {
+          onSignedUp(e.email)
+          return
+        }
         // 인증 표가 만료됐거나 이미 쓰였으면(CODE_EXPIRED, 06 ACC-1f·1l) 휴대폰 인증부터 다시 해요. 입력한 계정 정보는 남겨요
         if (e instanceof ApiError && e.code === "CODE_EXPIRED") {
           setPhoneToken("")

@@ -100,6 +100,18 @@ export const ACK_TEXT_VERSIONS = {
   terms: "v1",
   privacyNotice: "v1",
 } as const
+// 가입은 끝났는데 이어서 한 로그인이 실패했을 때(연결 오류·429 등). 인증 표는 이미 쓰여서 다시 가입하면
+// CODE_EXPIRED·EMAIL_TAKEN에 막히므로, 화면은 이 오류를 받으면 가입을 되풀이하지 않고 로그인으로 보내요.
+export const SIGNED_UP_LOGIN_FAILED_MESSAGE =
+  "가입은 끝났어요. 가입한 이메일로 로그인해 주세요."
+export class SignedUpLoginError extends Error {
+  readonly email: string
+  constructor(email: string, options?: ErrorOptions) {
+    super(SIGNED_UP_LOGIN_FAILED_MESSAGE, options)
+    this.name = "SignedUpLoginError"
+    this.email = email
+  }
+}
 // 06 4-10 화면 문구
 export const CODE_REPLACED_MESSAGE =
   "새 인증번호를 보냈어요. 가장 최근 문자의 번호를 넣어 주세요. 다른 기기에서 받았다면 그 기기에서 넣어 주세요"
@@ -194,7 +206,11 @@ export function createHttpAuth(
         },
         idempotent: false,
       })
-      return this.login(email, input.password)
+      try {
+        return await this.login(email, input.password)
+      } catch (e) {
+        throw new SignedUpLoginError(email, { cause: e })
+      }
     },
     async login(email, password) {
       const r = await request<{ accessToken: string }>(

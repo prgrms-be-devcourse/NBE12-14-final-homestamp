@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { createHttpAuth } from "../src/api/auth"
+import { createHttpAuth, SignedUpLoginError } from "../src/api/auth"
 import { createHttpClient } from "../src/api/http-client"
 import { maskPhone } from "../src/lib/phone"
 
@@ -288,6 +288,37 @@ describe("가입·휴대폰 인증", () => {
     ])
     expect(calls[0].headers["Idempotency-Key"]).toBeUndefined()
     expect(store.get()).toBe("A1")
+  })
+
+  it("가입은 됐는데 이어진 로그인이 실패하면 가입한 이메일을 담은 SignedUpLoginError로 알린다", async () => {
+    const calls = fakeServer({
+      "POST /api/auth/signup": () => json({ id: ME.id }, 201),
+      "POST /api/auth/login": () => {
+        throw new TypeError("Failed to fetch")
+      },
+    })
+    const { auth, store } = setup()
+
+    const err = await auth
+      .signup({
+        email: " seoyun@example.com ",
+        password: "abcd1234",
+        name: "정서윤",
+        phoneToken: "T1",
+        agreements: { age14: true, terms: true, privacyNotice: true },
+      })
+      .catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(SignedUpLoginError)
+    expect(err).toMatchObject({
+      email: "seoyun@example.com",
+      cause: { code: "NETWORK" },
+    })
+    // 가입은 한 번만 보내요(같은 인증 표로 다시 보내지 않음)
+    expect(calls.map((c) => c.key)).toEqual([
+      "POST /api/auth/signup",
+      "POST /api/auth/login",
+    ])
+    expect(store.get()).toBeUndefined()
   })
 
   it("인증 표가 만료돼 가입이 CODE_EXPIRED면 로그인하지 않고 그대로 알린다", async () => {
