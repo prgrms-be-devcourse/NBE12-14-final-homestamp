@@ -36,7 +36,7 @@ public record SoloCheck(boolean allowed, SoloReason reason, Instant opensAt, Ins
     return new SoloCheck(true, reason, null, null);
   }
 
-  /** 이유와 그 이유가 성립한 시각. */
+  /** 이유와 그 이유가 성립한 시각. 시각 없이 돌려줄 수 있는 이유(상대 없음 등)에 시각을 붙여도 된다. 부르는 쪽은 그 시각 뒤를 확인할 뿐이다. */
   public static SoloCheck allowedSince(SoloReason reason, Instant since) {
     return new SoloCheck(true, reason, null, Objects.requireNonNull(since, "since"));
   }

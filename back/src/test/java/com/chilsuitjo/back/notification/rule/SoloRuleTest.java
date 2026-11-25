@@ -46,6 +46,15 @@ class SoloRuleTest {
     assertThat(check.since()).isEqualTo(STOPPED);
   }
 
+  @ParameterizedTest
+  @EnumSource(
+      value = RequestKind.class,
+      names = {"DEFECT_CONFIRM", "CLOSE_CONFIRM", "INSPECTION_CONFIRM"})
+  void 공유_중단은_하자_종료_점검_확인에_쓴다(RequestKind kind) {
+    assertThat(SoloRule.direct(parties(seat(PartyPresence.CONNECTED, STOPPED)), kind))
+        .isEqualTo(SoloCheck.allowedSince(SoloReason.SHARING_STOPPED, STOPPED));
+  }
+
   @Test
   void 그만둔_시각이_없거나_다시_공유했으면_공유_중단으로_열지_않는다() {
     // 다시 공유하면 sharing_stopped_at이 비워진다(05 party). 시각 없는 공유 중단은 이유가 아니다

@@ -7,6 +7,7 @@ import com.chilsuitjo.back.TestcontainersConfiguration;
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.global.error.BusinessException;
+import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.dto.SoloCheck;
 import com.chilsuitjo.back.notification.dto.SoloQuery;
@@ -16,6 +17,8 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
@@ -68,10 +71,42 @@ class WaitServiceDirectSoloContextTest {
     UUID room = room();
     party(room, "TENANT", member(), "CONNECTED", null);
     party(room, "LANDLORD", member(), "CONNECTED", null);
-    if (waits instanceof FakeWaitService fake) {
-      fake.seedSolo(
-          repairCase, RequestKind.CLOSE_CONFIRM, SoloCheck.allowedBecause(SoloReason.UNCONFIRMED));
-    }
+    // 지금 운영에서도 쓰이는 빈은 가짜다. 진짜 구현으로 바뀌면 이 테스트가 깨져 다시 보게 한다(조용히 seed를 건너뛰지 않게)
+    assertThat(waits).isInstanceOf(FakeWaitService.class);
+    ((FakeWaitService) waits)
+        .seedSolo(
+            repairCase,
+            RequestKind.CLOSE_CONFIRM,
+            SoloCheck.allowedBecause(SoloReason.UNCONFIRMED));
+
+    assertThat(waits.canGoSoloDirectly(close(room))).isEqualTo(SoloCheck.notYet(null));
+  }
+
+  @Test
+  void 번호만_있는_자리도_상대_없음이다() {
+    UUID room = room();
+    party(room, "TENANT", member(), "CONNECTED", null);
+    party(room, "LANDLORD", null, "NUMBER_ONLY", null);
+
+    assertThat(waits.canGoSoloDirectly(close(room)))
+        .isEqualTo(SoloCheck.allowedBecause(SoloReason.NO_COUNTERPART));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"INVITED", "REJECTED"})
+  void 연결_전이나_거절한_자리는_열지_않는다(String status) {
+    UUID room = room();
+    party(room, "TENANT", member(), "CONNECTED", null);
+    party(room, "LANDLORD", null, status, null);
+
+    assertThat(waits.canGoSoloDirectly(close(room))).isEqualTo(SoloCheck.notYet(null));
+  }
+
+  @Test
+  void 탈퇴한_자리는_남은_공유_중단_시각이_있어도_아직_열지_않는다() {
+    UUID room = room();
+    party(room, "TENANT", member(), "CONNECTED", null);
+    party(room, "LANDLORD", member(), "WITHDRAWN", STOPPED);
 
     assertThat(waits.canGoSoloDirectly(close(room))).isEqualTo(SoloCheck.notYet(null));
   }
@@ -79,7 +114,8 @@ class WaitServiceDirectSoloContextTest {
   @Test
   void 없는_호실은_불가가_아니라_예외다() {
     assertThatThrownBy(() -> waits.canGoSoloDirectly(close(UUID.randomUUID())))
-        .isInstanceOf(BusinessException.class);
+        .isInstanceOfSatisfying(
+            BusinessException.class, e -> assertThat(e.errorCode()).isEqualTo(ErrorCode.NOT_FOUND));
   }
 
   private SoloQuery close(UUID room) {
