@@ -2,6 +2,7 @@ package com.chilsuitjo.back.notification.service;
 
 import com.chilsuitjo.back.global.common.LinkInvalidReason;
 import com.chilsuitjo.back.notification.dto.RequestTarget;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -30,9 +31,9 @@ public interface InviteLinks {
    *
    * <p><b>번호를 고쳐 다시 초대할 때</b>: 받는 번호는 다시 쓰는 기준이 아니어서, 옛 링크를 닫지 않고 부르면 옛 번호로 보낸 링크가 그대로 돌아온다(옛 번호를
    * 받은 사람이 계속 열 수 있음). 그래서 부르는 쪽은 같은 트랜잭션 안에서 이 순서를 지킨다: ① 다시 초대할 수 있는지와 번호가 바뀌었는지 확인(room) ②
-   * {@link #invalidateInvites(UUID, UUID, LinkInvalidReason)}로 그 자리 링크를 {@code REINVITED} 무효 ③ 이
-   * 메서드로 새 링크 ④ 통지. 이 포트는 번호를 모르므로 이 순서를 검사하지 않는다. 순서를 지키는지는 room의 번호 고치기 구현과 그 테스트에서 확인해야 한다(아직
-   * 없음, #100·#163).
+   * {@link #invalidateInvites(UUID, UUID, LinkInvalidReason)}로 그 자리 링크를 {@code REINVITED} 무효로 하고 링크
+   * ID 목록을 받음 ③ 그 ID가 담긴 보내지 않은 문자를 취소(notification, #100 U2, 아직 없음) ④ 이 메서드로 새 링크 ⑤ 통지. 이 포트는 번호를
+   * 모르므로 이 순서를 검사하지 않는다. 순서를 지키는지는 room의 번호 고치기 구현과 그 테스트에서 확인해야 한다(아직 없음, #100·#163).
    *
    * <p>누가 언제 초대할 수 있는지는 부르는 쪽이 이미 확인했다고 보고 다시 보지 않는다. 링크를 돌려줬다고 초대가 허락됐다는 뜻은 아니다.
    *
@@ -54,9 +55,23 @@ public interface InviteLinks {
   int invalidateInvites(UUID roomRecordId, LinkInvalidReason reason);
 
   /**
-   * 그 호실에서 한 자리에 보낸 유효한 초대 링크만 무효로 하고 개수를 돌려준다(번호 고쳐 다시 초대 {@code REINVITED}, 연결 {@code
-   * CONNECTED}). 나머지는 {@link #invalidateInvites(UUID, LinkInvalidReason)}와 같다. 번호를 고쳐 다시 초대할 때는 새
-   * 링크를 만들기 전에 이것을 먼저 부른다({@link #issueInvite} 설명의 순서 ②).
+   * 그 호실에서 한 자리에 보낸 초대 링크를 모두 무효로 하고, 그 자리의 초대 링크 ID를 <b>전부</b> 돌려준다(번호 고쳐 다시 초대 {@code REINVITED},
+   * 연결 {@code CONNECTED}).
+   *
+   * <p>돌려주는 목록에는 이번에 무효로 한 링크와 <b>이미 무효였던 링크</b>가 함께 들어간다. 공유 그만두기처럼 다른 이유로 먼저 닫힌 링크가 담긴 보내지 않은 문자도
+   * 취소할 수 있게 하려는 것이다(#100 기본안 "기존 링크 ID 집합", #236에서 A·D 합의).
+   *
+   * <ul>
+   *   <li>부른 뒤 목록의 링크는 모두 무효다. 이미 무효인 링크는 다시 저장하지 않아 처음 이유·시각이 그대로다(05 불변식 7)
+   *   <li>그 호실·그 자리의 {@code INVITE}만 넣는다. 다른 자리·다른 호실의 링크와 정산 초대 링크({@code SETTLEMENT_INVITE})는 넣지
+   *       않는다
+   *   <li>링크가 없으면 빈 목록이다. 같은 ID는 두 번 들어가지 않는다. 같은 트랜잭션에서 다시 불러도 같은 집합이다
+   *   <li>목록의 순서는 계약이 아니다(집합으로 쓴다). 바꿀 수 없는 목록이다
+   * </ul>
+   *
+   * <p>부르는 쪽(room)은 이 목록을 같은 트랜잭션의 미발송 취소에 그대로 넘긴다. 취소는 그 호실·자리의 통지를 통째로 지우지 않고 이 링크 ID가 담긴 보내지 않은
+   * 문자만 다루며, 빈 목록이면 아무것도 하지 않는다(#100 U2, 아직 없음). 번호를 고쳐 다시 초대할 때는 새 링크를 만들기 전에 이것을 먼저 부른다({@link
+   * #issueInvite} 설명의 순서 ②).
    */
-  int invalidateInvites(UUID roomRecordId, UUID partyId, LinkInvalidReason reason);
+  List<UUID> invalidateInvites(UUID roomRecordId, UUID partyId, LinkInvalidReason reason);
 }

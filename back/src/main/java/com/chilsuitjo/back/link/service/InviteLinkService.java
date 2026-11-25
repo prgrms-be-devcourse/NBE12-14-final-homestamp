@@ -91,12 +91,15 @@ public class InviteLinkService implements InviteLinks {
 
   @Override
   @Transactional(propagation = Propagation.MANDATORY)
-  public int invalidateInvites(UUID roomRecordId, UUID partyId, LinkInvalidReason reason) {
+  public List<UUID> invalidateInvites(UUID roomRecordId, UUID partyId, LinkInvalidReason reason) {
     Objects.requireNonNull(roomRecordId, "roomRecordId");
     Objects.requireNonNull(partyId, "partyId");
     Objects.requireNonNull(reason, "reason");
     roomGateReader.lockAndRead(roomRecordId, Actor.server());
-    return invalidate(links.lockValidForParty(roomRecordId, partyId, LinkKind.INVITE), reason);
+    // 돌려줄 집합(그 자리의 초대 링크 전부)과 상태를 바꿀 대상(아직 유효한 것)을 나눈다. 이미 무효인 링크는 다시 저장하지 않아 처음 이유·시각이 남는다.
+    List<Link> all = links.lockAllForParty(roomRecordId, partyId, LinkKind.INVITE);
+    invalidate(all.stream().filter(link -> !link.isInvalidated()).toList(), reason);
+    return all.stream().map(Link::getId).toList();
   }
 
   private int invalidate(List<Link> valid, LinkInvalidReason reason) {

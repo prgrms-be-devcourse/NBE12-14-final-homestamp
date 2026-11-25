@@ -9,7 +9,8 @@ import java.util.UUID;
 
 /**
  * DB 없는 테스트용 {@link InviteLinks}(#163 ②). 실제 구현({@code InviteLinkService})과 같게 같은 호실·자리·기록의 유효한 링크는
- * 다시 쓰고, 무효로 한 링크는 처음 이유를 바꾸지 않는다. 잠금·트랜잭션·DB 외래 키는 흉내 내지 않는다(그건 실제 DB 테스트에서 본다).
+ * 다시 쓰고, 무효로 한 링크는 처음 이유를 바꾸지 않으며, 자리 단위 무효는 이미 무효였던 것까지 그 자리의 링크 ID를 전부 돌려준다. 잠금·트랜잭션·DB 외래 키는 흉내
+ * 내지 않는다(그건 실제 DB 테스트에서 본다).
  *
  * <p>쓰는 법: room 규칙·서비스 단위 테스트에 넣고 {@link #issued()}로 무엇을 발급했는지 본다. 스프링 테스트는 실제 구현을 그대로 쓴다.
  */
@@ -46,8 +47,14 @@ public class FakeInviteLinks implements InviteLinks {
   }
 
   @Override
-  public int invalidateInvites(UUID roomRecordId, UUID partyId, LinkInvalidReason reason) {
-    return invalidate(roomRecordId, Objects.requireNonNull(partyId, "partyId"), reason);
+  public List<UUID> invalidateInvites(UUID roomRecordId, UUID partyId, LinkInvalidReason reason) {
+    Objects.requireNonNull(partyId, "partyId");
+    invalidate(roomRecordId, partyId, reason);
+    // 실제 구현처럼 이미 무효였던 것까지 그 자리의 초대 링크 ID 전부(가짜는 정산 초대 링크를 만들지 않는다)
+    return issued.stream()
+        .filter(link -> link.roomRecordId.equals(roomRecordId) && link.partyId.equals(partyId))
+        .map(link -> link.id)
+        .toList();
   }
 
   /** 발급한 링크 전부(무효 포함), 발급한 순서대로. */

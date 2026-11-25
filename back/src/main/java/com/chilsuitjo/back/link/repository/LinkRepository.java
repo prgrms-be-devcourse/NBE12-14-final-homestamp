@@ -43,13 +43,16 @@ public interface LinkRepository extends JpaRepository<Link, UUID> {
   @Transactional(propagation = Propagation.MANDATORY)
   List<Link> lockValid(@Param("room") UUID roomRecordId, @Param("kind") LinkKind kind);
 
-  /** {@link #lockValid}와 같고 한 자리만. */
+  /**
+   * 호실을 잠근 뒤 그 호실·자리의 링크를 한 종류만, <b>이미 무효인 것까지</b> 모두 잠근다(호실 → 링크, 09 3-1). 자리 단위 무효화가 이미 무효였던 링크
+   * ID도 돌려주려고 쓴다({@code InviteLinks.invalidateInvites(호실, 자리, 이유)}). ID 순 정렬은 잠그는 순서를 고정하려는 것이다.
+   */
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query(
       "select l from Link l where l.roomRecordId = :room and l.partyId = :party and l.kind = :kind"
-          + " and l.invalidatedAt is null order by l.id")
+          + " order by l.id")
   @Transactional(propagation = Propagation.MANDATORY)
-  List<Link> lockValidForParty(
+  List<Link> lockAllForParty(
       @Param("room") UUID roomRecordId, @Param("party") UUID partyId, @Param("kind") LinkKind kind);
 
   /**

@@ -1,6 +1,7 @@
 package com.chilsuitjo.back.notification.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 
 import com.chilsuitjo.back.global.common.LinkInvalidReason;
 import com.chilsuitjo.back.global.common.TargetKind;
@@ -31,7 +32,8 @@ class FakeInviteLinksTest {
   void 무효로_하면_새로_만들고_처음_이유는_바뀌지_않는다() {
     UUID first = links.issueInvite(room, party, null, issuer);
 
-    assertThat(links.invalidateInvites(room, party, LinkInvalidReason.REINVITED)).isEqualTo(1);
+    assertThat(links.invalidateInvites(room, party, LinkInvalidReason.REINVITED))
+        .containsExactly(first);
     UUID second = links.issueInvite(room, party, null, issuer);
     assertThat(links.invalidateInvites(room, LinkInvalidReason.RESIDENCE_ENDED)).isEqualTo(1);
 
@@ -39,5 +41,33 @@ class FakeInviteLinksTest {
     assertThat(links.issued())
         .extracting(FakeInviteLinks.Issued::invalidReason)
         .containsExactly(LinkInvalidReason.REINVITED, LinkInvalidReason.RESIDENCE_ENDED);
+  }
+
+  @Test
+  void 자리_단위_무효는_이미_무효였던_것까지_그_자리의_링크_ID를_전부_돌려준다() {
+    UUID otherParty = UUID.randomUUID();
+    UUID otherRoom = UUID.randomUUID();
+    UUID closedBefore = links.issueInvite(room, party, null, issuer);
+    links.invalidateInvites(room, party, LinkInvalidReason.CONNECTED);
+    UUID fresh = links.issueInvite(room, party, null, issuer);
+    UUID otherSeat = links.issueInvite(room, otherParty, null, issuer);
+    UUID otherRoomLink = links.issueInvite(otherRoom, party, null, issuer);
+
+    var returned = links.invalidateInvites(room, party, LinkInvalidReason.REINVITED);
+
+    assertThat(returned).doesNotHaveDuplicates().containsExactlyInAnyOrder(closedBefore, fresh);
+    assertThat(links.issued())
+        .extracting(FakeInviteLinks.Issued::id, FakeInviteLinks.Issued::invalidReason)
+        .containsExactly(
+            tuple(closedBefore, LinkInvalidReason.CONNECTED),
+            tuple(fresh, LinkInvalidReason.REINVITED),
+            tuple(otherSeat, null),
+            tuple(otherRoomLink, null));
+    assertThat(links.invalidateInvites(room, party, LinkInvalidReason.REINVITED))
+        .containsExactlyInAnyOrderElementsOf(returned);
+    assertThat(links.invalidateInvites(room, otherParty, LinkInvalidReason.REINVITED))
+        .containsExactly(otherSeat);
+    assertThat(links.invalidateInvites(otherRoom, otherParty, LinkInvalidReason.REINVITED))
+        .isEmpty();
   }
 }

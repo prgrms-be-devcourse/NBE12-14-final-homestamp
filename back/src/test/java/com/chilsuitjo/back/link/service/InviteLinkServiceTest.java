@@ -265,18 +265,156 @@ class InviteLinkServiceTest {
         inTx(() -> inviteLinks.issueInvite(room.id(), room.counterpart(), null, room.issuer()));
     UUID mine = inTx(() -> inviteLinks.issueInvite(room.id(), room.mine(), null, room.issuer()));
 
-    int closed =
+    List<UUID> closed =
         inTx(() ->
             inviteLinks.invalidateInvites(
                 room.id(), room.counterpart(), LinkInvalidReason.REINVITED));
 
-    assertThat(closed).isEqualTo(1);
+    assertThat(closed).containsExactly(theirs);
     assertThat(reason(theirs)).isEqualTo("REINVITED");
     assertThat(
             jdbc.queryForObject(
                 "SELECT invalidated_at FROM state.link WHERE id = ?", Object.class, theirs))
         .isNotNull();
     assertThat(reason(mine)).isNull();
+  }
+
+  @Test
+  void 자리_단위_무효는_이미_무효였던_링크까지_그_자리의_초대_링크_ID를_전부_돌려준다() {
+    Room room = room();
+    Room otherRoom = room();
+    UUID inspection = inspection(room.id());
+    UUID closedBefore =
+        inTx(() -> inviteLinks.issueInvite(room.id(), room.counterpart(), null, room.issuer()));
+    inTx(() ->
+        inviteLinks.invalidateInvites(room.id(), room.counterpart(), LinkInvalidReason.CONNECTED));
+    Object closedAt = invalidatedAt(closedBefore);
+    UUID roomInvite =
+        inTx(() -> inviteLinks.issueInvite(room.id(), room.counterpart(), null, room.issuer()));
+    UUID recordLink =
+        inTx(() ->
+            inviteLinks.issueInvite(
+                room.id(),
+                room.counterpart(),
+                RequestTarget.of(TargetKind.INSPECTION, inspection),
+                room.issuer()));
+    UUID otherSeat =
+        inTx(() -> inviteLinks.issueInvite(room.id(), room.mine(), null, room.issuer()));
+    UUID otherRoomLink =
+        inTx(() ->
+            inviteLinks.issueInvite(
+                otherRoom.id(), otherRoom.counterpart(), null, otherRoom.issuer()));
+    UUID settlement = settlementInvite(room);
+
+    List<UUID> returned =
+        inTx(() ->
+            inviteLinks.invalidateInvites(
+                room.id(), room.counterpart(), LinkInvalidReason.REINVITED));
+
+    assertThat(returned)
+        .doesNotHaveDuplicates()
+        .containsExactlyInAnyOrder(closedBefore, roomInvite, recordLink);
+    assertThat(reason(roomInvite)).isEqualTo("REINVITED");
+    assertThat(reason(recordLink)).isEqualTo("REINVITED");
+    assertThat(reason(closedBefore)).isEqualTo("CONNECTED");
+    assertThat(invalidatedAt(closedBefore)).isEqualTo(closedAt);
+    assertThat(reason(otherSeat)).isNull();
+    assertThat(reason(otherRoomLink)).isNull();
+    assertThat(reason(settlement)).isNull();
+  }
+
+  @Test
+  void 이미_무효인_링크만_있으면_그_ID만_돌려주고_처음_이유와_시각은_그대로다() {
+    Room room = room();
+    UUID link =
+        inTx(() -> inviteLinks.issueInvite(room.id(), room.counterpart(), null, room.issuer()));
+    inTx(() ->
+        inviteLinks.invalidateInvites(room.id(), room.counterpart(), LinkInvalidReason.CONNECTED));
+    Object closedAt = invalidatedAt(link);
+
+    List<UUID> returned =
+        inTx(() ->
+            inviteLinks.invalidateInvites(
+                room.id(), room.counterpart(), LinkInvalidReason.REINVITED));
+
+    assertThat(returned).containsExactly(link);
+    assertThat(reason(link)).isEqualTo("CONNECTED");
+    assertThat(invalidatedAt(link)).isEqualTo(closedAt);
+  }
+
+  @Test
+  void 자리에_초대_링크가_없으면_빈_목록이고_정산_초대_링크도_넣지_않는다() {
+    Room room = room();
+    UUID settlement = settlementInvite(room);
+
+    assertThat(
+            inTx(() ->
+                inviteLinks.invalidateInvites(
+                    room.id(), room.counterpart(), LinkInvalidReason.REINVITED)))
+        .isEmpty();
+    assertThat(reason(settlement)).isNull();
+  }
+
+  @Test
+  void 같은_트랜잭션에서_두_번_불러도_같은_집합이고_처음_이유가_남는다() {
+    Room room = room();
+    UUID link =
+        inTx(() -> inviteLinks.issueInvite(room.id(), room.counterpart(), null, room.issuer()));
+
+    List<List<UUID>> both =
+        inTx(() ->
+            List.of(
+                inviteLinks.invalidateInvites(
+                    room.id(), room.counterpart(), LinkInvalidReason.REINVITED),
+                inviteLinks.invalidateInvites(
+                    room.id(), room.counterpart(), LinkInvalidReason.CONNECTED)));
+
+    assertThat(both.get(0)).containsExactly(link);
+    assertThat(both.get(1)).containsExactlyInAnyOrderElementsOf(both.get(0));
+    assertThat(reason(link)).isEqualTo("REINVITED");
+  }
+
+  @Test
+  void 부르는_쪽이_되돌리면_자리_단위_무효도_남지_않는다() {
+    Room room = room();
+    UUID link =
+        inTx(() -> inviteLinks.issueInvite(room.id(), room.counterpart(), null, room.issuer()));
+
+    new TransactionTemplate(txManager)
+        .executeWithoutResult(status -> {
+          inviteLinks.invalidateInvites(room.id(), room.counterpart(), LinkInvalidReason.REINVITED);
+          status.setRollbackOnly();
+        });
+
+    assertThat(reason(link)).isNull();
+  }
+
+  @Test
+  void 같은_자리의_무효가_동시에_와도_같은_집합을_돌려주고_이유는_하나만_남는다() throws Exception {
+    Room room = room();
+    UUID link =
+        inTx(() -> inviteLinks.issueInvite(room.id(), room.counterpart(), null, room.issuer()));
+    CountDownLatch start = new CountDownLatch(1);
+    ExecutorService pool = Executors.newFixedThreadPool(2);
+    try {
+      List<Future<List<UUID>>> results = new ArrayList<>();
+      for (LinkInvalidReason reason :
+          List.of(LinkInvalidReason.REINVITED, LinkInvalidReason.CONNECTED)) {
+        results.add(
+            pool.submit(() -> {
+              start.await();
+              return inTx(
+                  () -> inviteLinks.invalidateInvites(room.id(), room.counterpart(), reason));
+            }));
+      }
+      start.countDown();
+
+      assertThat(results.get(0).get(30, TimeUnit.SECONDS)).containsExactly(link);
+      assertThat(results.get(1).get(30, TimeUnit.SECONDS)).containsExactly(link);
+    } finally {
+      pool.shutdownNow();
+    }
+    assertThat(reason(link)).isIn("REINVITED", "CONNECTED");
   }
 
   @Test
@@ -332,6 +470,11 @@ class InviteLinkServiceTest {
   private int linkCount(UUID room) {
     return jdbc.queryForObject(
         "SELECT count(*) FROM state.link WHERE room_record_id = ?", Integer.class, room);
+  }
+
+  private Object invalidatedAt(UUID link) {
+    return jdbc.queryForObject(
+        "SELECT invalidated_at FROM state.link WHERE id = ?", Object.class, link);
   }
 
   private String reason(UUID link) {
