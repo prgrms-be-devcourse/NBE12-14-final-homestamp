@@ -13,6 +13,7 @@ import { RoomForm } from "../src/features/room/room-form"
 import { SettlementItemForm } from "../src/features/settlement/settlement-item-form"
 import { InspectionItemForm } from "../src/features/inspection/inspection-item-form"
 import { ZONE_PART_ERROR } from "../src/lib/record-commands"
+import { MOBILE_PHONE_MESSAGE } from "../src/lib/phone"
 import { ApiProvider } from "../src/api"
 import { createMockApi } from "../src/api/mock/mock-api"
 import { createMockStore } from "../src/api/mock/store"
@@ -78,7 +79,7 @@ describe("상대 번호 수정(초대 전)", () => {
     )
     const input = "새 상대 휴대폰 번호"
     for (const [value, msg] of [
-      ["0101234", "010으로 시작하는 11자리 번호를 입력해 주세요."],
+      ["0101234", MOBILE_PHONE_MESSAGE],
       ["01011112222", "내 계정 번호는 상대로 넣을 수 없어요."],
       ["01033334444", "기존 번호와 같아요."],
     ]) {
@@ -151,7 +152,7 @@ describe("호실 만들기", () => {
     type(/세입자 휴대폰 번호/, "0101")
     submit(/만들기/)
     expect(screen.getByRole("alert").textContent).toBe(
-      "선택 전화번호를 010으로 시작하는 11자리로 입력해 주세요.",
+      `선택 전화번호: ${MOBILE_PHONE_MESSAGE}`,
     )
     type(/세입자 휴대폰 번호/, "01055556666")
     submit(/만들기/)
