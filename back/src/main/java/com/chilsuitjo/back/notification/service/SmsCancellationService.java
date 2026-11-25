@@ -9,6 +9,7 @@ import com.chilsuitjo.back.notification.repository.NoticeRepository;
 import com.chilsuitjo.back.notification.repository.OutboxRepository;
 import com.chilsuitjo.back.notification.rule.NoticeChannel;
 import com.chilsuitjo.back.notification.rule.NoticeStatus;
+import com.chilsuitjo.back.notification.rule.OutboxKind;
 import com.chilsuitjo.back.notification.rule.OutboxStatus;
 import java.util.Collection;
 import java.util.List;
@@ -62,7 +63,10 @@ public class SmsCancellationService implements SmsCancellation {
       return 0;
     }
     Map<String, Outbox> rows =
-        outbox.lockByDedupeKeys(targets.stream().map(n -> dedupeKey(n.getId())).toList()).stream()
+        outbox
+            .lockByDedupeKeys(
+                OutboxKind.SMS, targets.stream().map(n -> dedupeKey(n.getId())).toList())
+            .stream()
             .collect(Collectors.toMap(Outbox::getDedupeKey, Function.identity()));
 
     int cancelled = 0;
@@ -79,9 +83,9 @@ public class SmsCancellationService implements SmsCancellation {
   private static boolean cancel(Notice notice, Outbox row) {
     if (row == null) {
       // 문자 통지는 문자 줄과 함께 만든다(NoticeOutbox). 보낼 일이 남은 통지인데 줄이 없으면 연결이 깨진 것이다.
-      // 보낼 줄이 없으니 번호 고치기는 막지 않되, 0으로 숨기지 않고 남긴다(#100 결정). 키가 틀린 줄과 아예 없는 줄은 여기서 나누지 않는다.
+      // 보낼 줄이 없으니 번호 고치기는 막지 않되, 0으로 숨기지 않고 남긴다(#100 결정). 키나 종류가 틀린 줄과 아예 없는 줄은 여기서 나누지 않는다.
       if (notice.getStatus() == NoticeStatus.REQUESTED) {
-        log.error("취소할 문자 통지에 맞는 문자 줄이 없음(없거나 중복 방지 키가 다름): notice={}", notice.getId());
+        log.error("취소할 문자 통지에 맞는 문자 줄이 없음(없거나 중복 방지 키·종류가 다름): notice={}", notice.getId());
       }
       return false;
     }

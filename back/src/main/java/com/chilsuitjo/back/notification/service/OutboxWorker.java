@@ -152,8 +152,11 @@ public class OutboxWorker {
    *
    * <p><b>남는 빈틈(NOTI-1에서 닫음)</b>: 연결된 회원의 번호 인증이 풀린 경우(다른 계정이 같은 번호를 인증, 불변식 8)는 요청이 열린 채 남아 통지가
    * {@code REQUESTED}에 멈추고 기다림이 시작되지 않는다(원칙 4). 05 {@code notice}대로 넣을 때 채널을 고르고(문자를 끈 회원·인증이 풀린
-   * 계정은 {@code IN_APP}), 보낼 때 번호가 사라진 회원은 {@code IN_APP}으로 바꾼다. 번호를 고쳐 다시 초대하면 그 자리의 보내지 않은 통지는
-   * 취소한다(새 번호로 옛 통지가 가지 않게, 03 C). 기다림 타이머가 돌기 전에 넣는다(#93).
+   * 계정은 {@code IN_APP}), 보낼 때 번호가 사라진 회원은 {@code IN_APP}으로 바꾼다. 기다림 타이머가 돌기 전에 넣는다(#93).
+   *
+   * <p>번호를 고쳐 다시 초대할 때 옛 링크의 보내지 않은 문자를 막는 것은 이 작업자가 아니다. room이 {@code save} 안에서 넘긴 링크 ID의 줄을
+   * {@link SmsCancellation}으로 취소하고(03 K "보내기 전 취소", room 호출은 아직 없음), 작업자는 {@code PENDING}만 가져가서 취소된
+   * 줄을 보내지 않는다. 이미 가져간({@code SENDING}) 줄은 막지 못한다(#100).
    */
   private void skipWithoutPhone(UUID outboxId, UUID noticeId) {
     transaction.executeWithoutResult(

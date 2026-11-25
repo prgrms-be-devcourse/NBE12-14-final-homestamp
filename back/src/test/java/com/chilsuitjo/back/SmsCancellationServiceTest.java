@@ -306,6 +306,26 @@ class SmsCancellationServiceTest {
   }
 
   @Test
+  void 키_모양이_같아도_문자_줄이_아닌_작업은_취소하지_않고_건수에도_넣지_않는다(CapturedOutput output) {
+    UUID normalLink = link(room, party, false);
+    UUID otherKindLink = link(room, party, false);
+    UUID normal = enqueue(room, party, normalLink);
+    UUID otherKind = enqueue(room, party, otherKindLink);
+    // 정상 경로로는 생길 수 없다: 'sms:<통지 ID>' 키를 가진 다른 종류의 작업
+    jdbc.update("UPDATE outbox SET kind = 'AUDIT_WRITE' WHERE dedupe_key = ?", "sms:" + otherKind);
+
+    int cancelled =
+        inSave(() -> cancellation.cancelPendingSms(room, List.of(normalLink, otherKindLink)));
+
+    assertThat(cancelled).isEqualTo(1);
+    assertThat(outboxStatus(normal)).isEqualTo("CANCELLED");
+    assertThat(noticeStatus(normal)).isEqualTo("CANCELLED");
+    assertThat(outboxStatus(otherKind)).isEqualTo("PENDING");
+    assertThat(noticeStatus(otherKind)).isEqualTo("REQUESTED");
+    assertThat(output.getAll()).contains("맞는 문자 줄이 없음").contains("notice=" + otherKind);
+  }
+
+  @Test
   void payload가_다른_통지를_가리키는_줄은_취소하지_않고_남긴다(CapturedOutput output) {
     UUID link = link(room, party, false);
     UUID notice = enqueue(room, party, link);

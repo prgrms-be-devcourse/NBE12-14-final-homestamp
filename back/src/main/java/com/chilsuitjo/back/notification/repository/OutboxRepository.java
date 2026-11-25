@@ -1,6 +1,7 @@
 package com.chilsuitjo.back.notification.repository;
 
 import com.chilsuitjo.back.notification.entity.Outbox;
+import com.chilsuitjo.back.notification.rule.OutboxKind;
 import jakarta.persistence.LockModeType;
 import java.time.Instant;
 import java.util.Collection;
@@ -31,9 +32,11 @@ public interface OutboxRepository extends JpaRepository<Outbox, UUID> {
 
   /**
    * 중복 방지 키로 문자 줄을 잠근다(#100 U2 취소). {@code SKIP LOCKED}가 아니라 기다린다: 작업자가 가져가는 중이면 그 결과({@code
-   * SENDING}이면 취소 안 함, 되돌아가면 {@code PENDING}이라 취소)를 보고 정해야 해서다. 상태로 거르지 않고, 여러 행은 ID 순서로 잠근다.
+   * SENDING}이면 취소 안 함, 되돌아가면 {@code PENDING}이라 취소)를 보고 정해야 해서다. 상태로 거르지 않고, 여러 행은 ID 순서로 잠근다. 종류도
+   * 함께 본다: 키 모양이 같아도 다른 종류의 작업(파일 삭제·감사 기록 등)은 문자 줄이 아니다.
    */
   @Lock(LockModeType.PESSIMISTIC_WRITE)
-  @Query("SELECT o FROM Outbox o WHERE o.dedupeKey IN :dedupeKeys ORDER BY o.id")
-  List<Outbox> lockByDedupeKeys(@Param("dedupeKeys") Collection<String> dedupeKeys);
+  @Query("SELECT o FROM Outbox o WHERE o.kind = :kind AND o.dedupeKey IN :dedupeKeys ORDER BY o.id")
+  List<Outbox> lockByDedupeKeys(
+      @Param("kind") OutboxKind kind, @Param("dedupeKeys") Collection<String> dedupeKeys);
 }
