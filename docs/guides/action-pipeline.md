@@ -27,13 +27,13 @@ sequenceDiagram
     C->>S: 요청 + Idempotency-Key
     S->>P: create / execute / executeAll
     P->>G: 1. 호실 잠그고 읽기
-    P->>P: 2. 현재 접근 검증 (설정된 경우)
-    P->>P: 3. 같은 키면 처음 결과 돌려주고 끝
-    P->>P: 4. 호실 단위 거절 (정산 완료 등)
-    P->>St: 6. load (지금 상태)
-    P->>R: 7. apply (다음 상태, 규칙 위반이면 예외)
-    P->>St: 8. save
-    P->>P: 9. 행동 기록 (room_seq, hash)
+    P->>P: 1 뒤(접근 검증이 붙은 요청만) 호실 단위 거절 → 현재 접근 검증
+    P->>P: 2. 같은 키면 처음 결과 돌려주고 끝
+    P->>P: 3. 호실 단위 거절 (정산 완료 등)
+    P->>St: 5. load (지금 상태)
+    P->>R: 6. apply (다음 상태, 규칙 위반이면 예외)
+    P->>St: 7. save
+    P->>P: 8. 행동 기록 (room_seq, hash)
     P-->>S: 결과 (대상 ID, replayed)
     S-->>C: 결과
 ```
@@ -209,7 +209,7 @@ public ResponseEntity<CreatedResponse> register(
 
 - `Actor.member(id)`의 측(TENANT/LANDLORD)은 넣지 않아요. pipeline이 `RoomGate`에서 채워요(호실 만들기만 예외).
 - `server`·`ops`는 호실 단위 거절을 건너뛰어요.
-- `link`는 호실 단위 거절을 거쳐요. 링크 열람은 호실이 정산 완료·합류 전 기록이면 link가 pipeline을 부르기 전에 `LINK_INVALID`로 돌려줘요(호실 상태를 드러내지 않게, 06 LINK-2, #83). 문자 그만 받기(`OPT_OUT`)는 호실 상태로 막히지 않아요.
+- `link`는 호실 단위 거절을 거쳐요. 링크 열람은 호실이 정산 완료·합류 전 기록이면 link가 pipeline을 부르기 전에 `LINK_INVALID`로 돌려줘요(호실 상태를 드러내지 않게, 06 LINK-2, #83). 그 뒤 잠그기 전에 바뀐 경우는 접근 검증이 붙은 요청이라 pipeline이 멱등 재생·최근 열람 생략보다 먼저 막고, link가 `LINK_INVALID`로 덮어요(09 3-1 "1 뒤"). 문자 그만 받기(`OPT_OUT`)는 호실 상태로 막히지 않아요.
 - 결과: `create`·`execute`는 `PipelineResult`(`state()` 저장 뒤 상태, `action()` 행동 결과), `executeAll`은 `BatchResult`(`actions()` 행동마다, `first()` 첫 행동). 다시 온 요청이면 `replayed()`가 참이고 `target()`에 처음 만든 ID가 있어요.
 
 ## 5. 테스트 쓰기
