@@ -11,7 +11,8 @@ import org.springframework.stereotype.Component;
 /**
  * 점검 항목의 규칙(03 H "항목"·"빠뜨린 하자 더하기"). 순수 함수다.
  *
- * <p>지금은 작성 중 기준 측의 항목 더하기만 있다(INSP-1a). 상대가 더하기·잠긴 뒤 추가(INSP-1d·1e), 응답·보충은 그 기능을 만들 때 더하고, 그 전까지는
+ * <p><b>현재 구현 범위의 한계</b>: 지금은 작성 중 기준 측의 항목 더하기만 있다. 규칙으로는 누구든 점검이 있는 동안 언제든 더할 수 있고 상대가 더한 것은 기준
+ * 측이 확인한다(03 H "빠뜨린 하자 더하기", 6-6 2번). 상대가 더하기·잠긴 뒤 추가(INSP-1d·1e), 응답·보충은 그 기능을 만들 때 더하고, 그 전까지는
  * {@code INVALID_STATE}다.
  */
 @Component
@@ -40,8 +41,8 @@ public class InspectionItemTransitions implements Transitions<InspectionItemStat
   }
 
   /**
-   * 항목 더하기: 사용자가 적은 하자 하나(부위 + 설명 + 사진, 03 H "항목"). 확인 기다림에서 시작하고 더한 측이 기록한 측이다. 작성 중에는 기준 측만
-   * 더한다(상대는 아직 "작성 중"만 보인다, 06 INSP-1a). 점검 상태를 모르면(재계산) 그때 서버가 확인했다고 본다.
+   * 항목 더하기: 사용자가 적은 하자 하나(부위 + 설명 + 사진, 03 H "항목"). 확인 기다림에서 시작하고 더한 측이 기록한 측이다. 현재 구현 범위의 한계로 작성 중
+   * 기준 측만 받는다(위 클래스 설명). 점검 상태를 모르면(재계산) 그때 서버가 확인했다고 본다.
    */
   private static InspectionItemState add(InspectionItemState now, ActionEntry action) {
     if (now.exists() || action.actorSide() == null) {

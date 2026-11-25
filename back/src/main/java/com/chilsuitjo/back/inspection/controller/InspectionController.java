@@ -59,8 +59,8 @@ public class InspectionController {
   /**
    * 점검 항목 더하기. 처음 성공과 다시 온 요청 모두 201과 만든 항목 ID다.
    *
-   * <p><b>아직 06과 다르다</b>: 지금은 작성 중 기준 측만 더할 수 있다. 상대가 더하기·잠긴 뒤 추가(INSP-1d·1e)와 그 방향 확인 요청은 후속 작업에서
-   * 만든다.
+   * <p><b>현재 구현 범위의 한계</b>(06과 다른 점): 지금은 작성 중 기준 측만 더할 수 있다. 규칙으로는 상대도 작성 중에 더할 수 있다(03 6-6 2번).
+   * 상대가 더하기·잠긴 뒤 추가(INSP-1d·1e)와 그 방향 확인 요청은 후속 작업에서 만든다.
    */
   @PostMapping("/api/inspections/{id}/items")
   public ResponseEntity<CreatedResponse> addItem(

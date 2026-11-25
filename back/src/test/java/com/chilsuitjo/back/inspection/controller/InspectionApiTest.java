@@ -289,7 +289,7 @@ class InspectionApiTest {
   }
 
   @Test
-  void INSP_1a_작성_중에는_상대가_항목을_더할_수_없다() throws Exception {
+  void 현재_구현_범위의_한계로_작성_중에는_상대가_항목을_더할_수_없다() throws Exception {
     UUID inspection = created(start(tenant, "s", "MOVE_IN", null));
 
     addItem(landlord, inspection, "other", "방충망 찢어짐", "[]")

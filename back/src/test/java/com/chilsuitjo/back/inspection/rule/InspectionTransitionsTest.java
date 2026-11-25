@@ -125,7 +125,7 @@ class InspectionTransitionsTest {
   }
 
   @Test
-  void INSP_1a_작성_중에는_상대가_항목을_더할_수_없다() {
+  void 현재_구현_범위의_한계로_작성_중에는_상대가_항목을_더할_수_없다() {
     assertThatThrownBy(() ->
             itemRules.apply(
                 InspectionItemState.newIn(InspectionStatus.DRAFT, PartySide.TENANT),
