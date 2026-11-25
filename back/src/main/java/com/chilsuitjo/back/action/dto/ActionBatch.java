@@ -30,7 +30,7 @@ public final class ActionBatch {
   private final String idempotencyKey;
   private final boolean newRoom;
   private final List<ActionStep<?>> steps = new ArrayList<>();
-  private Runnable beforeReplayCheck = () -> {};
+  private Runnable accessCheck;
 
   private ActionBatch(UUID roomRecordId, Actor actor, String idempotencyKey, boolean newRoom) {
     this.roomRecordId = roomRecordId;
@@ -142,20 +142,34 @@ public final class ActionBatch {
   }
 
   /**
-   * 호실 잠금을 얻은 뒤 멱등 조회보다 먼저 실행할 현재 접근 검증. 처음 실행과 저장된 결과의 replay 모두에 적용한다. 검증은 pipeline 트랜잭션 안에서
-   * 부르므로, 도메인 행 잠금이 필요하면 호실 다음 순서로 얻는다.
+   * 현재 접근 검증(09 3-1 순서 1 뒤). 처음 실행과 같은 키의 재생 모두에서, pipeline이 호실을 잠그고 <b>이 요청의 모든 단계에 호실 단위 거절(순서
+   * 3)을 먼저 한 뒤</b>, 멱등 조회(순서 2)보다 앞에서 부른다. 그래서 재생도 지금 호실 상태와 이 검증을 통과해야 하고, 06 4-10 오류 순서(정산 완료 →
+   * 거주 종료 → …)가 이 검증의 업무 오류보다 앞선다.
+   *
+   * <p>잠금과 지금 대상 확인에만 쓴다(예: 링크 열람이 링크 행을 잠그고 무효 여부를 다시 봄). 호실 상태는 pipeline이 보므로 여기서 판단하지 않는다. 도메인
+   * 행을 잠그면 호실 다음 순서로 얻는다. 한 요청에 하나만 붙일 수 있다(두 번 붙이면 앞의 검증이 사라지므로 개발 오류).
    */
-  public ActionBatch beforeReplayCheck(Runnable check) {
+  public ActionBatch accessCheck(Runnable check) {
     if (newRoom) {
       throw new IllegalStateException("호실을 만드는 요청에는 접근 검증을 붙일 수 없어요");
     }
-    this.beforeReplayCheck = Objects.requireNonNull(check, "check");
+    if (accessCheck != null) {
+      throw new IllegalStateException("접근 검증은 한 요청에 하나만 붙여요");
+    }
+    this.accessCheck = Objects.requireNonNull(check, "check");
     return this;
   }
 
-  /** ActionPipeline이 호실 잠금 뒤, 멱등 조회 전에 부른다. */
-  public void runBeforeReplayCheck() {
-    beforeReplayCheck.run();
+  /** 접근 검증이 붙었는지. pipeline이 호실 단위 거절을 앞당길지 정할 때 본다. */
+  public boolean hasAccessCheck() {
+    return accessCheck != null;
+  }
+
+  /** 접근 검증 실행. {@code ActionPipeline}만 부른다(호실 잠금과 호실 단위 거절 뒤, 멱등 조회 전). */
+  public void runAccessCheck() {
+    if (accessCheck != null) {
+      accessCheck.run();
+    }
   }
 
   public UUID roomRecordId() {

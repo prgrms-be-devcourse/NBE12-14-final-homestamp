@@ -12,7 +12,6 @@ import com.chilsuitjo.back.action.dto.PipelineResult;
 import com.chilsuitjo.back.action.dto.RoomGate;
 import com.chilsuitjo.back.action.dto.SavedState;
 import com.chilsuitjo.back.action.rule.ActionType;
-import com.chilsuitjo.back.action.rule.ActionType.Allow;
 import com.chilsuitjo.back.action.rule.RoomGateReader;
 import com.chilsuitjo.back.action.rule.Transitions;
 import com.chilsuitjo.back.global.common.TargetKind;
@@ -119,10 +118,11 @@ public class ActionPipeline {
    * 순서(호실 먼저)도 어긋난다(#94 리뷰, 링크 열람 경합). 호실을 만드는 요청은 아직 잠글 호실을 모른다.
    */
   private Outcome replayIfDone(ActionBatch batch) {
-    if (!batch.isNewRoom()) {
-      roomGateReader.lockAndRead(batch.roomRecordId(), batch.actor()); // 1
-    }
-    batch.runBeforeReplayCheck();
+    RoomGate gate =
+        batch.isNewRoom()
+            ? null
+            : roomGateReader.lockAndRead(batch.roomRecordId(), batch.actor()); // 1
+    checkAccess(batch, gate);
     List<ActionEntry> done = actionWriter.findRequest(batch.actor().key(), batch.idempotencyKey());
     return done.isEmpty() ? null : replay(batch, done);
   }
@@ -132,7 +132,7 @@ public class ActionPipeline {
     RoomGate gate =
         batch.isNewRoom() ? null : roomGateReader.lockAndRead(roomRecordId, batch.actor()); // 1
 
-    batch.runBeforeReplayCheck();
+    checkAccess(batch, gate); // 1 뒤(접근 검증이 붙은 요청만)
     List<ActionEntry> done =
         actionWriter.findRequest(batch.actor().key(), batch.idempotencyKey()); // 2
     if (!done.isEmpty()) {
@@ -275,25 +275,32 @@ public class ActionPipeline {
   }
 
   /**
-   * 3. 호실 단위 거절. 서버·운영 행동과 호실을 만드는 요청은 건너뛴다. 여럿이 겹치면 정산 완료 → 거주 종료 → 합류 전 기록 → 공유 중단 순서로 앞의 것을
-   * 돌려준다(정산 완료면 거주 종료도 참이라 {@code SETTLED}가 먼저).
+   * 1 뒤. 접근 검증이 붙은 요청은 멱등 조회(2)보다 먼저 모든 단계에 호실 단위 거절(3)을 하고 접근 검증을 부른다. 재생도 지금 호실 상태를 통과해야 하고(링크
+   * 열람의 최근 열람 생략 포함, #89 리뷰), 06 4-10 오류 순서가 접근 검증의 업무 오류보다 앞선다. 잠근 호실은 커밋까지 바뀌지 않아 3단계에서 다시 봐도 결과가
+   * 같다. 접근 검증이 없는 요청은 지금처럼 2 → 3이다.
+   */
+  private static void checkAccess(ActionBatch batch, RoomGate gate) {
+    if (!batch.hasAccessCheck()) {
+      return;
+    }
+    for (ActionStep<?> step : batch.steps()) {
+      checkRoom(gate, batch.actor(), step.type());
+    }
+    batch.runAccessCheck();
+  }
+
+  /**
+   * 3. 호실 단위 거절({@link RoomGate#rejection}). 서버·운영 행동과 호실을 만드는 요청은 건너뛴다. 상세 조회의 {@code
+   * availableActions}도 같은 판단을 쓴다.
    */
   private static void checkRoom(RoomGate gate, Actor actor, ActionType type) {
     if (gate == null || actor.isSystem()) {
       return;
     }
-    if (gate.settled() && !type.allows(Allow.AFTER_SETTLED)) {
-      throw new BusinessException(ErrorCode.SETTLED);
-    }
-    if (gate.ended() && type.blockedAfterEnded()) {
-      throw new BusinessException(ErrorCode.ROOM_ENDED);
-    }
-    if (gate.joinedAway() && !type.allows(Allow.ON_JOINED)) {
-      throw new BusinessException(ErrorCode.JOINED_RECORD);
-    }
-    if (gate.mySharingStopped() && !type.allows(Allow.WHILE_SHARING_STOPPED)) {
-      throw new BusinessException(ErrorCode.SHARING_STOPPED);
-    }
+    gate.rejection(type)
+        .ifPresent(code -> {
+          throw new BusinessException(code);
+        });
   }
 
   /**

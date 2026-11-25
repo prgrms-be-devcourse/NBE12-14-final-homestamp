@@ -150,6 +150,72 @@ class LinkViewServiceTest {
     assertThat(viewActions()).hasSize(1);
   }
 
+  // ---- 최근 열람이 있어도 잠근 뒤의 호실 접근 검사를 건너뛰지 않는다(#89 리뷰) ----
+
+  @Test
+  void 최근_열람이_있어도_그_뒤_정산_완료가_되면_다시_열지_못한다() {
+    Link link = newLink(LinkKind.INVITE, repairCaseId);
+    String token = stub(link);
+    openRoom();
+    content.seedRecord(roomRecordId, repairCaseId, repairRecord(), false);
+    service.view(new LinkViewRequest(token));
+    // 미리 거르는 조회(content.room)는 아직 열린 호실로 읽고, 잠근 뒤의 호실은 정산 완료다
+    fx.gates().putRoom(new RoomGate(roomRecordId, null, true, false, false, true));
+    clock.advance(Duration.ofMinutes(3));
+
+    assertLinkInvalid(() -> service.view(new LinkViewRequest(token)));
+
+    verify(links).countFailedView(link.getId());
+    assertThat(viewActions()).hasSize(1);
+  }
+
+  @Test
+  void 최근_열람이_있어도_그_뒤_합류_전_기록이_되면_다시_열지_못한다() {
+    Link link = newLink(LinkKind.INVITE, repairCaseId);
+    String token = stub(link);
+    openRoom();
+    content.seedRecord(roomRecordId, repairCaseId, repairRecord(), false);
+    service.view(new LinkViewRequest(token));
+    fx.gates().putRoom(new RoomGate(roomRecordId, null, false, true, false, false));
+    clock.advance(Duration.ofMinutes(3));
+
+    assertLinkInvalid(() -> service.view(new LinkViewRequest(token)));
+
+    verify(links).countFailedView(link.getId());
+    assertThat(viewActions()).hasSize(1);
+  }
+
+  @Test
+  void 같은_멱등_구간에_다시_와도_정산_완료_뒤에는_저장된_성공을_재생하지_않는다() {
+    // 최근 열람 확인을 건너뛰어도(구간 0초 전) 같은 키의 재생이 잠근 뒤 호실 검사를 앞지르지 않는다
+    Link link = newLink(LinkKind.INVITE, repairCaseId);
+    String token = stub(link);
+    openRoom();
+    content.seedRecord(roomRecordId, repairCaseId, repairRecord(), false);
+    service.view(new LinkViewRequest(token));
+    fx.gates().putRoom(new RoomGate(roomRecordId, null, true, false, false, true));
+
+    assertLinkInvalid(() -> service.view(new LinkViewRequest(token)));
+
+    assertThat(viewActions()).hasSize(1);
+  }
+
+  @Test
+  void 최근_열람이_있고_호실이_그대로면_다시_열어도_성공하고_한_줄이다() {
+    String token = issue(LinkKind.INVITE, repairCaseId);
+    openRoom();
+    content.seedRecord(roomRecordId, repairCaseId, repairRecord(), false);
+    fx.gates().putRoom(RoomGate.open(roomRecordId, null));
+    service.view(new LinkViewRequest(token));
+    clock.advance(Duration.ofMinutes(3));
+
+    LinkViewResponse again = service.view(new LinkViewRequest(token));
+
+    assertThat(again.kind()).isEqualTo(LinkViewKind.RECORD);
+    assertThat(viewActions()).hasSize(1);
+    verify(links, never()).countFailedView(any());
+  }
+
   @Test
   void 멱등_구간이_1초보다_짧으면_시작할_수_없다() {
     assertThatThrownBy(() ->

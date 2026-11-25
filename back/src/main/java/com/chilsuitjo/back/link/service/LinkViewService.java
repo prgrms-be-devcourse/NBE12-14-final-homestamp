@@ -113,16 +113,20 @@ public class LinkViewService {
   /**
    * 링크 열람 행동. 같은 링크는 {@code link.view.dedupe}(10분) 안에서 한 줄이다(06 4-4, 멱등 키 {@code
    * link-view:<링크>:<구간>}). pipeline이 호실을 잠근 뒤 링크를 잠그고 무효 여부를 다시 확인한다. 멱등 replay도 이 검증 뒤에만 수행한다.
+   *
+   * <p>최근 열람이라 새 줄을 남기지 않는 경우와 같은 키의 재생도 성공으로 끝나기 전에, 접근 검증이 붙은 요청이라 pipeline이 잠근 호실의 지금 상태로 호실 단위
+   * 거절을 먼저 한다({@code ActionBatch.accessCheck}). 미리 거른 {@code content.room}은 잠그기 전 값이라, 그 사이 정산
+   * 완료·합류가 되면 거기서 막히고 {@link #view}가 {@code LINK_INVALID}로 덮는다(#89 리뷰).
    */
   private void recordView(Link link, LinkRoom room) {
     var observedAt = clock.instant();
     long window = observedAt.getEpochSecond() / viewDedupe.toSeconds();
     String key = "link-view:" + link.getId() + ":" + window;
+    Actor actor = Actor.link(link.getId(), room.recipientSide());
     try {
       pipeline.executeAll(
-          ActionBatch.of(
-                  link.getRoomRecordId(), Actor.link(link.getId(), room.recipientSide()), key)
-              .beforeReplayCheck(() -> requireCurrentLink(link, observedAt))
+          ActionBatch.of(link.getRoomRecordId(), actor, key)
+              .accessCheck(() -> requireCurrentLink(link, observedAt))
               .record(
                   ActionType.LINK_VIEW,
                   done -> ActionTarget.of(TargetKind.LINK, link.getId()),

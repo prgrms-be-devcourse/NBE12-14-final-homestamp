@@ -260,7 +260,7 @@ class LinkConcurrencyTest {
 
   private ActionBatch viewBatch(TestLink link, CountDownLatch locked, CountDownLatch continueView) {
     return ActionBatch.of(link.roomId(), Actor.link(link.id(), PartySide.TENANT), "link-view-race")
-        .beforeReplayCheck(() -> {
+        .accessCheck(() -> {
           Link current = links.findByIdForUpdate(link.id()).orElseThrow();
           if (current.isInvalidated()) {
             throw new BusinessException(ErrorCode.LINK_INVALID);
