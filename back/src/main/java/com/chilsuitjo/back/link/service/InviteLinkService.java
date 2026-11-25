@@ -2,6 +2,7 @@ package com.chilsuitjo.back.link.service;
 
 import com.chilsuitjo.back.action.dto.Actor;
 import com.chilsuitjo.back.action.rule.RoomGateReader;
+import com.chilsuitjo.back.action.service.ActionRequestContext;
 import com.chilsuitjo.back.global.common.LinkInvalidReason;
 import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.global.common.Uuids;
@@ -10,7 +11,6 @@ import com.chilsuitjo.back.link.repository.LinkRepository;
 import com.chilsuitjo.back.link.rule.LinkKind;
 import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.service.InviteLinks;
-import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
@@ -32,6 +32,10 @@ import org.springframework.transaction.annotation.Transactional;
  *   <li>다시 쓰기: 호실·자리·기록이 같은 유효한 초대 링크가 있으면 행을 바꾸지 않고 그 ID를 돌려준다. 발급자·번호는 보지 않는다(이유와 번호를 고칠 때의 순서는
  *       {@link InviteLinks#issueInvite})
  *   <li>토큰: 링크 ID로 다시 만들 수 있는 HMAC 토큰의 해시만 저장한다({@link LinkTokenKeys}). 원래 토큰은 만들자마자 버린다
+ *   <li>시각: 만든 시각·무효 시각은 {@code Clock}을 다시 읽지 않고 그 행동의 시각({@link ActionRequestContext#at()})을 쓴다.
+ *       그래서 행동 기록의 {@code created_at}과 같고, 한 행동에서 옛 링크를 닫고 새 링크를 만들면 두 시각이 같다(decisions
+ *       2026-11-19). 부르는 곳이 pipeline {@code save}가 아니면 링크를 만들지 않았어도 바로 {@link
+ *       IllegalStateException}이다
  * </ul>
  *
  * <p>누가 언제 초대할 수 있는지는 보지 않는다(부르는 쪽 규칙). 호실 단계도 보지 않는다: 거주 종료 뒤 초대는 room 규칙이 {@code INVALID_STATE}로,
@@ -44,7 +48,7 @@ public class InviteLinkService implements InviteLinks {
   private final LinkRepository links;
   private final RoomGateReader roomGateReader;
   private final LinkTokenKeys tokenKeys;
-  private final Clock clock;
+  private final ActionRequestContext requestContext;
 
   @Override
   @Transactional(propagation = Propagation.MANDATORY)
@@ -55,6 +59,7 @@ public class InviteLinkService implements InviteLinks {
     Objects.requireNonNull(issuedByMemberId, "issuedByMemberId");
     UUID repairCaseId = recordId(record, TargetKind.REPAIR_CASE);
     UUID inspectionId = recordId(record, TargetKind.INSPECTION);
+    Instant at = requestContext.at();
 
     roomGateReader.lockAndRead(roomRecordId, Actor.server());
     var existing =
@@ -65,7 +70,6 @@ public class InviteLinkService implements InviteLinks {
       return existing.get().getId();
     }
     UUID id = Uuids.v7();
-    Instant now = clock.instant();
     links.saveAndFlush(
         new Link(
             id,
@@ -76,7 +80,7 @@ public class InviteLinkService implements InviteLinks {
             inspectionId,
             tokenKeys.tokenHash(id),
             issuedByMemberId,
-            now));
+            at));
     return id;
   }
 
@@ -85,8 +89,9 @@ public class InviteLinkService implements InviteLinks {
   public int invalidateInvites(UUID roomRecordId, LinkInvalidReason reason) {
     Objects.requireNonNull(roomRecordId, "roomRecordId");
     Objects.requireNonNull(reason, "reason");
+    Instant at = requestContext.at();
     roomGateReader.lockAndRead(roomRecordId, Actor.server());
-    return invalidate(links.lockValid(roomRecordId, LinkKind.INVITE), reason);
+    return invalidate(links.lockValid(roomRecordId, LinkKind.INVITE), reason, at);
   }
 
   @Override
@@ -95,16 +100,16 @@ public class InviteLinkService implements InviteLinks {
     Objects.requireNonNull(roomRecordId, "roomRecordId");
     Objects.requireNonNull(partyId, "partyId");
     Objects.requireNonNull(reason, "reason");
+    Instant at = requestContext.at();
     roomGateReader.lockAndRead(roomRecordId, Actor.server());
     // 돌려줄 집합(그 자리의 초대 링크 전부)과 상태를 바꿀 대상(아직 유효한 것)을 나눈다. 이미 무효인 링크는 다시 저장하지 않아 처음 이유·시각이 남는다.
     List<Link> all = links.lockAllForParty(roomRecordId, partyId, LinkKind.INVITE);
-    invalidate(all.stream().filter(link -> !link.isInvalidated()).toList(), reason);
+    invalidate(all.stream().filter(link -> !link.isInvalidated()).toList(), reason, at);
     return all.stream().map(Link::getId).toList();
   }
 
-  private int invalidate(List<Link> valid, LinkInvalidReason reason) {
-    Instant now = clock.instant();
-    valid.forEach(link -> link.invalidate(reason, now));
+  private static int invalidate(List<Link> valid, LinkInvalidReason reason, Instant at) {
+    valid.forEach(link -> link.invalidate(reason, at));
     return valid.size();
   }
 

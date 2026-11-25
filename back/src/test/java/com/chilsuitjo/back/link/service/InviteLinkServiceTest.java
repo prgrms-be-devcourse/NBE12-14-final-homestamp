@@ -4,6 +4,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.chilsuitjo.back.TestcontainersConfiguration;
+import com.chilsuitjo.back.action.dto.ActionCommand;
+import com.chilsuitjo.back.action.dto.ActionEntry;
+import com.chilsuitjo.back.action.dto.ActionTarget;
+import com.chilsuitjo.back.action.dto.Actor;
+import com.chilsuitjo.back.action.dto.SavedState;
+import com.chilsuitjo.back.action.rule.ActionType;
+import com.chilsuitjo.back.action.rule.Transitions;
+import com.chilsuitjo.back.action.service.ActionPipeline;
+import com.chilsuitjo.back.action.service.ActionRequestContext;
+import com.chilsuitjo.back.action.service.RequestContextTestSupport;
+import com.chilsuitjo.back.action.service.StateStore;
 import com.chilsuitjo.back.global.common.LinkInvalidReason;
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.common.TargetKind;
@@ -15,6 +26,8 @@ import com.chilsuitjo.back.link.dto.LinkViewRequest;
 import com.chilsuitjo.back.link.rule.LinkToken;
 import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.service.InviteLinks;
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -25,6 +38,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -51,6 +65,13 @@ class InviteLinkServiceTest {
   @Autowired private FakeLinkContentSource content;
   @Autowired private JdbcTemplate jdbc;
   @Autowired private PlatformTransactionManager txManager;
+  @Autowired private ActionRequestContext requestContext;
+  @Autowired private ActionPipeline pipeline;
+
+  /** 테스트의 행동 시각. 지금 시계와 일부러 다르게 둔다(링크 시각이 {@code Clock}이 아니라 행동 시각인지 보려고). */
+  private static final Instant AT = Instant.parse("2026-11-20T01:02:03.456789Z");
+
+  private static final Instant LATER = AT.plusSeconds(3600);
 
   @Test
   void 처음_발급하면_링크_ID만_돌려주고_토큰_원문_없이_해시만_남긴다() {
@@ -209,6 +230,147 @@ class InviteLinkServiceTest {
   }
 
   @Test
+  void 만든_시각과_무효_시각은_시계가_아니라_그_행동의_시각이다() {
+    Room room = room();
+
+    UUID link =
+        inTx(() -> inviteLinks.issueInvite(room.id(), room.counterpart(), null, room.issuer()));
+    assertThat(createdAt(link)).isEqualTo(AT);
+
+    inTx(
+        LATER,
+        () ->
+            inviteLinks.invalidateInvites(
+                room.id(), room.counterpart(), LinkInvalidReason.REINVITED));
+    assertThat(invalidatedInstant(link)).isEqualTo(LATER);
+
+    // 이미 무효인 링크는 나중 행동(호실 전체·자리 단위)이 와도 처음 무효 시각이 남는다
+    Instant later = LATER.plusSeconds(60);
+    inTx(later, () -> inviteLinks.invalidateInvites(room.id(), LinkInvalidReason.RESIDENCE_ENDED));
+    inTx(
+        later,
+        () ->
+            inviteLinks.invalidateInvites(
+                room.id(), room.counterpart(), LinkInvalidReason.CONNECTED));
+    assertThat(invalidatedInstant(link)).isEqualTo(LATER);
+    assertThat(reason(link)).isEqualTo("REINVITED");
+  }
+
+  @Test
+  void 실제_pipeline의_한_행동에서_옛_링크_무효와_새_링크_발급은_행동_기록과_같은_시각이다() {
+    Room room = room();
+    UUID old =
+        inTx(() -> inviteLinks.issueInvite(room.id(), room.counterpart(), null, room.issuer()));
+    AtomicReference<List<UUID>> closed = new AtomicReference<>();
+    AtomicReference<UUID> fresh = new AtomicReference<>();
+    // 번호 고치기(room, 아직 없음)가 save 안에서 부를 순서 ②·④만 흉내 낸다
+    StateStore<String> store =
+        new StateStore<>() {
+          @Override
+          public String load(ActionCommand command) {
+            return "";
+          }
+
+          @Override
+          public SavedState save(ActionCommand command, String next) {
+            closed.set(
+                inviteLinks.invalidateInvites(
+                    room.id(), room.counterpart(), LinkInvalidReason.REINVITED));
+            fresh.set(inviteLinks.issueInvite(room.id(), room.counterpart(), null, room.issuer()));
+            return SavedState.unchanged();
+          }
+        };
+    Transitions<String> rules =
+        new Transitions<>() {
+          @Override
+          public String initial() {
+            return "";
+          }
+
+          @Override
+          public String apply(String now, ActionEntry action) {
+            return now;
+          }
+        };
+
+    pipeline.execute(
+        new ActionCommand(
+            room.id(),
+            Actor.member(room.issuer()),
+            ActionType.CHANGE_INVITE_PHONE,
+            "invite-links-" + UUID.randomUUID(),
+            ActionTarget.party(room.counterpart()),
+            null,
+            null,
+            null,
+            null),
+        store,
+        rules);
+
+    Instant actionAt =
+        jdbc.queryForObject(
+                "SELECT created_at FROM record.action WHERE room_record_id = ? AND type = ?",
+                Timestamp.class,
+                room.id(),
+                ActionType.CHANGE_INVITE_PHONE.name())
+            .toInstant();
+    assertThat(closed.get()).containsExactly(old);
+    assertThat(invalidatedInstant(old)).isEqualTo(actionAt);
+    assertThat(createdAt(fresh.get())).isEqualTo(actionAt);
+  }
+
+  @Test
+  void 트랜잭션은_있어도_save_밖이면_개발_오류고_링크가_남지_않는다() {
+    Room room = room();
+    UUID link =
+        inTx(() -> inviteLinks.issueInvite(room.id(), room.counterpart(), null, room.issuer()));
+    TransactionTemplate tx = new TransactionTemplate(txManager);
+
+    assertThatThrownBy(() ->
+            tx.execute(
+                status -> inviteLinks.issueInvite(room.id(), room.mine(), null, room.issuer())))
+        .isInstanceOf(IllegalStateException.class);
+    // 다시 쓸 링크가 있어도(새로 만들지 않아도) 창구가 닫혀 있으면 바로 실패한다
+    assertThatThrownBy(() ->
+            tx.execute(status ->
+                inviteLinks.issueInvite(room.id(), room.counterpart(), null, room.issuer())))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() ->
+            tx.execute(status ->
+                inviteLinks.invalidateInvites(
+                    room.id(), room.counterpart(), LinkInvalidReason.REINVITED)))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() ->
+            tx.execute(status ->
+                inviteLinks.invalidateInvites(room.id(), LinkInvalidReason.RESIDENCE_ENDED)))
+        .isInstanceOf(IllegalStateException.class);
+
+    assertThat(linkCount(room.id())).isEqualTo(1);
+    assertThat(reason(link)).isNull();
+  }
+
+  @Test
+  void 일이_실패해도_행동_시각_창구는_닫혀_다음_요청으로_새지_않는다() {
+    Room room = room();
+
+    assertThatThrownBy(() ->
+            inTx(() -> {
+              inviteLinks.issueInvite(room.id(), room.counterpart(), null, room.issuer());
+              throw new IllegalArgumentException("중간 실패");
+            }))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    assertThat(linkCount(room.id())).isZero();
+    assertThatThrownBy(requestContext::at).isInstanceOf(IllegalStateException.class);
+    // 창구가 남아 있었다면 다시 열 때 "pipeline 안에서 pipeline을 다시 부르지 않아요"로 실패한다
+    UUID link =
+        inTx(
+            LATER,
+            () -> inviteLinks.issueInvite(room.id(), room.counterpart(), null, room.issuer()));
+    assertThat(createdAt(link)).isEqualTo(LATER);
+  }
+
+  @Test
   void 트랜잭션_밖에서_부르면_개발_오류다() {
     Room room = room();
 
@@ -225,10 +387,15 @@ class InviteLinkServiceTest {
     Room room = room();
 
     new TransactionTemplate(txManager)
-        .executeWithoutResult(status -> {
-          inviteLinks.issueInvite(room.id(), room.counterpart(), null, room.issuer());
-          status.setRollbackOnly();
-        });
+        .executeWithoutResult(status ->
+            RequestContextTestSupport.within(
+                requestContext,
+                AT,
+                () -> {
+                  inviteLinks.issueInvite(room.id(), room.counterpart(), null, room.issuer());
+                  status.setRollbackOnly();
+                  return null;
+                }));
 
     assertThat(linkCount(room.id())).isZero();
   }
@@ -306,10 +473,13 @@ class InviteLinkServiceTest {
                 otherRoom.id(), otherRoom.counterpart(), null, otherRoom.issuer()));
     UUID settlement = settlementInvite(room);
 
+    // 처음 무효 시각이 덮이지 않는지 보려고 나중 행동 시각으로 부른다
     List<UUID> returned =
-        inTx(() ->
-            inviteLinks.invalidateInvites(
-                room.id(), room.counterpart(), LinkInvalidReason.REINVITED));
+        inTx(
+            LATER,
+            () ->
+                inviteLinks.invalidateInvites(
+                    room.id(), room.counterpart(), LinkInvalidReason.REINVITED));
 
     assertThat(returned)
         .doesNotHaveDuplicates()
@@ -333,11 +503,14 @@ class InviteLinkServiceTest {
     Object closedAt = invalidatedAt(link);
 
     List<UUID> returned =
-        inTx(() ->
-            inviteLinks.invalidateInvites(
-                room.id(), room.counterpart(), LinkInvalidReason.REINVITED));
+        inTx(
+            LATER,
+            () ->
+                inviteLinks.invalidateInvites(
+                    room.id(), room.counterpart(), LinkInvalidReason.REINVITED));
 
     assertThat(returned).containsExactly(link);
+    assertThat(invalidatedInstant(link)).isEqualTo(AT);
     assertThat(reason(link)).isEqualTo("CONNECTED");
     assertThat(invalidatedAt(link)).isEqualTo(closedAt);
   }
@@ -381,10 +554,16 @@ class InviteLinkServiceTest {
         inTx(() -> inviteLinks.issueInvite(room.id(), room.counterpart(), null, room.issuer()));
 
     new TransactionTemplate(txManager)
-        .executeWithoutResult(status -> {
-          inviteLinks.invalidateInvites(room.id(), room.counterpart(), LinkInvalidReason.REINVITED);
-          status.setRollbackOnly();
-        });
+        .executeWithoutResult(status ->
+            RequestContextTestSupport.within(
+                requestContext,
+                AT,
+                () -> {
+                  inviteLinks.invalidateInvites(
+                      room.id(), room.counterpart(), LinkInvalidReason.REINVITED);
+                  status.setRollbackOnly();
+                  return null;
+                }));
 
     assertThat(reason(link)).isNull();
   }
@@ -463,8 +642,26 @@ class InviteLinkServiceTest {
             e -> assertThat(e.errorCode()).isEqualTo(ErrorCode.LINK_INVALID));
   }
 
+  /** pipeline {@code save} 안처럼 트랜잭션과 행동 시각 창구를 함께 연다(행동 시각은 {@link #AT}). */
   private <T> T inTx(Supplier<T> work) {
-    return new TransactionTemplate(txManager).execute(status -> work.get());
+    return inTx(AT, work);
+  }
+
+  private <T> T inTx(Instant at, Supplier<T> work) {
+    return new TransactionTemplate(txManager)
+        .execute(status -> RequestContextTestSupport.within(requestContext, at, work));
+  }
+
+  private Instant createdAt(UUID link) {
+    return jdbc.queryForObject(
+            "SELECT created_at FROM state.link WHERE id = ?", Timestamp.class, link)
+        .toInstant();
+  }
+
+  private Instant invalidatedInstant(UUID link) {
+    return jdbc.queryForObject(
+            "SELECT invalidated_at FROM state.link WHERE id = ?", Timestamp.class, link)
+        .toInstant();
   }
 
   private int linkCount(UUID room) {
