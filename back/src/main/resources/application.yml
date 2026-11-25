@@ -49,6 +49,7 @@ app:
     verify-code:
     verify-ticket:
     phone-hmac:
+    upload-ticket: # 사진 업로드 표 전용 서명 키(32바이트 이상)
     # 로그인 토큰 키(32바이트 이상, 서로 달라야 함). access-token: 액세스 JWT 서명(HS256), refresh-token: 재발급한 리프레시 토큰 만들기(HMAC).
     # 둘 다 없으면 토큰 기능이 꺼지고 보호된 API는 모두 401이다. prod는 이때 시작하지 않는다
     access-token:
@@ -85,6 +86,20 @@ sms:
 photo:
   max:
     repair: 30
+  s3:
+    bucket: ${PHOTO_S3_BUCKET:}
+    region: ${PHOTO_S3_REGION:ap-northeast-2}
+
+# 사진 업로드 정책 (06 0-1)
+upload:
+  policy:
+    ttl: 5m
+  ticket:
+    ttl: 12h
+  size:
+    max: 10MB
+  daily:
+    member: 100
 
 ---
 spring:
@@ -108,6 +123,7 @@ app:
     verify-code: local-test-only-verify-code-key
     verify-ticket: local-test-only-verify-ticket-key
     phone-hmac: local-test-only-phone-hmac-key
+    upload-ticket: local-test-only-photo-upload-ticket-signing-key
     # SecurityTestSupport.loginAs가 같은 값으로 테스트 토큰을 만든다. 바꾸면 그쪽도 함께 바꾼다
     access-token: local-test-only-access-token-signing-key
     refresh-token: local-test-only-refresh-token-rotation-key
