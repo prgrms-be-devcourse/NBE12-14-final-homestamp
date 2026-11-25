@@ -25,8 +25,9 @@ import org.springframework.stereotype.Component;
  * <p>정산 완료·거주 종료·합류 전 기록·내 공유 중단은 pipeline이 먼저 막는다(09 3-1 순서 3). 거주 종료 뒤 새 수리 건과 수리 시작은 {@code
  * blockedAfterEnded}로 막힌다(06 REP-1c, 03 A "상태별로 할 수 있는 일").
  *
- * <p>지금은 하자 등록(REP-1), 하자 응답·보충(REP-2), 수리 시작(REP-4)·종료 요청·종료 확인·아직 안 됐어요(REP-5a·5b)가 있다. 혼자 종료·다시
- * 열기(REP-5c~e) 등은 그 기능을 만들 때 더한다(#174). 그 전까지 다른 행동은 {@code INVALID_STATE}다.
+ * <p>지금은 하자 등록(REP-1), 하자 응답·보충(REP-2), 수리 시작(REP-4)·종료 요청·종료 확인·아직 안 됐어요(REP-5a·5b), 진행 상황
+ * 묻기·남기기(REP-6b·6c)가 있다. 혼자 종료·다시 열기(REP-5c~e), [상황이 바뀌었어요](REP-6d) 등은 그 기능을 만들 때 더한다(#174, #219).
+ * 그 전까지 다른 행동은 {@code INVALID_STATE}다.
  */
 @Component
 public class RepairTransitions implements Transitions<RepairState> {
@@ -37,8 +38,14 @@ public class RepairTransitions implements Transitions<RepairState> {
   /** 한 기록에 보충하고 다시 확인 요청하는 간격({@code rerequest.interval}, 06 0-1). */
   private final Duration rerequestInterval;
 
-  public RepairTransitions(@Value("${app.rerequest.interval:7d}") Duration rerequestInterval) {
+  /** 한 건에 진행 상황을 다시 묻는 간격(누가 물었든, {@code progress.ask.interval}, 06 0-1). */
+  private final Duration progressAskInterval;
+
+  public RepairTransitions(
+      @Value("${app.rerequest.interval:7d}") Duration rerequestInterval,
+      @Value("${app.progress.ask.interval:7d}") Duration progressAskInterval) {
     this.rerequestInterval = Objects.requireNonNull(rerequestInterval, "rerequestInterval");
+    this.progressAskInterval = Objects.requireNonNull(progressAskInterval, "progressAskInterval");
   }
 
   @Override
@@ -54,6 +61,8 @@ public class RepairTransitions implements Transitions<RepairState> {
    *
    * <p>수리 진행은 시작 전이면 시작, 처리 중이면 종료 요청(종료 확인 요청을 열 수 있을 때), 종료 확인 대기면 요청의 상대 측에 종료 확인·아직 안 됐어요다. 혼자
    * 종료·다시 열기 등은 그 기능을 만들 때 {@link #apply}와 함께 더한다.
+   *
+   * <p>그 뒤에 진행 상황 묻기(시작 전·처리 중, 묻기 요청을 열 수 있고 간격이 지났을 때), 진행 상황 남기기(언제든)가 온다(03 D).
    *
    * @param now 지금 시각(7일 간격 판단). 행동이 아니라 조회라서 부르는 쪽이 {@code Clock}으로 넘긴다
    */
@@ -87,7 +96,30 @@ public class RepairTransitions implements Transitions<RepairState> {
       }
       case DONE -> {}
     }
+    if (canAskProgress(state, now)) {
+      result.add(ActionType.ASK_PROGRESS);
+    }
+    result.add(ActionType.NOTE_PROGRESS);
     return List.copyOf(result);
+  }
+
+  /** 다음에 진행 상황을 물을 수 있는 시각("○월 ○일부터 다시 물을 수 있어요"). 물은 적이 없으면 null. */
+  public Instant nextProgressAskAt(RepairState state) {
+    return state.lastProgressAskAt() == null
+        ? null
+        : state.lastProgressAskAt().plus(progressAskInterval);
+  }
+
+  private boolean canAskProgress(RepairState state, Instant now) {
+    Instant next = nextProgressAskAt(state);
+    return askableStatus(state.status())
+        && !state.progressCheckBlocked()
+        && (next == null || !now.isBefore(next));
+  }
+
+  /** 진행 상황을 물을 수 있는 수리 진행: 시작 전·처리 중(03 D "진행 상황 묻기"). */
+  private static boolean askableStatus(RepairStatus status) {
+    return status == RepairStatus.NOT_STARTED || status == RepairStatus.IN_PROGRESS;
   }
 
   /**
@@ -125,6 +157,8 @@ public class RepairTransitions implements Transitions<RepairState> {
       case REQUEST_CLOSE -> requestClose(now, action);
       case CONFIRM_CLOSE -> confirmClose(now, action);
       case NOT_YET -> notYet(now, action);
+      case ASK_PROGRESS -> askProgress(now, action);
+      case NOTE_PROGRESS -> noteProgress(now, action);
       default -> throw new BusinessException(ErrorCode.INVALID_STATE);
     };
   }
@@ -146,8 +180,10 @@ public class RepairTransitions implements Transitions<RepairState> {
         null,
         null,
         null,
+        null,
         now.canOpenDefectConfirm(),
         now.canOpenCloseConfirm(),
+        now.canOpenProgressCheck(),
         now.hiddenFromCounterpart());
   }
 
@@ -232,6 +268,31 @@ public class RepairTransitions implements Transitions<RepairState> {
       throw new BusinessException(ErrorCode.REASON_REQUIRED);
     }
     return now.withProgress(RepairStatus.IN_PROGRESS, null, null);
+  }
+
+  /**
+   * 진행 상황 묻기(06 REP-6b, 03 D): 당사자 누구든, 시작 전·처리 중에서만, 지금 진행 상황 묻기 요청을 열 수 있을 때만(거주 중, 03 K), 한 건에
+   * {@code progress.ask.interval}에 한 번(누가 물었든, decisions 2026-11-13). 그 안이면 {@code ASKED_RECENTLY}.
+   * 수리 진행·하자 인정은 그대로이고 물은 시각만 남는다. 재계산이라 요청을 열 수 있는지 모르면 그때 서버가 확인했다고 본다.
+   */
+  private RepairState askProgress(RepairState now, ActionEntry action) {
+    requireVisible(now, action);
+    requireSide(action);
+    if (!askableStatus(now.status()) || now.progressCheckBlocked()) {
+      throw new BusinessException(ErrorCode.INVALID_STATE);
+    }
+    AnswerSupport.checkInterval(now.lastProgressAskAt(), action.createdAt(), progressAskInterval);
+    return now.withLastProgressAskAt(action.createdAt());
+  }
+
+  /**
+   * 진행 상황 남기기(06 REP-6, 03 D): 당사자 누구든, 언제든(처리 완료 뒤에도 덧붙이기, REP-5). 글·사진 하나 이상은 서비스가 pipeline 전에
+   * 본다. 덧붙이기라 상태는 그대로다(03 G "덧붙이기"). 거주 종료 뒤에도 정산 완료 전까지 된다(03 D "언제든", #113 3번 답 전까지).
+   */
+  private static RepairState noteProgress(RepairState now, ActionEntry action) {
+    requireVisible(now, action);
+    requireSide(action);
+    return now;
   }
 
   /** 종료 요청에 답하기: 종료 확인 대기 → 요청한 측이 아님(같은 측이면 {@code NOT_COUNTERPART_SIDE}). */
