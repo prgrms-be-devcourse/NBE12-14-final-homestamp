@@ -83,4 +83,22 @@ public class Inspection {
     this.createdAt = Objects.requireNonNull(createdAt, "createdAt");
     this.status = InspectionStatus.DRAFT;
   }
+
+  /**
+   * 상태를 바꾼다(확인 요청 등). 값은 {@code InspectionTransitions.apply}가 정한 다음 상태 그대로다. 동시에 바뀌면
+   * {@code @Version}이 막는다(409 {@code VERSION_CONFLICT}).
+   */
+  public void changeStatus(InspectionStatus next) {
+    this.status = Objects.requireNonNull(next, "next");
+  }
+
+  /**
+   * 상대에게 실제로 보이게 된 시각을 남긴다(decisions 2026-11-18·2026-11-23). 이미 있으면 그대로 둔다: 한 번 보인 기록은 다시 숨겨지지 않아
+   * 처음 시각만 뜻이 있다. 시각은 그 행동의 시각({@code ActionRequestContext.at()})이다.
+   */
+  public void markShown(Instant at) {
+    if (firstShownAt == null) {
+      firstShownAt = Objects.requireNonNull(at, "at");
+    }
+  }
 }

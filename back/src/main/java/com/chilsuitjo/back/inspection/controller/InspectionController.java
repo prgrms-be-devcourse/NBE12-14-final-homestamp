@@ -5,6 +5,8 @@ import com.chilsuitjo.back.global.security.LoginMember;
 import com.chilsuitjo.back.inspection.dto.AddInspectionItemRequest;
 import com.chilsuitjo.back.inspection.dto.InspectionCreated;
 import com.chilsuitjo.back.inspection.dto.InspectionDetail;
+import com.chilsuitjo.back.inspection.dto.InspectionStatusChanged;
+import com.chilsuitjo.back.inspection.dto.InspectionStatusResponse;
 import com.chilsuitjo.back.inspection.dto.StartInspectionRequest;
 import com.chilsuitjo.back.inspection.service.InspectionQueryService;
 import com.chilsuitjo.back.inspection.service.InspectionService;
@@ -69,6 +71,25 @@ public class InspectionController {
       @RequestHeader("Idempotency-Key") String idempotencyKey,
       @Valid @RequestBody AddInspectionItemRequest request) {
     return created(inspections.addItem(id, memberId, idempotencyKey, request));
+  }
+
+  /**
+   * 확인 요청(INSP-1f). 처음 성공과 다시 온 요청 모두 200과 점검의 상태다. 다시 온 요청이면 {@code Idempotent-Replayed: true}를
+   * 붙인다(06 4-0). 상대 측은 작성 중이 {@code inspection.draft.stale-after}를 넘은 뒤에만 보낼 수 있다.
+   *
+   * <p><b>잠정(D 확인 전, #218 ③)</b>: 상대가 연결돼 있지 않으면 상태만 바꾸고 확인 요청은 열지 않는다.
+   */
+  @PostMapping("/api/inspections/{id}/request-confirm")
+  public ResponseEntity<InspectionStatusResponse> requestConfirm(
+      @PathVariable UUID id,
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey) {
+    InspectionStatusChanged changed = inspections.requestConfirm(id, memberId, idempotencyKey);
+    ResponseEntity.BodyBuilder response = ResponseEntity.ok();
+    if (changed.replayed()) {
+      response.header(REPLAYED, "true");
+    }
+    return response.body(new InspectionStatusResponse(changed.id(), changed.status()));
   }
 
   private static ResponseEntity<CreatedResponse> created(InspectionCreated created) {
