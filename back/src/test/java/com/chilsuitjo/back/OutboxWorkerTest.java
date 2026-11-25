@@ -360,6 +360,23 @@ class OutboxWorkerTest {
     assertThat(gateway.sentBatchIds()).isEmpty();
   }
 
+  @Test
+  void 취소한_줄은_작업자가_가져가지_않고_통지도_그대로다() {
+    UUID cancelled = enqueue();
+    UUID pending = enqueue();
+    // 취소 서비스는 아직 없어서(#100 U2 2단계) 두 상태를 직접 바꾼다.
+    jdbc.update(
+        "UPDATE state.outbox SET status = 'CANCELLED' WHERE dedupe_key = ?", "sms:" + cancelled);
+    jdbc.update("UPDATE state.notice SET status = 'CANCELLED' WHERE id = ?", cancelled);
+
+    worker.runOnce();
+    worker.runOnce();
+
+    assertThat(outboxStatus(cancelled)).isEqualTo("CANCELLED");
+    assertThat(notice(cancelled).get("status")).isEqualTo("CANCELLED");
+    assertThat(gateway.sentBatchIds()).doesNotContain(cancelled).contains(pending);
+  }
+
   private OutboxWorker workerWith(RecipientDirectory directory, NoticeRepository repository) {
     return new OutboxWorker(
         outboxRepository,
