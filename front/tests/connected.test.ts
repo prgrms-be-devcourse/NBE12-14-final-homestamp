@@ -44,4 +44,13 @@ describe("HTTP 모드는 연결을 마친 API만 서버로 보내요", () => {
     ).rejects.toMatchObject({ code: "RATE_LIMITED", retryAfter: 42 })
     expect(fetch).toHaveBeenCalledTimes(1)
   })
+  it("법정동 찾기·단계 선택(06 4-3)은 GET만 서버로 보내요", () => {
+    expect(isConnected("GET", "/api/regions/search?q=%EC%B2%AD%EC%9A%B4")).toBe(
+      true,
+    )
+    expect(isConnected("GET", "/api/regions")).toBe(true)
+    expect(isConnected("GET", "/api/regions?parent=11")).toBe(true)
+    expect(isConnected("POST", "/api/regions")).toBe(false)
+    expect(isConnected("GET", "/api/regions/11")).toBe(false)
+  })
 })
