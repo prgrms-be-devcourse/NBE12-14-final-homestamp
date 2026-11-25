@@ -2,6 +2,9 @@ package com.chilsuitjo.back.inspection.controller;
 
 import static com.chilsuitjo.back.global.security.SecurityTestSupport.loginAs;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doCallRealMethod;
+import static org.mockito.Mockito.doThrow;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -41,6 +44,8 @@ import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -51,6 +56,7 @@ import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 
@@ -68,7 +74,7 @@ class InspectionApiTest {
 
   @Autowired private MockMvc mvc;
   @Autowired private JdbcTemplate jdbc;
-  @Autowired private FakeWaitService waits;
+  @MockitoSpyBean private FakeWaitService waits;
   @Autowired private FakeInAppNotifier notifier;
   @Autowired private MutableClock clock;
 
@@ -574,20 +580,61 @@ class InspectionApiTest {
   }
 
   @Test
-  void 잠정_상대가_연결돼_있지_않으면_상태만_바꾸고_요청은_열지_않는다() throws Exception {
-    // D와 확인 전(#218 ③): 연결 전 상대의 링크 알림·혼자 잠금은 뒤 작업에서 정한다
-    jdbc.update(
-        "UPDATE state.party SET status = 'INVITED', member_id = NULL"
-            + " WHERE room_record_id = ? AND side = 'LANDLORD'",
-        room);
+  void 연결_전_상대에게도_확인_요청을_열고_처음_보인_시각은_비워_둔다() throws Exception {
+    // #163 6-1: 03 1-4 "연결 전 상대" ① 링크로 알리고 기다린다. 점검은 연결할 때 보이게 된다(05 2-10)
+    counterpartSeat("INVITED");
     UUID inspection = created(start(tenant, "s", "MOVE_IN", null));
 
-    requestConfirm(tenant, inspection, "not-connected")
+    requestConfirm(tenant, inspection, "invited")
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("REQUESTED"));
+
+    assertThat(confirmRequest(inspection, PartySide.TENANT)).contains(RequestStatus.WAITING);
+    assertThat(inspectionRow(inspection).get("first_shown_at")).isNull();
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"EMPTY", "NUMBER_ONLY", "REJECTED", "WITHDRAWN"})
+  void 받을_상대가_없으면_상태만_바꾸고_요청은_열지_않는다(String seat) throws Exception {
+    // #163 6-1: 상대 없음은 잠금 작업에서 canGoSoloDirectly로, 거절·탈퇴는 지금 열지 않는다
+    counterpartSeat(seat);
+    UUID inspection = created(start(tenant, "s", "MOVE_IN", null));
+
+    requestConfirm(tenant, inspection, "no-counterpart")
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("REQUESTED"));
 
     assertThat(confirmRequest(inspection, PartySide.TENANT)).isEmpty();
     assertThat(inspectionRow(inspection).get("first_shown_at")).isNull();
+  }
+
+  @Test
+  void 확인_요청을_열다_실패하면_점검_상태와_행동_기록이_함께_되돌아간다() throws Exception {
+    // #163 6-1: 요청 생성은 pipeline의 같은 트랜잭션 안(save)이라 실패하면 앞의 상태 변경·행동 기록도 남지 않는다
+    UUID inspection = created(start(tenant, "s", "MOVE_IN", null));
+    doThrow(new IllegalStateException("요청을 열 수 없어요")).when(waits).open(any());
+
+    requestConfirm(tenant, inspection, "fail").andExpect(status().is5xxServerError());
+
+    Map<String, Object> row = inspectionRow(inspection);
+    assertThat(row).containsEntry("status", "DRAFT");
+    assertThat(row.get("first_shown_at")).isNull();
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM record.action WHERE inspection_id = ?"
+                    + " AND type = 'REQUEST_INSPECTION_CONFIRM'",
+                Long.class,
+                inspection))
+        .isZero();
+    assertThat(confirmRequest(inspection, PartySide.TENANT)).isEmpty();
+
+    // 멱등 기록도 남지 않아 같은 키로 다시 보내면 처음 요청처럼 처리된다
+    doCallRealMethod().when(waits).open(any());
+    requestConfirm(tenant, inspection, "fail")
+        .andExpect(status().isOk())
+        .andExpect(header().doesNotExist(InspectionController.REPLAYED))
+        .andExpect(jsonPath("$.status").value("REQUESTED"));
+    assertThat(confirmRequest(inspection, PartySide.TENANT)).contains(RequestStatus.WAITING);
   }
 
   @Test
@@ -795,6 +842,15 @@ class InspectionApiTest {
         side.name(),
         memberId,
         status);
+  }
+
+  /** 임대인(상대) 자리를 회원 연결 없는 상태로 바꾼다. */
+  private void counterpartSeat(String status) {
+    jdbc.update(
+        "UPDATE state.party SET status = ?, member_id = NULL"
+            + " WHERE room_record_id = ? AND side = 'LANDLORD'",
+        status,
+        room);
   }
 
   private void stopSharing(PartySide side, Instant at) {

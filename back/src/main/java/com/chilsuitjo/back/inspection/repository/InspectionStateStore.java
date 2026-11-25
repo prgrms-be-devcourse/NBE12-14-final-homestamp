@@ -157,15 +157,18 @@ public class InspectionStateStore {
     }
 
     /**
-     * 점검을 확인 요청으로 바꾼다. 상대(기준 측의 반대)가 지금 이 점검을 볼 수 있을 때만, 같은 트랜잭션에서 점검 확인 요청을 열고({@code
-     * INSPECTION_CONFIRM}, 요청한 측 = 기준 측) {@code first_shown_at}을 행동 시각으로 채운다(decisions 2026-11-23과
-     * 같은 기준).
+     * 점검을 확인 요청으로 바꾼다. 상태는 상대 자리와 상관없이 바뀌고, 같은 트랜잭션에서 점검 확인 요청({@code INSPECTION_CONFIRM}, 요청한 측 =
+     * 기준 측)을 열지와 {@code first_shown_at}을 채울지는 상대 자리로 나눈다(#163 6-1 D 추천).
      *
      * <ul>
-     *   <li>공유 중단 제한이 살아 있으면 요청을 열지 않는다(03 B "그만둔 사람에게는 새 확인 요청을 만들지 않는다", 불변식 18). 다시 공유하면 그때 요청이
-     *       생긴다(03 1-4 "다시 공유한 뒤 새 확인 요청")
-     *   <li><b>잠정(D 확인 전, #218 ③)</b>: 상대가 연결돼 있지 않으면(상대 없음·연결 전) 요청을 열지 않는다. 연결 전 상대의 링크 알림(03
-     *       1-4)은 #163·링크 발급 뒤, 혼자 잠금은 잠금 작업에서 정한다
+     *   <li>공유 중단 제한이 살아 있으면(어느 쪽이든) 요청을 열지 않는다(03 B "그만둔 사람에게는 새 확인 요청을 만들지 않는다", 불변식 18). 다시 공유하면
+     *       그때 요청이 생긴다(03 1-4 "다시 공유한 뒤 새 확인 요청")
+     *   <li>연결됨: 요청을 열고 {@code first_shown_at}을 행동 시각으로 채운다(05 2-10, decisions 2026-11-23과 같은 기준)
+     *   <li>연결 전({@code INVITED}): 요청을 연다(03 1-4 "연결 전 상대" ① "링크로 알리고 기다린다", 06 ROOM-4c). 점검이 아직
+     *       상대에게 보이지 않아 {@code first_shown_at}은 비워 두고 연결할 때 채운다. 기다림은 요청을 만든 시각이 아니라 첫 통지가 전달된 시각부터
+     *       센다(05 {@code first_notified_at}, D 담당)
+     *   <li>상대 없음({@code EMPTY}·{@code NUMBER_ONLY})·거절·탈퇴: 받을 사람이 없어 요청을 열지 않는다. 혼자 잠금은 잠금 작업에서
+     *       {@code canGoSoloDirectly}로 판단한다
      * </ul>
      *
      * <p>상대 측이 "지금까지 쓴 것으로" 보냈으면 기준 측에 서비스 안 알림을 보낸다(06 4-7). 공유 중단 제한이 살아 있으면 그 뒤의 상대 행동이 보이지 않아야
@@ -180,8 +183,11 @@ public class InspectionStateStore {
       Instant at = requestContext.at();
       RequestTarget target = RequestTarget.of(TargetKind.INSPECTION, row.getId());
       boolean stopped = sharingStopped(room);
-      if (!stopped && room.counterpart().presence() == PartyPresence.CONNECTED) {
+      PartyPresence presence = room.counterpart().presence();
+      if (!stopped && presence == PartyPresence.CONNECTED) {
         row.markShown(at);
+      }
+      if (!stopped && (presence == PartyPresence.CONNECTED || presence == PartyPresence.INVITED)) {
         waits.open(
             new OpenRequestCommand(
                 command.roomRecordId(), RequestKind.INSPECTION_CONFIRM, target, author));
