@@ -19,8 +19,9 @@ export const endpoints = {
   // 4-3 호실과 참여
   // 법정동 찾기·단계 선택(호실 만들기, ROOM-1)
   regionSearch: (q: string) => `/api/regions/search?q=${id(q)}`,
+  // parent가 없을 때만 시·도 주소. 빈 글자도 그대로 보내 서버가 VALIDATION_FAILED로 막게 해요(mock과 같게)
   regions: (parent?: string) =>
-    parent ? `/api/regions?parent=${id(parent)}` : "/api/regions",
+    parent === undefined ? "/api/regions" : `/api/regions?parent=${id(parent)}`,
   rooms: "/api/rooms",
   room: (rid: string) => `/api/rooms/${id(rid)}`,
   timeline: (rid: string) => `/api/rooms/${id(rid)}/timeline`,

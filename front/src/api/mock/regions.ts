@@ -42,16 +42,34 @@ export function searchMockRegions(q: string): Region[] {
     .slice(0, SEARCH_LIMIT)
 }
 
-// GET /api/regions?parent=: 없으면 시·도, 2자리면 시·군·구, 5자리면 읍·면·동(코드 순)
+// 서버(RegionService)와 같이 ASCII 숫자 2자리(시·도)·5자리(시·군·구)만 받아요
+const SIDO_CODE = /^[0-9]{2}$/
+const SIGUNGU_CODE = /^[0-9]{5}$/
+
+// GET /api/regions?parent=: 없으면 시·도, 2자리면 시·군·구, 5자리면 읍·면·동(코드 순). 없는 코드면 빈 목록.
+// parent가 있는데 숫자 2·5자리가 아니면(빈 글자 포함) 서버처럼 VALIDATION_FAILED예요.
 // 세종은 parent=36에 이름이 null인 시·군·구 36110 하나를 줘요(06 4-3, decisions 2026-11-24)
 export function listMockRegions(parent?: string): RegionOption[] {
+  const level =
+    parent === undefined
+      ? "sido"
+      : SIDO_CODE.test(parent)
+        ? "sigungu"
+        : SIGUNGU_CODE.test(parent)
+          ? "dong"
+          : null
+  if (!level)
+    throw new ApiError({
+      status: 400,
+      code: "VALIDATION_FAILED",
+      detail: "입력한 내용을 확인해 주세요",
+    })
   const seen = new Map<string, string | null>()
   for (const r of MOCK_REGIONS) {
-    if (!parent) seen.set(r.code.slice(0, 2), r.sido)
-    else if (parent.length === 2 && r.code.startsWith(parent))
-      seen.set(r.code.slice(0, 5), r.sigungu)
-    else if (parent.length === 5 && r.code.startsWith(parent))
-      seen.set(r.code, r.dong)
+    if (level === "sido") seen.set(r.code.slice(0, 2), r.sido)
+    else if (!r.code.startsWith(parent!)) continue
+    else if (level === "sigungu") seen.set(r.code.slice(0, 5), r.sigungu)
+    else seen.set(r.code, r.dong)
   }
   return [...seen]
     .sort(([a], [b]) => a.localeCompare(b))

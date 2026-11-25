@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { endpoints } from "../src/api/endpoints"
 import { listMockRegions, searchMockRegions } from "../src/api/mock/regions"
 import {
   REGION_QUERY_MAX,
@@ -44,6 +45,29 @@ describe("법정동 고르기(06 4-3, decisions 2026-11-13·2026-11-24)", () => 
       name: "아현동",
     })
     expect(listMockRegions("99")).toEqual([])
+    expect(listMockRegions("99999")).toEqual([])
+  })
+  it("단계 선택: parent가 있는데 숫자 2·5자리가 아니면 서버처럼 VALIDATION_FAILED", () => {
+    // 빈 글자·길이 틀림·글자·10자리 동 코드·전각 숫자·앞뒤 공백 (서버 RegionService와 같은 경우들)
+    for (const parent of [
+      "",
+      "1",
+      "111",
+      "1111",
+      "ab",
+      "1a",
+      "1111010100",
+      "１１",
+      " 11",
+    ])
+      expect(() => listMockRegions(parent), parent).toThrow(
+        expect.objectContaining({ code: "VALIDATION_FAILED", status: 400 }),
+      )
+  })
+  it("HTTP 주소: parent가 없을 때만 시·도, 빈 글자도 그대로 보내 서버가 막게 해요", () => {
+    expect(endpoints.regions()).toBe("/api/regions")
+    expect(endpoints.regions("")).toBe("/api/regions?parent=")
+    expect(endpoints.regions("11")).toBe("/api/regions?parent=11")
   })
   it("세종은 이름 없는 시·군·구 한 칸을 주고, 화면은 그 칸을 저절로 골라요", () => {
     const sigungus = listMockRegions("36")
