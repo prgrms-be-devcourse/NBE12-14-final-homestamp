@@ -303,9 +303,10 @@ class RepairProgressApiTest {
     assertThat(caseRow(caseId)).containsEntry("status", "NOT_STARTED");
     detail(caseId, landlord)
         .andExpect(status().isOk())
-        // 하자 응답은 정산 완료 전까지 되므로(03 A) 그것만 남는다
-        .andExpect(jsonPath("$.availableActions.length()").value(1))
-        .andExpect(jsonPath("$.availableActions[0]").value("respond"));
+        // 하자 응답과 원인 설명은 정산 완료 전까지 되므로(03 A) 그것만 남는다
+        .andExpect(jsonPath("$.availableActions.length()").value(2))
+        .andExpect(jsonPath("$.availableActions[0]").value("respond"))
+        .andExpect(jsonPath("$.availableActions[1]").value("cause-notes"));
   }
 
   // ---- 상세의 버튼과 같은 키 ----
@@ -323,18 +324,18 @@ class RepairProgressApiTest {
     act(caseId, landlord, "request-close", null).andExpect(status().isOk());
     // 요청한 쪽에는 버튼이 없고 상대에게는 종료 확인·아직 안 됐어요가 보인다. 누가 요청했는지는 양쪽 모두 본다
     detail(caseId, landlord)
-        .andExpect(jsonPath("$.availableActions").isEmpty())
+        .andExpect(jsonPath("$.availableActions[0]").value("cause-notes"))
         .andExpect(jsonPath("$.closeRequestedBy").value("LANDLORD"));
     detail(caseId, tenant)
         .andExpect(jsonPath("$.closeRequestedBy").value("LANDLORD"))
-        .andExpect(jsonPath("$.availableActions.length()").value(2))
+        .andExpect(jsonPath("$.availableActions.length()").value(3))
         .andExpect(jsonPath("$.availableActions[0]").value("confirm-close"))
         .andExpect(jsonPath("$.availableActions[1]").value("not-yet"));
     act(caseId, tenant, "confirm-close", null).andExpect(status().isOk());
     detail(caseId, tenant)
         .andExpect(jsonPath("$.status").value("DONE"))
         .andExpect(jsonPath("$.closeRequestedBy").doesNotExist())
-        .andExpect(jsonPath("$.availableActions").isEmpty());
+        .andExpect(jsonPath("$.availableActions[0]").value("cause-notes"));
   }
 
   @Test
