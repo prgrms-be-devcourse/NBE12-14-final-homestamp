@@ -82,7 +82,7 @@
 - 인증 표(`verificationTicket`)는 15분, 가입에 한 번만 쓴다. 같은 표로 다시 가입하면 `CODE_EXPIRED`다
 - 리프레시 쿠키는 `Secure`라서 `http://localhost`에서는 Postman이 다시 보내지 않을 수 있다. 그래서 **로그인**·**토큰 재발급**이 쿠키 값을 `refreshToken`에 저장하고, **토큰 재발급**은 `Cookie` 머리로 직접 보낸다. `Origin: http://localhost:5173`(local `app.origin`)도 머리에 있다. 빠지면 `LOGIN_REQUIRED`다
 - **로그아웃**은 `refreshToken`을 비운다. 그 뒤 재발급은 `LOGIN_REQUIRED`다(지운 쿠키를 다시 보내면 `REFRESH_REUSED`)
-- 공개 API(인증·가입·로그인·재발급)는 요청의 Authorization을 **No Auth**로 둔다
+- 공개 API(인증·가입·로그인·재발급·비밀번호 재설정)는 요청의 Authorization을 **No Auth**로 둔다
 - **내 정보**는 `bearer_token_15h5`의 회원을 돌려준다. 개발용 토큰 회원(DB에 바로 넣은 행)은 `email`·`displayName`·`phone`이 `null`이고, 가입한 회원으로 로그인한 뒤 보내면 값이 찬다. 토큰은 맞아도 그 회원 행이 DB에 없으면 401 `LOGIN_REQUIRED`다(위 "처음 한 번" 2번)
 - **내 정보 수정**은 보낸 칸(`displayName`·`smsEnabled`)만 바꾸고 바뀐 내 정보를 돌려준다. 문자 설정만 바꿀 때는 `{"smsEnabled": false}`만 보낸다. 개발용 토큰 회원도 이름을 넣으면 그 뒤 **내 정보**에 보인다
 - **비밀번호 변경**은 가입한 회원으로 **로그인**한 뒤 보낸다(개발용 토큰 회원은 비밀번호가 없어 `PASSWORD_MISMATCH`). 204면 다른 기기(다른 로그인)의 리프레시 토큰이 폐기되고, 지금 `refreshToken`은 그대로 쓴다. 다시 보내려면 본문의 두 비밀번호를 바꿔 넣는다
