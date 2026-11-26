@@ -41,8 +41,8 @@ class ResponseRequestTransitionTest extends SchemaTestSupport {
     ResponseRequest withdrawn = save(room, RequestKind.CLOSE_CONFIRM, repairCase(room));
     ResponseRequest closed = save(room, RequestKind.PROGRESS_CHECK, repairCase(room));
 
-    answered.answer();
-    withdrawn.withdraw();
+    answered.answer(PartySide.LANDLORD);
+    withdrawn.withdraw(PartySide.TENANT);
     closed.close(ClosedReason.ROOM_ENDED, CLOSED_AT);
     entityManager.flush();
     entityManager.clear();
@@ -67,7 +67,7 @@ class ResponseRequestTransitionTest extends SchemaTestSupport {
 
     ResponseRequest unconfirmed = requests.findById(request.getId()).orElseThrow();
     assertThat(unconfirmed.isOpen()).isTrue();
-    unconfirmed.answer();
+    unconfirmed.answer(PartySide.LANDLORD);
     entityManager.flush();
 
     assertThat(row(request)).containsEntry("status", "ANSWERED");
@@ -77,13 +77,37 @@ class ResponseRequestTransitionTest extends SchemaTestSupport {
   void 끝난_요청은_다시_바꾸지_않는다() {
     UUID room = room();
     ResponseRequest request = save(room, RequestKind.DEFECT_CONFIRM, repairCase(room));
-    request.answer();
+    request.answer(PartySide.LANDLORD);
 
-    assertThatThrownBy(request::answer).isInstanceOf(IllegalStateException.class);
-    assertThatThrownBy(request::withdraw).isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> request.answer(PartySide.LANDLORD))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> request.withdraw(PartySide.TENANT))
+        .isInstanceOf(IllegalStateException.class);
     assertThatThrownBy(() -> request.close(ClosedReason.ROOM_ENDED, CLOSED_AT))
         .isInstanceOf(IllegalStateException.class);
     assertThat(request.getStatus()).isEqualTo(RequestStatus.ANSWERED);
+  }
+
+  @Test
+  void 요청한_측은_답하지_못하고_상대는_거두지_못한다() {
+    UUID room = room();
+    ResponseRequest request = save(room, RequestKind.DEFECT_CONFIRM, repairCase(room));
+
+    assertThatThrownBy(() -> request.answer(PartySide.TENANT))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> request.withdraw(PartySide.LANDLORD))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(request.getStatus()).isEqualTo(RequestStatus.WAITING);
+  }
+
+  @Test
+  void 끝난_제안은_다시_기다림으로_돌리지_않는다() {
+    UUID room = room();
+    ResponseRequest proposal = save(room, RequestKind.PROPOSAL, repairCase(room));
+    proposal.close(ClosedReason.AMOUNT_CHANGED, CLOSED_AT);
+
+    assertThatThrownBy(proposal::rewait).isInstanceOf(IllegalStateException.class);
+    assertThat(proposal.getStatus()).isEqualTo(RequestStatus.CLOSED);
   }
 
   @Test
@@ -148,7 +172,7 @@ class ResponseRequestTransitionTest extends SchemaTestSupport {
     UUID room = room();
     RequestTarget target = repairCase(room);
     ResponseRequest old = save(room, RequestKind.CLOSE_CONFIRM, target);
-    old.answer();
+    old.answer(PartySide.LANDLORD);
     entityManager.flush(); // 새 WAITING을 넣기 전에 옛 요청이 끝나 있어야 V1 유니크에 걸리지 않음
     ResponseRequest newer =
         requests.saveAndFlush(

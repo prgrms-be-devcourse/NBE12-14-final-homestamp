@@ -30,9 +30,10 @@ import org.hibernate.annotations.UuidGenerator;
  * <p>대상은 V1의 대상 칸 여덟 개 중 하나이거나, 모두 비어 있으면 호실 기록 자체다(예: 거주 종료 요청). 요청 종류와 대상 종류의 짝은 여기서 검사하지
  * 않는다(정해지지 않은 규칙이 있음. 예: 정산 끝내기의 대상이 호실 기록인지 정산인지, #117).
  *
- * <p>상태는 열린 요청(기다림·미확인)에서만 바뀐다: 답함({@link #answer})·거둠({@link #withdraw})·닫힘({@link #close})·제안
- * 바꾸기로 다시 기다림({@link #rewait}). 끝난 요청(답함·거둠·닫힘)은 다시 열지 않는다(03 1-4 "닫힌 요청을 자동으로 되살리지 않는다"). 미확인으로
- * 바꾸기·기한 정하기는 기다림 타이머(d3)와 전달 확인 연동에서 더한다. 어떤 요청을 바꿀지(대상·종류·방향)는 {@code WaitService}가 고른다.
+ * <p>상태는 열린 요청(기다림·미확인)에서만 바뀐다: 답함({@link #answer(PartySide)})·거둠({@link
+ * #withdraw(PartySide)})·닫힘({@link #close})·제안 바꾸기로 다시 기다림({@link #rewait}). 끝난 요청(답함·거둠·닫힘)은 다시 열지
+ * 않는다(03 1-4 "닫힌 요청을 자동으로 되살리지 않는다"). 미확인으로 바꾸기·기한 정하기는 기다림 타이머(d3)와 전달 확인 연동에서 더한다. 어떤 요청을
+ * 바꿀지(대상·종류·방향)는 {@code WaitService}가 고른다.
  */
 @Entity
 @Table(schema = "state", name = "response_request")
@@ -134,15 +135,27 @@ public class ResponseRequest {
     return status.isOpen();
   }
 
-  /** 상대가 답했다. 기한 칸은 그대로 둔다(작업자는 {@code WAITING}만 보므로 재통지·미확인이 다시 걸리지 않음). */
-  public void answer() {
+  /**
+   * 상대가 답했다. 요청한 측이 부르면 답이 아니라 거절한다. 기한 칸은 그대로 둔다(작업자는 {@code WAITING}만 보므로 재통지·미확인이 다시 걸리지 않음).
+   * 미확인 뒤 늦은 답이어도 {@code solo_reason}은 지우지 않는다(혼자 진행이 열렸던 사실. 혼자 진행 판단은 상태를 먼저 본다).
+   *
+   * <p>답이 없는 요청·끝난 요청에 "아무것도 하지 않음"({@code WaitService#answered})은 고르는 쪽({@code WaitService})이 지킨다.
+   * 여기 온 요청은 열려 있어야 한다.
+   */
+  public void answer(PartySide answeredBySide) {
     requireOpen();
+    if (answeredBySide == requestedBySide) {
+      throw new IllegalStateException("요청한 측은 자기 요청에 답하지 않아요");
+    }
     status = RequestStatus.ANSWERED;
   }
 
-  /** 요청한 측이 거뒀다({@code WITHDRAWN}, decisions 2026-11-26). */
-  public void withdraw() {
+  /** 요청한 측이 거뒀다({@code WITHDRAWN}, decisions 2026-11-26). 요청한 측만 거둘 수 있다. */
+  public void withdraw(PartySide withdrawnBySide) {
     requireOpen();
+    if (withdrawnBySide != requestedBySide) {
+      throw new IllegalStateException("요청한 측만 거둘 수 있어요");
+    }
     status = RequestStatus.WITHDRAWN;
   }
 
