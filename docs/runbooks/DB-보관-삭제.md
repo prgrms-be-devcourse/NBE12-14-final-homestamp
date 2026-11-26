@@ -21,7 +21,7 @@ V1은 부모 삭제 보호·수신 거부 UPDATE 금지·회원 확인 기록 �
 스키마 배치는 05 0장 「DB 스키마와 권한」이 원본이다. 실제 역할 이름은 배포에서 정하며 V1은 운영 역할을 만들거나 GRANT하지 않는다.
 
 - 소유자 역할로 `ALTER DEFAULT PRIVILEGES FOR ROLE <소유자> IN SCHEMA record GRANT SELECT, INSERT ON TABLES TO <앱>`을 설정한다. 새 `state` 테이블에는 SELECT·INSERT만 기본 부여하고, UPDATE·DELETE는 분류된 기존 C 테이블에 명시적으로 부여한다. `log`에는 INSERT를 기본 부여한다. 이미 마이그레이션된 테이블에는 `GRANT ... ON ALL TABLES IN SCHEMA ...`와 객체별 C 권한을 함께 적용한다.
-- `state.part_template`·`state.region`은 고정 조회 데이터이므로 앱의 INSERT·UPDATE·DELETE를 회수하고 SELECT만 남긴다. `state.sms_opt_out`은 SELECT·INSERT·DELETE만 허용한다. 체인 머리 `state.action_chain_head`(V10)는 SELECT·INSERT·UPDATE만 허용하고 DELETE는 주지 않는다(지우면 다음 행동이 지운 번호를 다시 쓸 수 있음, 05 2-10). 호실 통째 삭제 때 CASCADE로만 지워진다.
+- `state.part_template`·`state.region`은 고정 조회 데이터이므로 앱의 INSERT·UPDATE·DELETE를 회수하고 SELECT만 남긴다. `state.sms_opt_out`은 SELECT·INSERT·DELETE만 허용한다. 체인 머리 `state.action_chain_head`(V9)는 SELECT·INSERT·UPDATE만 허용하고 DELETE는 주지 않는다(지우면 다음 행동이 지운 번호를 다시 쓸 수 있음, 05 2-10). 호실 통째 삭제 때 CASCADE로만 지워진다.
 - 앱에 `record`, `state`, `log` USAGE를 주고, 스키마 CREATE·public 접근·소유자 멤버십은 주지 않는다. Flyway는 소유자로 실행하며 이력은 `public`, 관리 스키마는 `public,record,state,log`다.
 - 삭제 작업 역할은 필요한 `record`·`state`·`log` 조회, 감사·아웃박스 INSERT와 `state.purge_room_record(uuid)` EXECUTE만 받는다. 앱에는 이 함수 EXECUTE가 없다.
 - 사람별 읽기 전용 역할(Human)은 장애 대응 조회에 필요한 범위만 읽는다. 쓰기·TRUNCATE·함수 실행·다른 역할 전환은 없다.

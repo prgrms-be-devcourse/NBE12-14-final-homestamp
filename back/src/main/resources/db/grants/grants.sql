@@ -382,7 +382,7 @@ BEGIN
         app_role);
     EXECUTE format('GRANT DELETE ON TABLE state.sms_opt_out TO %I', app_role);
     EXECUTE format('GRANT UPDATE ON TABLE state.room_record TO %I', app_role);
-    -- Chain head (05 2-3, V10): the app advances last_seq/last_hash but never deletes it, so a deleted last action
+    -- Chain head (05 2-3, V9): the app advances last_seq/last_hash but never deletes it, so a deleted last action
     -- cannot make the next action reuse its room_seq. It goes away only with the whole room (CASCADE from purge).
     EXECUTE format('GRANT UPDATE ON TABLE state.action_chain_head TO %I', app_role);
     EXECUTE format('REVOKE INSERT, UPDATE, DELETE ON TABLE state.part_template, state.region FROM %I', app_role);

@@ -14,7 +14,7 @@ import lombok.NoArgsConstructor;
 import org.hibernate.annotations.UuidGenerator;
 
 /**
- * 호실 하나의 행동 체인 머리({@code state.action_chain_head}, 05 2-3, C 테이블, V10). 지금까지 쓴 가장 큰 {@code
+ * 호실 하나의 행동 체인 머리({@code state.action_chain_head}, 05 2-3, C 테이블, V9). 지금까지 쓴 가장 큰 {@code
  * room_seq}와 그 행동의 해시다. 그 행동이 탈퇴로 지워져도 그대로 두어, 다음 행동이 지운 번호를 다시 쓰지 않게 한다(05 2-10, #128).
  *
  * <p>행동 기록 저장({@code JpaActionWriter})만 읽고 쓴다. 바뀌는 칸은 {@code last_seq}·{@code last_hash}·{@code
