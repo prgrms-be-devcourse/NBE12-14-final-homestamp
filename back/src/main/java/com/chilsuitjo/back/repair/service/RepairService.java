@@ -180,9 +180,6 @@ public class RepairService {
   }
 
   /**
-   * 수리 건의 호실. 없는 ID면 {@code NOT_FOUND}. 남의 수리 건도 pipeline 잠금의 당사자 확인에서 같은 {@code NOT_FOUND}가 된다.
-   */
-  /**
    * 수리비 부담 제안(06 MONEY-3). 이 수리 건의 호실을 찾아 돈 안건 장치에 넘긴다(decisions 2026-11-17 "이 호실의 수리 건인지 확인한 뒤
    * 부른다"). 없는 수리 건이면 {@code NOT_FOUND}이고, 그 호실 당사자가 아니면 pipeline 잠금에서 {@code NOT_FOUND}다. 줄 모양·기다리는
    * 안·합계 검사는 {@code ProposalService.propose}가 한다. 돈은 수리 진행과 따로라 수리 상태는 보지 않는다.
@@ -382,6 +379,9 @@ public class RepairService {
         result.action().replayed());
   }
 
+  /**
+   * 수리 건의 호실. 없는 ID면 {@code NOT_FOUND}. 남의 수리 건도 pipeline 잠금의 당사자 확인에서 같은 {@code NOT_FOUND}가 된다.
+   */
   private UUID roomOf(UUID repairCaseId) {
     return cases
         .findRoomRecordIdById(repairCaseId)
