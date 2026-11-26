@@ -203,9 +203,6 @@ class RepairProgressNoteApiTest {
         .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
     note(caseId, tenant, "{\"text\":\"x\",\"uploadTickets\":[\"\"]}")
         .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
-    // [상황이 바뀌었어요]는 다음 PR(#219). 켜고 보내면 확인 요청 없이 남기지 않게 막는다
-    note(caseId, tenant, "{\"text\":\"더 커졌어요\",\"asksCheck\":true}")
-        .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
 
     assertThat(countActions(caseId, "NOTE_PROGRESS")).isZero();
     assertThat(noteCount(caseId)).isZero();

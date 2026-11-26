@@ -39,6 +39,16 @@ public interface WaitService {
   void answered(RequestTarget target, RequestKind kind, PartySide answeredBySide);
 
   /**
+   * 요청한 측이 요청을 거뒀다. 예: 고친 측이 그 기록의 기다리던 고친 내용을 모두 거둬 상대가 답할 것이 남지 않음(03 G "고친 쪽이 답하기 전에 거둠", 05 2-4
+   * "대기 중인 고친 내용이 0개가 되면"). 그 대상·종류의 열린 요청(기다림·미확인)이 이 측이 보낸 것이면 "거둠"({@code WITHDRAWN})으로 닫고 대기
+   * 재통지를 취소한다(#258 리뷰).
+   *
+   * <p>열린 요청이 없거나, 이미 닫혔거나, 요청한 측이 아니면 아무것도 하지 않는다. 닫힌 요청을 다시 열지 않는다. 언제 거둔 것으로 볼지(남은 내용이 없는지)는 부르는
+   * 도메인이 정한다.
+   */
+  void withdrawn(RequestTarget target, RequestKind kind, PartySide requestedBySide);
+
+  /**
    * 보충·다시 요청([보충하고 다시 확인 요청]·[사진 더해서 다시 요청], 03 "응답과 그 뒤"). 7일 제한·근거 필수는 도메인 규칙({@code
    * AnswerSupport})이 먼저 본다. [상황이 바뀌었어요]는 진행 상황마다 새 상황 확인이라 {@link #open}이다.
    *
