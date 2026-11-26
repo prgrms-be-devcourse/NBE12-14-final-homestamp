@@ -103,6 +103,20 @@ public class Member {
   }
 
   /**
+   * 표시용 이름을 바꾼다(06 ACC-4). 신원 칸이라 값은 행동 기록에 남기지 않는다(05 0장).
+   *
+   * @param displayName 입력 규칙은 부르는 쪽({@code MeUpdateRequest})이 먼저 본다
+   */
+  public void changeDisplayName(String displayName) {
+    this.displayName = Objects.requireNonNull(displayName);
+  }
+
+  /** 문자 설정을 켜거나 끈다(06 ACC-6, 03 K "회원의 문자 설정"). 번호는 그대로 둔다. */
+  public void changeSmsEnabled(boolean smsEnabled) {
+    this.smsEnabled = smsEnabled;
+  }
+
+  /**
    * 다른 계정이 이 번호를 인증해 이 계정의 인증 번호와 인증 시각을 비운다(06 ACC-3a, 05 {@code member}: 이전 계정의 {@code phone}을
    * NULL로). 이미 연결된 호실(당사자 자리)은 건드리지 않는다.
    */

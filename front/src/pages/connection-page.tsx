@@ -1,9 +1,9 @@
-import { Link2, Plus } from "lucide-react"
+import { Link2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Panel, Status } from "@/components/common/blocks"
 import { maskPhone } from "@/lib/phone"
 import { other, type Role, type Room } from "@/data/demo"
-import { activeInviteLinks } from "@/lib/workflows"
+import { activeInviteLinks, connectionText } from "@/lib/workflows"
 import { sideText } from "@/lib/words"
 import type { RoomAction } from "@/api/actions"
 
@@ -34,16 +34,18 @@ export function ConnectionPage({
         </div>
         <div className="connection-line">
           <Link2 size={26} />
-          <Status>{room.connection}</Status>
+          <Status>{connectionText(room)}</Status>
         </div>
         <div className="person-card">
           <span className="avatar counterpart">상대</span>
           <h3>{sideText(other(role))}</h3>
-          <Status>{room.connection}</Status>
+          <Status>{connectionText(room)}</Status>
           <p>
-            {room.connection === "연결됨"
-              ? "휴대폰 인증 후 연결된 계정"
-              : "초대 후 가입·연결 확인이 필요해요"}
+            {connectionText(room) === "상대 탈퇴"
+              ? "탈퇴한 계정 · 함께 남긴 기록은 그대로 남아요"
+              : room.connection === "연결됨"
+                ? "휴대폰 인증 후 연결된 계정"
+                : "초대 후 가입·연결 확인이 필요해요"}
           </p>
         </div>
       </div>
@@ -86,12 +88,6 @@ export function ConnectionPage({
               초대 번호 {maskPhone(room.phone || "")} · 상대가 이 번호로
               가입·인증한 계정에서 연결을 수락하면 연결돼요.
             </p>
-          )}
-          {room.connection === "연결됨" && (
-            <Button variant="outline" onClick={() => open("room")}>
-              <Plus />
-              상대 없이 새 호실 시작하기
-            </Button>
           )}
         </div>
       )}

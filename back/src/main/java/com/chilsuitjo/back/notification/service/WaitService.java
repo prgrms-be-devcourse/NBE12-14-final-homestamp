@@ -39,6 +39,16 @@ public interface WaitService {
   void answered(RequestTarget target, RequestKind kind, PartySide answeredBySide);
 
   /**
+   * 요청한 측이 요청을 거뒀다. 예: 고친 측이 그 기록의 기다리던 고친 내용을 모두 거둬 상대가 답할 것이 남지 않음(03 G "고친 쪽이 답하기 전에 거둠", 05 2-4
+   * "대기 중인 고친 내용이 0개가 되면"). 그 대상·종류의 열린 요청(기다림·미확인)이 이 측이 보낸 것이면 "거둠"({@code WITHDRAWN})으로 닫고 대기
+   * 재통지를 취소한다(#258 리뷰).
+   *
+   * <p>열린 요청이 없거나, 이미 닫혔거나, 요청한 측이 아니면 아무것도 하지 않는다. 닫힌 요청을 다시 열지 않는다. 언제 거둔 것으로 볼지(남은 내용이 없는지)는 부르는
+   * 도메인이 정한다.
+   */
+  void withdrawn(RequestTarget target, RequestKind kind, PartySide requestedBySide);
+
+  /**
    * 보충·다시 요청([보충하고 다시 확인 요청]·[사진 더해서 다시 요청], 03 "응답과 그 뒤"). 7일 제한·근거 필수는 도메인 규칙({@code
    * AnswerSupport})이 먼저 본다. [상황이 바뀌었어요]는 진행 상황마다 새 상황 확인이라 {@link #open}이다.
    *
@@ -82,6 +92,30 @@ public interface WaitService {
    */
   boolean canOpen(UUID roomRecordId, RequestKind kind);
 
-  /** 상대 응답 없이 요청한 측이 혼자 진행할 수 있나와 그 이유(03 1-4 ①~⑥). */
+  /**
+   * 상대 응답 없이 요청한 측이 혼자 진행할 수 있나와 그 이유(03 1-4 ①~⑥). <b>그 요청</b>(대상 + 종류 + 요청한 측)을 기준으로 본다. 예: 정산 끝내기
+   * 요청이 미확인이 된 뒤의 혼자 끝내기(06 SET-5d). 수리 종료는 이 함수를 쓰지 않는다(물을 상대가 있으면 미확인이 돼도 혼자 종료하지 않음, #113 ③').
+   * 요청 없이 바로 혼자 진행은 {@link #canGoSoloDirectly}다.
+   */
   SoloCheck canGoSolo(SoloQuery query);
+
+  /**
+   * 요청 없이 바로 혼자 진행할 수 있나(03 1-4 "이미 혼자 진행 가능한 건의 종료", 06 REP-5e, #113 Q5). 판단은 {@code SoloRule}이고
+   * 상대 자리는 {@code CounterpartReader}로 읽는다. 도메인은 혼자 진행 이유를 직접 계산하지 않는다(03 1-1 "함수 하나").
+   *
+   * <p>{@code query.kind}는 혼자 진행이 대신하는 요청 종류(수리 종료면 {@code CLOSE_CONFIRM}), {@code
+   * query.requestedBySide}는 행동하는 측이다. 그 종류의 요청이 지금 열려 있는지는 보지 않는다(그건 {@link #canGoSolo}). 요청을 만들지
+   * 않는다.
+   *
+   * <p>부르는 법: pipeline이 호실을 잠근 뒤 {@code save} 안에서 부른다. 버튼 계산({@code availableActions})에도 쓰지만 그 결과를
+   * 저장해 권한으로 쓰지 않고 실행할 때 다시 부른다. 허용이면 실행할 때 받은 {@code reason}을 행동 기록에 남긴다({@code CLOSE_ALONE}의
+   * {@code solo_reason}).
+   *
+   * <p>부르는 쪽 책임: 그 건의 상태, 행동하는 측의 권한, 거주 종료·정산 완료 뒤인지, {@code since}가 있으면 그 시각 뒤 이 건에서 행동하는 측에게 보이는
+   * 상대 행동이 있는지({@link SoloCheck}). 이 메서드는 상대 쪽 사정만 본다.
+   *
+   * <p>지금 할 수 없거나 근거·시각을 확인할 수 없으면 {@code allowed=false}다. 판단 자체를 할 수 없으면 예외다(호실이 없으면 {@code
+   * NOT_FOUND}, DB 오류). 불가나 가능으로 바꾸지 않는다.
+   */
+  SoloCheck canGoSoloDirectly(SoloQuery query);
 }
