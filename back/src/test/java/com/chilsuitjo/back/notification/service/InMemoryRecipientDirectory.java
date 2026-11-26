@@ -9,8 +9,8 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 테스트용 번호 조회. 빈으로 등록하지 않아 main 빈(지금은 {@link FakeRecipientDirectory}, 나중에 room 실제 구현)과 부딪히지 않는다. 필요한
- * 테스트가 직접 만들거나, Spring 테스트면 그 테스트의 설정에서 {@code @Primary} 빈으로 넣는다.
+ * 테스트용 번호 조회. 빈으로 등록하지 않아 main 빈(room 실제 구현 {@code JpaRecipientDirectory})과 부딪히지 않는다. 필요한 테스트가 직접
+ * 만들거나, Spring 테스트면 그 테스트의 설정에서 {@code @Primary} 빈으로 넣는다.
  *
  * <p>{@link #resolve}는 정해 둔 결과만 돌려주고, 정해 두지 않은 자리는 예외다({@code Unavailable}로 바꾸지 않음). main 가짜가 지워져도
  * 아웃박스 테스트가 이것으로 그대로 돈다.
