@@ -23,6 +23,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -30,7 +31,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 내려받기 목록(06 DL-1). 행동 기록만으로 만든다: 사진 지문값은 행동 payload의 {@code photos}(05 2-3 "사진 지문은 행동 payload에"),
- * 지운 사진은 {@code ERASE_PHOTO} 행동에서 읽는다. 그래서 사진 창구를 부르지 않는다. 원본 주소는 화면이 묶음마다 따로 받는다(#246).
+ * 지운 사진은 {@code ERASE_PHOTO} 행동에서 읽는다. 그래서 사진 창구를 부르지 않는다. 원본 5분 주소는 화면이 묶음마다 {@code POST
+ * /api/photos/view-urls}({@code variant: ORIGINAL})로 받는다(#246).
  */
 @Service
 @RequiredArgsConstructor
@@ -57,10 +59,11 @@ public class DownloadService {
   public RoomDownload download(UUID roomRecordId, UUID memberId) {
     RoomAccess viewer = access.require(roomRecordId, memberId);
     Instant cutoff = RecordVisibility.cutoff(parties.read(roomRecordId, viewer.side()));
-    List<ActionEntry> visible =
-        RecordVisibility.select(actions.findByRoom(roomRecordId), viewer.side(), cutoff);
+    List<ActionEntry> all = actions.findByRoom(roomRecordId);
+    List<ActionEntry> visible = RecordVisibility.select(all, viewer.side(), cutoff);
 
-    Map<UUID, Erased> erased = erasedPhotos(visible);
+    // 지운 사진은 기준 시각 뒤에 지웠어도 양쪽에 고정 표시다(03 3-1 "지운 사진", 불변식 16). 그래서 걸러지기 전 전체에서 찾는다
+    Map<UUID, Erased> erased = erasedPhotos(all);
     List<RecordAction> recordActions = new ArrayList<>();
     Map<UUID, RecordPhoto> photos = new LinkedHashMap<>();
     for (ActionEntry entry : visible) {
@@ -114,10 +117,10 @@ public class DownloadService {
     return List.copyOf(result);
   }
 
-  /** 보이는 {@code ERASE_PHOTO} 행동으로 지운 사진. 운영이 지웠으면(측 없음) 측을 비운다(불변식 16). */
-  private static Map<UUID, Erased> erasedPhotos(List<ActionEntry> visible) {
+  /** {@code ERASE_PHOTO} 행동으로 지운 사진. 운영이 지웠으면(측 없음) 측을 비운다(불변식 16). */
+  private static Map<UUID, Erased> erasedPhotos(List<ActionEntry> all) {
     Map<UUID, Erased> erased = new HashMap<>();
-    for (ActionEntry entry : visible) {
+    for (ActionEntry entry : all) {
       if (entry.type() == ActionType.ERASE_PHOTO
           && entry.target() != null
           && entry.target().kind() == TargetKind.PHOTO) {
@@ -155,8 +158,8 @@ public class DownloadService {
       Map<?, ?> photo = (Map<?, ?>) item;
       refs.add(
           new PhotoRef(
-              UUID.fromString(String.valueOf(photo.get("photoId"))),
-              String.valueOf(photo.get("originalSha256")),
+              UUID.fromString((String) Objects.requireNonNull(photo.get("photoId"), "photoId")),
+              (String) Objects.requireNonNull(photo.get("originalSha256"), "originalSha256"),
               ((Number) photo.get("sortOrder")).intValue()));
     }
     refs.sort((a, b) -> Integer.compare(a.sortOrder(), b.sortOrder()));

@@ -17,9 +17,8 @@ public class DownloadController {
   private final DownloadService downloads;
 
   /**
-   * 내려받기 목록(DL-1). {@code 기록.json} 내용과 사진 ID 묶음을 준다. 원본 주소는 묶음마다 따로 받는다.
-   *
-   * <p>주소를 받는 API는 아직 정하는 중이다(#246). 정해지면 06 4장 이 줄과 함께 적는다.
+   * 내려받기 목록(DL-1). {@code 기록.json} 내용과 사진 ID 묶음을 준다. 원본 5분 주소는 화면이 묶음마다 {@code POST
+   * /api/photos/view-urls}({@code variant: ORIGINAL})로 받는다(#246).
    */
   @GetMapping("/api/rooms/{id}/download")
   public RoomDownload download(@PathVariable UUID id, @LoginMember UUID memberId) {

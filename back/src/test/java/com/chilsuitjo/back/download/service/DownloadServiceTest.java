@@ -1,6 +1,7 @@
 package com.chilsuitjo.back.download.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -103,6 +104,62 @@ class DownloadServiceTest {
     // 다른 사람의 요청으로 운영이 지웠으면 측을 보이지 않는다(불변식 16)
     assertThat(photos.get(2).erased().side()).isNull();
     assertThat(result.record().actions().getFirst().photos().get(1).file()).isNull();
+  }
+
+  @Test
+  void 공유_중단_기준_시각_뒤에_지운_사진도_지운_사진으로_남는다() {
+    PartyFacts mine =
+        new PartyFacts(
+            UUID.randomUUID(), member, PartyPresence.CONNECTED, null, false, false, null);
+    PartyFacts stopped =
+        new PartyFacts(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            PartyPresence.CONNECTED,
+            T0.plusSeconds(10),
+            false,
+            false,
+            null);
+    when(parties.read(room, PartySide.TENANT))
+        .thenReturn(new RoomParties(RoomPhase.values()[0], mine, stopped));
+    UUID photo = UUID.randomUUID();
+    log.add(withPhotos(1, T0, List.of(photo)));
+    log.add(entry(2, ActionType.ERASE_PHOTO, null, ActionTarget.photo(photo), T0.plusSeconds(20)));
+
+    RoomDownload result = service.download(room, member);
+
+    // 지운 행동 자체는 기준 시각 뒤 서버 행동이라 넣지 않지만, 사진은 양쪽에 고정 표시다(03 3-1 "지운 사진", 불변식 16)
+    assertThat(result.record().actions()).hasSize(1);
+    assertThat(result.photoBatches()).isEmpty();
+    RecordPhoto trace = result.record().photos().getFirst();
+    assertThat(trace.file()).isNull();
+    assertThat(trace.erased().at()).isEqualTo(T0.plusSeconds(20));
+    assertThat(trace.erased().side()).isNull();
+  }
+
+  @Test
+  void 사진_지문값이_없으면_조용히_넘기지_않고_실패한다() {
+    log.add(
+        new ActionEntry(
+            UUID.randomUUID(),
+            room,
+            1,
+            ActionType.REGISTER,
+            PartySide.TENANT,
+            member.toString(),
+            "k1",
+            UUID.randomUUID(),
+            ActionTarget.repairCase(UUID.randomUUID()),
+            null,
+            null,
+            null,
+            Map.of(
+                "photos", List.of(Map.of("photoId", UUID.randomUUID().toString(), "sortOrder", 0))),
+            T0));
+
+    assertThatThrownBy(() -> service.download(room, member))
+        .isInstanceOf(NullPointerException.class)
+        .hasMessage("originalSha256");
   }
 
   @Test

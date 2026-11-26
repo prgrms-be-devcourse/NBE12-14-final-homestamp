@@ -6,6 +6,7 @@ import com.chilsuitjo.back.action.dto.ActionEntry;
 import com.chilsuitjo.back.action.dto.ActionTarget;
 import com.chilsuitjo.back.action.rule.ActionType;
 import com.chilsuitjo.back.global.common.PartySide;
+import com.chilsuitjo.back.global.common.TargetKind;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -77,6 +78,104 @@ class RecordVisibilityTest {
 
     assertThat(RecordVisibility.visible(theirs, PartySide.TENANT, null)).isFalse();
     assertThat(RecordVisibility.visible(theirs, PartySide.LANDLORD, null)).isTrue();
+  }
+
+  @Test
+  void 확인_요청_전_상대_점검_초안은_빼고_내_초안은_넣는다() {
+    UUID inspection = UUID.randomUUID();
+    ActionEntry start = startInspection(1, inspection, PartySide.LANDLORD, T0);
+    ActionEntry item = addItem(2, inspection, PartySide.LANDLORD, T0.plusSeconds(1));
+
+    assertThat(RecordVisibility.select(List.of(start, item), PartySide.TENANT, null)).isEmpty();
+    assertThat(RecordVisibility.select(List.of(start, item), PartySide.LANDLORD, null))
+        .containsExactly(start, item);
+  }
+
+  @Test
+  void 확인_요청을_보낸_점검은_상대에게도_넣는다() {
+    UUID inspection = UUID.randomUUID();
+    UUID other = UUID.randomUUID();
+    ActionEntry start = startInspection(1, inspection, PartySide.LANDLORD, T0);
+    ActionEntry item = addItem(2, inspection, PartySide.LANDLORD, T0.plusSeconds(1));
+    ActionEntry request =
+        inspectionEntry(
+            3,
+            ActionType.REQUEST_INSPECTION_CONFIRM,
+            PartySide.LANDLORD,
+            ActionTarget.inspection(inspection),
+            Map.of(),
+            T0.plusSeconds(2));
+    ActionEntry otherDraft = addItem(4, other, PartySide.LANDLORD, T0.plusSeconds(3));
+
+    assertThat(
+            RecordVisibility.select(
+                List.of(start, item, request, otherDraft), PartySide.TENANT, null))
+        .containsExactly(start, item, request);
+  }
+
+  @Test
+  void 확인_요청이_공유_중단_뒤라_빠졌으면_그_초안도_뺀다() {
+    UUID inspection = UUID.randomUUID();
+    ActionEntry start = startInspection(1, inspection, PartySide.LANDLORD, T0);
+    ActionEntry request =
+        inspectionEntry(
+            2,
+            ActionType.REQUEST_INSPECTION_CONFIRM,
+            PartySide.LANDLORD,
+            ActionTarget.inspection(inspection),
+            Map.of(),
+            AFTER);
+
+    assertThat(RecordVisibility.select(List.of(start, request), PartySide.TENANT, CUTOFF))
+        .isEmpty();
+  }
+
+  @Test
+  void 어느_점검인지_알_수_없는_상대_점검_행동은_뺀다() {
+    ActionEntry photo =
+        inspectionEntry(1, ActionType.ADD_PART_PHOTO, PartySide.LANDLORD, null, Map.of(), T0);
+
+    assertThat(RecordVisibility.select(List.of(photo), PartySide.TENANT, null)).isEmpty();
+  }
+
+  private static ActionEntry startInspection(
+      long seq, UUID inspection, PartySide side, Instant at) {
+    return inspectionEntry(
+        seq, ActionType.START_INSPECTION, side, ActionTarget.inspection(inspection), Map.of(), at);
+  }
+
+  private static ActionEntry addItem(long seq, UUID inspection, PartySide side, Instant at) {
+    return inspectionEntry(
+        seq,
+        ActionType.ADD_ITEM,
+        side,
+        ActionTarget.of(TargetKind.INSPECTION_ITEM, UUID.randomUUID()),
+        Map.of("inspectionId", inspection.toString()),
+        at);
+  }
+
+  private static ActionEntry inspectionEntry(
+      long seq,
+      ActionType type,
+      PartySide side,
+      ActionTarget target,
+      Map<String, Object> payload,
+      Instant at) {
+    return new ActionEntry(
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        seq,
+        type,
+        side,
+        "member",
+        "k" + seq,
+        UUID.randomUUID(),
+        target,
+        null,
+        null,
+        null,
+        payload,
+        at);
   }
 
   private static ActionEntry entry(long seq, ActionType type, PartySide side, Instant at) {
