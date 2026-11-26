@@ -23,6 +23,9 @@ export const endpoints = {
   regions: (parent?: string) =>
     parent === undefined ? "/api/regions" : `/api/regions?parent=${id(parent)}`,
   rooms: "/api/rooms",
+  // 내 호실 목록 한 쪽(06 4-3: size 1~100, cursor는 앞 쪽의 nextCursor)
+  roomPage: (size: number, cursor?: string) =>
+    `/api/rooms?size=${size}${cursor ? `&cursor=${id(cursor)}` : ""}`,
   room: (rid: string) => `/api/rooms/${id(rid)}`,
   timeline: (rid: string) => `/api/rooms/${id(rid)}/timeline`,
   invite: (rid: string) => `/api/rooms/${id(rid)}/invite`,
