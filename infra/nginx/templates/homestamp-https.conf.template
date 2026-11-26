@@ -61,6 +61,7 @@ server {
   location @api_unavailable {
     include /etc/nginx/snippets/security-headers.conf;
     default_type application/problem+json;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
     add_header Cache-Control "no-store" always;
     return 503 '{"type":"about:blank","title":"Service Unavailable","status":503}';
   }

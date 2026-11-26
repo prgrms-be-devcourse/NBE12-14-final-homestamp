@@ -48,7 +48,9 @@ fi
 
 # 파일이 아니라 폴더를 컨테이너에 묶어 두어야 mv로 바꾼 새 파일이 보인다(compose.yaml)
 prev="$dir/upstream.conf.prev"
-[[ -f "$conf" ]] && cp -p "$conf" "$prev"
+# 지난 실행의 사본으로 되돌리지 않게 지우고 지금 파일만 남긴다
+rm -f "$prev"
+if [[ -f "$conf" ]]; then cp -p "$conf" "$prev"; fi
 mv -f "$tmp" "$conf"
 
 NGINX_TEST="${NGINX_TEST:-docker exec homestamp-nginx nginx -t -q}"

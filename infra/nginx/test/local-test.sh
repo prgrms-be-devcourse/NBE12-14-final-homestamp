@@ -23,6 +23,12 @@ pass=0
 fail=0
 ok() { echo "PASS $1"; pass=$((pass + 1)); }
 ng() { echo "FAIL $1"; fail=$((fail + 1)); }
+# 헤더 본문(CSP의 '…' 등)을 셸 문자열에 끼우지 않고 검사한다
+has_all() { # <본문> <정규식...>
+  local text="$1"; shift
+  local re
+  for re in "$@"; do grep -qiE "$re" <<<"$text" || return 1; done
+}
 check() { # <이름> <명령...>
   local name="$1"; shift
   if "$@"; then ok "$name"; else ng "$name"; fi
@@ -59,6 +65,11 @@ server {
   listen 8080;
   location / {
     default_type text/plain;
+    # Spring Security 기본 헤더 흉내(nginx가 지우고 자기 값만 붙이는지 본다)
+    add_header Cache-Control "no-cache, no-store, max-age=0, must-revalidate" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Strict-Transport-Security "max-age=31536000 ; includeSubDomains" always;
     return 200 "$color xff=\$http_x_forwarded_for real=\$http_x_real_ip proto=\$http_x_forwarded_proto fwd=[\$http_forwarded] uri=\$request_uri\n";
   }
 }
@@ -159,6 +170,12 @@ check "API: 경로 그대로(/api/...)" grep -q 'uri=/api/auth/login?x=1' <<<"$a
 check "API: 가짜 X-Forwarded-For·X-Real-IP·Forwarded 덮어씀" bash -c "! grep -q '6.6.6.6' <<<'$api'"
 check "API: proto=https" grep -q 'proto=https' <<<"$api"
 check "API: 응답 Cache-Control no-store" bash -c "curl ${C[*]} -D - -o /dev/null https://$DOMAIN:$S/api/x | grep -qi 'cache-control: no-store'"
+ah="$(curl "${C[@]}" -D - -o /dev/null "https://$DOMAIN:$S/api/x")"
+check "API 헤더: Cache-Control 한 번(no-store)" test "$(grep -ci '^cache-control:' <<<"$ah")-$(grep -ci '^cache-control: no-store' <<<"$ah")" = "1-1"
+check "API 헤더: nosniff 한 번" test "$(grep -ci '^x-content-type-options:' <<<"$ah")" = "1"
+check "API 헤더: X-Frame-Options 한 번" test "$(grep -ci '^x-frame-options:' <<<"$ah")" = "1"
+check "API 헤더: 앱의 HSTS는 지움(기본 꺼짐)" test "$(grep -ci '^strict-transport-security:' <<<"$ah")" = "0"
+check "API 헤더: Referrer-Policy·CSP 있음" has_all "$ah" '^referrer-policy: strict-origin' '^content-security-policy-report-only:'
 check "API: 1MB 넘는 본문 413" test "$(head -c 1100000 /dev/zero | curl "${C[@]}" -o /dev/null -w '%{http_code}' --data-binary @- "https://$DOMAIN:$S/api/x")" = "413"
 
 # ---------- 4. 블루/그린 전환 ----------
@@ -176,6 +193,8 @@ check "render는 현재 앱 주소를 되돌리지 않음" bash -c "'$work/nginx
 docker stop "$P-green" >/dev/null
 code_ct="$(curl "${C[@]}" -o /dev/null -w '%{http_code} %{content_type}' "https://$DOMAIN:$S/api/x")"
 check "앱 꺼짐: 503 problem+json" test "$code_ct" = "503 application/problem+json"
+dh="$(curl "${C[@]}" -D - -o /dev/null "https://$DOMAIN:$S/api/x")"
+check "앱 꺼짐: 503에도 보안 헤더" has_all "$dh" '^x-content-type-options: nosniff' '^referrer-policy:' '^cache-control: no-store'
 docker start "$P-green" >/dev/null
 
 # ---------- 5. HSTS 켜기, 입력 검사 ----------
@@ -183,6 +202,7 @@ sed -i.bak 's/^HSTS_MAX_AGE=.*/HSTS_MAX_AGE=300/' "$work/nginx/homestamp.env"
 "$work/nginx/render.sh" "$work/nginx/homestamp.env" >/dev/null
 docker exec "$EDGE" nginx -t -q && docker exec "$EDGE" nginx -s reload; sleep 1
 check "HSTS 켜면 max-age=300" bash -c "curl ${C[*]} -D - -o /dev/null https://$DOMAIN:$S/ | grep -qi 'strict-transport-security: max-age=300'"
+check "HSTS 켜면 API도 nginx 값 하나만" test "$(curl "${C[@]}" -D - -o /dev/null "https://$DOMAIN:$S/api/x" | grep -ci '^strict-transport-security: max-age=300')" = "1"
 printf 'DOMAIN=a;b.test\nPHOTOS_BUCKET=homestamp-photos\n' > "$work/bad.env"
 check "render: 잘못된 DOMAIN 거절" bash -c "! '$work/nginx/render.sh' '$work/bad.env' >/dev/null 2>&1"
 
