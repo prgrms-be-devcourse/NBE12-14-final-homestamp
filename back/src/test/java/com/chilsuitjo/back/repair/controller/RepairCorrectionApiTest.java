@@ -382,6 +382,31 @@ class RepairCorrectionApiTest {
     assertThat(correction(id)).containsEntry("status", "WITHDRAWN");
     respond(id, landlord, "r1", "ACK", null, 1)
         .andExpect(jsonPath("$.code").value("INVALID_STATE"));
+    // 기다리는 고친 내용이 남지 않아 확인 요청도 거둠으로 닫힌다(#258 리뷰)
+    assertThat(waits.statusOf(caseRequest(), RequestKind.CORRECTION_CONFIRM))
+        .contains(RequestStatus.WITHDRAWN);
+  }
+
+  @Test
+  void 기다리는_고친_내용이_남아_있으면_거둬도_확인_요청은_열려_있다() throws Exception {
+    stamp();
+    List<UUID> ids =
+        ids(
+            correct(
+                tenant,
+                "c1",
+                "{\"field\":\"title\",\"newValue\":\"천장 물샘\"},"
+                    + "{\"field\":\"description\",\"newValue\":\"물이 새요\"}",
+                "더 정확하게"));
+
+    withdraw(ids.get(0), tenant, "w1").andExpect(status().isNoContent());
+    assertThat(waits.statusOf(caseRequest(), RequestKind.CORRECTION_CONFIRM))
+        .contains(RequestStatus.WAITING);
+
+    // 남은 것에 상대가 답하면 답함으로 닫힌다
+    respond(ids.get(1), landlord, "r1", "ACK", null, 1).andExpect(status().isOk());
+    assertThat(waits.statusOf(caseRequest(), RequestKind.CORRECTION_CONFIRM))
+        .contains(RequestStatus.ANSWERED);
   }
 
   @Test

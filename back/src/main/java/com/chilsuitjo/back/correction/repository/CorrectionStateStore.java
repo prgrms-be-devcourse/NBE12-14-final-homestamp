@@ -349,16 +349,20 @@ public class CorrectionStateStore {
     }
 
     /**
-     * 기다리던 고친 내용을 거둔다. 앞모습은 그대로다.
-     *
-     * <p>한계: 그 기록에 기다리는 고친 내용이 0개가 돼도 고친 내용 확인 요청은 열린 채로 남는다. 요청을 보낸 측이 거둘 때 닫는 창구가 {@code
-     * WaitService}에 아직 없다({@code answered}는 보낸 측이면 아무것도 하지 않고, {@code close}에는 맞는 닫힌 이유가 없음, #258).
+     * 기다리던 고친 내용을 거둔다. 앞모습은 그대로다. 그 기록에 기다리는 고친 내용이 남지 않으면 같은 트랜잭션에서 고친 내용 확인 요청도 "거둠"으로 닫는다(상대가 답할
+     * 것이 없는데 요청·재통지가 남지 않게, 03 G·05 2-4, #258 리뷰).
      */
     @Override
     public SavedState save(ActionCommand command, CorrectionState next) {
       CorrectionRequest row = row(command);
       row.withdraw();
       corrections.saveAndFlush(row);
+      if (!corrections.existsByTargetKeyAndStatus(row.getTargetKey(), CorrectionStatus.WAITING)) {
+        waits.withdrawn(
+            recordRequest(row.targetKind(), row.targetId()),
+            RequestKind.CORRECTION_CONFIRM,
+            command.actor().side());
+      }
       return SavedState.unchanged();
     }
   }

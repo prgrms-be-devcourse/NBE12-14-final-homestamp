@@ -98,6 +98,31 @@ class FakeWaitServiceTest {
   }
 
   @Test
+  void 요청한_측이_거두면_거둠으로_닫히고_상대가_불러도_닫히지_않는다() {
+    waits.open(defectConfirm());
+
+    waits.withdrawn(repairCase, RequestKind.DEFECT_CONFIRM, PartySide.LANDLORD);
+    assertThat(waits.statusOf(repairCase, RequestKind.DEFECT_CONFIRM))
+        .contains(RequestStatus.WAITING);
+
+    waits.withdrawn(repairCase, RequestKind.DEFECT_CONFIRM, PartySide.TENANT);
+    assertThat(waits.statusOf(repairCase, RequestKind.DEFECT_CONFIRM))
+        .contains(RequestStatus.WITHDRAWN);
+
+    // 거둔 요청은 답이 와도 다시 열지 않는다
+    waits.answered(repairCase, RequestKind.DEFECT_CONFIRM, PartySide.LANDLORD);
+    assertThat(waits.statusOf(repairCase, RequestKind.DEFECT_CONFIRM))
+        .contains(RequestStatus.WITHDRAWN);
+  }
+
+  @Test
+  void 요청이_없으면_거둬도_아무것도_생기지_않는다() {
+    waits.withdrawn(repairCase, RequestKind.DEFECT_CONFIRM, PartySide.TENANT);
+
+    assertThat(waits.statusOf(repairCase, RequestKind.DEFECT_CONFIRM)).isEmpty();
+  }
+
+  @Test
   void 종류가_다르면_다른_요청이다() {
     waits.open(defectConfirm());
     waits.open(
