@@ -5,6 +5,8 @@ import com.chilsuitjo.back.global.common.dto.RespondRequest;
 import com.chilsuitjo.back.global.common.dto.SupplementRequest;
 import com.chilsuitjo.back.global.response.CreatedResponse;
 import com.chilsuitjo.back.global.security.LoginMember;
+import com.chilsuitjo.back.proposal.dto.ProposalRequest;
+import com.chilsuitjo.back.proposal.dto.ProposalResult;
 import com.chilsuitjo.back.repair.dto.DefectAckChanged;
 import com.chilsuitjo.back.repair.dto.DefectAckResponse;
 import com.chilsuitjo.back.repair.dto.RegisterRepairRequest;
@@ -95,6 +97,22 @@ public class RepairController {
     DefectAckChanged changed = repairs.supplement(id, memberId, idempotencyKey, request);
     return withReplayed(ResponseEntity.ok(), changed.replayed())
         .body(new DefectAckResponse(changed.id(), changed.defectAck()));
+  }
+
+  /**
+   * 수리비 부담 제안(MONEY-3). 처음 성공과 다시 온 요청 모두 201과 만든 제안 ID다. 다시 온 요청이면 {@code Idempotent-Replayed:
+   * true}를 붙인다(06 4-0 "새 기록을 만드는 행동이면 201 + 만든 ID만"). 줄 목록 또는 비용 없음이고, 기다리는 안이 있으면 {@code
+   * INVALID_STATE}다 (decisions 2026-11-26).
+   */
+  @PostMapping("/api/repair-cases/{id}/proposals")
+  public ResponseEntity<CreatedResponse> propose(
+      @PathVariable UUID id,
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey,
+      @RequestBody ProposalRequest request) {
+    ProposalResult result = repairs.propose(id, memberId, idempotencyKey, request);
+    return withReplayed(ResponseEntity.status(HttpStatus.CREATED), result.replayed())
+        .body(new CreatedResponse(result.proposalId()));
   }
 
   private static ResponseEntity.BodyBuilder withReplayed(

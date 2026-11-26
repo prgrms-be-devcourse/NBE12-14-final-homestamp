@@ -27,10 +27,15 @@ public interface ProposalService {
    * @param memberId 제안하는 회원 ID
    * @param idempotencyKey 요청의 {@code Idempotency-Key}
    * @param agenda 제안할 안건
+   *     <p>기다리는 안이 없을 때만 받는다(decisions 2026-11-26): 미정·이견이면 합의 대기, 합의됨·비용 없음이면 합의는 그대로이고 새 안은 바꾸자는
+   *     안이다(MONEY-3d). 기다리는 안이 있으면 내 안 바꾸기·역제안이라 아직 받지 않는다. 지금은 수리비 부담({@code REPAIR_BURDEN})만 받는다.
    * @param cmd 금액 줄·비용 없음·사유
-   * @return 만든 제안 ID와 처리 뒤 안건
-   * @throws com.chilsuitjo.back.global.error.BusinessException 줄 금액의 합이 전체 금액과 다르면 {@code
-   *     SUM_MISMATCH}, 다른 호실의 대상이면 {@code NOT_FOUND}, 호실 단위 거절은 pipeline의 오류({@code SETTLED} 등)
+   * @return 만든 제안 ID와 재요청 여부. {@link ProposalResult#agenda()}는 {@code null}이다(만드는 행동의 응답은 만든 ID만,
+   *     06 4-0)
+   * @throws com.chilsuitjo.back.global.error.BusinessException 줄 모양이 안건에 맞지 않으면 {@code
+   *     VALIDATION_FAILED}, 제3자 설명이 주민등록번호 형태면 {@code RESIDENT_ID_BLOCKED}, 기다리는 안이 있으면 {@code
+   *     INVALID_STATE}, 줄 금액의 합이 전체 금액과 다르면 {@code SUM_MISMATCH}, 다른 호실의 대상이면 {@code NOT_FOUND}, 호실
+   *     단위 거절은 pipeline의 오류({@code SETTLED} 등)
    */
   ProposalResult propose(
       UUID roomRecordId,

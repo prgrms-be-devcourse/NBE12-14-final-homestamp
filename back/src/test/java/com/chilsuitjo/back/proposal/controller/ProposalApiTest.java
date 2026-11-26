@@ -37,8 +37,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 본다. 응답 요청은 가짜({@code FakeWaitService})라 상태만 확인하고, 기준 금액은 가짜 지불 창구({@code FakePaymentService})에 적어
  * 둔다.
  *
- * <p>제안 만들기({@code propose})가 아직 없어서 제안·줄·head는 SQL로 넣는다. pipeline이 바깥 트랜잭션을 거절해서
- * {@code @Transactional}로 되돌리지 않는다. 테스트마다 새 호실을 만들어 섞이지 않게 한다.
+ * <p>답할 상태(지난 안·합의 뒤 바꾸자는 안 등)를 바로 만들려고 제안·줄·head는 SQL로 넣는다. API로 제안하고 동의까지 잇는 흐름은 {@code
+ * RepairProposalApiTest}가 본다. pipeline이 바깥 트랜잭션을 거절해서 {@code @Transactional}로 되돌리지 않는다. 테스트마다 새 호실을
+ * 만들어 섞이지 않게 한다.
  */
 @Import(TestcontainersConfiguration.class)
 @SpringBootTest
