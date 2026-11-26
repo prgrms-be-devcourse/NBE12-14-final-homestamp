@@ -1,6 +1,6 @@
 package com.chilsuitjo.back.link.entity;
 
-import com.chilsuitjo.back.link.rule.LinkInvalidReason;
+import com.chilsuitjo.back.global.common.LinkInvalidReason;
 import com.chilsuitjo.back.link.rule.LinkKind;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;

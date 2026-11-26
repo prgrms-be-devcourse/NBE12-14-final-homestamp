@@ -276,10 +276,16 @@ public class RepairStateStore {
    * 없다(#219).
    */
   private void answerProgressCheck(ActionCommand command) {
+    answerProgressCheck(command.target().id(), command.actor().side());
+  }
+
+  /**
+   * 행동 대상이 수리 건이 아닌 저장 방법(원인 설명 남기기·응답, {@code CauseNoteStateStore})이 부모 수리 건의 진행 상황 묻기를 닫을 때 쓴다(06
+   * REP-6c). 규칙은 {@link #answerProgressCheck(ActionCommand)}와 같다.
+   */
+  void answerProgressCheck(UUID repairCaseId, PartySide side) {
     waits.answered(
-        RequestTarget.of(TargetKind.REPAIR_CASE, command.target().id()),
-        RequestKind.PROGRESS_CHECK,
-        command.actor().side());
+        RequestTarget.of(TargetKind.REPAIR_CASE, repairCaseId), RequestKind.PROGRESS_CHECK, side);
   }
 
   /** 판의 내용 지문 재료. 칸 순서도 형식의 일부라 바꾸면 옛 지문과 달라진다(05 2-3, 테스트로 고정). */
