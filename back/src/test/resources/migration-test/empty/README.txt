@@ -1,0 +1,1 @@
+-- 위치는 있지만 SQL Migration이 하나도 없는 경우(MigrationRunnerIntegrationTest). Flyway가 읽는 이름이 아니다.
