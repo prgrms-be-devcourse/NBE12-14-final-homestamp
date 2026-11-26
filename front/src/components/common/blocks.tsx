@@ -288,10 +288,14 @@ export function Choice({
 }: {
   value: string
   onChange: (v: string) => void
-  values: string[]
+  // 글자 그대로 고르거나, 보이는 이름이 겹칠 수 있으면 { value: id, label: 이름 }으로 넘겨요
+  values: (string | { value: string; label: string })[]
   label: string
   disabled?: boolean
 }) {
+  const options = values.map((v) =>
+    typeof v === "string" ? { value: v, label: v } : v,
+  )
   return (
     <Select
       value={value}
@@ -299,12 +303,14 @@ export function Choice({
       disabled={disabled}
     >
       <SelectTrigger className="w-full" aria-label={label}>
-        <SelectValue>{value}</SelectValue>
+        <SelectValue>
+          {options.find((o) => o.value === value)?.label ?? value}
+        </SelectValue>
       </SelectTrigger>
       <SelectContent>
-        {values.map((v) => (
-          <SelectItem key={v} value={v}>
-            {v}
+        {options.map((o) => (
+          <SelectItem key={o.value} value={o.value}>
+            {o.label}
           </SelectItem>
         ))}
       </SelectContent>

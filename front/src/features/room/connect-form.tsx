@@ -7,6 +7,7 @@ import { post } from "@/api/records"
 import { endpoints } from "@/api/endpoints"
 import type { Account } from "@/api/auth"
 import type { DemoState, Role, Room } from "@/data/demo"
+import { roomOptions } from "@/lib/room-options"
 import {
   acceptInvitation,
   canReceiveInvitation,
@@ -17,6 +18,9 @@ import {
 } from "@/lib/workflows"
 import { sideText } from "@/lib/words"
 import type { Act } from "@/lib/record-commands"
+
+// "같은 집의 내 기록" 칸에서 고르지 않음을 뜻하는 값(호실 ID와 겹치지 않아요)
+const NO_SAME_HOUSE = "none"
 
 // 받은 초대 연결(S-08, ROOM-5). 로그인 계정의 인증 번호와 초대 번호가 같아야 하고,
 // [동의하고 연결하기]를 누르는 것으로 기록 공유에 동의해요.
@@ -169,13 +173,14 @@ export function ConnectForm({
           <label>같은 집에 대해 내가 만든 기록</label>
           <Choice
             label="같은 집의 내 기록"
-            value={
-              myOwnRooms.find((x) => x.id === sameHouseId)?.name ||
-              "없음 · 바로 연결"
-            }
-            values={["없음 · 바로 연결", ...myOwnRooms.map((x) => x.name)]}
+            // 호실 이름은 겹칠 수 있어서 ID로 골라요
+            value={sameHouseId || NO_SAME_HOUSE}
+            values={[
+              { value: NO_SAME_HOUSE, label: "없음 · 바로 연결" },
+              ...roomOptions(myOwnRooms),
+            ]}
             onChange={(v) => {
-              setSameHouseId(myOwnRooms.find((x) => x.name === v)?.id || "")
+              setSameHouseId(v === NO_SAME_HOUSE ? "" : v)
               setJoinChoice("")
               setError("")
             }}

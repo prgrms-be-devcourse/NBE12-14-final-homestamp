@@ -1,11 +1,13 @@
 import { Bell, Building2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Choice } from "@/components/common/blocks"
+import type { RoomOption } from "@/lib/room-options"
 
 // PC: 초대/알림(화면 제목은 본문 머리말 하나만, #229 리뷰) | 모바일: 브랜드/호실 빠른 전환 + 알림 + 내 계정(1줄 슬림 바)
 export function AppTopbar({
+  roomId,
   roomName,
-  roomNames,
+  roomOptions,
   invitations,
   unread,
   accountInitial,
@@ -14,12 +16,14 @@ export function AppTopbar({
   onNotifications,
   onAccount,
 }: {
+  roomId?: string
   roomName?: string
-  roomNames: string[]
+  // 호실 이름은 겹칠 수 있어서 값은 호실 ID로 골라요
+  roomOptions: RoomOption[]
   invitations: number
   unread: number
   accountInitial: string
-  onRoom: (name: string) => void
+  onRoom: (roomId: string) => void
   onInvitations: () => void
   onNotifications: () => void
   onAccount: () => void
@@ -32,12 +36,12 @@ export function AppTopbar({
           <span className="mobile-brand-mark" aria-hidden>
             H
           </span>
-          {roomName && roomNames.length > 1 ? (
+          {roomId && roomName && roomOptions.length > 1 ? (
             <div className="mobile-room-select">
               <Choice
                 label="현재 호실 선택"
-                value={roomName}
-                values={roomNames}
+                value={roomId}
+                values={roomOptions}
                 onChange={onRoom}
               />
             </div>
