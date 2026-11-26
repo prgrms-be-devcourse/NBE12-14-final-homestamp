@@ -143,8 +143,27 @@ jobs:
           echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/$file" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/$file" -C "$RUNNER_TEMP" gitleaks
       - name: 비밀값 검사
+        # 탐지되면 위치만 남긴다(RuleID·File·StartLine·Commit·Fingerprint). Secret·Match·소스 줄·작성자는 로그에 내지 않고,
+        # 보고서 파일은 올리지 않고 끝나면 지운다. 종료 코드는 gitleaks 것을 그대로 돌려주고, 보고서를 못 읽으면 실패한다
         run: |
-          "$RUNNER_TEMP/gitleaks" git --log-opts="$BASE_SHA..$HEAD_SHA" --redact --no-banner --exit-code 1 .
+          report="$RUNNER_TEMP/gitleaks-report.json"
+          trap 'rm -f "$report"' EXIT
+          set +e
+          "$RUNNER_TEMP/gitleaks" git --log-opts="$BASE_SHA..$HEAD_SHA" --redact --no-banner --exit-code 1 \
+            --report-format json --report-path "$report" .
+          code=$?
+          set -e
+          if [ ! -s "$report" ]; then
+            if [ "$code" -eq 0 ]; then
+              echo "::error::gitleaks가 성공했는데 보고서가 없어요"
+              exit 1
+            fi
+            exit "$code"
+          fi
+          count=$(jq -e 'if type == "array" then length else error("보고서가 배열이 아니에요") end' "$report")
+          echo "탐지 건수: $count"
+          jq -c '.[] | {RuleID, File, StartLine, Commit, Fingerprint}' "$report"
+          exit "$code"
 
   back:
     needs: changes
