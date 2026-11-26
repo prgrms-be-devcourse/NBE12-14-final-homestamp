@@ -5,9 +5,17 @@ import { Panel, Status } from "@/components/common/blocks"
 import { EmptyState } from "@/components/common/states"
 import { PhotoGallery } from "@/features/photo/photo-gallery"
 import { RepairListItem } from "@/components/common/home-dashboard"
-import type { Repair, Role } from "@/data/demo"
+import type { Event, Repair, Role } from "@/data/demo"
+import { daysSince, lastActivity } from "@/lib/activity"
+import { seoulDate } from "@/api/http-rooms"
 import { myTurn } from "@/lib/turn"
 import { plainText } from "@/lib/plain-words"
+
+// 서버 시각(ISO) → "11월 26일"(한국 날짜)
+const monthDay = (iso: string) => {
+  const [, m, d] = seoulDate(iso).split("-")
+  return `${Number(m)}월 ${Number(d)}일`
+}
 
 // 하자·수리 목록과 수리비(돈) 목록. 같은 목록을 탭과 검색으로 걸러 보여 줘요.
 export function RepairsPage({
@@ -22,10 +30,16 @@ export function RepairsPage({
   setSearch,
   tabCount,
   detail,
+  events,
+  asOf,
 }: {
   page: "repairs" | "money"
   role: Role
   repairs: Repair[]
+  // 목업의 "N일째"는 경과 기록으로 세요(서버 모드는 수리 건의 lastActionAt)
+  events: Event[]
+  // 공유를 그만둬 보이는 범위를 고정한 시각(ISO). 없으면 null·undefined
+  asOf?: string | null
   moneyLeft: Repair[]
   openCount: number
   filter: string
@@ -89,6 +103,13 @@ export function RepairsPage({
             : `수리 기록 전체 ${repairs.length}건 · 진행 중 ${openCount}건`
         }
       >
+        {asOf && (
+          // 공유를 그만둔 뒤에는 그 시각까지의 기록으로 보여요(03 6-6 9번, 06 4-6 asOf)
+          <p className="mb-4 flex items-start gap-2 px-1 text-[13px] leading-[1.6] text-sub">
+            <Info size={16} aria-hidden />
+            {`${monthDay(asOf)} 기준 기록이에요. 공유를 그만둔 뒤 상대가 남긴 것은 보이지 않아요.`}
+          </p>
+        )}
         {page === "money" && (
           <p className="mb-4 flex items-start gap-2 px-1 text-[13px] leading-[1.6] text-sub">
             <Info size={16} aria-hidden />
@@ -140,8 +161,13 @@ export function RepairsPage({
                   }
                   onOpen={() => detail(r.id)}
                   extra={
-                    page === "money" && r.payments?.length ? (
-                      <Status>{`지불 기록 ${r.payments.length}건`}</Status>
+                    page === "money" ? (
+                      r.payments?.length ? (
+                        <Status>{`지불 기록 ${r.payments.length}건`}</Status>
+                      ) : undefined
+                    ) : r.status !== "처리 완료" ? (
+                      // "N일째"는 마지막 당사자 행동부터 세요(03 G "멈춘 기간", 06 4-6 lastActionAt)
+                      <Status>{`${daysSince(lastActivity(r, events))}일째`}</Status>
                     ) : undefined
                   }
                 />

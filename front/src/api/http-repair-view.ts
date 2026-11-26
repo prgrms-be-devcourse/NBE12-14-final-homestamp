@@ -60,8 +60,33 @@ const ACK: Record<AckState, Ack> = {
   UNCONFIRMED: "상대 미확인",
 }
 
+// 호실의 수리 건 목록(GET /api/rooms/{id}/repair-cases, 06 4-6)의 서버 모양. 칸 이름은 백엔드 RepairCaseList와 같아요.
+// 열린 응답 요청(waiting)은 응답 요청 조회 포트(#266) 전이라 지금은 늘 빈 목록이에요(#283)
+export interface RepairCaseListItemBody {
+  id: string
+  registeredBy: ServerSide
+  createdAt: string
+  content: { no: number; partName: string; title: string }
+  status: RepairCaseDetailBody["status"]
+  lastActionAt: string
+  closeRequestedBy: ServerSide | null
+  closedBy: RepairCaseDetailBody["closedBy"]
+  defect: { ack: AckState }
+  money: { status: string }
+  waiting: unknown[]
+}
+export interface RepairCasePageBody {
+  asOf: string | null
+  mySide: ServerSide
+  items: RepairCaseListItemBody[]
+  nextCursor: string | null
+}
+
 // 화면은 시작 전을 하자 인정에 따라 "확인 전"/"확인 완료"로 나눠 보여요. 종료 확인 대기는 "처리 중" + 요청한 측(closeBy)이에요.
-function statusOf(b: RepairCaseDetailBody): RepairStatus {
+function statusOf(b: {
+  status: RepairCaseDetailBody["status"]
+  defect: { ack: AckState }
+}): RepairStatus {
   if (b.status === "DONE") return "처리 완료"
   if (b.status === "NOT_STARTED")
     return b.defect.ack === "ACK" ? "확인 완료" : "확인 전"
@@ -142,13 +167,17 @@ export function repairStub(id: string, roomId: string): Repair {
   }
 }
 
-export function repairFromDetail(b: RepairCaseDetailBody): RepairCaseView {
-  const repair: Repair = {
+// 목록 줄과 상세가 같이 가진 칸(칸 이름이 같아요, 06 4-6) → 화면 모델
+function repairBase(
+  b: RepairCaseListItemBody | RepairCaseDetailBody,
+  roomId: string,
+): Repair {
+  return {
     id: b.id,
-    roomId: b.roomRecordId,
+    roomId,
     title: b.content.title,
     zone: b.content.partName,
-    description: b.content.description ?? "",
+    description: "",
     status: statusOf(b),
     ack: ACK[b.defect.ack],
     author: toRole(b.registeredBy),
@@ -165,6 +194,21 @@ export function repairFromDetail(b: RepairCaseDetailBody): RepairCaseView {
       b.status === "DONE" && b.closedBy && b.closedBy !== "BOTH"
         ? toRole(b.closedBy)
         : undefined,
+  }
+}
+
+// 목록 한 줄 → 화면 모델. 설명·원인 설명·사진은 목록에 없어 상세에서 받아요
+export function repairFromListItem(
+  b: RepairCaseListItemBody,
+  roomId: string,
+): Repair {
+  return { ...repairBase(b, roomId), lastActionAt: b.lastActionAt }
+}
+
+export function repairFromDetail(b: RepairCaseDetailBody): RepairCaseView {
+  const repair: Repair = {
+    ...repairBase(b, b.roomRecordId),
+    description: b.content.description ?? "",
     causes: causesOf(b.causeNotes),
   }
   const availableActions = b.availableActions.filter((a): a is RepairAction =>

@@ -14,6 +14,11 @@ import {
   type RoomSummaryBody,
 } from "../src/api/http-rooms"
 import { notConnected } from "../src/api/connected"
+import {
+  repairFromListItem,
+  type RepairCaseListItemBody,
+} from "../src/api/http-repair-view"
+import { lastActivity } from "../src/lib/activity"
 import { connectionText, isPreJoin, sideOf } from "../src/lib/workflows"
 import type { PartyStatus } from "../src/data/demo"
 
@@ -53,6 +58,15 @@ const detail = (patch: Partial<RoomDetailBody> = {}): RoomDetailBody => {
     availableActions: ["repair-cases"],
     ...patch,
   }
+}
+
+// 호실의 수리 건 목록(06 4-6). 호실 시험에서는 비어 있어요
+const isRepairPage = (path: string) => /\/repair-cases(\?|$)/.test(path)
+const emptyRepairs = {
+  asOf: null,
+  mySide: "LANDLORD",
+  items: [],
+  nextCursor: null,
 }
 
 describe("목록 한 줄 → 화면 모델", () => {
@@ -165,6 +179,7 @@ describe("HTTP 기록 API의 호실 받기", () => {
       if (path === endpoints.roomPage(100, "c1"))
         return { items: [summary({ id: "b" })], nextCursor: null }
       if (path === endpoints.room("a")) return detail({ id: "a" })
+      if (isRepairPage(path)) return emptyRepairs
       if (path === endpoints.room("b"))
         throw new ApiError({ status: 404, code: "NOT_FOUND" })
       if (path === endpoints.notifications) throw notConnected()
@@ -184,6 +199,7 @@ describe("HTTP 기록 API의 호실 받기", () => {
         return { items: [summary()], nextCursor: null }
       if (path === endpoints.room("r1"))
         return detail({ availableActions: actions })
+      if (isRepairPage(path)) return emptyRepairs
       return []
     }) as HttpRequest
     const records = createHttpRecords(request)
@@ -201,6 +217,7 @@ describe("HTTP 기록 API의 호실 받기", () => {
       if (method === "POST") return { id: "r1" }
       if (path.startsWith(`${endpoints.rooms}?`))
         return { items: [summary()], nextCursor: null }
+      if (isRepairPage(path)) return emptyRepairs
       if (path.startsWith(`${endpoints.rooms}/`))
         return detailOf(decodeURIComponent(path.split("/").pop()!))
       return []
@@ -286,6 +303,7 @@ describe("HTTP 기록 API의 호실 받기", () => {
       }
       if (path === endpoints.room("new"))
         return detail({ id: "new", moveInDate: "2026-03-01" })
+      if (isRepairPage(path)) return emptyRepairs
       return []
     }) as HttpRequest
     const records = createHttpRecords(request)
@@ -329,6 +347,87 @@ describe("HTTP 기록 API의 호실 받기", () => {
       nextCursor: "same",
     })) as unknown as HttpRequest
     await expect(listAllRooms(request)).rejects.toThrow()
+  })
+})
+
+describe("호실의 수리 건 목록(06 4-6, #290)", () => {
+  const item = (
+    patch: Partial<RepairCaseListItemBody> = {},
+  ): RepairCaseListItemBody => ({
+    id: "c1",
+    registeredBy: "TENANT",
+    createdAt: "2026-11-20T01:00:00Z",
+    content: { no: 2, partName: "천장", title: "천장 누수" },
+    status: "CLOSE_WAIT",
+    lastActionAt: "2026-11-24T03:00:00Z",
+    closeRequestedBy: "LANDLORD",
+    closedBy: null,
+    defect: { ack: "ACK" },
+    money: { status: "UNDECIDED" },
+    waiting: [],
+    ...patch,
+  })
+
+  test("목록 한 줄을 상세와 같은 규칙으로 화면 모델로 바꾼다", () => {
+    expect(repairFromListItem(item(), "r1")).toMatchObject({
+      id: "c1",
+      roomId: "r1",
+      title: "천장 누수",
+      zone: "천장",
+      status: "처리 중",
+      ack: "확인됨",
+      author: "임차인",
+      date: "2026.11.20",
+      version: 2,
+      closeBy: "임대인",
+      lastActionAt: "2026-11-24T03:00:00Z",
+    })
+    expect(
+      repairFromListItem(
+        item({ status: "DONE", closedBy: "TENANT", closeRequestedBy: null }),
+        "r1",
+      ),
+    ).toMatchObject({ status: "처리 완료", soloClosed: "임차인" })
+  })
+
+  test("N일째는 서버의 lastActionAt부터 센다", () => {
+    const r = repairFromListItem(item(), "r1")
+    expect(lastActivity(r, [])).toBe(Date.parse("2026-11-24T03:00:00Z"))
+  })
+
+  test("호실마다 수리 건을 끝까지 받고, 호실에 들어가면 그 호실 것만 바꾼다", async () => {
+    let title = "천장 누수"
+    const paths: string[] = []
+    const request = (async (_m: string, path: string) => {
+      paths.push(path)
+      if (path.startsWith(`${endpoints.rooms}?`))
+        return { items: [summary()], nextCursor: null }
+      if (path === endpoints.room("r1")) return detail()
+      if (path === endpoints.repairCasePage("r1", 100))
+        return {
+          asOf: null,
+          mySide: "LANDLORD",
+          items: [item({ content: { no: 1, partName: "천장", title } })],
+          nextCursor: "c1",
+        }
+      if (path === endpoints.repairCasePage("r1", 100, "c1"))
+        return {
+          asOf: null,
+          mySide: "LANDLORD",
+          items: [item({ id: "c0" })],
+          nextCursor: null,
+        }
+      return []
+    }) as HttpRequest
+    const records = createHttpRecords(request)
+    await records.load({ accountId: "me" })
+    expect(records.getSnapshot().repairs.map((r) => r.id)).toEqual(["c1", "c0"])
+    title = "천장 물샘"
+    await records.loadRoom({ accountId: "me" }, "r1")
+    expect(records.getSnapshot().repairs.map((r) => r.title)).toEqual([
+      "천장 물샘",
+      "천장 누수",
+    ])
   })
 })
 

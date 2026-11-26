@@ -232,13 +232,14 @@ function HomeStampApp({
     if (accountId)
       api.records.load({ accountId }).catch((e) => toast(errorMessage(e)))
   }, [api, accountId])
-  // 호실에 들어가면 그 호실 상세(입주일·availableActions)를 새로 받아요(GET /api/rooms/{id}). 목업은 할 일이 없어요
+  // 호실에 들어가면 그 호실 상세(입주일·availableActions)와 수리 건 목록을 새로 받아요(GET /api/rooms/{id}, /repair-cases).
+  // 화면을 옮길 때마다 다시 받아, 상세에서 행동한 뒤 목록으로 돌아오면 바뀐 상태가 보여요. 목업은 할 일이 없어요
   useEffect(() => {
     if (accountId && route.roomId)
       api.records
         .loadRoom({ accountId }, route.roomId)
         .catch((e) => toast(errorMessage(e)))
-  }, [api, accountId, route.roomId])
+  }, [api, accountId, route.roomId, page])
   // 내 호실: 내가 만들었거나 연결을 수락한 호실. 호실마다 내 측(임차인/임대인)은 연결로 정해져요.
   const myRooms = db.rooms.filter((r) => {
     const s = sideOf(r, accountId)
@@ -290,8 +291,8 @@ function HomeStampApp({
   const repairListed = db.repairs.some(
     (r) => r.id === repairId && r.roomId === roomId,
   )
-  // http 모드는 수리 건 목록을 아직 받지 않아(#264) 기록에 없는 건도 상세 주소로 열고, 상세 화면이 서버에서 받아요(#179).
-  // 남의 수리 건·없는 건이면 상세 화면이 서버의 404를 받아 '찾을 수 없음'을 보여요
+  // http 모드는 목록을 받기 전(주소로 바로 연 상세)이나 목록을 다시 받기 전(방금 등록한 건)에도 상세 주소로 열고,
+  // 상세 화면이 서버에서 받아요(#179, #290). 남의 수리 건·없는 건이면 상세 화면이 서버의 404를 받아 '찾을 수 없음'을 보여요
   const serverOnlyRepair =
     api.mode === "http" &&
     page === "detail" &&
@@ -1140,6 +1141,8 @@ function HomeStampApp({
                       setSearch={setSearch}
                       tabCount={tabCount}
                       detail={detail}
+                      events={events}
+                      asOf={room.server?.asOf}
                     />
                   )}
                   {page === "detail" && repair && detailView(repair)}

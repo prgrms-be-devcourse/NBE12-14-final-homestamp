@@ -201,6 +201,8 @@ export interface Repair {
   linkViews?: number
   confirmRequested?: boolean
   inspectionRefs?: string[]
+  // 서버가 준 마지막 당사자 행동 시각(ISO, 06 4-6 lastActionAt). "N일째"·오래 멈춘 건을 이 값으로 세요. 목업은 경과 기록으로 셉니다
+  lastActionAt?: string
   id: string
   roomId: string
   title: string
