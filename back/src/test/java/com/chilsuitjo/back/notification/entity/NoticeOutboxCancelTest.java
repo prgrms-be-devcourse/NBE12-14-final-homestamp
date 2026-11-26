@@ -113,6 +113,30 @@ class NoticeOutboxCancelTest {
   }
 
   @Test
+  void 작업자가_가져간_줄은_보내기_전_취소로만_취소되고_시도_횟수는_그대로다() {
+    Outbox row = Outbox.sms(UUID.randomUUID(), NOW, NOW);
+    row.markSending();
+
+    assertThat(row.markCancelledBeforeSend()).isTrue();
+
+    assertThat(row.getStatus()).isEqualTo(OutboxStatus.CANCELLED);
+    assertThat(row.getAttempts()).isEqualTo(1);
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = OutboxStatus.class,
+      names = {"PENDING", "DONE", "FAILED", "CANCELLED"})
+  void 가져간_줄이_아니면_보내기_전_취소는_바꾸지_않는다(OutboxStatus status) {
+    Outbox row = Outbox.sms(UUID.randomUUID(), NOW, NOW);
+    ReflectionTestUtils.setField(row, "status", status);
+
+    assertThat(row.markCancelledBeforeSend()).isFalse();
+
+    assertThat(row.getStatus()).isEqualTo(status);
+  }
+
+  @Test
   void 이미_취소된_문자_줄을_다시_취소해도_바뀌지_않는다() {
     Outbox row = Outbox.sms(UUID.randomUUID(), NOW, NOW);
     row.markCancelled();

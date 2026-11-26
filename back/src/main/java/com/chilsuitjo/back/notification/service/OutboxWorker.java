@@ -8,6 +8,7 @@ import com.chilsuitjo.back.notification.repository.NoticeRepository;
 import com.chilsuitjo.back.notification.repository.OutboxRepository;
 import com.chilsuitjo.back.notification.repository.SmsGateway;
 import com.chilsuitjo.back.notification.rule.NoticeText;
+import com.chilsuitjo.back.notification.rule.OutboxStatus;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -154,13 +155,19 @@ public class OutboxWorker {
     finish(outboxId, notice.get().getId(), result);
   }
 
-  /** 재시도 줄의 초대 링크가 발송 전에 무효가 됐으면 이 시도는 보내지 않고 취소로 끝낸다. */
+  /**
+   * 가져간 줄(첫 시도든 {@code RETRY} 뒤 다시 시도든)의 초대 링크가 업체에 보내기 전에 이미 무효면 이 시도는 보내지 않고 통지와 줄을 함께 취소로 끝낸다.
+   * 줄이 이 작업자가 가져간 {@code SENDING}이고 통지가 발송 요청됨일 때만 바꾼다.
+   */
   private void cancelInvalidatedInvite(UUID outboxId, UUID noticeId) {
     transaction.executeWithoutResult(status -> {
       Notice notice = notices.findForUpdate(noticeId).orElse(null);
       Outbox row = outbox.findById(outboxId).orElse(null);
-      if (notice != null && row != null && notice.markCancelled()) {
-        row.markCancelled();
+      if (notice != null
+          && row != null
+          && row.getStatus() == OutboxStatus.SENDING
+          && notice.markCancelled()) {
+        row.markCancelledBeforeSend();
       }
     });
   }

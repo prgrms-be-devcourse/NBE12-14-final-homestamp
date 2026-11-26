@@ -437,6 +437,48 @@ class SmsCancellationServiceTest {
   }
 
   @Test
+  void 작업자는_가져간_줄의_초대_링크가_이미_무효면_보내지_않고_통지와_함께_취소한다() {
+    UUID invalid = link(room, party, true);
+    UUID notice = enqueue(room, party, invalid);
+    recipients.seedParty(party, "01012345678");
+
+    worker.runOnce();
+
+    assertThat(outboxStatus(notice)).isEqualTo("CANCELLED");
+    assertThat(noticeStatus(notice)).isEqualTo("CANCELLED");
+    assertThat(attempts(notice)).isEqualTo(1);
+    assertThat(gateway.sentBatchIds()).doesNotContain(notice);
+  }
+
+  @Test
+  void 업체_RETRY_뒤_초대_링크가_무효가_되면_다시_시도할_때_보내지_않고_취소한다() {
+    UUID link = link(room, party, false);
+    UUID notice = enqueue(room, party, link);
+    recipients.seedParty(party, "01012345678");
+    gateway.respondWith(SmsSendResult.Outcome.RETRY);
+    worker.runOnce();
+    assertThat(outboxStatus(notice)).isEqualTo("PENDING");
+
+    // 그사이 번호를 고쳐 옛 링크가 무효가 됐다(취소는 SENDING이던 줄을 놓쳤다). 다시 시도 시각도 지났다
+    jdbc.update(
+        "UPDATE link SET invalidated_at = CURRENT_TIMESTAMP, invalidated_reason = 'REINVITED'"
+            + " WHERE id = ?",
+        link);
+    jdbc.update(
+        "UPDATE outbox SET next_attempt_at = CURRENT_TIMESTAMP - interval '1 minute'"
+            + " WHERE dedupe_key = ?",
+        "sms:" + notice);
+    gateway.respondWith(SmsSendResult.Outcome.SENT);
+
+    worker.runOnce();
+
+    assertThat(outboxStatus(notice)).isEqualTo("CANCELLED");
+    assertThat(noticeStatus(notice)).isEqualTo("CANCELLED");
+    assertThat(attempts(notice)).isEqualTo(2);
+    assertThat(gateway.sentBatchIds()).doesNotContain(notice);
+  }
+
+  @Test
   void 취소가_줄을_잡고_있으면_작업자는_기다리지_않고_건너뛴다() throws Exception {
     UUID link = link(room, party, false);
     UUID notice = enqueue(room, party, link);
