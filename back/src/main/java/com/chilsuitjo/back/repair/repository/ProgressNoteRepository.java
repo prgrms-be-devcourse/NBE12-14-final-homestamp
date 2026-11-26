@@ -11,6 +11,9 @@ import org.springframework.data.repository.query.Param;
 /** 진행 상황({@code record.progress_note}, B). 덧붙이기만 한다. repair 안에서만 쓴다. */
 public interface ProgressNoteRepository extends JpaRepository<ProgressNote, UUID> {
 
+  /** 그 호실의 진행 상황. 다른 호실의 ID면 비어 있다(ROOM-2a). */
+  Optional<ProgressNote> findByIdAndRoomRecordId(UUID id, UUID roomRecordId);
+
   /** 그 수리 건의 진행 상황 ID들. 수리 건 카드 사진 한도를 셀 때 쓴다(06 0-1 {@code photo.max.repair}). */
   @Query("select n.id from ProgressNote n where n.repairCaseId = :repairCaseId")
   List<UUID> findIdsByRepairCaseId(@Param("repairCaseId") UUID repairCaseId);

@@ -1,6 +1,7 @@
 package com.chilsuitjo.back.inspection.service;
 
 import com.chilsuitjo.back.action.dto.ActionCommand;
+import com.chilsuitjo.back.action.dto.ActionTarget;
 import com.chilsuitjo.back.action.dto.Actor;
 import com.chilsuitjo.back.action.dto.PipelineResult;
 import com.chilsuitjo.back.action.rule.ActionType;
@@ -10,11 +11,13 @@ import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.inspection.dto.AddInspectionItemRequest;
 import com.chilsuitjo.back.inspection.dto.InspectionCreated;
+import com.chilsuitjo.back.inspection.dto.InspectionStatusChanged;
 import com.chilsuitjo.back.inspection.dto.StartInspectionRequest;
 import com.chilsuitjo.back.inspection.repository.InspectionItemStateStore;
 import com.chilsuitjo.back.inspection.repository.InspectionRepository;
 import com.chilsuitjo.back.inspection.repository.InspectionStateStore;
 import com.chilsuitjo.back.inspection.rule.InspectionItemTransitions;
+import com.chilsuitjo.back.inspection.rule.InspectionState;
 import com.chilsuitjo.back.inspection.rule.InspectionTransitions;
 import com.chilsuitjo.back.room.service.RoomMoveInDates;
 import java.util.LinkedHashMap;
@@ -94,5 +97,34 @@ public class InspectionService {
             itemStore.adding(request.roomPartId(), request.description(), request.uploadTickets()),
             itemRules);
     return new InspectionCreated(result.action().target().id(), result.action().replayed());
+  }
+
+  /**
+   * 확인 요청(06 4-7 {@code request-confirm}, INSP-1f). 없는 점검·당사자가 아니면 {@code NOT_FOUND}, 작성 중이 아니거나 상대
+   * 측이 {@code inspection.draft.stale-after} 전에 보내면 {@code INVALID_STATE}, 공유를 그만둔 사람이면 {@code
+   * SHARING_STOPPED}(pipeline)다. 같은 키로 다시 오면 점검의 지금 상태를 돌려준다(06 4-0).
+   */
+  public InspectionStatusChanged requestConfirm(
+      UUID inspectionId, UUID memberId, String idempotencyKey) {
+    UUID roomRecordId =
+        inspections
+            .findRoomRecordIdById(inspectionId)
+            .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
+    PipelineResult<InspectionState> result =
+        pipeline.execute(
+            new ActionCommand(
+                roomRecordId,
+                Actor.member(memberId),
+                ActionType.REQUEST_INSPECTION_CONFIRM,
+                idempotencyKey,
+                ActionTarget.inspection(inspectionId),
+                null,
+                null,
+                null,
+                Map.of()),
+            inspectionStore.requesting(),
+            inspectionRules);
+    return new InspectionStatusChanged(
+        inspectionId, result.state().status(), result.action().replayed());
   }
 }

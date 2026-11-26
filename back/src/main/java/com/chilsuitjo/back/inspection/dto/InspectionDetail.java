@@ -25,6 +25,8 @@ import java.util.UUID;
  * @param lockReason 잠긴 이유. 잠기지 않았으면 null
  * @param asOf 공유를 그만둬 보이는 범위를 고정한 시각(03 6-6 9번). 이 시각 뒤 상대가 더한 항목은 빠진다. 고정되지 않았으면 null
  * @param items 보이는 항목(더한 순서). 작성 중이라 보는 사람에게 아직 보이지 않으면 null
+ * @param counterpartCanRequestAt 기준 측이 아닌 사람도 "지금까지 쓴 것으로" 확인 요청을 보낼 수 있게 되는 시각(시작 + {@code
+ *     inspection.draft.stale-after}, 06 INSP-1f). 화면의 "작성 중이에요 · 8일째"에 쓴다
  * @param availableActions 지금 이 사람이 누를 수 있는 행동. 이름은 API 끝 단어와 같다(06 4-0 "할 수 있는 행동")
  */
 public record InspectionDetail(
@@ -40,6 +42,7 @@ public record InspectionDetail(
     Instant createdAt,
     Instant asOf,
     List<Item> items,
+    Instant counterpartCanRequestAt,
     List<String> availableActions) {
 
   /**
