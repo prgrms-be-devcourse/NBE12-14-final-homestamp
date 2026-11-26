@@ -12,7 +12,8 @@ const fromServer = <T>(record: unknown, v?: Viewer): T[] => {
 }
 
 export const httpAvailableActions: AvailableActionsApi = {
-  room: (room, _role, v) => fromServer(room, v),
+  // 호실은 상세(GET /api/rooms/{id})의 값을 room.server에 둬요(http-rooms)
+  room: (room, _role, v) => fromServer(room.server, v),
   inspection: () => [],
   inspectionItem: (item, _role, v) => fromServer(item, v),
   settlement: () => [],
