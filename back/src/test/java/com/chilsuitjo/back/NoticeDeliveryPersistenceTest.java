@@ -9,6 +9,7 @@ import com.chilsuitjo.back.notification.rule.NoticeKind;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.sql.Timestamp;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
@@ -24,6 +25,7 @@ class NoticeDeliveryPersistenceTest extends SchemaTestSupport {
   private static final Instant CREATED = Instant.parse("2026-11-23T01:00:00Z");
   private static final Instant SENT_AT = Instant.parse("2026-11-23T01:00:10Z");
   private static final Instant LATER = Instant.parse("2026-11-23T01:05:00Z");
+  private static final Instant DUE = SENT_AT.plus(Duration.ofDays(3));
 
   @Autowired private NoticeRepository notices;
   @PersistenceContext private EntityManager entityManager;
@@ -57,6 +59,22 @@ class NoticeDeliveryPersistenceTest extends SchemaTestSupport {
     assertThat(instant(row(id).get("failed_at"))).isEqualTo(LATER);
   }
 
+  @Test
+  void 보낼_때_정한_전달_확인_기한이_저장되고_다시_읽어도_결과를_적어도_그대로다() {
+    UUID id = sentNotice();
+
+    assertThat(instant(row(id).get("delivery_check_due_at"))).isEqualTo(DUE);
+    Notice reloaded = notices.findById(id).orElseThrow();
+    assertThat(reloaded.getDeliveryCheckDueAt()).isEqualTo(DUE);
+
+    reloaded.markDelivered(LATER);
+    entityManager.flush();
+    entityManager.clear();
+
+    assertThat(instant(row(id).get("delivery_check_due_at"))).isEqualTo(DUE);
+    assertThat(notices.findById(id).orElseThrow().getDeliveryCheckDueAt()).isEqualTo(DUE);
+  }
+
   /** 보낸 상태의 통지를 저장하고 1차 캐시를 비워, 다음 조회가 DB에서 읽게 한다. */
   private UUID sentNotice() {
     UUID room = room();
@@ -72,7 +90,7 @@ class NoticeDeliveryPersistenceTest extends SchemaTestSupport {
         new Notice(
             room, null, null, party, NoticeKind.REQUEST, NoticeChannel.SMS, CREATED, CREATED);
     notices.saveAndFlush(notice);
-    notice.markSent("fake-1", SENT_AT, SENT_AT.plusSeconds(60));
+    notice.markSent("fake-1", SENT_AT, SENT_AT.plusSeconds(60), DUE);
     entityManager.flush();
     entityManager.clear();
     return notice.getId();

@@ -128,11 +128,13 @@ class DeliveryPollSchedulerTest {
           assertThat(context).hasSingleBean(DeliveryResultPoller.class);
           assertThat(context).doesNotHaveBean(DeliveryPollScheduler.class);
           DeliveryPollSchedule schedule = context.getBean(DeliveryPollSchedule.class);
-          assertThat(schedule.first(Instant.EPOCH, Duration.ofDays(3)))
+          assertThat(schedule.first(Instant.EPOCH, Instant.EPOCH.plus(Duration.ofDays(3))))
               .isEqualTo(Instant.EPOCH.plus(Duration.ofMinutes(2)));
           assertThat(
                   schedule.next(
-                      Instant.EPOCH, Instant.EPOCH.plus(Duration.ofMinutes(2)), Duration.ofDays(3)))
+                      Instant.EPOCH,
+                      Instant.EPOCH.plus(Duration.ofMinutes(2)),
+                      Instant.EPOCH.plus(Duration.ofDays(3))))
               .contains(Instant.EPOCH.plus(Duration.ofMinutes(7)));
         });
 

@@ -6,7 +6,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.chilsuitjo.back.notification.rule.NoticeChannel;
 import com.chilsuitjo.back.notification.rule.NoticeKind;
 import com.chilsuitjo.back.notification.rule.NoticeStatus;
+import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
@@ -20,6 +22,7 @@ class NoticeTest {
   private static final Instant SENT_AT = Instant.parse("2026-11-23T01:00:10Z");
   private static final Instant LATER = Instant.parse("2026-11-23T01:05:00Z");
   private static final Instant MUCH_LATER = Instant.parse("2026-11-23T02:00:00Z");
+  private static final Instant DUE = SENT_AT.plus(Duration.ofDays(3));
 
   @Test
   void 보낸_통지가_전달되면_전달됨과_넘긴_시각이_남고_더_묻지_않는다() {
@@ -104,13 +107,15 @@ class NoticeTest {
   void 보내면_보낸_시각과_1분_뒤_첫_조회가_정해지고_두_번_보내지_않는다() {
     Notice notice = requested();
 
-    notice.markSent("fake-1", SENT_AT, SENT_AT.plusSeconds(60));
-    notice.markSent("fake-2", LATER, LATER.plusSeconds(60));
+    notice.markSent("fake-1", SENT_AT, SENT_AT.plusSeconds(60), DUE);
+    notice.markSent("fake-2", LATER, LATER.plusSeconds(60), LATER.plus(Duration.ofMinutes(5)));
 
     assertThat(notice.getStatus()).isEqualTo(NoticeStatus.SENT);
     assertThat(notice.getSentAt()).isEqualTo(SENT_AT);
     assertThat(notice.getProviderMessageId()).isEqualTo("fake-1");
     assertThat(notice.getNextPollAt()).isEqualTo(SENT_AT.plusSeconds(60));
+    // 두 번째 markSent는 무시되므로 처음 정한 기한이 그대로다
+    assertThat(notice.getDeliveryCheckDueAt()).isEqualTo(DUE);
   }
 
   @Test
@@ -118,9 +123,68 @@ class NoticeTest {
     Notice notice = requested();
     Instant configuredFirst = SENT_AT.plusSeconds(120);
 
-    notice.markSent("fake-1", SENT_AT, configuredFirst);
+    notice.markSent("fake-1", SENT_AT, configuredFirst, DUE);
 
     assertThat(notice.getNextPollAt()).isEqualTo(configuredFirst);
+    assertThat(notice.getDeliveryCheckDueAt()).isEqualTo(DUE);
+  }
+
+  @Test
+  void 보내기_전에는_전달_확인_기한이_없다() {
+    assertThat(requested().getDeliveryCheckDueAt()).isNull();
+  }
+
+  @Test
+  void 전달_확인_기한이_없거나_보낸_시각보다_뒤가_아니면_보내지_않는다() {
+    Notice missing = requested();
+    assertThatThrownBy(() -> missing.markSent("fake-1", SENT_AT, SENT_AT.plusSeconds(60), null))
+        .isInstanceOf(NullPointerException.class);
+
+    Notice same = requested();
+    assertThatThrownBy(() -> same.markSent("fake-1", SENT_AT, SENT_AT.plusSeconds(60), SENT_AT))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    Notice before = requested();
+    assertThatThrownBy(() ->
+            before.markSent("fake-1", SENT_AT, SENT_AT.plusSeconds(60), SENT_AT.minusSeconds(1)))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    for (Notice notice : List.of(missing, same, before)) {
+      assertThat(notice.getStatus()).isEqualTo(NoticeStatus.REQUESTED);
+      assertThat(notice.getSentAt()).isNull();
+      assertThat(notice.getDeliveryCheckDueAt()).isNull();
+    }
+  }
+
+  @Test
+  void 첫_조회_시각이_전달_확인_기한을_넘으면_보내지_않는다() {
+    Notice notice = requested();
+    Instant due = SENT_AT.plusSeconds(30);
+
+    assertThatThrownBy(() -> notice.markSent("fake-1", SENT_AT, due.plusNanos(1_000), due))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThat(notice.getStatus()).isEqualTo(NoticeStatus.REQUESTED);
+
+    // 기한과 같은 첫 조회는 받는다(기한이 첫 조회 간격보다 짧은 설정)
+    notice.markSent("fake-1", SENT_AT, due, due);
+    assertThat(notice.getNextPollAt()).isEqualTo(due);
+  }
+
+  @Test
+  void 조회_세대와_다음_조회가_바뀌고_결과가_적혀도_전달_확인_기한은_그대로다() {
+    Notice delivered = sent();
+    UUID token = UUID.randomUUID();
+    delivered.claimDeliveryPoll(token, LATER);
+    delivered.startDeliveryPoll(token, LATER, LATER.plusSeconds(120));
+    delivered.finishDeliveryPoll(token, MUCH_LATER);
+    delivered.scheduleNextPoll(MUCH_LATER.plusSeconds(60));
+    assertThat(delivered.getDeliveryCheckDueAt()).isEqualTo(DUE);
+    delivered.markDelivered(MUCH_LATER);
+    assertThat(delivered.getDeliveryCheckDueAt()).isEqualTo(DUE);
+
+    Notice failed = sent();
+    failed.markDeliveryFailed(MUCH_LATER);
+    assertThat(failed.getDeliveryCheckDueAt()).isEqualTo(DUE);
   }
 
   @Test
@@ -166,7 +230,7 @@ class NoticeTest {
 
   private static Notice sent() {
     Notice notice = requested();
-    notice.markSent("fake-1", SENT_AT, SENT_AT.plusSeconds(60));
+    notice.markSent("fake-1", SENT_AT, SENT_AT.plusSeconds(60), DUE);
     return notice;
   }
 }

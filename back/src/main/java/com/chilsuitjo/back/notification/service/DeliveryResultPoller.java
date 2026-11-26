@@ -6,7 +6,6 @@ import com.chilsuitjo.back.notification.entity.Notice;
 import com.chilsuitjo.back.notification.repository.NoticeRepository;
 import com.chilsuitjo.back.notification.repository.SmsGateway;
 import com.chilsuitjo.back.notification.rule.DeliveryOutcome;
-import com.chilsuitjo.back.notification.rule.DeliveryPollSchedule;
 import com.chilsuitjo.back.notification.rule.NoticeStatus;
 import java.time.Clock;
 import java.time.Duration;
@@ -15,6 +14,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,9 +33,10 @@ import org.springframework.transaction.support.TransactionTemplate;
  *   <li>통지마다 새 트랜잭션에서 다시 잠그고, 아직 보낸(SENT) 상태일 때만 결과를 적는다
  * </ol>
  *
- * <p>전달됨이면 전달됨, 업체의 최종 실패면 실패다. 결과가 없거나 업체 조회가 실패하면 기한(보낸 뒤 {@code delivery.unknown-after}, 3일) 전에는
- * 그대로 두고 옮겨 둔 시각에 다시 묻는다. 기한이 지났으면 실패로 끝낸다: 전달됐다는 증거가 아니라 "기한 안에 전달을 확인하지 못함"이라는 뜻이다(04 4-2 "3일이
- * 지나도 결과가 없으면 실패로 본다"). 조회 실패로 문자를 다시 보내지는 않는다.
+ * <p>전달됨이면 전달됨, 업체의 최종 실패면 실패다. 결과가 없거나 업체 조회가 실패하면 전달 확인 기한(보낼 때 그때의 {@code
+ * delivery.unknown-after}로 정해 통지에 저장한 {@code delivery_check_due_at}, 기본 3일) 전에는 그대로 두고 옮겨 둔 시각에 다시
+ * 묻는다. 기한이 지났으면 실패로 끝낸다: 전달됐다는 증거가 아니라 "기한 안에 전달을 확인하지 못함"이라는 뜻이다(04 4-2 "전달 확인 기한까지 결과가 없으면 실패로
+ * 본다"). 조회 실패로 문자를 다시 보내지는 않는다.
  *
  * <p>통지 하나가 묶음 하나인 지금 구조를 기준으로 한다(문자 모으기의 묶음 전체 변경은 아직 없음). 결과는 가져간 통지의 묶음 ID로만 찾으므로, 업체가 모르는 ID를
  * 돌려주거나 일부를 빠뜨려도 다른 통지에 적히지 않는다(빠진 통지는 결과 없음).
@@ -52,7 +53,6 @@ public class DeliveryResultPoller {
   private final SmsGateway gateway;
   private final Clock clock;
   private final TransactionTemplate transaction;
-  private final Duration giveUpAfter;
   private final Duration protectFor;
 
   public DeliveryResultPoller(
@@ -61,7 +61,6 @@ public class DeliveryResultPoller {
       SmsGateway gateway,
       Clock clock,
       PlatformTransactionManager transactionManager,
-      @Value("${app.delivery.unknown-after:3d}") Duration giveUpAfter,
       @Value("${app.delivery.poller.protect-for:2m}") Duration protectFor) {
     if (protectFor == null
         || protectFor.isNegative()
@@ -78,7 +77,6 @@ public class DeliveryResultPoller {
     this.clock = clock;
     this.transaction = new TransactionTemplate(transactionManager);
     this.transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-    this.giveUpAfter = giveUpAfter;
     this.protectFor = protectFor;
   }
 
@@ -184,9 +182,11 @@ public class DeliveryResultPoller {
         notice.markDeliveryFailed(now);
         return;
       }
+      // 기한은 보낼 때 저장한 값이다. 지금 설정으로 다시 계산하지 않는다(06 0-1)
       boolean pastDeadline =
           poll.pastDeadline()
-              || !now.isBefore(DeliveryPollSchedule.deadline(notice.getSentAt(), giveUpAfter));
+              || !now.isBefore(
+                  Objects.requireNonNull(notice.getDeliveryCheckDueAt(), "deliveryCheckDueAt"));
       if (pastDeadline) {
         // 결과 없음 또는 조회 실패인 채 기한이 지났다: 전달 확인 기한 만료로 끝낸다(실제 전달 실패의 증거는 아님)
         notice.markDeliveryFailed(now);

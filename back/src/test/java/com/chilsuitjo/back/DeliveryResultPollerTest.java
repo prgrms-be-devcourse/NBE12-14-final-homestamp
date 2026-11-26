@@ -153,7 +153,6 @@ class DeliveryResultPollerTest {
             fake,
             advancingClock,
             transactionManager,
-            THREE_DAYS,
             Duration.ofMinutes(2))
         .runOnce(50);
 
@@ -193,6 +192,50 @@ class DeliveryResultPollerTest {
     assertThat(column(id, "status")).isEqualTo("FAILED");
     assertThat(time(id, "failed_at")).isEqualTo(DEADLINE);
     assertThat(time(id, "next_poll_at")).isNull();
+  }
+
+  @Test
+  void 결과_없음의_만료는_저장된_기한의_직전_같은_시각_직후로_판단한다() {
+    // 보낸 뒤 3일이 아니라 보낼 때 저장한 기한(5분)을 따른다
+    Instant due = SENT.plus(Duration.ofMinutes(5));
+    UUID justBefore = notice(due.minusNanos(1_000), due);
+    poller(due.minusNanos(1_000), due.minusNanos(1_000), fake).runOnce(50);
+    assertThat(column(justBefore, "status")).isEqualTo("SENT");
+    assertThat(time(justBefore, "delivery_check_due_at")).isEqualTo(due);
+
+    UUID exactly = notice(due, due);
+    poller(due, due, fake).runOnce(50);
+    assertThat(column(exactly, "status")).isEqualTo("FAILED");
+    assertThat(column(justBefore, "status")).isEqualTo("FAILED");
+
+    UUID justAfter = notice(due.plusNanos(1_000), due);
+    poller(due.plusNanos(1_000), due.plusNanos(1_000), fake).runOnce(50);
+    assertThat(column(justAfter, "status")).isEqualTo("FAILED");
+    assertThat(time(justAfter, "delivery_check_due_at")).isEqualTo(due);
+  }
+
+  @Test
+  void 저장된_기한이_3일보다_길면_3일이_지나도_결과_없음으로_실패하지_않는다() {
+    Instant sevenDays = SENT.plus(Duration.ofDays(7));
+    UUID id = notice(DEADLINE, sevenDays);
+
+    poller(DEADLINE, DEADLINE.plusSeconds(1), fake).runOnce(50);
+
+    assertThat(column(id, "status")).isEqualTo("SENT");
+    assertThat(time(id, "failed_at")).isNull();
+    assertThat(time(id, "delivery_check_due_at")).isEqualTo(sevenDays);
+  }
+
+  @Test
+  void 가져간_뒤_적기_전에_저장된_기한이_지나면_결과_없음은_실패다() {
+    Instant due = SENT.plus(Duration.ofMinutes(5));
+    Instant claimAt = due.minusSeconds(1);
+    UUID id = notice(claimAt, due);
+
+    poller(claimAt, due, fake).runOnce(50);
+
+    assertThat(column(id, "status")).isEqualTo("FAILED");
+    assertThat(time(id, "failed_at")).isEqualTo(due);
   }
 
   @Test
@@ -547,7 +590,6 @@ class DeliveryResultPollerTest {
                 fake,
                 Clock.systemUTC(),
                 transactionManager,
-                THREE_DAYS,
                 Duration.ZERO))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() ->
@@ -557,7 +599,6 @@ class DeliveryResultPollerTest {
                 fake,
                 Clock.systemUTC(),
                 transactionManager,
-                THREE_DAYS,
                 Duration.ofMinutes(16)))
         .isInstanceOf(IllegalArgumentException.class);
   }
@@ -663,7 +704,7 @@ class DeliveryResultPollerTest {
 
   private DeliveryPollClaimer claimer(Instant at) {
     return new DeliveryPollClaimer(
-        notices, Clock.fixed(at, ZoneOffset.UTC), transactionManager, THREE_DAYS, SCHEDULE);
+        notices, Clock.fixed(at, ZoneOffset.UTC), transactionManager, SCHEDULE);
   }
 
   /** 가져갈 때와 적을 때의 시각을 따로 정한다(업체에 묻는 사이 시간이 흐름). */
@@ -673,13 +714,7 @@ class DeliveryResultPollerTest {
 
   private DeliveryResultPoller poller(Instant claimAt, Clock workerClock, SmsGateway gateway) {
     return new DeliveryResultPoller(
-        claimer(claimAt),
-        notices,
-        gateway,
-        workerClock,
-        transactionManager,
-        THREE_DAYS,
-        Duration.ofMinutes(2));
+        claimer(claimAt), notices, gateway, workerClock, transactionManager, Duration.ofMinutes(2));
   }
 
   private static Clock sequenceClock(Instant... instants) {
@@ -750,14 +785,20 @@ class DeliveryResultPollerTest {
         id);
   }
 
-  /** 보낸 시각은 {@link #SENT}, 묶음 ID는 자기 자신(Notice.markSent와 같음). */
+  /** 보낸 시각은 {@link #SENT}, 묶음 ID는 자기 자신, 전달 확인 기한은 보낸 뒤 3일(Notice.markSent와 같음). */
   private UUID notice(Instant nextPollAt) {
+    return notice(nextPollAt, DEADLINE);
+  }
+
+  /** 보낼 때 저장된 전달 확인 기한을 정해 만든다(설정을 바꾸기 전후에 보낸 통지). */
+  private UUID notice(Instant nextPollAt, Instant deliveryCheckDueAt) {
     UUID id = UUID.randomUUID();
     jdbc.update(
         """
         INSERT INTO notice (id, room_record_id, recipient_party_id, kind, channel, status,
-          sent_at, provider_message_id, batch_lead_id, next_poll_at, created_at, version)
-        VALUES (?, ?, ?, 'REQUEST', 'SMS', 'SENT', ?, ?, ?, ?, ?, 0)
+          sent_at, provider_message_id, batch_lead_id, next_poll_at, delivery_check_due_at,
+          created_at, version)
+        VALUES (?, ?, ?, 'REQUEST', 'SMS', 'SENT', ?, ?, ?, ?, ?, ?, 0)
         """,
         id,
         room,
@@ -766,6 +807,7 @@ class DeliveryResultPollerTest {
         "fake-" + id,
         id,
         Timestamp.from(nextPollAt),
+        Timestamp.from(deliveryCheckDueAt),
         Timestamp.from(SENT.minusSeconds(10)));
     return id;
   }

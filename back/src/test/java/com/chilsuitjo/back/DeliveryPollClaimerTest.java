@@ -195,7 +195,7 @@ class DeliveryPollClaimerTest {
         .lockDuePolls(any(), anyInt());
     DeliveryPollClaimer broken =
         new DeliveryPollClaimer(
-            failing, Clock.fixed(now, ZoneOffset.UTC), transactionManager, THREE_DAYS, SCHEDULE);
+            failing, Clock.fixed(now, ZoneOffset.UTC), transactionManager, SCHEDULE);
 
     assertThatThrownBy(() -> broken.claim(50)).isInstanceOf(NullPointerException.class);
 
@@ -205,24 +205,82 @@ class DeliveryPollClaimerTest {
   }
 
   @Test
-  void 묶음_ID나_보낸_시각이_없는_통지는_돌려주지_않고_시각만_옮겨_정상_통지를_막지_않는다() {
+  void 묶음_ID가_없는_통지는_돌려주지_않고_시각만_옮겨_정상_통지를_막지_않는다() {
     Instant now = SENT.plus(Duration.ofMinutes(1));
     UUID noBatch = notice("SENT", now.minusSeconds(2));
-    UUID noSentAt = notice("SENT", now.minusSeconds(1));
     UUID good = notice("SENT", now);
     jdbc.update("UPDATE notice SET batch_lead_id = NULL WHERE id = ?", noBatch);
-    jdbc.update("UPDATE notice SET sent_at = NULL WHERE id = ?", noSentAt);
 
     List<UUID> claimed = ids(claimerAt(now).claim(50));
 
-    assertThat(claimed).contains(good).doesNotContain(noBatch, noSentAt);
-    for (UUID id : List.of(noBatch, noSentAt)) {
-      assertThat(status(id)).isEqualTo("SENT");
-      assertThat(nextPollAt(id)).isEqualTo(now.plus(Duration.ofMinutes(15)));
-    }
+    assertThat(claimed).contains(good).doesNotContain(noBatch);
+    assertThat(status(noBatch)).isEqualTo("SENT");
+    assertThat(nextPollAt(noBatch)).isEqualTo(now.plus(Duration.ofMinutes(15)));
     // 잘못된 줄이 limit을 먼저 차지해도 다음 실행에서는 정상 통지가 나온다
     UUID later = notice("SENT", now);
     assertThat(ids(claimerAt(now).claim(1))).containsExactly(later);
+  }
+
+  @Test
+  void 전달_확인_기한이_없는_보낸_통지는_가져가지도_바꾸지도_않고_정상_통지를_막지_않는다() {
+    // V9 이전에 보냈거나 이전 버전 앱이 적은 줄: 기한을 지어내거나 실패로 끝내지 않고, 시각을 계속 옮기며 다시 가져가지도 않는다
+    Instant now = SENT.plus(Duration.ofDays(4));
+    UUID legacy = notice("SENT", SENT.plus(Duration.ofMinutes(1)), null);
+    UUID noSentAt = notice("SENT", SENT.plus(Duration.ofMinutes(1)), null);
+    jdbc.update("UPDATE notice SET sent_at = NULL WHERE id = ?", noSentAt);
+    UUID good = notice("SENT", now);
+
+    assertThat(ids(claimerAt(now).claim(1))).containsExactly(good);
+    assertThat(ids(claimerAt(now.plus(Duration.ofDays(1))).claim(50)))
+        .doesNotContain(legacy, noSentAt);
+    for (UUID id : List.of(legacy, noSentAt)) {
+      assertThat(status(id)).isEqualTo("SENT");
+      assertThat(nextPollAt(id)).isEqualTo(SENT.plus(Duration.ofMinutes(1)));
+      assertThat(jdbc.queryForMap("SELECT * FROM notice WHERE id = ?", id))
+          .containsEntry("delivery_check_due_at", null)
+          .containsEntry("delivery_poll_token", null)
+          .containsEntry("failed_at", null);
+    }
+    assertThat(notices.countSentWithoutDeliveryCheckDue()).isGreaterThanOrEqualTo(2);
+  }
+
+  @Test
+  void 저장된_기한이_3일보다_길면_3일이_지나도_마지막_조회가_아니다() {
+    // 설정을 7일로 늘린 뒤 보낸 통지: 지금 설정이나 3일로 다시 계산하지 않고 저장된 기한을 따른다
+    Instant sevenDays = SENT.plus(Duration.ofDays(7));
+    Instant now = SENT.plus(THREE_DAYS);
+    UUID id = notice("SENT", now, sevenDays);
+
+    List<ClaimedDeliveryPoll> claimed = claimerAt(now).claim(50);
+
+    assertThat(claimed)
+        .filteredOn(c -> c.noticeId().equals(id))
+        .singleElement()
+        .extracting(ClaimedDeliveryPoll::pastDeadline)
+        .isEqualTo(false);
+    assertThat(nextPollAt(id)).isEqualTo(now.plus(Duration.ofMinutes(15)));
+  }
+
+  @Test
+  void 저장된_기한이_짧으면_그_기한에_마지막_조회가_되고_기한을_넘겨_예약하지_않는다() {
+    Instant fiveMinutes = SENT.plus(Duration.ofMinutes(5));
+    UUID beforeDue = notice("SENT", SENT.plus(Duration.ofMinutes(1)), fiveMinutes);
+    UUID atDue = notice("SENT", fiveMinutes, fiveMinutes);
+
+    List<ClaimedDeliveryPoll> early = claimerAt(SENT.plus(Duration.ofMinutes(1))).claim(50);
+    assertThat(early)
+        .filteredOn(c -> c.noticeId().equals(beforeDue))
+        .singleElement()
+        .extracting(ClaimedDeliveryPoll::pastDeadline)
+        .isEqualTo(false);
+    assertThat(nextPollAt(beforeDue)).isEqualTo(fiveMinutes);
+
+    List<ClaimedDeliveryPoll> due = claimerAt(fiveMinutes).claim(50);
+    assertThat(due)
+        .filteredOn(c -> c.noticeId().equals(atDue))
+        .singleElement()
+        .extracting(ClaimedDeliveryPoll::pastDeadline)
+        .isEqualTo(true);
   }
 
   @Test
@@ -283,11 +341,7 @@ class DeliveryPollClaimerTest {
 
     DeliveryPollClaimer firstClaim =
         new DeliveryPollClaimer(
-            notices,
-            Clock.fixed(first, ZoneOffset.UTC),
-            transactionManager,
-            THREE_DAYS,
-            configured);
+            notices, Clock.fixed(first, ZoneOffset.UTC), transactionManager, configured);
     assertThat(ids(firstClaim.claim(50))).contains(id);
     assertThat(nextPollAt(id)).isEqualTo(SENT.plus(Duration.ofMinutes(7)));
 
@@ -296,7 +350,6 @@ class DeliveryPollClaimerTest {
             notices,
             Clock.fixed(SENT.plus(Duration.ofMinutes(7)), ZoneOffset.UTC),
             transactionManager,
-            THREE_DAYS,
             configured);
     assertThat(ids(secondClaim.claim(50))).contains(id);
     assertThat(nextPollAt(id)).isEqualTo(SENT.plus(Duration.ofMinutes(17)));
@@ -334,7 +387,7 @@ class DeliveryPollClaimerTest {
 
   private DeliveryPollClaimer claimerAt(Instant now) {
     return new DeliveryPollClaimer(
-        notices, Clock.fixed(now, ZoneOffset.UTC), transactionManager, THREE_DAYS, SCHEDULE);
+        notices, Clock.fixed(now, ZoneOffset.UTC), transactionManager, SCHEDULE);
   }
 
   private List<UUID> claimAfter(CountDownLatch start, Instant now, int limit) {
@@ -348,15 +401,20 @@ class DeliveryPollClaimerTest {
     return claimed;
   }
 
-  /** 보낸 시각은 {@link #SENT}, 보냈으면 묶음 ID는 자기 자신(Notice.markSent와 같음). */
+  /** 보낸 시각은 {@link #SENT}, 보냈으면 묶음 ID는 자기 자신, 전달 확인 기한은 보낸 뒤 3일(Notice.markSent와 같음). */
   private UUID notice(String status, Instant nextPollAt) {
+    return notice(status, nextPollAt, status.equals("REQUESTED") ? null : SENT.plus(THREE_DAYS));
+  }
+
+  private UUID notice(String status, Instant nextPollAt, Instant deliveryCheckDueAt) {
     UUID id = UUID.randomUUID();
     boolean sent = !status.equals("REQUESTED");
     jdbc.update(
         """
         INSERT INTO notice (id, room_record_id, recipient_party_id, kind, channel, status,
-          sent_at, provider_message_id, batch_lead_id, next_poll_at, created_at, version)
-        VALUES (?, ?, ?, 'REQUEST', 'SMS', ?, ?, ?, ?, ?, ?, 0)
+          sent_at, provider_message_id, batch_lead_id, next_poll_at, delivery_check_due_at,
+          created_at, version)
+        VALUES (?, ?, ?, 'REQUEST', 'SMS', ?, ?, ?, ?, ?, ?, ?, 0)
         """,
         id,
         room,
@@ -366,6 +424,7 @@ class DeliveryPollClaimerTest {
         sent ? "fake-" + id : null,
         sent ? id : null,
         Timestamp.from(nextPollAt),
+        deliveryCheckDueAt == null ? null : Timestamp.from(deliveryCheckDueAt),
         Timestamp.from(SENT.minusSeconds(10)));
     return id;
   }

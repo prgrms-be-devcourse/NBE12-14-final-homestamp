@@ -91,6 +91,13 @@ public class Notice {
   @Column(name = "delivery_poll_protected_until")
   private Instant deliveryPollProtectedUntil;
 
+  /**
+   * 전달 확인 기한: 결과 없이 기다리는 마지막 시각. 보낼 때({@link #markSent}) 한 번 정하고 바꾸지 않는다. 설정({@code
+   * delivery.unknown-after})을 바꿔도 이미 보낸 통지의 기한은 그대로다(06 0-1). 보내기 전에는 비어 있다.
+   */
+  @Column(name = "delivery_check_due_at")
+  private Instant deliveryCheckDueAt;
+
   /** 보낼 예정 시각(모으기·밤 보류·한도 미룸). */
   @Column(name = "scheduled_for")
   private Instant scheduledFor;
@@ -120,20 +127,33 @@ public class Notice {
     this.createdAt = Objects.requireNonNull(createdAt, "createdAt");
   }
 
-  /** 업체가 받았다(보냄) 또는 결과를 모른다(보낸 것으로 봄, 04 4-2). 첫 조회 시각은 설정을 읽은 작업자가 넘긴다. */
-  public void markSent(String providerMessageId, Instant at, Instant firstPollAt) {
+  /**
+   * 업체가 받았다(보냄) 또는 결과를 모른다(보낸 것으로 봄, 04 4-2). 첫 조회 시각과 전달 확인 기한은 설정을 읽은 작업자가 보낸 시각 기준으로 정해 넘긴다. 기한은
+   * 여기서만 정해지고 뒤의 조회·설정 변경으로 바뀌지 않는다(이미 보낸 통지는 그대로 둠).
+   */
+  public void markSent(
+      String providerMessageId, Instant at, Instant firstPollAt, Instant deliveryCheckDueAt) {
     if (status != NoticeStatus.REQUESTED) {
       return;
     }
+    Objects.requireNonNull(at, "at");
     Objects.requireNonNull(firstPollAt, "firstPollAt");
+    Objects.requireNonNull(deliveryCheckDueAt, "deliveryCheckDueAt");
+    if (!deliveryCheckDueAt.isAfter(at)) {
+      throw new IllegalArgumentException("전달 확인 기한은 보낸 시각보다 뒤여야 해요");
+    }
     if (!firstPollAt.isAfter(at)) {
       throw new IllegalArgumentException("첫 전달 결과 조회 시각은 보낸 시각보다 뒤여야 해요");
+    }
+    if (firstPollAt.isAfter(deliveryCheckDueAt)) {
+      throw new IllegalArgumentException("첫 전달 결과 조회 시각은 전달 확인 기한을 넘을 수 없어요");
     }
     this.status = NoticeStatus.SENT;
     this.sentAt = at;
     this.providerMessageId = providerMessageId;
     this.batchLeadId = id;
     this.nextPollAt = firstPollAt;
+    this.deliveryCheckDueAt = deliveryCheckDueAt;
   }
 
   /** 최종 실패(업체가 거절, 업체에 닿지 못한 채 3일). 보낸 측이 한 번 다시 보낼 수 있다(05 {@code notice}, 03 1-1). */
@@ -214,8 +234,8 @@ public class Notice {
    * 업체가 전달됐다고 답했다(결과 4000, 04 4-2). 보낸(SENT) 통지만 바뀌고, 그 밖의 상태(아직 보내기 전, 이미 전달·열람·실패)는 그대로 둔다(상태는
    * 앞으로만). 더 묻지 않으므로 다음 조회 시각을 지운다.
    *
-   * @param at 서버가 업체의 DELIVERED 응답을 관측한 시각. 업체가 제공한 실제 배송 시각이나 DB 저장 완료 시각과는 다르다(#120 정책 제안, 팀 검토
-   *     대기)
+   * @param at 서버가 업체의 DELIVERED 응답을 관측한 시각. 업체가 제공한 실제 배송 시각이나 DB 저장 완료 시각과는 다르다(#124 리뷰에서 합의, 05
+   *     {@code notice.delivered_at})
    */
   public void markDelivered(Instant at) {
     Objects.requireNonNull(at, "at");
@@ -231,8 +251,9 @@ public class Notice {
   }
 
   /**
-   * 보낸 문자가 전달되지 않았다고 끝났다(업체의 최종 실패 결과, 또는 보내고 3일 동안 결과 없음, 04 4-2·05 {@code notice}). 보낸(SENT) 통지만
-   * 바뀌고 그 밖의 상태는 그대로 둔다. 보내기 전 실패는 {@link #markFailed}다. 더 묻지 않으므로 다음 조회 시각을 지운다.
+   * 보낸 문자가 전달되지 않았다고 끝났다(업체의 최종 실패 결과, 또는 전달 확인 기한({@link #deliveryCheckDueAt})까지 결과 없음, 04 4-2·05
+   * {@code notice}). 보낸(SENT) 통지만 바뀌고 그 밖의 상태는 그대로 둔다. 보내기 전 실패는 {@link #markFailed}다. 더 묻지 않으므로 다음
+   * 조회 시각을 지운다.
    */
   public void markDeliveryFailed(Instant at) {
     Objects.requireNonNull(at, "at");

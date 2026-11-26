@@ -185,8 +185,13 @@ public class OutboxWorker {
         case SENT, UNKNOWN -> {
           row.markDone();
           if (notice != null) {
+            // 전달 확인 기한은 보낸 이 순간의 설정으로 한 번만 정해 저장한다(06 0-1). 뒤에 설정을 바꿔도 이 통지의 기한은 그대로다
+            Instant deliveryCheckDueAt = DeliveryPollSchedule.deadline(now, giveUpAfter);
             notice.markSent(
-                result.providerMessageId(), now, deliveryPollSchedule.first(now, giveUpAfter));
+                result.providerMessageId(),
+                now,
+                deliveryPollSchedule.first(now, deliveryCheckDueAt),
+                deliveryCheckDueAt);
           }
         }
         case REJECTED -> {

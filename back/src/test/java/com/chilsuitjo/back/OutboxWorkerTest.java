@@ -155,8 +155,35 @@ class OutboxWorkerTest {
     assertThat(notice.get("batch_lead_id")).isEqualTo(noticeId);
     assertThat(notice.get("sent_at")).isNotNull();
     assertThat(notice.get("next_poll_at")).isNotNull();
+    // 전달 확인 기한은 보낸 시각 + 설정(app.delivery.unknown-after, 3일)으로 보낼 때 저장한다(06 0-1)
+    assertThat(time(notice, "delivery_check_due_at"))
+        .isEqualTo(time(notice, "sent_at").plus(Duration.ofDays(3)));
     assertThat(outboxStatus(noticeId)).isEqualTo("DONE");
     assertThat(gateway.sentBatchIds()).containsExactly(noticeId);
+  }
+
+  @Test
+  void 보낼_때의_기한_설정으로_전달_확인_기한과_첫_조회를_함께_정해_저장한다() {
+    UUID shortDue = enqueue();
+    sender(Duration.ofMinutes(5)).runOnce();
+    Map<String, Object> five = notice(shortDue);
+    Instant fiveSentAt = time(five, "sent_at");
+    assertThat(time(five, "delivery_check_due_at"))
+        .isEqualTo(fiveSentAt.plus(Duration.ofMinutes(5)));
+    assertThat(time(five, "next_poll_at")).isEqualTo(fiveSentAt.plus(Duration.ofMinutes(1)));
+
+    // 기한이 첫 조회 간격보다 짧으면 첫 조회는 기한에 잡힌다(기한을 넘겨 예약하지 않음)
+    UUID tinyDue = enqueue();
+    sender(Duration.ofSeconds(30)).runOnce();
+    Map<String, Object> tiny = notice(tinyDue);
+    Instant tinySentAt = time(tiny, "sent_at");
+    assertThat(time(tiny, "delivery_check_due_at")).isEqualTo(tinySentAt.plusSeconds(30));
+    assertThat(time(tiny, "next_poll_at")).isEqualTo(tinySentAt.plusSeconds(30));
+
+    // 앞서 보낸 통지의 기한은 뒤의 다른 설정 작업자가 돌아도 그대로다
+    sender(Duration.ofDays(7)).runOnce();
+    assertThat(time(notice(shortDue), "delivery_check_due_at"))
+        .isEqualTo(fiveSentAt.plus(Duration.ofMinutes(5)));
   }
 
   @Test
@@ -206,6 +233,9 @@ class OutboxWorkerTest {
 
     assertThat(notice(noticeId).get("status")).isEqualTo("SENT");
     assertThat(notice(noticeId).get("provider_message_id")).isNull();
+    // 결과 모름도 보낸 것으로 보므로 같은 방식으로 기한을 저장한다(04 4-2)
+    assertThat(time(notice(noticeId), "delivery_check_due_at"))
+        .isEqualTo(time(notice(noticeId), "sent_at").plus(Duration.ofDays(3)));
     assertThat(gateway.sentBatchIds()).containsExactly(noticeId);
   }
 
@@ -494,6 +524,25 @@ class OutboxWorkerTest {
 
   private UUID enqueue() {
     return transaction.execute(status -> noticeOutbox.enqueueSms(command()));
+  }
+
+  /** 기한 설정만 다른 보내기 작업자(설정을 바꾼 뒤 띄운 앱). */
+  private OutboxWorker sender(Duration giveUpAfter) {
+    return new OutboxWorker(
+        outboxRepository,
+        noticeRepository,
+        recipients,
+        gateway,
+        clock,
+        transactionManager,
+        50,
+        List.of(Duration.ofMinutes(1)),
+        giveUpAfter,
+        deliveryPollSchedule);
+  }
+
+  private static Instant time(Map<String, Object> row, String column) {
+    return ((Timestamp) row.get(column)).toInstant();
   }
 
   private Map<String, Object> notice(UUID id) {
