@@ -102,7 +102,8 @@ public class InviteLinkService implements InviteLinks {
     } catch (DataIntegrityViolationException e) {
       // 기록 ID는 요청에서 온 값이라, 없거나 다른 호실의 기록이면 사용자 요청 오류다(#163). 기록 외래 키 두 개만 바꾸고 나머지는 그대로 올린다.
       // 이 문장이 실패해 트랜잭션은 되돌리기만 할 수 있다. 부르는 쪽은 잡지 말고 올려 행동·자리·링크·통지를 함께 되돌린다
-      if (record != null && RECORD_FOREIGN_KEYS.contains(constraintName(e))) {
+      String violated = constraintName(e);
+      if (record != null && violated != null && RECORD_FOREIGN_KEYS.contains(violated)) {
         throw new BusinessException(ErrorCode.NOT_FOUND);
       }
       throw e;

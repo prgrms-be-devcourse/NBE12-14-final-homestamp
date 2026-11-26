@@ -189,6 +189,11 @@ class InviteLinkServiceTest {
     assertThatThrownBy(() ->
             inTx(() -> inviteLinks.issueInvite(one.id(), two.counterpart(), null, one.issuer())))
         .isInstanceOf(DataIntegrityViolationException.class);
+    // 기록이 맞아도 자리가 틀리면 NOT_FOUND가 아니라 개발 오류다
+    RequestTarget mine = RequestTarget.of(TargetKind.INSPECTION, inspection(one.id()));
+    assertThatThrownBy(() ->
+            inTx(() -> inviteLinks.issueInvite(one.id(), two.counterpart(), mine, one.issuer())))
+        .isInstanceOf(DataIntegrityViolationException.class);
     assertThat(linkCount(one.id())).isZero();
   }
 
