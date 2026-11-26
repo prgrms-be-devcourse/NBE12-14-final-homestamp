@@ -47,6 +47,8 @@ import org.springframework.transaction.support.TransactionTemplate;
       "app.keys.access-token=prod-like-access-token-signing-key-for-test",
       "app.keys.refresh-token=prod-like-refresh-token-rotation-key-for-test",
       "app.origin=https://homestamp.example",
+      // prod는 사진 버킷 없이 시작하지 않는다(#223, FakeUploadPostSigner). 버킷 이름만 넣고 S3는 부르지 않는다
+      "photo.s3.bucket=prod-like-photos-for-test",
       "spring.datasource.hikari.connection-init-sql=SET search_path TO state, record, log, public",
       "app.outbox.worker.enabled=false"
     })
