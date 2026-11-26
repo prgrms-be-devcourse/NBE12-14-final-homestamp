@@ -115,6 +115,33 @@ class ResponseRequestLookupImpl implements ResponseRequestLookup {
     return byTarget(kind, target, statuses).getResultList();
   }
 
+  @Override
+  public List<ResponseRequest> findOpenRequestedBy(UUID roomRecordId, PartySide requestedBySide) {
+    return entityManager
+        .createQuery(
+            """
+            select r from ResponseRequest r
+            where r.roomRecordId = :roomRecordId and r.requestedBySide = :side
+              and r.status in :statuses
+            order by r.createdAt, r.id
+            """,
+            ResponseRequest.class)
+        .setParameter("roomRecordId", Objects.requireNonNull(roomRecordId))
+        .setParameter("side", Objects.requireNonNull(requestedBySide))
+        .setParameter("statuses", EnumSet.of(RequestStatus.WAITING, RequestStatus.UNCONFIRMED))
+        .getResultList();
+  }
+
+  @Override
+  public Optional<ResponseRequest> findLatest(RequestKind kind, RequestTarget target) {
+    if (kind == RequestKind.INSPECTION_CONFIRM) {
+      throw new IllegalArgumentException("점검 확인은 방향이 둘이라 가장 최근 하나가 정해지지 않아요");
+    }
+    List<ResponseRequest> all =
+        byTarget(kind, target, EnumSet.allOf(RequestStatus.class)).getResultList();
+    return all.isEmpty() ? Optional.empty() : Optional.of(all.get(all.size() - 1));
+  }
+
   private TypedQuery<ResponseRequest> byTarget(
       RequestKind kind, RequestTarget target, Set<RequestStatus> statuses) {
     RequestTargetColumns columns = RequestTargetColumns.of(target);
