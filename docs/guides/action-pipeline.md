@@ -263,6 +263,7 @@ assertThat(fx.actions().findByRoom(roomId))
 | 합류 전 기록 | `new RoomGate(room, side, false, true, false, false)` | `JOINED_RECORD` (예외: `ON_JOINED`) |
 | 내가 공유를 그만둠 | `new RoomGate(room, side, false, false, true, false)` | `SHARING_STOPPED` (예외: `WHILE_SHARING_STOPPED`) |
 | 서버·운영 행동 | `fx.gates().putRoom(new RoomGate(room, null, …))` | 호실 단위 거절을 건너뜀 |
+| 아직 연결하지 않은 초대받은 회원(연결·거절) | `fx.gates().invitee(room, partyId, side)` + `ActionBatch…asInvitee(partyId)` | `CONNECT`·`REJECT_INVITE`·`SHARE_CONSENT`만 통과, 그 밖은 `NOT_FOUND`(호실 상태는 `putRoom` 값, #249) |
 
 어떤 행동에 어떤 표시가 있는지는 `ActionType`(09 3-1 `ActionType` 줄)을 보세요.
 
