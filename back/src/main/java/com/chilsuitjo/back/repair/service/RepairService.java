@@ -21,6 +21,12 @@ import com.chilsuitjo.back.global.common.dto.RespondRequest;
 import com.chilsuitjo.back.global.common.dto.SupplementRequest;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
+import com.chilsuitjo.back.proposal.dto.AgendaRef;
+import com.chilsuitjo.back.proposal.dto.ProposalCommand;
+import com.chilsuitjo.back.proposal.dto.ProposalRequest;
+import com.chilsuitjo.back.proposal.dto.ProposalResult;
+import com.chilsuitjo.back.proposal.rule.AgendaKind;
+import com.chilsuitjo.back.proposal.service.ProposalService;
 import com.chilsuitjo.back.repair.dto.ConfirmCloseRequest;
 import com.chilsuitjo.back.repair.dto.DefectAckChanged;
 import com.chilsuitjo.back.repair.dto.ProgressAsked;
@@ -58,6 +64,7 @@ public class RepairService {
   private final RepairStateStore store;
   private final RepairTransitions rules;
   private final RepairCaseRepository cases;
+  private final ProposalService proposals;
   private final RoomGateReader gates;
   private final ProgressNoteRepository notes;
 
@@ -173,8 +180,23 @@ public class RepairService {
   }
 
   /**
-   * 수리 건의 호실. 없는 ID면 {@code NOT_FOUND}. 남의 수리 건도 pipeline 잠금의 당사자 확인에서 같은 {@code NOT_FOUND}가 된다.
+   * 수리비 부담 제안(06 MONEY-3). 이 수리 건의 호실을 찾아 돈 안건 장치에 넘긴다(decisions 2026-11-17 "이 호실의 수리 건인지 확인한 뒤
+   * 부른다"). 없는 수리 건이면 {@code NOT_FOUND}이고, 그 호실 당사자가 아니면 pipeline 잠금에서 {@code NOT_FOUND}다. 줄 모양·기다리는
+   * 안·합계 검사는 {@code ProposalService.propose}가 한다. 돈은 수리 진행과 따로라 수리 상태는 보지 않는다.
    */
+  public ProposalResult propose(
+      UUID repairCaseId, UUID memberId, String idempotencyKey, ProposalRequest request) {
+    if (request == null) {
+      throw new BusinessException(ErrorCode.VALIDATION_FAILED);
+    }
+    return proposals.propose(
+        roomOf(repairCaseId),
+        memberId,
+        idempotencyKey,
+        new AgendaRef(AgendaKind.REPAIR_BURDEN, repairCaseId),
+        new ProposalCommand(request.lines(), request.isNoCost(), false, request.reason()));
+  }
+
   /** 수리 시작(06 REP-4a). 시작 전이 아니면 {@code INVALID_STATE}. */
   public RepairProgressChanged start(UUID repairCaseId, UUID memberId, String idempotencyKey) {
     return progress(repairCaseId, memberId, idempotencyKey, ActionType.START_REPAIR, null);
@@ -277,14 +299,18 @@ public class RepairService {
 
   /**
    * 진행 상황 남기기(06 REP-6). pipeline 전에 입력을 본다: 사진이 10장을 넘거나 빈 표가 있거나 글이 2,000자를 넘으면 {@code
-   * VALIDATION_FAILED}, [상황이 바뀌었어요]({@code asksCheck})는 아직 없어 {@code VALIDATION_FAILED}, 주민등록번호 형태면
-   * {@code RESIDENT_ID_BLOCKED}, 글도 사진도 없으면 {@code EVIDENCE_REQUIRED}. 사진만이면 글은 빈 글자로 남는다({@code
-   * progress_note.text} NOT NULL). 공유를 그만둔 사람도 남길 수 있다({@code Allow.WHILE_SHARING_STOPPED}, 03 B).
+   * VALIDATION_FAILED}, 주민등록번호 형태면 {@code RESIDENT_ID_BLOCKED}, 글도 사진도 없으면 {@code
+   * EVIDENCE_REQUIRED}. 사진만이면 글은 빈 글자로 남는다({@code progress_note.text} NOT NULL). 공유를 그만둔 사람도 남길 수
+   * 있다({@code Allow.WHILE_SHARING_STOPPED}, 03 B).
+   *
+   * <p>[상황이 바뀌었어요]({@code asksCheck: true}, REP-6d)를 켜면 상대에게 상황 변화 확인 요청을 열고 행동 payload에 {@code
+   * asksCheck}를 남긴다(한 건에 7일에 한 번을 행동 기록으로 셈). 공유를 그만둔 사람이면 {@code SHARING_STOPPED}, 하자를 둘 다 확인한 건이
+   * 아니거나 지금 요청을 열 수 없으면 {@code INVALID_STATE}, 7일 안이면 {@code ASKED_RECENTLY}({@code
+   * RepairTransitions}).
    */
   public ProgressNoteCreated noteProgress(
       UUID repairCaseId, UUID memberId, String idempotencyKey, ProgressNoteRequest request) {
     if (request == null
-        || Boolean.TRUE.equals(request.asksCheck())
         || request.uploadTickets().size() > MAX_PHOTOS
         || request.uploadTickets().stream().anyMatch(t -> t == null || t.isBlank())) {
       throw new BusinessException(ErrorCode.VALIDATION_FAILED);
@@ -296,8 +322,12 @@ public class RepairService {
     ResidentIdGuard.check(text);
     AnswerSupport.requireEvidence(request.hasEvidence());
     UUID roomRecordId = roomOf(repairCaseId);
+    boolean asksCheck = Boolean.TRUE.equals(request.asksCheck());
     RepairStateStore.NotingProgress noting =
-        store.notingProgress(text == null ? "" : text, request.uploadTickets());
+        store.notingProgress(text == null ? "" : text, request.uploadTickets(), asksCheck);
+    // 켜지 않았으면 키를 두지 않는다(그 전에 남긴 행동과 같은 모양, RepairTransitions.ProgressPayload)
+    Map<String, Object> payload =
+        asksCheck ? Map.of(RepairTransitions.ProgressPayload.ASKS_CHECK, true) : Map.of();
     PipelineResult<RepairState> result =
         pipeline.execute(
             new ActionCommand(
@@ -309,7 +339,7 @@ public class RepairService {
                 null,
                 null,
                 null,
-                Map.of()),
+                payload),
             noting,
             rules);
     UUID noteId =
@@ -357,6 +387,9 @@ public class RepairService {
         result.action().replayed());
   }
 
+  /**
+   * 수리 건의 호실. 없는 ID면 {@code NOT_FOUND}. 남의 수리 건도 pipeline 잠금의 당사자 확인에서 같은 {@code NOT_FOUND}가 된다.
+   */
   private UUID roomOf(UUID repairCaseId) {
     return cases
         .findRoomRecordIdById(repairCaseId)

@@ -3,12 +3,14 @@ package com.chilsuitjo.back.action.service;
 import com.chilsuitjo.back.action.dto.ActionCommand;
 import com.chilsuitjo.back.action.dto.ActionEntry;
 import com.chilsuitjo.back.action.dto.ActionTarget;
+import com.chilsuitjo.back.action.entity.ActionChainHead;
 import com.chilsuitjo.back.action.entity.ActionRecord;
 import com.chilsuitjo.back.action.rule.ActionHash;
 import com.chilsuitjo.back.action.rule.ActionType;
 import com.chilsuitjo.back.action.rule.ContentDigest;
 import com.chilsuitjo.back.global.common.TargetKind;
 import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
 import jakarta.persistence.PersistenceContext;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -29,15 +31,19 @@ import tools.jackson.databind.json.JsonMapper;
  * <p>한 줄 쓰기:
  *
  * <ol>
- *   <li>호실의 마지막 행동을 읽어 {@code room_seq} = 마지막 + 1, {@code prev_hash} = 마지막 hash(첫 행동은 {@link
- *       ActionHash#start()})
+ *   <li>호실의 체인 머리({@link ActionChainHead})를 {@code FOR UPDATE}로 읽어 {@code room_seq} = {@code
+ *       last_seq} + 1, {@code prev_hash} = {@code last_hash}(첫 행동은 1과 {@link ActionHash#start()}).
+ *       남은 마지막 행동이 아니라 머리에서 정하므로, 탈퇴로 끝 행동이 지워져도 번호를 다시 쓰지 않는다(05 2-10, #128). 행동이 있는데 머리가 없거나
+ *       뒤처졌으면 쓰지 않고 실패한다
+ *   <li>같은 트랜잭션에서 머리를 이 행동으로 옮긴다(첫 행동이면 만든다)
  *   <li>내용 지문({@link ContentDigest}), payload는 JSON으로 바꿨다가 다시 읽은 값으로 행동 해시({@link ActionHash})
  *   <li>저장하고 바로 {@code flush}: {@code UNIQUE(actor_key, idempotency_key)}·{@code
  *       UNIQUE(room_record_id, room_seq)} 충돌이 이 자리에서 {@code DataIntegrityViolationException}으로 난다
  * </ol>
  *
  * <p>같은 호실에 두 요청이 동시에 쓰지 않는 것은 pipeline 1단계 잠금({@code RoomGateReader.lockAndRead})이 맡는다. 잠금이 빠져도 같은
- * {@code room_seq}는 UNIQUE가 막아 체인이 갈라지지 않는다(나중 요청이 실패).
+ * {@code room_seq}는 UNIQUE가 막아 체인이 갈라지지 않는다. 머리 행 잠금은 번호만 차례로 정할 뿐 도메인 상태 검사를 지켜 주지 않으므로 호실 잠금을
+ * 대신하지 않는다. 머리가 아직 없는 호실에 첫 행동 두 개가 동시에 오면 {@code uq_action_chain_head_room}이 나중 요청을 막는다.
  *
  * <p>pipeline의 트랜잭션 안에서만 부른다({@link Propagation#MANDATORY}). {@code @Repository}라서 {@code flush}에서
  * 난 DB 오류가 Spring 예외({@code DataIntegrityViolationException})로 바뀐다. pipeline은 이 예외로 같은 키가 동시에 온 것을
@@ -66,9 +72,10 @@ class JpaActionWriter implements ActionWriter, ActionReader {
     String column = columnOf(c.target());
     UUID targetId = c.target() == null ? null : c.target().id();
 
-    ActionRecord last = last(c.roomRecordId());
-    long roomSeq = last == null ? 1 : last.getRoomSeq() + 1;
-    byte[] prevHash = last == null ? ActionHash.start() : last.getHash();
+    ActionChainHead head = lockHead(c.roomRecordId());
+    checkHead(c.roomRecordId(), head);
+    long roomSeq = head == null ? 1 : head.getLastSeq() + 1;
+    byte[] prevHash = head == null ? ActionHash.start() : head.getLastHash();
     byte[] contentDigest = c.content() == null ? null : ContentDigest.compute(c.content());
     String payloadJson = c.payload().isEmpty() ? null : JSON.writeValueAsString(c.payload());
 
@@ -116,6 +123,11 @@ class JpaActionWriter implements ActionWriter, ActionReader {
       record.target(column, targetId);
     }
     entityManager.persist(record);
+    if (head == null) {
+      entityManager.persist(new ActionChainHead(c.roomRecordId(), roomSeq, hash, at));
+    } else {
+      head.advance(roomSeq, hash);
+    }
     entityManager.flush();
     return entryOf(record);
   }
@@ -181,17 +193,40 @@ class JpaActionWriter implements ActionWriter, ActionReader {
         .toList();
   }
 
-  private ActionRecord last(UUID roomRecordId) {
-    List<ActionRecord> last =
+  /**
+   * 호실의 체인 머리를 {@code FOR UPDATE}로 읽는다. 첫 행동 전이면 null. 호실 잠금(pipeline 1단계) 안에서만 잠그고, 작업자는 이 행을 잠그지
+   * 않는다.
+   */
+  private ActionChainHead lockHead(UUID roomRecordId) {
+    List<ActionChainHead> head =
         entityManager
             .createQuery(
-                "select a from ActionRecord a where a.roomRecordId = :room"
-                    + " order by a.roomSeq desc",
-                ActionRecord.class)
+                "select h from ActionChainHead h where h.roomRecordId = :room",
+                ActionChainHead.class)
             .setParameter("room", roomRecordId)
-            .setMaxResults(1)
+            .setLockMode(LockModeType.PESSIMISTIC_WRITE)
             .getResultList();
-    return last.isEmpty() ? null : last.getFirst();
+    return head.isEmpty() ? null : head.getFirst();
+  }
+
+  /**
+   * 머리는 남은 마지막 행동보다 작을 수 없다(지운 번호만큼 클 수는 있다, 05 2-10). 행동이 있는데 머리가 없거나 머리가 더 작으면 머리를 쓰는 길을 건너뛴 버그라,
+   * 번호를 다시 쓰기 전에 멈춘다.
+   */
+  private void checkHead(UUID roomRecordId, ActionChainHead head) {
+    Long lastSeq =
+        entityManager
+            .createQuery(
+                "select max(a.roomSeq) from ActionRecord a where a.roomRecordId = :room",
+                Long.class)
+            .setParameter("room", roomRecordId)
+            .getSingleResult();
+    long kept = lastSeq == null ? 0 : lastSeq;
+    long headSeq = head == null ? 0 : head.getLastSeq();
+    if (kept > headSeq) {
+      throw new IllegalStateException(
+          "체인 머리가 남은 행동보다 뒤처졌어요: 호실 " + roomRecordId + ", 머리 " + headSeq + ", 행동 " + kept);
+    }
   }
 
   /** 대상 칸 이름. 종류 이름을 소문자로 바꾸고 {@code _id}를 붙인 것이 05 {@code action}의 칸 이름이다. 호실 기록 자체면 null. */

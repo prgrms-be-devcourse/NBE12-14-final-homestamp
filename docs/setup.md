@@ -97,8 +97,10 @@ npm run dev                # http://localhost:5173, /api는 백엔드(8080)로 �
 
 ### 지금 알아 둘 것
 
-- **프로필은 기본 `local`이다.** 다른 프로필로 띄우려면 환경 변수 `SPRING_PROFILES_ACTIVE`를 주거나(`SPRING_PROFILES_ACTIVE=test ./gradlew bootRun`) `--args='--spring.profiles.active=test'`를 붙인다.
+- **프로필은 기본 `local`이다.** 다른 프로필로 띄우려면 환경 변수 `SPRING_PROFILES_ACTIVE`를 주거나(`SPRING_PROFILES_ACTIVE=test ./gradlew bootRun`) `--args='--spring.profiles.active=test'`를 붙인다. **프로필 없이 띄운 앱은 시작하지 않는다**(local·test·prod 중 하나가 있어야 하고, prod는 local·test와 함께 켤 수 없다).
+- **문자는 로컬에서 보내지 않는다.** local·test는 가짜 발송기(`app.sms.mode=fake`)라 실제 문자가 가지 않는다. 운영(prod)은 솔라피 연동 전까지 `disabled`다(`docs/rules/04` 4-2).
 - **API 문서(Swagger UI)는 로컬에서만 켜진다.** `bootRun`이 local 프로필로 떠서 http://localhost:8080/swagger-ui/index.html 에 열린다(운영에서는 꺼짐, `docs/rules/04` API 문서). 문서 주소는 local·test 프로필에서만 로그인 없이 열리고, `prod`가 켜지면 열리지 않는다.
+- **화면에서 가입할 때 인증번호는 백엔드 로그에 나온다.** 로컬은 문자를 실제로 보내지 않는다. 프론트를 `VITE_API_MODE=http npm run dev`로 띄워 가입하면, `bootRun` 터미널에 `[로컬 전용] 인증번호 123456 (받는 번호 010-****-5678)` 한 줄이 찍힌다. local 프로필로 띄웠을 때만 찍히고(`app.sms.log-code`, #248), test나 prod 프로필이 함께 켜져 있으면 설정을 켜도 찍히지 않는다. 받는 번호는 가린 형태로만 나온다. 프론트는 5173 포트여야 한다(아래 재발급의 `Origin` 검사. 5173이 이미 쓰이면 Vite가 5174로 띄우니 먼저 끈다).
 - **로그인 API로 토큰을 받는다.** 가입한 회원의 이메일·비밀번호로 `POST /api/auth/login`을 부르면 본문에 액세스 토큰, `Set-Cookie`에 리프레시 쿠키(`refresh_token`, `Path=/api/auth/refresh`, 14일)가 온다. 액세스 토큰은 15분이다. 이메일·비밀번호가 맞지 않으면 어느 쪽이 틀렸든 `401 LOGIN_FAILED`다.
   ```
   curl -i -X POST http://localhost:8080/api/auth/login \
@@ -114,7 +116,7 @@ npm run dev                # http://localhost:5173, /api는 백엔드(8080)로 �
   ./gradlew -q localAccessToken --args=0190b6c6-0000-7000-8000-000000000001   # 토큰 한 줄이 나온다(24시간)
   curl -H "Authorization: Bearer <위 토큰>" http://localhost:8080/api/...
   ```
-  - 토큰은 local·test 고정 키(`application.yml`)로 서명한다. 서버가 `local`(기본)이나 `test` 프로필로 떠 있어야 받고, `prod`나 프로필 없이 띄운 서버는 받지 않는다. 이 도구는 test 소스에 있어 운영 jar에 들어가지 않는다.
+  - 토큰은 local·test 고정 키(`application.yml`)로 서명한다. 서버가 `local`(기본)이나 `test` 프로필로 떠 있어야 받고, `prod`로 띄운 서버는 받지 않는다(프로필 없이는 서버가 시작하지 않는다). 이 도구는 test 소스에 있어 운영 jar에 들어가지 않는다.
   - 회원이 DB에 있는지는 보지 않는다. 회원 정보를 읽는 API는 `state.member`에 그 UUID의 행이 있어야 한다.
   - 테스트 코드에서는 이 도구 대신 `SecurityTestSupport.loginAs(회원 UUID)`를 쓴다(`mvc.perform(get(...).with(loginAs(id)))`, 같은 키로 만든 토큰).
     - `@SpringBootTest` + `@ActiveProfiles("test")`에서는 그대로 쓴다.
@@ -133,7 +135,8 @@ npm run dev                # http://localhost:5173, /api는 백엔드(8080)로 �
 | IDE에서 맞췄는데 `spotlessCheck`가 떨어진다 | google-java-format 플러그인 버전이 2.0.0.x인지 확인. 그래도 다르면 `./gradlew spotlessApply`로 맞추고, `docs/rules/04` 17장 "서식 기준"의 cleanup 시험 결과를 확인 |
 | google-java-format 플러그인이 시작할 때 오류를 낸다 | 플러그인 안내에 있는 `--add-exports` 줄을 Help → Edit Custom VM Options에 넣고 IntelliJ를 다시 켠다 |
 | 실행하면 `No Docker Compose file found in directory`로 떨어진다 | 작업 폴더가 저장소 루트다. `bootRun`으로 띄우거나, IntelliJ 실행 설정의 Working directory를 `back/`으로 |
-| 로그에 `No active profile set, falling back to ... "default"` | 프로필이 비었다. `bootRun`으로 띄우거나 실행 설정에 `SPRING_PROFILES_ACTIVE=local`. 프로필이 없으면 Swagger가 켜지지 않고 개발용 토큰도 받지 않는다 |
+| 시작하자마자 `활성 프로필(local·test·prod)이 없어 시작하지 않는다` | 프로필이 비었다. `bootRun`으로 띄우거나 실행 설정에 `SPRING_PROFILES_ACTIVE=local` |
+| 시작하자마자 `문자 방식(app.sms.mode)…` | 문자 방식 값이 없거나 틀렸다. local·test는 `application.yml`이 `fake`로 정하므로, 실행 설정에서 `app.sms.mode`를 덮어쓰지 않았는지 본다. prod에서 `fake`는 막혀 있다 |
 | Swagger·API가 로그인 화면이나 401만 준다 | 지금 브랜치에 보안 뼈대(#80)가 없을 수 있다. 오래된 브랜치면 dev를 합치고 다시 띄운다. dev에서는 local 프로필이면 Swagger가 로그인 없이 열리고, API는 위 "개발용 토큰"(`./gradlew localAccessToken`)으로 만든 `Authorization: Bearer <토큰>`으로 부른다 |
 | `bootRun`이 `Failed to configure a DataSource`로 떨어진다 | Docker Desktop이 켜져 있는지(`docker info`) 확인. IntelliJ에서 실행했다면 작업 폴더가 `back/`인지 확인(`compose.yml`을 그 폴더에서 찾는다) |
 | `bootRun`이 Docker Compose 오류로 떨어진다 | `cd back && docker compose up postgres`로 직접 띄워 오류 메시지를 본다. 이미지 받기 실패면 네트워크, 볼륨 오류면 `docker compose down -v`로 지우고 다시 |

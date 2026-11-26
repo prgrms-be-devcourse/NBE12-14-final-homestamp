@@ -4,14 +4,15 @@ import com.chilsuitjo.back.action.rule.Answerable;
 import com.chilsuitjo.back.global.common.AckState;
 import com.chilsuitjo.back.global.common.PartySide;
 import java.time.Instant;
+import java.util.Objects;
 
 /**
  * 수리 건 하나의 상태 값({@link RepairTransitions}가 다룬다). 하자 인정({@code defectAck})과 수리 진행({@code status})은
  * 따로 간다(03 D). 아직 없는 기록이면 모든 칸이 비어 있다({@link #NONE}).
  *
- * <p><b>요청할 때만 아는 값</b>({@code canOpen…}·{@code hiddenFromCounterpart}): 호실 단계·공유 중단처럼 행동 기록 밖의
- * 사실이라 {@code load}가 그때 읽어 채운다. 행동 기록만으로 다시 계산할 때({@code Replay.fold}, REP-10)는 알 수 없어 {@code
- * null}이고, 그때는 검사하지 않는다(기록된 행동은 그때 서버가 이미 확인했다).
+ * <p><b>요청할 때만 아는 값</b>({@code canOpen…}·{@code hiddenFromCounterpart}·{@code
+ * situationCheck.opening}): 호실 단계·공유 중단처럼 행동 기록 밖의 사실이라 {@code load}가 그때 읽어 채운다. 행동 기록만으로 다시 계산할
+ * 때({@code Replay.fold}, REP-10)는 알 수 없어 {@code null}이고, 그때는 검사하지 않는다(기록된 행동은 그때 서버가 이미 확인했다).
  *
  * @param status 수리 진행(시작 전 → 처리 중 → 종료 확인 대기 → 처리 완료)
  * @param defectAck 하자 인정(확인 기다림 / 맞아요 / 보류 / 이견 / 확인 없음)
@@ -35,6 +36,7 @@ import java.time.Instant;
  * @param canCloseAlone 행동하는(보는) 측이 지금 종료 요청 없이 혼자 종료할 수 있는지(03 1-1 수리 종료 이유: 물을 상대가 처음부터 없음, 06
  *     REP-5e). 판단은 {@code WaitService.canGoSoloDirectly(CLOSE_CONFIRM)} 그대로이고, 그 이유가 성립한 뒤 이 건에
  *     행동하는 측에게 보이는 상대 행동이 있으면 거짓이다(03 1-4). 측마다 달라 혼자 종료할 때와 상세 조회만 채운다. 그 밖과 재계산이면 null
+ * @param situationCheck [상황이 바뀌었어요] 확인 요청 값(마지막으로 켠 시각, 지금 열 수 있는지, 06 REP-6d). null이 아니다
  */
 public record RepairState(
     RepairStatus status,
@@ -50,12 +52,51 @@ public record RepairState(
     Boolean canOpenCloseConfirm,
     Boolean canOpenProgressCheck,
     Boolean hiddenFromCounterpart,
-    Boolean canCloseAlone) {
+    Boolean canCloseAlone,
+    SituationCheck situationCheck) {
 
   /** 아직 없는 기록. 하자 등록의 지금 상태이고 재계산의 시작점이다(요청할 때만 아는 값은 모름). */
   public static final RepairState NONE =
       new RepairState(
           null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+
+  public RepairState {
+    Objects.requireNonNull(situationCheck, "situationCheck");
+  }
+
+  /** [상황이 바뀌었어요]를 켠 적이 없는 상태({@link SituationCheck#NONE}). */
+  public RepairState(
+      RepairStatus status,
+      AckState defectAck,
+      MoneyStatus moneyStatus,
+      PartySide registeredBy,
+      Integer contentNo,
+      Instant lastRerequestAt,
+      ClosedBy closedBy,
+      PartySide closeRequestedBy,
+      Instant lastProgressAskAt,
+      Boolean canOpenDefectConfirm,
+      Boolean canOpenCloseConfirm,
+      Boolean canOpenProgressCheck,
+      Boolean hiddenFromCounterpart,
+      Boolean canCloseAlone) {
+    this(
+        status,
+        defectAck,
+        moneyStatus,
+        registeredBy,
+        contentNo,
+        lastRerequestAt,
+        closedBy,
+        closeRequestedBy,
+        lastProgressAskAt,
+        canOpenDefectConfirm,
+        canOpenCloseConfirm,
+        canOpenProgressCheck,
+        hiddenFromCounterpart,
+        canCloseAlone,
+        SituationCheck.NONE);
+  }
 
   /** 혼자 종료할 수 없다고 확인됐나. 모르면(재계산) 거짓이다. */
   public boolean closeAloneBlocked() {
@@ -83,7 +124,37 @@ public record RepairState(
         canOpenCloseConfirm,
         canOpenProgressCheck,
         hiddenFromCounterpart,
-        value);
+        value,
+        situationCheck);
+  }
+
+  /** [상황이 바뀌었어요] 값을 바꾼다(진행 상황을 남길 때 열 수 있는지를 채우거나, 켜서 남긴 시각을 남김). */
+  public RepairState withSituationCheck(SituationCheck next) {
+    return new RepairState(
+        status,
+        defectAck,
+        moneyStatus,
+        registeredBy,
+        contentNo,
+        lastRerequestAt,
+        closedBy,
+        closeRequestedBy,
+        lastProgressAskAt,
+        canOpenDefectConfirm,
+        canOpenCloseConfirm,
+        canOpenProgressCheck,
+        hiddenFromCounterpart,
+        canCloseAlone,
+        next);
+  }
+
+  /**
+   * 요청할 때 읽은 상태인가. {@code load}({@code RepairStateStore.current})는 {@code canOpen…}을 늘 채우고,
+   * 재계산({@code Replay.fold})이면 비어 있다. 재계산이면 지금 설정값으로 보는 간격 검사(7일)를 하지 않는다: 설정을 늘린 뒤 이미 기록된 행동을 다시
+   * 거절하면 재계산이 실패한다(#234와 같은 방식, #259 리뷰).
+   */
+  public boolean atRequest() {
+    return canOpenDefectConfirm != null;
   }
 
   /** 하자 확인 요청을 열 수 없다고 확인됐나. 모르면(재계산) 거짓이다. */
@@ -130,7 +201,8 @@ public record RepairState(
         canOpenCloseConfirm,
         canOpenProgressCheck,
         hiddenFromCounterpart,
-        canCloseAlone);
+        canCloseAlone,
+        situationCheck);
   }
 
   public RepairState withLastRerequestAt(Instant at) {
@@ -148,7 +220,8 @@ public record RepairState(
         canOpenCloseConfirm,
         canOpenProgressCheck,
         hiddenFromCounterpart,
-        canCloseAlone);
+        canCloseAlone,
+        situationCheck);
   }
 
   /** 진행 상황을 물었다(REP-6b). 수리 진행·하자 인정은 그대로다. */
@@ -167,7 +240,8 @@ public record RepairState(
         canOpenCloseConfirm,
         canOpenProgressCheck,
         hiddenFromCounterpart,
-        canCloseAlone);
+        canCloseAlone,
+        situationCheck);
   }
 
   /** 수리 진행을 바꾼다(REP-4·5). 종료 요청한 측·끝낸 측도 함께 정한다. */
@@ -186,6 +260,7 @@ public record RepairState(
         canOpenCloseConfirm,
         canOpenProgressCheck,
         hiddenFromCounterpart,
-        canCloseAlone);
+        canCloseAlone,
+        situationCheck);
   }
 }

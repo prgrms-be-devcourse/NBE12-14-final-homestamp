@@ -24,9 +24,11 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.support.TransactionTemplate;
 
 @SpringBootTest
+@ActiveProfiles("test")
 @Import({TestcontainersConfiguration.class, PhotoUploadQuotaServiceTest.FixedClock.class})
 class PhotoUploadQuotaServiceTest {
 

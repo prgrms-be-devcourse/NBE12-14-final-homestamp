@@ -6,6 +6,8 @@ import com.chilsuitjo.back.global.common.dto.RespondRequest;
 import com.chilsuitjo.back.global.common.dto.SupplementRequest;
 import com.chilsuitjo.back.global.response.CreatedResponse;
 import com.chilsuitjo.back.global.security.LoginMember;
+import com.chilsuitjo.back.proposal.dto.ProposalRequest;
+import com.chilsuitjo.back.proposal.dto.ProposalResult;
 import com.chilsuitjo.back.repair.dto.ConfirmCloseRequest;
 import com.chilsuitjo.back.repair.dto.DefectAckChanged;
 import com.chilsuitjo.back.repair.dto.DefectAckResponse;
@@ -105,6 +107,22 @@ public class RepairController {
         .body(new DefectAckResponse(changed.id(), changed.defectAck()));
   }
 
+  /**
+   * 수리비 부담 제안(MONEY-3). 처음 성공과 다시 온 요청 모두 201과 만든 제안 ID다. 다시 온 요청이면 {@code Idempotent-Replayed:
+   * true}를 붙인다(06 4-0 "새 기록을 만드는 행동이면 201 + 만든 ID만"). 줄 목록 또는 비용 없음이고, 기다리는 안이 있으면 {@code
+   * INVALID_STATE}다 (decisions 2026-11-26).
+   */
+  @PostMapping("/api/repair-cases/{id}/proposals")
+  public ResponseEntity<CreatedResponse> propose(
+      @PathVariable UUID id,
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey,
+      @RequestBody ProposalRequest request) {
+    ProposalResult result = repairs.propose(id, memberId, idempotencyKey, request);
+    return withReplayed(ResponseEntity.status(HttpStatus.CREATED), result.replayed())
+        .body(new CreatedResponse(result.proposalId()));
+  }
+
   /** 수리 시작(REP-4a). 누구든, 시작 전에서만. 처음 성공과 다시 온 요청 모두 200이다. */
   @PostMapping("/api/repair-cases/{id}/start")
   public ResponseEntity<RepairProgressResponse> start(
@@ -179,8 +197,10 @@ public class RepairController {
    * 진행 상황 남기기(REP-6). 누구든, 언제든(처리 완료 뒤에도). 글·사진 중 하나 이상, 사진은 한 번에 10장까지 그 진행 상황에 붙는다. 처음 성공과 다시 온
    * 요청 모두 201과 만든 진행 상황 ID다.
    *
-   * <p><b>아직 06과 다르다</b>: [상황이 바뀌었어요]({@code asksCheck: true})는 다음 PR에서 만든다(#219). 그 전에는 {@code
-   * VALIDATION_FAILED}다.
+   * <p>[상황이 바뀌었어요]({@code asksCheck: true}, REP-6d)를 켜면 하자를 둘 다 확인한 건에서만 상대에게 확인을 요청한다(한 건에 7일에 한
+   * 번). 상대의 답은 {@code POST /api/progress-notes/{id}/respond}({@code SituationController}).
+   *
+   * <p><b>아직 06과 다르다</b>: 알리기(문자)는 만들지 않아 상대에게 알림이 가지 않는다(#134).
    */
   @PostMapping("/api/repair-cases/{id}/progress-notes")
   public ResponseEntity<CreatedResponse> noteProgress(

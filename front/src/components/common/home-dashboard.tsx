@@ -1,7 +1,6 @@
 import type { ReactNode } from "react"
 import {
   ArrowRight,
-  Bell,
   Building2,
   ChevronRight,
   Clock,
@@ -18,7 +17,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { Status, Timeline } from "@/components/common/blocks"
+import { Status } from "@/components/common/blocks"
 import { EmptyState } from "@/components/common/states"
 import type { Event, Notice, Repair, Role, Room } from "@/data/demo"
 import type { Page } from "@/lib/router"
@@ -235,7 +234,7 @@ export interface HomeDashboardProps {
   moneyNotice: (r: Repair) => ReactNode
   thumb?: (r: Repair) => ReactNode
 }
-// 홈(S-03): 맨 위 내가 답할 것 → 오래 멈춘 건 → 고쳤지만 돈이 남은 건 → 내 호실 → 최근 수리·행동
+// 홈(S-03): 내가 답할 것 → 핵심 2칸 요약 → 최근 하자·수리 + 지금 보는 호실(중복 카드·긴 이력 제거)
 export function HomeDashboard(p: HomeDashboardProps) {
   const { role, room, rooms, repairs, events, notices, moneyLeft } = p
   const toAnswer = notices.filter((n) => !n.read)
@@ -244,7 +243,7 @@ export function HomeDashboard(p: HomeDashboardProps) {
       r.status === "처리 중" && (daysSince(lastActivity(r, events)) ?? 0) > 14,
   )
   const open = repairs.filter((r) => r.status !== "처리 완료")
-  // 숫자로 세는 것만 통계 칸에(상대 연결 여부는 호실 카드의 상태 배지로 보여요)
+  // '내가 답할 것'은 맨 위 강조 카드에 이미 있으므로 요약 칸에는 수리·돈 2개만 둬요
   const stats = [
     {
       label: "진행 중인 수리",
@@ -257,12 +256,6 @@ export function HomeDashboard(p: HomeDashboardProps) {
       value: moneyLeft.length,
       icon: Wallet,
       go: "money" as Page,
-    },
-    {
-      label: "내가 답할 것",
-      value: toAnswer.length,
-      icon: Bell,
-      go: "notifications" as Page,
     },
   ]
   const list = "flex flex-col gap-2"
@@ -278,11 +271,12 @@ export function HomeDashboard(p: HomeDashboardProps) {
             aria-hidden
           />
         }
-        description="응답이 필요한 일을 먼저 모았어요."
         action={
-          <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-turn px-2 text-sm font-bold text-white tabular-nums">
-            {toAnswer.length}
-          </span>
+          toAnswer.length > 0 ? (
+            <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-turn px-2 text-sm font-bold text-white tabular-nums">
+              {toAnswer.length}
+            </span>
+          ) : undefined
         }
       >
         {toAnswer.length ? (
@@ -317,53 +311,53 @@ export function HomeDashboard(p: HomeDashboardProps) {
             )}
           </div>
         ) : (
-          <div className="rounded-[14px] bg-white/70 px-4 py-3">
-            <p className="text-[15px] font-semibold text-ink">
-              지금 답할 일이 없어요
-            </p>
-            <p className="mt-0.5 text-[13px] text-sub">
-              상대가 확인이나 응답을 요청하면 여기에 먼저 보여요.
-            </p>
-          </div>
+          <p className="rounded-[12px] bg-white/75 px-3.5 py-2.5 text-sm text-sub">
+            지금 답할 일이 없어요. 상대가 확인을 요청하면 여기에 먼저 떠요.
+          </p>
         )}
       </Section>
-      {/* 숫자 세 칸: 숫자를 크게, 누르면 그 목록으로 */}
-      <div className="grid grid-cols-3 gap-2.5">
+      {/* 핵심 요약 2칸 */}
+      <div className="grid grid-cols-2 gap-2.5">
         {stats.map((s) => (
           <button
             type="button"
             key={s.label}
-            className="flex min-w-0 flex-col items-start gap-2 rounded-[16px] border border-line bg-white p-3.5 text-left hover:border-line-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand md:flex-row md:items-center md:gap-3 md:p-4"
+            className="flex min-w-0 items-center gap-3 rounded-[16px] border border-line bg-white p-3.5 text-left hover:border-line-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand md:p-4"
             onClick={() => p.onGo(s.go)}
           >
             <span
-              className="grid size-8 flex-none place-items-center rounded-[10px] bg-brand-soft text-brand md:size-10"
+              className="grid size-9 flex-none place-items-center rounded-[10px] bg-brand-soft text-brand md:size-10"
               aria-hidden
             >
-              <s.icon size={17} />
+              <s.icon size={18} />
             </span>
-            <span className="min-w-0">
-              <small className="block text-[13px] leading-snug text-sub">
+            <span className="min-w-0 flex-1">
+              <small className="block truncate text-[13px] text-sub">
                 {s.label}
               </small>
-              <strong className="block text-[26px] leading-tight font-extrabold text-ink tabular-nums">
+              <strong className="block text-[22px] leading-tight font-extrabold text-ink tabular-nums md:text-[26px]">
                 {s.value}
                 <span className="ml-0.5 text-sm font-semibold text-sub">
                   건
                 </span>
               </strong>
             </span>
+            <ChevronRight
+              size={16}
+              className="flex-none text-faint max-sm:hidden"
+              aria-hidden
+            />
           </button>
         ))}
       </div>
-      {/* 왼쪽 넓은 칸(멈춘 건·돈·수리) · 오른쪽 칸(호실·행동 기록), 좁은 화면은 한 줄로 */}
-      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,1fr)]">
+      {/* PC: 2단(좌: 하자·수리 / 우: 지금 보는 호실) · 모바일: 1단 */}
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(300px,1fr)]">
         <div className="flex min-w-0 flex-col gap-4">
           {stale.length > 0 && (
             <Section
               title="오래 멈춘 건"
               icon={<Clock size={18} aria-hidden />}
-              description="14일 넘게 아무 행동이 없는 수리 건이에요."
+              description="14일 넘게 움직임이 없는 수리 건이에요."
             >
               <div className={list}>
                 {stale.map((r) => (
@@ -384,11 +378,15 @@ export function HomeDashboard(p: HomeDashboardProps) {
             <Section
               title="고쳤지만 돈이 남은 건"
               icon={<Wallet size={18} aria-hidden />}
-              description="수리는 끝났지만 부담이 정해지지 않았거나, 정한 부담과 실제로 낸 돈이 달라요."
+              action={
+                <Button variant="link" onClick={() => p.onGo("money")}>
+                  비용 보기
+                  <ChevronRight />
+                </Button>
+              }
             >
-              {/* 수리 줄과 그 건의 돈 안내를 한 묶음(연한 바탕)으로 */}
               <div className={list}>
-                {moneyLeft.map((r) => (
+                {moneyLeft.slice(0, 3).map((r) => (
                   <div
                     key={r.id}
                     className="flex flex-col gap-2 rounded-[16px] bg-soft p-2"
@@ -434,14 +432,32 @@ export function HomeDashboard(p: HomeDashboardProps) {
           </Section>
         </div>
         <div className="flex min-w-0 flex-col gap-4">
-          {(() => {
-            const card = (r: Room) => (
+          {!rooms.length ? (
+            <Section title="내 호실">
+              <EmptyState
+                title="첫 호실 기록을 만들어 보세요"
+                action={
+                  <Button onClick={p.onNewRoom}>
+                    <Plus />
+                    호실 기록 만들기
+                  </Button>
+                }
+              />
+            </Section>
+          ) : (
+            <Section
+              title="지금 보는 호실"
+              action={
+                <Button variant="link" onClick={() => p.onGo("rooms")}>
+                  {rooms.length > 1 ? `전체 ${rooms.length}곳` : "관리"}
+                  <ChevronRight />
+                </Button>
+              }
+            >
               <button
                 type="button"
-                key={r.id}
-                className={cn(row, r.id === room.id ? rowCurrent : rowPlain)}
-                onClick={() => p.onOpenRoom(r.id)}
-                aria-current={r.id === room.id ? "true" : undefined}
+                className={cn(row, rowCurrent)}
+                onClick={() => p.onGo("rooms")}
               >
                 <span
                   className={cn(rowIcon, "bg-brand-soft text-brand")}
@@ -450,77 +466,36 @@ export function HomeDashboard(p: HomeDashboardProps) {
                   <Building2 size={20} />
                 </span>
                 <span className={rowMain}>
-                  <strong>{r.name}</strong>
-                  <small>{r.address}</small>
+                  <strong>{room.name}</strong>
+                  <small>{room.address}</small>
                   <span className="badges mt-1">
-                    <Status>{r.status}</Status>
-                    <Status>{connectionText(r)}</Status>
+                    <Status>{room.status}</Status>
+                    <Status>{connectionText(room)}</Status>
                   </span>
                   <span className="mt-1 flex items-center gap-1.5 text-sm font-semibold text-brand">
                     <ArrowRight size={14} aria-hidden />
-                    {p.nextStep(r)}
+                    {p.nextStep(room)}
                   </span>
                 </span>
               </button>
-            )
-            if (!rooms.length)
-              return (
-                <Section title="내 호실">
-                  <EmptyState
-                    title="첫 호실 기록을 만들어 보세요"
-                    action={
-                      <Button onClick={p.onNewRoom}>
-                        <Plus />
-                        호실 기록 만들기
-                      </Button>
-                    }
-                  />
-                </Section>
-              )
-            const live = rooms.filter((r) => p.sideFor(r) === "임차인"),
-              own = rooms.filter((r) => p.sideFor(r) === "임대인")
-            return (
-              <>
-                {live.length > 0 && (
-                  <Section
-                    title="사는 집"
-                    action={
-                      <Button variant="link" onClick={() => p.onGo("rooms")}>
-                        전체
-                        <ChevronRight />
-                      </Button>
-                    }
-                  >
-                    <div className={list}>{live.map(card)}</div>
-                  </Section>
-                )}
-                {own.length > 0 && (
-                  <Section
-                    title="관리하는 호실"
-                    action={
-                      <Button variant="link" onClick={() => p.onGo("rooms")}>
-                        전체
-                        <ChevronRight />
-                      </Button>
-                    }
-                  >
-                    <div className={list}>{own.map(card)}</div>
-                  </Section>
-                )}
-              </>
-            )
-          })()}
-          <Section
-            title="최근 행동 기록"
-            action={
-              <Button variant="link" onClick={() => p.onGo("timeline")}>
-                전체 보기
-                <ChevronRight />
-              </Button>
-            }
-          >
-            <Timeline compact events={events.slice(0, 5)} />
-          </Section>
+              <div className="mt-3 flex gap-2">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => p.onGo("inspection")}
+                >
+                  점검 · 정산
+                </Button>
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => p.onGo("connection")}
+                >
+                  상대 연결
+                </Button>
+              </div>
+            </Section>
+          )}
         </div>
       </div>
     </div>

@@ -43,12 +43,14 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /** 06 ACC-1e~l. 실제 PostgreSQL에서 번호 잠금·한 줄 갱신·동시 요청까지 본다. 시각은 바꿀 수 있는 시계로 옮긴다. */
 @Import({TestcontainersConfiguration.class, PhoneVerificationServiceTest.TestClock.class})
 @SpringBootTest
+@ActiveProfiles("test")
 class PhoneVerificationServiceTest {
 
   /** 한국 시간 2026-11-19 10:00. */
