@@ -102,6 +102,10 @@ photo:
     bucket: ${PHOTO_S3_BUCKET:}
     region: ${PHOTO_S3_REGION:ap-northeast-2}
 
+# 고아 파일 확인(04 5-1, 06 0-1 orphan.check-after): 복사 전에 남긴 확인 줄이 이 시간 뒤 돈다
+orphan:
+  check-after: 1h
+
 # 사진 업로드 정책 (06 0-1)
 upload:
   policy:
