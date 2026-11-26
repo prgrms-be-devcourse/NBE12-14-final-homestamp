@@ -36,15 +36,19 @@ public class PasswordController {
   /**
    * 비밀번호를 바꾸고 지금 기기를 뺀 다른 기기를 로그아웃시킨다. 지금 기기는 요청한 액세스 토큰의 묶음이다(로그아웃과 같은 방법).
    *
-   * <p>{@code PASSWORD_MISMATCH}(400), {@code VALIDATION_FAILED}(400), {@code LOGIN_REQUIRED}(401)
+   * <p>{@code PASSWORD_MISMATCH}(400), {@code VALIDATION_FAILED}(400), {@code LOGIN_REQUIRED}(401,
+   * 헤더가 없거나 묶음을 읽을 수 없는 토큰도), {@code VERSION_CONFLICT}(409)
    */
   @PostMapping("/api/me/password")
   @ResponseStatus(HttpStatus.NO_CONTENT)
   public void change(
       @LoginMember UUID memberId,
-      @RequestHeader(HttpHeaders.AUTHORIZATION) String authorization,
+      @RequestHeader(name = HttpHeaders.AUTHORIZATION, required = false) String authorization,
       @Valid @RequestBody PasswordChangeRequest request) {
-    String token = authorization.startsWith(BEARER) ? authorization.substring(BEARER.length()) : "";
+    String token =
+        authorization != null && authorization.startsWith(BEARER)
+            ? authorization.substring(BEARER.length())
+            : "";
     UUID familyId =
         accessTokens
             .read(token.strip())
