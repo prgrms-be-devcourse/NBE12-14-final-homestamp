@@ -32,6 +32,7 @@ import com.chilsuitjo.back.repair.repository.RepairCaseRepository;
 import com.chilsuitjo.back.repair.repository.RepairContentRepository;
 import com.chilsuitjo.back.repair.repository.RepairStateStore;
 import com.chilsuitjo.back.repair.rule.CauseNoteTransitions;
+import com.chilsuitjo.back.repair.rule.ClosedBy;
 import com.chilsuitjo.back.repair.rule.RepairState;
 import com.chilsuitjo.back.repair.rule.RepairStatus;
 import com.chilsuitjo.back.repair.rule.RepairTransitions;
@@ -192,17 +193,21 @@ public class RepairQueryService {
 
   /**
    * 내용의 고친 내용(06 REP-7). 버튼은 실제 요청과 같은 판단이다: 호실 단위 거절은 {@code RoomGate.rejection}, 고친 내용 규칙은 {@code
-   * CorrectionTransitions.canRespond}·{@code canWithdraw}.
+   * CorrectionTransitions.canRespond}·{@code canWithdraw}이고 지금 상태로 계산한다(상세의 {@code
+   * availableActions}와 같음). 처리 완료(양측)된 수리 건이면 보류·이견이던 것도 맞아요로 바꾸지 못해 응답 버튼이 없다(REP-7k, #287 리뷰).
    *
-   * <p>공유를 그만둔 뒤({@code asOf})에는 그 시각까지 고친 것과 보는 사람 자신이 고친 것만 보인다. 내가 고친 것에 상대가 그 뒤 남긴 응답은 드러나지 않아
-   * 확인 전으로 보인다(03 6-6 9번, 불변식 18).
+   * <p>공유를 그만둔 뒤({@code asOf})에는 그 시각까지 고친 것과 보는 사람 자신이 고친 것만 보이고, 응답도 그 시각까지의 응답과 보는 사람 자신의 응답 중
+   * 마지막으로 보여 준다(03 6-6 9번, 불변식 18). 그래서 그만두기 전에 보류·이견이었고 그 뒤 상대가 맞아요로 바꿨으면 보류·이견과 그 사유가 그대로 보인다.
    */
   private List<RepairCaseDetail.Correction> correctionsOf(
       RepairCase row, RoomGate gate, Instant asOf) {
     PartySide viewer = gate.side();
-    boolean respondable = gate.rejection(ActionType.RESPOND_CORRECTION).isEmpty();
+    boolean closedByBoth =
+        row.getStatus() == RepairStatus.DONE && row.getClosedBy() == ClosedBy.BOTH;
+    boolean respondable = !closedByBoth && gate.rejection(ActionType.RESPOND_CORRECTION).isEmpty();
     boolean withdrawable = gate.rejection(ActionType.WITHDRAW_CORRECTION).isEmpty();
-    boolean resubmittable = gate.rejection(ActionType.RESUBMIT_CORRECTION).isEmpty();
+    boolean resubmittable =
+        !closedByBoth && gate.rejection(ActionType.RESUBMIT_CORRECTION).isEmpty();
     Instant lastRerequestAt = store.lastRerequestAt(row);
     Instant now = clock.instant();
     List<RepairCaseDetail.Correction> result = new ArrayList<>();
@@ -211,25 +216,17 @@ public class RepairQueryService {
       if (asOf != null && view.createdAt().isAfter(asOf) && view.requestedBySide() != viewer) {
         continue;
       }
-      // 내가 고친 것에 상대가 그 뒤 남긴 응답만 가린다(내가 남긴 응답은 내 행동이라 보인다)
-      boolean hideAnswer =
-          asOf != null
-              && view.requestedBySide() == viewer
-              && view.answeredAt() != null
-              && view.answeredAt().isAfter(asOf);
-      CorrectionStatus status = hideAnswer ? CorrectionStatus.WAITING : view.status();
+      Shown shown = shownAnswer(view, viewer, asOf);
       List<String> buttons = new ArrayList<>();
-      if (respondable && CorrectionTransitions.canRespond(status, view.requestedBySide(), viewer)) {
+      if (respondable
+          && CorrectionTransitions.canRespond(view.status(), view.requestedBySide(), viewer)) {
         buttons.add(RESPOND);
       }
       if (withdrawable
-          && CorrectionTransitions.canWithdraw(status, view.requestedBySide(), viewer)) {
+          && CorrectionTransitions.canWithdraw(view.status(), view.requestedBySide(), viewer)) {
         buttons.add(WITHDRAW);
       }
-      // 가린 응답이면 화면에는 확인 전이라 다시 보낼 것이 없다
-      if (resubmittable
-          && status == view.status()
-          && correctionReader.canResubmit(view.id(), viewer, lastRerequestAt, now)) {
+      if (resubmittable && correctionReader.canResubmit(view.id(), viewer, lastRerequestAt, now)) {
         buttons.add(RESUBMIT);
       }
       String newPartName =
@@ -246,15 +243,47 @@ public class RepairQueryService {
               newPartName,
               view.requestedBySide(),
               view.reason(),
-              status,
-              hideAnswer ? AckState.PENDING : view.answer(),
-              hideAnswer ? null : view.answerReason(),
-              hideAnswer ? null : view.answeredAt(),
+              shown.status(),
+              shown.answer(),
+              shown.reason(),
+              shown.at(),
               view.closedReason(),
               view.createdAt(),
               List.copyOf(buttons)));
     }
     return List.copyOf(result);
+  }
+
+  /** 보이는 응답 상태. */
+  private record Shown(CorrectionStatus status, AckState answer, String reason, Instant at) {}
+
+  /**
+   * 보는 사람에게 보이는 응답. 고정되지 않았으면 지금 값이다. 고정됐으면 그 시각까지의 응답과 보는 사람 자신의 응답 중 마지막이고, 그 뒤 상대가 남긴 응답이 있을 때만
+   * 다시 계산한다(맞아요 → 확인됨, 보류·이견 → 거절, 없음 → 기다림).
+   */
+  private static Shown shownAnswer(CorrectionView view, PartySide viewer, Instant asOf) {
+    Shown now = new Shown(view.status(), view.answer(), view.answerReason(), view.answeredAt());
+    if (asOf == null) {
+      return now;
+    }
+    CorrectionView.Response last = null;
+    boolean hidden = false;
+    for (CorrectionView.Response response : view.responses()) {
+      if (!response.at().isAfter(asOf) || response.side() == viewer) {
+        last = response;
+      } else {
+        hidden = true;
+      }
+    }
+    if (!hidden) {
+      return now;
+    }
+    if (last == null) {
+      return new Shown(CorrectionStatus.WAITING, AckState.PENDING, null, null);
+    }
+    CorrectionStatus status =
+        last.answer() == AckState.ACK ? CorrectionStatus.ACCEPTED : CorrectionStatus.REJECTED;
+    return new Shown(status, last.answer(), last.reason(), last.at());
   }
 
   /**

@@ -147,14 +147,16 @@ public class CorrectionStateStore {
    * @param lastRerequestAt 그 기록의 마지막 다시 요청 시각({@code Correctable.lastRerequestAt})
    */
   public CorrectionState resubmitState(UUID correctionId, Instant lastRerequestAt) {
-    return resubmitState(find(correctionId), lastRerequestAt);
+    // 기록이 처리 완료(양측)인지는 부르는 쪽(상세)이 따로 막는다
+    return resubmitState(find(correctionId), lastRerequestAt, false);
   }
 
-  private CorrectionState resubmitState(CorrectionRequest row, Instant lastRerequestAt) {
+  private CorrectionState resubmitState(
+      CorrectionRequest row, Instant lastRerequestAt, boolean recordClosedByBoth) {
     return CorrectionState.forResubmitting(
         row.getRequestedBySide(),
         row.getStatus(),
-        row.getClosedReason() == ClosedReason.CLOSED_BY_BOTH,
+        row.getClosedReason() == ClosedReason.CLOSED_BY_BOTH || recordClosedByBoth,
         answerOf(row),
         latestOfField(row),
         waits.canOpen(row.getRoomRecordId(), RequestKind.CORRECTION_CONFIRM),
@@ -387,7 +389,20 @@ public class CorrectionStateStore {
   public List<CorrectionView> views(String targetKey) {
     List<CorrectionView> result = new ArrayList<>();
     for (CorrectionRequest row : corrections.findByTargetKeyOrderByCreatedAtAscIdAsc(targetKey)) {
-      ActionEntry last = lastResponse(row);
+      List<CorrectionView.Response> responses = new ArrayList<>();
+      ActionEntry last = null;
+      for (ActionEntry entry : actions.findByTarget(ActionTarget.correctionRequest(row.getId()))) {
+        if (entry.type() == ActionType.RESPOND_CORRECTION) {
+          Answer given = entry.payloadAs(AnswerPayload.class).answer();
+          responses.add(
+              new CorrectionView.Response(
+                  AckState.valueOf(given.name()),
+                  given == Answer.ACK ? null : entry.reason(),
+                  entry.actorSide(),
+                  entry.createdAt()));
+          last = entry;
+        }
+      }
       AckState answer = answerOf(row, last);
       boolean objected = answer == AckState.NEED_MORE || answer == AckState.DISPUTE;
       result.add(
@@ -402,7 +417,8 @@ public class CorrectionStateStore {
               objected ? last.reason() : null,
               last == null ? null : last.createdAt(),
               row.getClosedReason(),
-              row.getCreatedAt()));
+              row.getCreatedAt(),
+              responses));
     }
     return List.copyOf(result);
   }
@@ -433,10 +449,11 @@ public class CorrectionStateStore {
       }
       CorrectableSnapshot snapshot = snapshot(target, row.targetId(), command);
       Integer startNo = snapshot.confirmedNo() == null ? null : snapshot.confirmedNo() - merged;
+      // 처리 완료(양측)된 기록이면 보류·이견이던 고친 내용도 맞아요로 바꾸지 못한다(앞모습이 바뀌므로, REP-7k·7l, #287 리뷰)
       return CorrectionState.forAnswering(
           row.getRequestedBySide(),
           row.getStatus(),
-          row.getClosedReason() == ClosedReason.CLOSED_BY_BOTH,
+          row.getClosedReason() == ClosedReason.CLOSED_BY_BOTH || snapshot.closedByBoth(),
           answerOf(row),
           startNo);
     }
@@ -509,7 +526,7 @@ public class CorrectionStateStore {
     public CorrectionState load(ActionCommand command) {
       CorrectionRequest row = earlier(command);
       snapshot = snapshot(target, row.targetId(), command);
-      return resubmitState(row, target.lastRerequestAt(row.targetId()));
+      return resubmitState(row, target.lastRerequestAt(row.targetId()), snapshot.closedByBoth());
     }
 
     /**

@@ -23,8 +23,9 @@ import org.springframework.stereotype.Component;
  *       {@code VERSION_CONFLICT} → 같은 값이면 {@code SAME_VALUE} → 도장 뒤인데 사유가 없으면 {@code
  *       REASON_REQUIRED}
  *   <li>응답({@code RESPOND_CORRECTION}): 고친 측의 반대 측 → 같은 칸을 다시 고쳐 대신된 내용이면 {@code
- *       VERSION_CONFLICT}(REP-7j) → 처리 완료로 닫혔으면 {@code CLOSED_BY_BOTH}(REP-7l) → 거뒀거나 그 밖에 닫혔으면
- *       {@code INVALID_STATE} → 그 뒤는 {@code AnswerSupport.answer}(본 번호, 맞아요는 끝, 보류·이견에서는 맞아요로만, 사유)
+ *       VERSION_CONFLICT}(REP-7j) → 처리 완료로 닫혔거나 기록이 처리 완료(양측)면 {@code CLOSED_BY_BOTH}(REP-7k·7l,
+ *       보류·이견도 맞아요로 못 바꿈) → 거뒀거나 그 밖에 닫혔으면 {@code INVALID_STATE} → 그 뒤는 {@code
+ *       AnswerSupport.answer}(본 번호, 맞아요는 끝, 보류·이견에서는 맞아요로만, 사유)
  *   <li>거두기({@code WITHDRAW_CORRECTION}): 고친 측 → 기다리는 고친 내용만({@code INVALID_STATE})
  *   <li>[사진 더해서 다시 요청]({@code RESUBMIT_CORRECTION}): 고친 측 → 처리 완료로 닫혔으면 {@code CLOSED_BY_BOTH} → 그
  *       칸의 마지막 고친 내용만({@code INVALID_STATE}) → 그 뒤는 {@code AnswerSupport.rerequest}(보류·이견이고 요청을 열 수
@@ -94,7 +95,7 @@ public class CorrectionTransitions implements Transitions<CorrectionState> {
     if (action.actorSide() != now.owner()) {
       throw new BusinessException(ErrorCode.NOT_COUNTERPART_SIDE);
     }
-    if (now.status() == CorrectionStatus.CLOSED && now.closedByBoth()) {
+    if (now.closedByBoth()) {
       throw new BusinessException(ErrorCode.CLOSED_BY_BOTH);
     }
     if (now.status() != CorrectionStatus.REJECTED || !now.latestOfField()) {
@@ -140,7 +141,12 @@ public class CorrectionTransitions implements Transitions<CorrectionState> {
           throw new BusinessException(
               now.closedByBoth() ? ErrorCode.CLOSED_BY_BOTH : ErrorCode.INVALID_STATE);
       case WITHDRAWN -> throw new BusinessException(ErrorCode.INVALID_STATE);
-      default -> {}
+      default -> {
+        // 처리 완료(양측)된 기록: 보류·이견이던 것도 맞아요로 바꾸지 못한다(REP-7k, #287 리뷰)
+        if (now.closedByBoth()) {
+          throw new BusinessException(ErrorCode.CLOSED_BY_BOTH);
+        }
+      }
     }
     AckState next =
         AnswerSupport.answer(
