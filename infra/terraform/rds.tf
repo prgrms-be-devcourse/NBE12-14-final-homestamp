@@ -10,7 +10,7 @@
 #   (manage_master_user_password). 상태 파일에는 비밀값이 아니라 비밀의 ARN만 남는다.
 #   마스터 계정은 Role Bootstrap(infra/db/bootstrap_roles.sql, #185)을 돌리는 신뢰된 DB 관리자만 쓴다.
 #   앱 EC2 역할은 Secrets Manager 값 읽기가 명시적으로 거부돼 있다(iam_web.tf DenySecretsManagerValues).
-#   그 Secret을 읽는 운영 관리자 권한은 별도 PR이다(decisions 2026-11-25). Secrets Manager는 과정 사용 가능 서비스
+#   그 Secret 하나를 읽는 권한은 운영 관리 역할에만 있다(iam_ops.tf ReadRdsMasterSecretOnly, decisions 2026-11-25). Secrets Manager는 과정 사용 가능 서비스
 # - RDS가 만드는 Secret은 Terraform이 관리하지 않아 default_tags(Team)가 붙는지 보장되지 않는다.
 #   apply 뒤 Secret 메타데이터의 태그만 확인하고(값은 읽지 않음), 없으면 붙인다(04 13-1 RDS 단계)
 # - 인스턴스 클래스 기본값은 과정 계정의 db.t4g.micro, 개인 계정은 tfvars로 바꾼다. 서울 리전에서 PostgreSQL 18.1~18.6이
@@ -100,8 +100,10 @@ resource "aws_db_instance" "main" {
   performance_insights_enabled    = false
   monitoring_interval             = 0
 
-  # 실수로 지우지 않게 두 겹. 지울 때는 먼저 최종 스냅숏을 남긴다
-  # (최종·수동 스냅숏은 저절로 지워지지 않으므로 7장 "백업·이관"대로 따로 목록·기한을 둔다)
+  # 실수로 지우지 않게 두 겹. deletion_protection은 AWS가(콘솔·CLI·Terraform 모두) 지우기를 거절하고,
+  # 아래 prevent_destroy는 Terraform이 지우거나 교체하는 plan 자체를 거절한다(콘솔·CLI는 막지 못함).
+  # 계정을 정리할 때는 ① db_deletion_protection = false로 apply ② prevent_destroy를 빼는 PR ③ destroy 순서로 한다.
+  # 지울 때 최종 스냅숏을 남긴다(최종·수동 스냅숏은 저절로 지워지지 않으므로 7장 "백업·이관"대로 따로 목록·기한을 둔다)
   deletion_protection       = var.db_deletion_protection
   skip_final_snapshot       = false
   final_snapshot_identifier = "${local.db_identifier}-final"
@@ -115,5 +117,28 @@ resource "aws_db_instance" "main" {
 
   lifecycle {
     prevent_destroy = true
+  }
+}
+
+# ---------- 앱 DB 주소 (04 13-1 "DB 주소", 6장 SSM 표) ----------
+# RDS 엔드포인트로 #165의 운영 주소 계약을 만들어 앱 경로에 String으로 둔다. 사람이 옮겨 적지 않고,
+# RDS를 다시 만들어 주소가 바뀌면 같은 apply에서 따라 바뀐다(떠 있는 앱은 다음 시작부터 새 값을 읽는다).
+# 주소는 비밀이 아니다. 사용자·비밀번호는 넣지 않는다(#165가 URL 안 사용자 정보를 거절). 인증서 경로는 이미지 안
+# 고정 경로이고, 파일은 G2/G4가 이미지에 넣는다(ca_cert_identifier와 같은 RDS CA 묶음)
+locals {
+  db_root_cert_path    = "/app/certs/rds-ca.crt"
+  db_url_parameter     = "${local.param_prefix}/app/spring.datasource.url"
+  db_url_parameter_arn = "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter${local.db_url_parameter}"
+}
+
+resource "aws_ssm_parameter" "app_datasource_url" {
+  name        = local.db_url_parameter
+  description = "App JDBC URL (verify-full). Managed by Terraform from the RDS endpoint"
+  type        = "String"
+  tier        = "Standard"
+  value       = "jdbc:postgresql://${aws_db_instance.main.address}:${aws_db_instance.main.port}/${var.db_name}?sslmode=verify-full&sslrootcert=${local.db_root_cert_path}"
+
+  tags = {
+    Name = "${var.prefix}-app-datasource-url"
   }
 }

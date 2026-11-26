@@ -1,12 +1,25 @@
-import type { RepairCasesApi, RepairCaseView } from "./repair-cases"
+import type { RepairCasesApi } from "./repair-cases"
+import { notConnected } from "./connected"
 import { endpoints } from "./endpoints"
 import type { HttpRequest } from "./http-client"
+import {
+  causeBasisCode,
+  repairFromDetail,
+  type RepairCaseDetailBody,
+} from "./http-repair-view"
 
-// 수리 건 API의 HTTP 구현(06 4장). 상태를 바꾸는 요청은 http-client가 Idempotency-Key를 붙여요.
-// 응답 본문 형식이 명세에 아직 없어, 백엔드가 생기면 toView만 서버 모양(OpenAPI 타입)에 맞춰 바꿔요.
-const toView = (body: unknown) => body as RepairCaseView
+// 수리 건 API의 HTTP 구현(06 4-6). 상태를 바꾸는 요청은 http-client가 Idempotency-Key를 붙여요.
+// 응답은 http-repair-view가 서버 모양(RepairCaseDetail)을 화면 모델로 바꿔요.
+// 사진은 업로드 표(upload-tickets, PHO-1·C)를 아직 받지 못해서, 사진을 고른 요청은 서버로 보내지 않고 "연결 전"으로 안내해요.
+const noPhotosYet = (photos: readonly unknown[] | undefined) => {
+  if (photos?.length) throw notConnected()
+}
 
 export function createHttpRepairCases(request: HttpRequest): RepairCasesApi {
+  const detail = async (id: string) =>
+    repairFromDetail(
+      await request<RepairCaseDetailBody>("GET", endpoints.repairCase(id)),
+    )
   const act = async (
     id: string,
     action: Parameters<typeof endpoints.repairAction>[1],
@@ -14,35 +27,50 @@ export function createHttpRepairCases(request: HttpRequest): RepairCasesApi {
   ) => {
     // 행동 요청 뒤에는 상세를 다시 받아 availableActions까지 새로 그려요
     await request("POST", endpoints.repairAction(id, action), { body })
-    return toView(await request<unknown>("GET", endpoints.repairCase(id)))
+    return detail(id)
   }
   return {
-    get: async (_s, id) =>
-      toView(await request<unknown>("GET", endpoints.repairCase(id))),
+    get: (_s, id) => detail(id),
     respond: (_s, id, b) => act(id, "respond", b),
-    supplement: (_s, id, b) => act(id, "supplement", b),
+    // 06 4-6 보충: {description, uploadTickets}
+    supplement: async (_s, id, b) => {
+      noPhotosYet(b.photos)
+      return act(id, "supplement", { description: b.text, uploadTickets: [] })
+    },
     start: (_s, id) => act(id, "start"),
     requestClose: (_s, id) => act(id, "request-close"),
+    // 하자 "맞아요"를 함께 남길 때만 본 판 번호(seenVersionNo)를 보내요(06 REP-3a)
     confirmClose: (_s, id, b) => act(id, "confirm-close", b),
     notYet: (_s, id, b) => act(id, "not-yet", b),
     closeAlone: (_s, id) => act(id, "close-alone"),
-    reopen: (_s, id, b) => act(id, "reopen", b),
-    // 하자 등록: 서버가 만든 수리 건 ID를 받아 상세를 다시 읽어요(06 4-0: 만들기면 201 + 만든 ID)
+    // 다시 열기는 없앴어요(decisions 2026-11-25). 서버에 API가 없어 보내지 않아요
+    reopen: () => Promise.reject(notConnected()),
+    // 하자 등록은 부위 목록(A)과 사진 업로드 표(C)가 연결된 뒤에 맞춰요(#179). 지금은 connected.ts에 없어 서버로 가지 않아요
     create: async (_s, roomId, b) => {
       const made = await request<{ id: string }>(
         "POST",
         endpoints.repairCases(roomId),
         { body: b },
       )
-      return toView(
-        await request<unknown>("GET", endpoints.repairCase(made.id)),
-      )
+      return detail(made.id)
     },
+    // 사진 추가(POST /photos)는 서버에 아직 없어요(REP-7·PHO-1). connected.ts에 없어 서버로 가지 않아요
     addPhotos: (_s, id, b) => act(id, "photos", b),
-    addCauseNote: (_s, id, b) => act(id, "cause-notes", b),
+    // 06 4-6 원인 설명: {text, basis, expertName, previousId, uploadTickets}. 업체 이름은 EXPERT일 때만 보내요
+    addCauseNote: async (_s, id, b) => {
+      noPhotosYet(b.photos)
+      const basis = causeBasisCode(b.basis)
+      return act(id, "cause-notes", {
+        text: b.text,
+        basis,
+        expertName: basis === "EXPERT" ? (b.company ?? null) : null,
+        previousId: b.previousId ?? null,
+        uploadTickets: [],
+      })
+    },
     respondCauseNote: async (_s, id, causeId, b) => {
       await request("POST", endpoints.causeNoteRespond(causeId), { body: b })
-      return toView(await request<unknown>("GET", endpoints.repairCase(id)))
+      return detail(id)
     },
   }
 }

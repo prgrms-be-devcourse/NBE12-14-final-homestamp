@@ -73,7 +73,7 @@ variable "db_backup_retention_days" {
 }
 
 variable "db_deletion_protection" {
-  description = "RDS 삭제 보호. 계정을 정리할 때만 false로 바꿔 apply한 뒤 지운다"
+  description = "RDS 삭제 보호(AWS 쪽). 지우려면 이 값을 false로 apply하는 것만으로는 안 되고, rds.tf의 prevent_destroy(Terraform 쪽)도 PR로 빼야 한다. 최종 스냅숏은 남는다"
   type        = bool
   default     = true
 }

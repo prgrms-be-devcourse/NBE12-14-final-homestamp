@@ -42,7 +42,8 @@ export function useRepairCase(
   return {
     view: query.data ?? undefined,
     loading: query.loading,
-    error: query.error,
+    // 실패 원인 그대로 돌려줘요. 화면이 404(남의 건·없는 건)를 일반 오류와 가르려면 상태 코드가 있어야 해요(#270 리뷰)
+    error: query.failure,
     run,
   }
 }
