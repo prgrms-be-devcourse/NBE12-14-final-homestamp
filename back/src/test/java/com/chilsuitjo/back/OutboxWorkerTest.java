@@ -207,6 +207,24 @@ class OutboxWorkerTest {
         .isEqualTo(fiveSentAt.plus(Duration.ofMinutes(5)));
   }
 
+  /** 기한 설정이 틀리면 문자를 보낸 뒤가 아니라 작업자를 만들 때 멈춘다(보낸 뒤 기한 계산에서 실패하면 문자 줄이 SENDING에 남음). */
+  @Test
+  void 전달_확인_기한_설정이_틀리면_작업자를_만들지_않는다() {
+    for (Duration bad :
+        List.of(
+            Duration.ZERO,
+            Duration.ofSeconds(-1),
+            Duration.ofNanos(500),
+            Duration.ofNanos(1_500))) {
+      assertThatThrownBy(() -> sender(bad))
+          .as(bad.toString())
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("app.delivery.unknown-after");
+    }
+    assertThatThrownBy(() -> sender(null)).isInstanceOf(IllegalArgumentException.class);
+    sender(Duration.ofNanos(1_000));
+  }
+
   @Test
   void 다른_조회_설정의_첫_간격을_보낼_때_저장한다() {
     UUID noticeId = enqueue();

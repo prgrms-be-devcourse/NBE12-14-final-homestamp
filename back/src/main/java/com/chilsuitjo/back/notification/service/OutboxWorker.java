@@ -71,6 +71,13 @@ public class OutboxWorker {
     if (retryDelays.isEmpty()) {
       throw new IllegalArgumentException("app.notice.send.retry가 비어 있어요");
     }
+    // 기한은 문자를 보낸 뒤 결과를 적을 때 계산한다. 그때 틀린 설정이 드러나면 이미 보낸 문자 줄이 SENDING에 남으므로 만들 때 막는다.
+    // DB(timestamptz)는 마이크로초까지라, 그보다 작은 단위가 있으면 보낸 시각과 기한이 같은 값으로 저장될 수 있다
+    if (giveUpAfter == null
+        || giveUpAfter.compareTo(Duration.ofNanos(1_000)) < 0
+        || giveUpAfter.getNano() % 1_000 != 0) {
+      throw new IllegalArgumentException("app.delivery.unknown-after는 1마이크로초 이상이고 마이크로초 단위여야 해요");
+    }
     this.outbox = outbox;
     this.notices = notices;
     this.inviteLinks = inviteLinks;
