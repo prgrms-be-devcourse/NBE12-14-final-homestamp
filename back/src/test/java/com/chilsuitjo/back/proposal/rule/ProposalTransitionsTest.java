@@ -201,6 +201,133 @@ class ProposalTransitionsTest {
         ErrorCode.NOT_CURRENT_PROPOSAL);
   }
 
+  // ---- 제안(PROPOSE): 기다리는 안이 없을 때만 받는다(decisions 2026-11-26) ----
+
+  @Test
+  void 미정에서_제안하면_합의_대기가_된다() {
+    ProposalState now = proposing(AgendaStatus.NONE, null, 82_000L, 82_000, false);
+
+    ProposalState next = rules.apply(now, propose(PartySide.LANDLORD));
+
+    // 새 제안의 ID는 저장할 때 생겨서 head의 기다리는 안은 save가 채운다
+    assertThat(next.head())
+        .isEqualTo(new AgendaState(ROOM, AGENDA, AgendaStatus.PENDING, null, null, 82_000L));
+    assertThat(next.draft()).isEqualTo(new ProposalState.Draft(82_000, false));
+  }
+
+  @Test
+  void 이견_뒤_새_제안은_합의_대기가_된다() {
+    ProposalState now = proposing(AgendaStatus.DISPUTE, null, 82_000L, 82_000, false);
+
+    ProposalState next = rules.apply(now, propose(PartySide.TENANT));
+
+    assertThat(next.head().status()).isEqualTo(AgendaStatus.PENDING);
+    assertThat(next.head().agreedProposalId()).isNull();
+  }
+
+  @Test
+  void MONEY_3d_합의_뒤_새_제안은_합의를_그대로_둔다() {
+    UUID agreed = UUID.randomUUID();
+    ProposalState now = proposing(AgendaStatus.AGREED, agreed, 82_000L, 82_000, false);
+
+    ProposalState next = rules.apply(now, propose(PartySide.LANDLORD));
+
+    assertThat(next.head())
+        .isEqualTo(new AgendaState(ROOM, AGENDA, AgendaStatus.AGREED, null, agreed, 82_000L));
+  }
+
+  @Test
+  void 비용_없음으로_합의한_뒤_새_제안도_합의를_그대로_둔다() {
+    UUID agreed = UUID.randomUUID();
+    ProposalState now = proposing(AgendaStatus.NO_COST, agreed, 0L, 0, false);
+
+    ProposalState next = rules.apply(now, propose(PartySide.TENANT));
+
+    assertThat(next.head().status()).isEqualTo(AgendaStatus.NO_COST);
+    assertThat(next.head().agreedProposalId()).isEqualTo(agreed);
+  }
+
+  @Test
+  void 금액이_바뀌어_합의가_풀린_뒤에는_새_제안을_받는다() {
+    // rebase는 기다리는 안·합의를 비우고 합의 대기로 둔다(05 2-4 ④)
+    ProposalState now = proposing(AgendaStatus.PENDING, null, 92_000L, 92_000, false);
+
+    ProposalState next = rules.apply(now, propose(PartySide.LANDLORD));
+
+    assertThat(next.head().status()).isEqualTo(AgendaStatus.PENDING);
+  }
+
+  @Test
+  void MONEY_3a_제안한_금액의_합이_전체_금액과_다르면_SUM_MISMATCH() {
+    ProposalState now = proposing(AgendaStatus.NONE, null, 82_000L, 80_000, false);
+
+    assertError(() -> rules.apply(now, propose(PartySide.LANDLORD)), ErrorCode.SUM_MISMATCH);
+  }
+
+  @Test
+  void 비용_없음_제안은_합계를_보지_않는다() {
+    ProposalState now = proposing(AgendaStatus.NONE, null, 82_000L, 0, true);
+
+    ProposalState next = rules.apply(now, propose(PartySide.LANDLORD));
+
+    assertThat(next.head().status()).isEqualTo(AgendaStatus.PENDING);
+    assertThat(next.draft().noCost()).isTrue();
+  }
+
+  @Test
+  void 기다리는_안이_있으면_내_안이든_상대_안이든_INVALID_STATE() {
+    UUID waiting = UUID.randomUUID();
+    ProposalState now =
+        new ProposalState(
+            new AgendaState(ROOM, AGENDA, AgendaStatus.PENDING, waiting, null, 82_000L),
+            new ProposalState.Waiting(waiting, PartySide.LANDLORD, 82_000, false),
+            new ProposalState.Draft(82_000, false));
+
+    // 내 안 바꾸기·역제안은 #224 다음 PR(decisions 2026-11-26)
+    assertError(() -> rules.apply(now, propose(PartySide.LANDLORD)), ErrorCode.INVALID_STATE);
+    assertError(() -> rules.apply(now, propose(PartySide.TENANT)), ErrorCode.INVALID_STATE);
+  }
+
+  @Test
+  void 기다리는_안이_있으면_합계보다_먼저_INVALID_STATE() {
+    UUID waiting = UUID.randomUUID();
+    ProposalState now =
+        new ProposalState(
+            new AgendaState(ROOM, AGENDA, AgendaStatus.PENDING, waiting, null, 82_000L),
+            new ProposalState.Waiting(waiting, PartySide.LANDLORD, 82_000, false),
+            new ProposalState.Draft(1, false));
+
+    assertError(() -> rules.apply(now, propose(PartySide.TENANT)), ErrorCode.INVALID_STATE);
+  }
+
+  /** 기다리는 안이 없는 안건에 이 내용으로 제안하는 중. */
+  private static ProposalState proposing(
+      AgendaStatus status, UUID agreed, Long requiredTotal, long total, boolean noCost) {
+    return new ProposalState(
+        new AgendaState(ROOM, AGENDA, status, null, agreed, requiredTotal),
+        null,
+        new ProposalState.Draft(total, noCost));
+  }
+
+  /** 제안은 새 기록을 만드는 행동이라 저장 전에는 대상이 없다({@code ActionPipeline.create}). */
+  private static ActionEntry propose(PartySide side) {
+    return new ActionEntry(
+        null,
+        ROOM,
+        0,
+        ActionType.PROPOSE,
+        side,
+        "k",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        Map.of(),
+        NOW);
+  }
+
   /** 합의 대기: head가 이 안을 가리키고 아직 합의가 없다(또는 {@code agreed}가 있다). */
   private static ProposalState waitingFor(
       UUID proposal,
