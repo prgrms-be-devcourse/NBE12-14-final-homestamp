@@ -44,6 +44,7 @@ public class OutboxWorker {
 
   private final OutboxRepository outbox;
   private final NoticeRepository notices;
+  private final InviteLinks inviteLinks;
   private final RecipientDirectory recipients;
   private final SmsGateway gateway;
   private final Clock clock;
@@ -55,6 +56,7 @@ public class OutboxWorker {
   public OutboxWorker(
       OutboxRepository outbox,
       NoticeRepository notices,
+      InviteLinks inviteLinks,
       RecipientDirectory recipients,
       SmsGateway gateway,
       Clock clock,
@@ -67,6 +69,7 @@ public class OutboxWorker {
     }
     this.outbox = outbox;
     this.notices = notices;
+    this.inviteLinks = inviteLinks;
     this.recipients = recipients;
     this.gateway = gateway;
     this.clock = clock;
@@ -132,6 +135,11 @@ public class OutboxWorker {
             status -> outbox.findById(outboxId).ifPresent(Outbox::markDone));
         return;
       }
+      if (notice.get().getLinkId() != null
+          && inviteLinks.isInvalidatedInvite(notice.get().getLinkId())) {
+        cancelInvalidatedInvite(outboxId, notice.get().getId());
+        return;
+      }
       phone = recipients.phoneOfRecipient(notice.get().getRecipientPartyId());
     } catch (RuntimeException e) {
       log.warn("보내기 전 단계 실패, 다시 시도: outbox={}, error={}", outboxId, e.getClass().getName());
@@ -146,6 +154,17 @@ public class OutboxWorker {
     finish(outboxId, notice.get().getId(), result);
   }
 
+  /** 재시도 줄의 초대 링크가 발송 전에 무효가 됐으면 이 시도는 보내지 않고 취소로 끝낸다. */
+  private void cancelInvalidatedInvite(UUID outboxId, UUID noticeId) {
+    transaction.executeWithoutResult(status -> {
+      Notice notice = notices.findForUpdate(noticeId).orElse(null);
+      Outbox row = outbox.findById(outboxId).orElse(null);
+      if (notice != null && row != null && notice.markCancelled()) {
+        row.markCancelled();
+      }
+    });
+  }
+
   /**
    * 보낼 번호가 없다. 수신 거부·탈퇴·합류처럼 요청을 닫는 일이 넣은 뒤에 일어났거나, 문자 대신 서비스 안 알림으로 갔어야 하는 경우다. 업체 실패가 아니므로 통지를 최종
    * 실패로 두지 않는다("문자가 가지 않았어요"와 [다시 보내기]가 뜨면 이유가 틀리다). 줄만 보내지 않은 채 끝내고 운영이 볼 수 있게 남긴다.
@@ -156,7 +175,8 @@ public class OutboxWorker {
    *
    * <p>번호를 고쳐 다시 초대할 때 옛 링크의 보내지 않은 문자를 막는 것은 이 작업자가 아니다. room이 {@code save} 안에서 넘긴 링크 ID의 줄을
    * {@link SmsCancellation}으로 취소하고(03 K "보내기 전 취소", room 호출은 아직 없음), 작업자는 {@code PENDING}만 가져가서 취소된
-   * 줄을 보내지 않는다. 이미 가져간({@code SENDING}) 줄은 막지 못한다(#100).
+   * 줄을 보내지 않는다. 이미 가져간({@code SENDING}) 줄도 발송 직전 링크가 무효인 것을 확인하면 취소한다. 확인을 끝낸 뒤 업체 호출에 들어가는 경합은 막지
+   * 못한다(#100).
    */
   private void skipWithoutPhone(UUID outboxId, UUID noticeId) {
     transaction.executeWithoutResult(

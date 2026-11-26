@@ -27,6 +27,8 @@ public class FakeRoomGateReader implements RoomGateReader {
 
   private final Map<Key, RoomGate> members = new ConcurrentHashMap<>();
   private final Map<UUID, RoomGate> rooms = new ConcurrentHashMap<>();
+  // 초대 자리(호실, 자리 ID) → 그 자리의 측. Key의 두 번째 칸은 자리 ID다
+  private final Map<Key, PartySide> seats = new ConcurrentHashMap<>();
 
   /** 잠그지 않는 가짜라 {@link #lockAndRead}와 같다. */
   @Override
@@ -53,6 +55,27 @@ public class FakeRoomGateReader implements RoomGateReader {
         room.ended());
   }
 
+  /**
+   * 초대 자리로 잠근다. {@link #invitee}로 적어 둔 자리만 되고 나머지는 {@code NOT_FOUND}다. 호실 상태는 {@link #putRoom}의 값을
+   * 쓴다.
+   */
+  @Override
+  public RoomGate lockAndReadAsInvitee(UUID roomRecordId, Actor actor, UUID partyId) {
+    if (!actor.isMember()) {
+      throw new IllegalArgumentException("초대 자리로 잠그는 요청은 회원 주체만 써요");
+    }
+    PartySide side = seats.get(new Key(roomRecordId, partyId));
+    if (side == null) {
+      throw new BusinessException(ErrorCode.NOT_FOUND);
+    }
+    return rooms.getOrDefault(roomRecordId, RoomGate.open(roomRecordId, null)).asInvitee(side);
+  }
+
+  /** 이 호실의 초대 자리로 적어 둔다({@link #lockAndReadAsInvitee}가 받는 자리). */
+  public void invitee(UUID roomRecordId, UUID partyId, PartySide side) {
+    seats.put(new Key(roomRecordId, partyId), side);
+  }
+
   /** 거주 중이고 막히는 것이 없는 호실의 당사자로 적어 둔다. 가장 흔한 경우다. */
   public RoomGate member(UUID roomRecordId, UUID memberId, PartySide side) {
     return put(memberId, RoomGate.open(roomRecordId, side));
@@ -74,7 +97,8 @@ public class FakeRoomGateReader implements RoomGateReader {
   public void clear() {
     members.clear();
     rooms.clear();
+    seats.clear();
   }
 
-  private record Key(UUID roomRecordId, UUID memberId) {}
+  private record Key(UUID roomRecordId, UUID id) {}
 }

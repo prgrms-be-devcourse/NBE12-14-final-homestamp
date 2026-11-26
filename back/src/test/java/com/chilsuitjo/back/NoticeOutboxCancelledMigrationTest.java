@@ -20,7 +20,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.datasource.init.ScriptUtils;
 
-/** V9: 통지·문자 줄 상태에 CANCELLED를 더한다(#100 U2). 실제 PostgreSQL에서 확인한다. */
+/** V10: 통지·문자 줄 상태에 CANCELLED를 더한다(#100 U2). 실제 PostgreSQL에서 확인한다. */
 class NoticeOutboxCancelledMigrationTest extends SchemaTestSupport {
 
   private static final List<String> NOTICE_BEFORE =
@@ -58,7 +58,7 @@ class NoticeOutboxCancelledMigrationTest extends SchemaTestSupport {
             connection -> {
               ScriptUtils.executeSqlScript(
                   connection,
-                  new ClassPathResource("db/migration/V9__add_notice_outbox_cancelled.sql"));
+                  new ClassPathResource("db/migration/V10__add_notice_outbox_cancelled.sql"));
               return null;
             });
 

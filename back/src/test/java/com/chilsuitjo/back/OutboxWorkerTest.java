@@ -14,6 +14,7 @@ import com.chilsuitjo.back.notification.repository.NoticeRepository;
 import com.chilsuitjo.back.notification.repository.OutboxRepository;
 import com.chilsuitjo.back.notification.rule.NoticeKind;
 import com.chilsuitjo.back.notification.service.FakeRecipientDirectory;
+import com.chilsuitjo.back.notification.service.InviteLinks;
 import com.chilsuitjo.back.notification.service.NoticeOutbox;
 import com.chilsuitjo.back.notification.service.OutboxPoller;
 import com.chilsuitjo.back.notification.service.OutboxWorker;
@@ -36,6 +37,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -50,12 +52,14 @@ import org.springframework.transaction.support.TransactionTemplate;
       "spring.datasource.hikari.connection-init-sql=SET search_path TO state, record, log, public",
       "app.outbox.worker.enabled=false"
     })
+@ActiveProfiles("test")
 class OutboxWorkerTest {
 
   @Autowired private NoticeOutbox noticeOutbox;
   @Autowired private OutboxWorker worker;
   @Autowired private FakeSmsGateway gateway;
   @Autowired private FakeRecipientDirectory recipients;
+  @Autowired private InviteLinks inviteLinks;
   @Autowired private TransactionTemplate transaction;
   @Autowired private JdbcTemplate jdbc;
   @Autowired private ApplicationContext context;
@@ -381,6 +385,7 @@ class OutboxWorkerTest {
     return new OutboxWorker(
         outboxRepository,
         repository,
+        inviteLinks,
         directory,
         gateway,
         clock,
@@ -414,6 +419,7 @@ class OutboxWorkerTest {
         new OutboxWorker(
             outboxRepository,
             noticeRepository,
+            inviteLinks,
             recipients,
             message -> {
               sending.countDown();

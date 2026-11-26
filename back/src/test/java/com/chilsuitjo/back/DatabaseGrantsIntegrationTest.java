@@ -142,6 +142,7 @@ class DatabaseGrantsIntegrationTest {
 
   private static final Set<String> STATE_TABLES =
       Set.of(
+          "state.action_chain_head",
           "state.correction_request",
           "state.in_app_notification",
           "state.inspection",
@@ -505,8 +506,10 @@ class DatabaseGrantsIntegrationTest {
       // 민감 테이블은 테이블 단위 SELECT가 없다(컬럼 단위만, assertHumanMinimalRead에서 실제 로그인으로 검사)
       boolean lookup = table.equals("state.part_template") || table.equals("state.region");
       boolean optOut = table.equals("state.sms_opt_out");
-      boolean room = table.equals("state.room_record");
-      assertRolePrivileges(APP, table, true, !lookup, !lookup && !optOut, !lookup && !room);
+      // 호실 행·체인 머리는 고치기만 하고 앱이 지우지 않는다(체인 머리는 #128, 지우면 번호를 다시 쓸 수 있음)
+      boolean noDelete =
+          table.equals("state.room_record") || table.equals("state.action_chain_head");
+      assertRolePrivileges(APP, table, true, !lookup, !lookup && !optOut, !lookup && !noDelete);
       assertRolePrivileges(PURGE, table, true, table.equals("state.outbox"), false, false);
       assertRolePrivileges(
           HUMAN, table, !HUMAN_COLUMN_ONLY.containsKey(table), false, false, false);
@@ -841,7 +844,7 @@ class DatabaseGrantsIntegrationTest {
 
   // ======================================================== JDBC 실행 계약(트랜잭션·역할·잠금·롤백)
 
-  /** 테스트마다 새 DB: #185 선행 권한 → #173과 같은 Flyway(V1~V9). 역할은 클러스터 전체라 한 번만 만든다. */
+  /** 테스트마다 새 DB: #185 선행 권한 → #173과 같은 Flyway(V1~V10). 역할은 클러스터 전체라 한 번만 만든다. */
   private static String freshDatabase(String db) throws Exception {
     try (Connection connection = adminConnection();
         Statement statement = connection.createStatement()) {
@@ -850,11 +853,11 @@ class DatabaseGrantsIntegrationTest {
     prepareDatabasePrivileges(db);
     migrate(db);
     assertEquals(
-        "9",
+        "10",
         scalarAsAdmin(
             db,
             "SELECT max(version::int)::text FROM public.flyway_schema_history WHERE success AND version IS NOT NULL"),
-        "이 테스트가 쓰는 DB 버전은 V9");
+        "이 테스트가 쓰는 DB 버전은 V10");
     return db;
   }
 

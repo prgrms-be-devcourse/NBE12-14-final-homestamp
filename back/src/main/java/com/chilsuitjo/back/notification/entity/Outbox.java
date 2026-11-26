@@ -119,11 +119,11 @@ public class Outbox {
   }
 
   /**
-   * 작업자가 가져가기 전에 취소했다(#100 U2). 아직 {@code PENDING}일 때만 바뀌고, 그 밖이면(이미 {@code SENDING}·끝남·취소됨) 그대로
-   * 둔다. 바뀌었는지를 돌려준다. 시도 횟수·다음 시도 시각은 바꾸지 않는다. 작업자는 {@code PENDING}만 가져가서 취소한 줄은 다시 보내지 않는다.
+   * 번호를 고쳐 다시 초대할 때 아직 {@code PENDING}이면 취소한다. 작업자가 가져간 뒤({@code SENDING})라도 실제 시도 전에 초대 링크가 이미
+   * 무효임을 확인한 작업자는 취소할 수 있다. 끝난 줄은 그대로 둔다. 시도 횟수·다음 시도 시각은 바꾸지 않는다.
    */
   public boolean markCancelled() {
-    if (status != OutboxStatus.PENDING) {
+    if (status != OutboxStatus.PENDING && status != OutboxStatus.SENDING) {
       return false;
     }
     this.status = OutboxStatus.CANCELLED;

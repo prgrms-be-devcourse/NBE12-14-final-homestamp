@@ -1,7 +1,9 @@
 package com.chilsuitjo.back.link.repository;
 
 import com.chilsuitjo.back.link.entity.Link;
+import com.chilsuitjo.back.link.rule.LinkKind;
 import jakarta.persistence.LockModeType;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -16,6 +18,8 @@ public interface LinkRepository extends JpaRepository<Link, UUID> {
 
   Optional<Link> findByTokenHash(String tokenHash);
 
+  boolean existsByIdAndKindAndInvalidatedAtIsNotNull(UUID id, LinkKind kind);
+
   @Query("select l.roomRecordId from Link l where l.id = :id")
   Optional<UUID> findRoomRecordIdById(@Param("id") UUID id);
 
@@ -24,6 +28,34 @@ public interface LinkRepository extends JpaRepository<Link, UUID> {
   @Query("select l from Link l where l.id = :id")
   @Transactional(propagation = Propagation.MANDATORY)
   Optional<Link> findByIdForUpdate(@Param("id") UUID id);
+
+  /**
+   * 같은 호실·자리·기록의 아직 유효한 링크(발급 재사용, {@code InviteLinks.issueInvite}). 기록 칸이 {@code null}이면 {@code IS
+   * NULL}로 찾는다. 호실을 잠근 뒤 부르므로 같은 조건의 발급끼리는 한 줄로 선다.
+   */
+  Optional<Link>
+      findFirstByRoomRecordIdAndPartyIdAndKindAndRepairCaseIdAndInspectionIdAndInvalidatedAtIsNull(
+          UUID roomRecordId, UUID partyId, LinkKind kind, UUID repairCaseId, UUID inspectionId);
+
+  /** 호실을 잠근 뒤 그 호실의 유효한 링크를 한 종류만 잠근다(호실 → 링크, 09 3-1). */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      "select l from Link l where l.roomRecordId = :room and l.kind = :kind"
+          + " and l.invalidatedAt is null order by l.id")
+  @Transactional(propagation = Propagation.MANDATORY)
+  List<Link> lockValid(@Param("room") UUID roomRecordId, @Param("kind") LinkKind kind);
+
+  /**
+   * 호실을 잠근 뒤 그 호실·자리의 링크를 한 종류만, <b>이미 무효인 것까지</b> 모두 잠근다(호실 → 링크, 09 3-1). 자리 단위 무효화가 이미 무효였던 링크
+   * ID도 돌려주려고 쓴다({@code InviteLinks.invalidateInvites(호실, 자리, 이유)}). ID 순 정렬은 잠그는 순서를 고정하려는 것이다.
+   */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      "select l from Link l where l.roomRecordId = :room and l.partyId = :party and l.kind = :kind"
+          + " order by l.id")
+  @Transactional(propagation = Propagation.MANDATORY)
+  List<Link> lockAllForParty(
+      @Param("room") UUID roomRecordId, @Param("party") UUID partyId, @Param("kind") LinkKind kind);
 
   /**
    * 링크를 찾았는데 열지 못한 횟수를 하나 올린다(무효 링크, 호실 상태로 막힘, 내용을 못 읽음, pipeline 거절. 05 {@code

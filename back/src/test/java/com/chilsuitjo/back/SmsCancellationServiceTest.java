@@ -12,6 +12,7 @@ import com.chilsuitjo.back.notification.repository.OutboxRepository;
 import com.chilsuitjo.back.notification.repository.SmsGateway;
 import com.chilsuitjo.back.notification.rule.NoticeKind;
 import com.chilsuitjo.back.notification.service.FakeRecipientDirectory;
+import com.chilsuitjo.back.notification.service.InviteLinks;
 import com.chilsuitjo.back.notification.service.NoticeOutbox;
 import com.chilsuitjo.back.notification.service.OutboxWorker;
 import com.chilsuitjo.back.notification.service.SmsCancellation;
@@ -65,6 +66,7 @@ class SmsCancellationServiceTest {
   @Autowired private OutboxWorker worker;
   @Autowired private FakeSmsGateway gateway;
   @Autowired private FakeRecipientDirectory recipients;
+  @Autowired private InviteLinks inviteLinks;
   @Autowired private ActionRequestContext requestContext;
   @Autowired private TransactionTemplate transaction;
   @Autowired private JdbcTemplate jdbc;
@@ -477,6 +479,7 @@ class SmsCancellationServiceTest {
         new OutboxWorker(
             outboxRepository,
             noticeRepository,
+            inviteLinks,
             recipients,
             blocking,
             clock,
