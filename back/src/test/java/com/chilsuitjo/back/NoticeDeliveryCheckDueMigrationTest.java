@@ -21,8 +21,8 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
 /**
- * V9 전달 확인 기한({@code notice.delivery_check_due_at})의 적용과 제약. 앱과 따로 띄운 PostgreSQL에서 V8까지 올린 뒤 그때의 통지
- * 줄을 넣고 V9를 올려, 기존 줄을 지우거나 기한을 지어내지 않는지 본다. 기존 개발·운영 DB는 건드리지 않는다.
+ * V11 전달 확인 기한({@code notice.delivery_check_due_at})의 적용과 제약. 앱과 따로 띄운 PostgreSQL에서 바로 앞 버전(V10)까지
+ * 올린 뒤 그때의 통지 줄을 넣고 V11을 올려, 기존 줄을 지우거나 기한을 지어내지 않는지 본다. 기존 개발·운영 DB는 건드리지 않는다.
  */
 class NoticeDeliveryCheckDueMigrationTest {
 
@@ -33,17 +33,17 @@ class NoticeDeliveryCheckDueMigrationTest {
   private static JdbcTemplate jdbc;
   private static UUID room;
   private static UUID party;
-  private static Map<UUID, Map<String, Object>> beforeV9;
+  private static Map<UUID, Map<String, Object>> beforeMigration;
 
   @BeforeAll
-  static void migrateToV8ThenAddLegacyRowsThenMigrate() {
+  static void migrateToPreviousThenAddLegacyRowsThenMigrate() {
     POSTGRES.start();
     DriverManagerDataSource dataSource =
         new DriverManagerDataSource(
             POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
     jdbc = new JdbcTemplate(dataSource);
 
-    flyway(dataSource, "8").migrate();
+    flyway(dataSource, "10").migrate();
     room = UUID.randomUUID();
     party = UUID.randomUUID();
     jdbc.update(
@@ -63,16 +63,16 @@ class NoticeDeliveryCheckDueMigrationTest {
         """,
         party,
         room);
-    // V8까지의 앱(dev markSent)이 남길 수 있는 줄: 보내기 전, 보냄(첫 조회 예약), 전달됨, 보낸 뒤 실패
+    // 바로 앞 버전까지의 앱(기한 없는 markSent)이 남길 수 있는 줄: 보내기 전, 보냄(첫 조회 예약), 전달됨, 보낸 뒤 실패
     List<UUID> legacy =
         List.of(
             legacyNotice("REQUESTED", null, null),
             legacyNotice("SENT", SENT_AT, SENT_AT.plusSeconds(60)),
             legacyNotice("DELIVERED", SENT_AT, null),
             legacyNotice("FAILED", SENT_AT, null));
-    beforeV9 = new HashMap<>();
+    beforeMigration = new HashMap<>();
     for (UUID id : legacy) {
-      beforeV9.put(id, row(id));
+      beforeMigration.put(id, row(id));
     }
 
     flyway(dataSource, "latest").migrate();
@@ -85,14 +85,14 @@ class NoticeDeliveryCheckDueMigrationTest {
 
   @Test
   void 기존_통지는_지워지거나_바뀌지_않고_기한을_지어내지_않는다() {
-    // 다른 테스트가 같은 호실에 줄을 더하므로 V8 때 넣은 줄만 센다
+    // 다른 테스트가 같은 호실에 줄을 더하므로 마이그레이션 전에 넣은 줄만 센다
     assertThat(
             jdbc.queryForObject(
                 "SELECT count(*) FROM state.notice WHERE id = ANY (?)",
                 Integer.class,
-                (Object) beforeV9.keySet().toArray(UUID[]::new)))
-        .isEqualTo(beforeV9.size());
-    for (Map.Entry<UUID, Map<String, Object>> entry : beforeV9.entrySet()) {
+                (Object) beforeMigration.keySet().toArray(UUID[]::new)))
+        .isEqualTo(beforeMigration.size());
+    for (Map.Entry<UUID, Map<String, Object>> entry : beforeMigration.entrySet()) {
       Map<String, Object> after = row(entry.getKey());
       assertThat(after).containsAllEntriesOf(entry.getValue());
       assertThat(after)

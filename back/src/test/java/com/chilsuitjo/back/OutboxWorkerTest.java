@@ -18,7 +18,8 @@ import com.chilsuitjo.back.notification.repository.SmsGateway;
 import com.chilsuitjo.back.notification.rule.DeliveryOutcome;
 import com.chilsuitjo.back.notification.rule.DeliveryPollSchedule;
 import com.chilsuitjo.back.notification.rule.NoticeKind;
-import com.chilsuitjo.back.notification.service.FakeRecipientDirectory;
+import com.chilsuitjo.back.notification.service.InMemoryRecipientDirectory;
+import com.chilsuitjo.back.notification.service.InviteLinks;
 import com.chilsuitjo.back.notification.service.NoticeOutbox;
 import com.chilsuitjo.back.notification.service.OutboxPoller;
 import com.chilsuitjo.back.notification.service.OutboxWorker;
@@ -40,9 +41,13 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.ApplicationContext;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -57,12 +62,27 @@ import org.springframework.transaction.support.TransactionTemplate;
       "spring.datasource.hikari.connection-init-sql=SET search_path TO state, record, log, public",
       "app.outbox.worker.enabled=false"
     })
+@ActiveProfiles("test")
 class OutboxWorkerTest {
+
+  /**
+   * 번호 조회는 test 코드의 가짜로 둔다. main의 {@code FakeRecipientDirectory}나 나중의 room 실제 구현이 있어도
+   * {@code @Primary}라 작업자는 이것을 받는다.
+   */
+  @TestConfiguration
+  static class RecipientsConfig {
+    @Bean
+    @Primary
+    InMemoryRecipientDirectory testRecipientDirectory() {
+      return new InMemoryRecipientDirectory();
+    }
+  }
 
   @Autowired private NoticeOutbox noticeOutbox;
   @Autowired private OutboxWorker worker;
   @Autowired private FakeSmsGateway gateway;
-  @Autowired private FakeRecipientDirectory recipients;
+  @Autowired private InMemoryRecipientDirectory recipients;
+  @Autowired private InviteLinks inviteLinks;
   @Autowired private TransactionTemplate transaction;
   @Autowired private JdbcTemplate jdbc;
   @Autowired private ApplicationContext context;
@@ -78,6 +98,7 @@ class OutboxWorkerTest {
   @BeforeEach
   void setUp() {
     gateway.reset();
+    recipients.reset();
     jdbc.update(
         "INSERT INTO region (code, sido, dong) VALUES ('9999999998', '테스트', '아웃박스동')"
             + " ON CONFLICT DO NOTHING");
@@ -196,6 +217,7 @@ class OutboxWorkerTest {
         new OutboxWorker(
             outboxRepository,
             noticeRepository,
+            inviteLinks,
             recipients,
             gateway,
             clock,
@@ -429,6 +451,7 @@ class OutboxWorkerTest {
     return new OutboxWorker(
         outboxRepository,
         repository,
+        inviteLinks,
         directory,
         gateway,
         clock,
@@ -463,6 +486,7 @@ class OutboxWorkerTest {
         new OutboxWorker(
             outboxRepository,
             noticeRepository,
+            inviteLinks,
             recipients,
             new SmsGateway() {
               @Override
@@ -531,6 +555,7 @@ class OutboxWorkerTest {
     return new OutboxWorker(
         outboxRepository,
         noticeRepository,
+        inviteLinks,
         recipients,
         gateway,
         clock,

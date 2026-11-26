@@ -3457,7 +3457,177 @@
     },
     {
       "name": "05 payment · proposal · settlement",
-      "item": []
+      "item": [
+        {
+          "name": "수리비 부담 제안 (비용 없음)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) pm.collectionVariables.set('proposalId', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"noCost\":true}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/repair-cases/{{repairCaseId}}/proposals",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "repair-cases",
+                "{{repairCaseId}}",
+                "proposals"
+              ]
+            },
+            "description": "하자를 등록한 토큰으로 보냅니다. 확인된 지불 없이 시험할 수 있으며 성공하면 응답의 id가 proposalId에 저장됩니다."
+          },
+          "response": []
+        },
+        {
+          "name": "수리비 부담 제안 (금액 나누기)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) pm.collectionVariables.set('proposalId', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"lines\":[{\"kind\":\"LANDLORD\",\"amount\":60000},{\"kind\":\"TENANT\",\"amount\":22000}]}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/repair-cases/{{repairCaseId}}/proposals",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "repair-cases",
+                "{{repairCaseId}}",
+                "proposals"
+              ]
+            },
+            "description": "확인된 지불 합계가 82,000원인 예시입니다. 줄 금액의 합을 해당 수리 건의 확인된 지불 합계에 맞춰 보내세요. 성공하면 proposalId가 갱신됩니다."
+          },
+          "response": []
+        },
+        {
+          "name": "수리비 부담안 동의 (상대 측)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{counterpart_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/proposals/{{proposalId}}/agree",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "proposals",
+                "{{proposalId}}",
+                "agree"
+              ]
+            },
+            "description": "직전에 저장한 proposalId에 상대 측으로 동의합니다. 이견 흐름을 시험하려면 새 제안을 만든 뒤 이견 요청을 보내세요."
+          },
+          "response": []
+        },
+        {
+          "name": "수리비 부담안 이견 (상대 측)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{counterpart_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"reason\":\"부담 금액을 다시 이야기하고 싶어요.\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/proposals/{{proposalId}}/dispute",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "proposals",
+                "{{proposalId}}",
+                "dispute"
+              ]
+            },
+            "description": "직전에 저장한 proposalId에 상대 측으로 이견을 남깁니다. 사유는 필수입니다."
+          },
+          "response": []
+        }
+      ],
+      "description": "하자를 등록해 repairCaseId를 채우고 상대 측 개발용 토큰을 counterpart_token에 넣으세요. 비용 없음 또는 금액 예시 중 하나를 보낸 뒤 상대 측에서 동의나 이견 중 하나를 보내세요."
     },
     {
       "name": "06 photo",
@@ -3603,6 +3773,10 @@
     },
     {
       "key": "repairCaseId",
+      "value": ""
+    },
+    {
+      "key": "proposalId",
       "value": ""
     },
     {

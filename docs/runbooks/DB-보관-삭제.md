@@ -21,11 +21,11 @@ V1은 부모 삭제 보호·수신 거부 UPDATE 금지·회원 확인 기록 �
 스키마 배치는 05 0장 「DB 스키마와 권한」이 원본이다. 실제 역할 이름은 배포에서 정하며 V1은 운영 역할을 만들거나 GRANT하지 않는다.
 
 - 소유자 역할로 `ALTER DEFAULT PRIVILEGES FOR ROLE <소유자> IN SCHEMA record GRANT SELECT, INSERT ON TABLES TO <앱>`을 설정한다. 새 `state` 테이블에는 SELECT·INSERT만 기본 부여하고, UPDATE·DELETE는 분류된 기존 C 테이블에 명시적으로 부여한다. `log`에는 INSERT를 기본 부여한다. 이미 마이그레이션된 테이블에는 `GRANT ... ON ALL TABLES IN SCHEMA ...`와 객체별 C 권한을 함께 적용한다.
-- `state.part_template`·`state.region`은 고정 조회 데이터이므로 앱의 INSERT·UPDATE·DELETE를 회수하고 SELECT만 남긴다. `state.sms_opt_out`은 SELECT·INSERT·DELETE만 허용한다.
+- `state.part_template`·`state.region`은 고정 조회 데이터이므로 앱의 INSERT·UPDATE·DELETE를 회수하고 SELECT만 남긴다. `state.sms_opt_out`은 SELECT·INSERT·DELETE만 허용한다. 체인 머리 `state.action_chain_head`(V9)는 SELECT·INSERT·UPDATE만 허용하고 DELETE는 주지 않는다(지우면 다음 행동이 지운 번호를 다시 쓸 수 있음, 05 2-10). 호실 통째 삭제 때 CASCADE로만 지워진다.
 - 앱에 `record`, `state`, `log` USAGE를 주고, 스키마 CREATE·public 접근·소유자 멤버십은 주지 않는다. Flyway는 소유자로 실행하며 이력은 `public`, 관리 스키마는 `public,record,state,log`다.
 - 삭제 작업 역할은 필요한 `record`·`state`·`log` 조회, 감사·아웃박스 INSERT와 `state.purge_room_record(uuid)` EXECUTE만 받는다. 앱에는 이 함수 EXECUTE가 없다.
 - 사람별 읽기 전용 역할(Human)은 장애 대응 조회에 필요한 범위만 읽는다. 쓰기·TRUNCATE·함수 실행·다른 역할 전환은 없다.
-  - 테이블 단위 SELECT는 `grants.sql`의 명시 목록(기록·상태·감사 테이블 31개)에만 준다. 기본 권한(Default Privileges)으로는 주지 않으므로 새 테이블은 분류하기 전까지 읽을 수 없고, 분류되지 않은 테이블이 있으면 GRANT가 실패한다.
+  - 테이블 단위 SELECT는 `grants.sql`의 명시 목록(기록·상태·감사 테이블 32개)에만 준다. 기본 권한(Default Privileges)으로는 주지 않으므로 새 테이블은 분류하기 전까지 읽을 수 없고, 분류되지 않은 테이블이 있으면 GRANT가 실패한다.
   - 민감 테이블 7개는 컬럼 단위 SELECT만 준다. 읽을 수 없는 컬럼: `member`의 `email`·`password_hash`·`display_name`·`phone`, `refresh_token`의 `token_hash`·`device_label`, `phone_verification`의 `phone`·`code_hash`, `link`의 `token_hash`, `party`의 `invite_phone`, `outbox`의 `payload`·`dedupe_key`, `cause_note`의 `expert_name`(제3자의 실제 이름). 이 컬럼은 SELECT 목록·WHERE·`SELECT *`·행 전체 참조 어디에 써도 권한 오류(SQLState `42501`)로 거부된다.
   - 새 컬럼이 Human에게 보이는지는 테이블 분류에 따라 다르다.
     - 컬럼 단위 7개 테이블: 새 컬럼은 `grants.sql`의 허용 컬럼 목록에 넣고 GRANT를 다시 실행하기 전까지 읽을 수 없다.

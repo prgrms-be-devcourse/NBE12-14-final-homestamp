@@ -18,6 +18,9 @@ import java.util.Set;
  *   <li>{@link Allow#AFTER_SETTLED}: 정산 완료 뒤에도 된다. 개인정보 사진 지우기와 다시 공유(보기만)(06 CONS-3i), 문자 그만 받기
  *   <li>{@link Allow#ON_JOINED}: 합류 전 기록에서도 된다. 개인정보 사진 지우기(decisions 2026-11-17)와 문자 그만 받기
  *   <li>{@link Allow#WHILE_SHARING_STOPPED}: 공유를 그만둔 사람도 된다. 나만 보는 기록과 거주 종료·다시 공유(03 B)
+ *   <li>{@link Allow#BY_INVITEE}: 아직 연결하지 않은 초대받은 회원이 초대 자리로 할 수 있다. 연결·공유 동의(ROOM-5, CONS-2)와 초대
+ *       거절(#249). 다른 표시와 달리 "막힌 호실에서도 된다"가 아니라 "당사자가 아닌 초대받은 회원에게 열린다"는 뜻이라, 호실의 다른 막힘은 그대로 받는다(정산
+ *       완료 호실의 연결은 {@code SETTLED})
  * </ul>
  *
  * <p>사진을 어디에 붙이는지처럼 대상으로 갈리는 것은 표시로 정하지 않고 도메인 {@code Transitions}가 본다(예: 그만둔 동안 {@code ADD_PHOTO}는
@@ -37,10 +40,10 @@ public enum ActionType {
   TOGGLE_PART(Area.ROOM),
   INVITE(Area.ROOM),
   CHANGE_INVITE_PHONE(Area.ROOM),
-  REJECT_INVITE(Area.ROOM),
-  CONNECT(Area.ROOM),
+  REJECT_INVITE(Area.ROOM, Allow.BY_INVITEE),
+  CONNECT(Area.ROOM, Allow.BY_INVITEE),
   JOIN(Area.ROOM),
-  SHARE_CONSENT(Area.ROOM, Allow.AFTER_SETTLED, Allow.WHILE_SHARING_STOPPED),
+  SHARE_CONSENT(Area.ROOM, Allow.AFTER_SETTLED, Allow.WHILE_SHARING_STOPPED, Allow.BY_INVITEE),
   STOP_SHARING(Area.ROOM),
   RESUME_SHARING(Area.ROOM, Allow.AFTER_SETTLED, Allow.WHILE_SHARING_STOPPED),
   MOVE_OUT(Area.ROOM, Allow.WHILE_SHARING_STOPPED),
@@ -128,11 +131,12 @@ public enum ActionType {
     PHOTO
   }
 
-  /** 호실이 막힌 상태에서도 되는 행동. */
+  /** 호실이 막힌 상태에서도 되는 행동, 그리고 초대받은 회원에게 열린 행동({@link #BY_INVITEE}). */
   public enum Allow {
     AFTER_SETTLED,
     ON_JOINED,
-    WHILE_SHARING_STOPPED
+    WHILE_SHARING_STOPPED,
+    BY_INVITEE
   }
 
   private final Area area;
@@ -153,11 +157,11 @@ public enum ActionType {
   }
 
   /**
-   * 거주가 끝난 호실에서 할 수 없는 행동: 새 수리 건 등록(03 불변식 9, 06 REP-1c)과 수리 시작(03 A "상태별로 할 수 있는 일": 거주 종료 뒤 수리
-   * 상태는 "거주 종료 시점"으로 멈춤). 둘 다 {@code ROOM_ENDED}. 종료 요청은 종료 확인 요청을 열 수 없어 수리 규칙이 막고, 열린 요청에 대한 종료
-   * 확인·아직 안 됐어요는 아직 정하지 않았다(#177).
+   * 거주가 끝난 호실에서 할 수 없는 행동: 새 수리 건 등록(03 불변식 9, 06 REP-1c), 수리 시작과 혼자 종료(03 A "상태별로 할 수 있는 일": 거주 종료
+   * 뒤 수리 상태는 "거주 종료 시점"으로 멈춤, 혼자 종료는 ✕). 모두 {@code ROOM_ENDED}. 종료 요청은 종료 확인 요청을 열 수 없어 수리 규칙이 막는다.
+   * 종료 확인·아직 안 됐어요는 요청이 닫혀도, 혼자 끝낸 건에도 정산 완료 전까지 받는다(늦은 답, decisions 2026-11-24·11-25).
    */
   public boolean blockedAfterEnded() {
-    return this == REGISTER || this == START_REPAIR;
+    return this == REGISTER || this == START_REPAIR || this == CLOSE_ALONE;
   }
 }

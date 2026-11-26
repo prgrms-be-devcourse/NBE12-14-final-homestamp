@@ -11,6 +11,7 @@ import com.chilsuitjo.back.notification.rule.NoticeKind;
 import com.chilsuitjo.back.notification.service.DeliveryPollClaimer;
 import com.chilsuitjo.back.notification.service.DeliveryResultPoller;
 import com.chilsuitjo.back.notification.service.FakeRecipientDirectory;
+import com.chilsuitjo.back.notification.service.InviteLinks;
 import com.chilsuitjo.back.notification.service.NoticeOutbox;
 import com.chilsuitjo.back.notification.service.OutboxWorker;
 import java.sql.Timestamp;
@@ -27,6 +28,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -43,6 +45,7 @@ import org.springframework.transaction.support.TransactionTemplate;
       "spring.datasource.hikari.connection-init-sql=SET search_path TO state, record, log, public",
       "app.outbox.worker.enabled=false"
     })
+@ActiveProfiles("test")
 class DeliveryCheckDueSettingChangeTest {
 
   private static final String REGION = "9999999995";
@@ -57,6 +60,7 @@ class DeliveryCheckDueSettingChangeTest {
   @Autowired private OutboxRepository outbox;
   @Autowired private FakeSmsGateway gateway;
   @Autowired private FakeRecipientDirectory recipients;
+  @Autowired private InviteLinks inviteLinks;
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private TransactionTemplate transaction;
   @Autowired private JdbcTemplate jdbc;
@@ -152,6 +156,7 @@ class DeliveryCheckDueSettingChangeTest {
     new OutboxWorker(
             outbox,
             notices,
+            inviteLinks,
             recipients,
             gateway,
             clock,

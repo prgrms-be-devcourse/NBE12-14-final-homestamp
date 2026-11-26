@@ -8,6 +8,7 @@ export function createMockRecords(store: MockStore): RecordsApi {
     subscribe: store.subscribe,
     getSnapshot: store.getState,
     load: async () => {},
+    loadRoom: async () => {},
     send: async (_s, c) => {
       recordAction(store, c.role, c.text, c.update, c.options)
       return {}

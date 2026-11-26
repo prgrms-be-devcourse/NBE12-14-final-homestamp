@@ -34,6 +34,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -47,6 +48,7 @@ import org.springframework.transaction.support.TransactionTemplate;
       "spring.datasource.hikari.connection-init-sql=SET search_path TO state, record, log, public",
       "app.outbox.worker.enabled=false"
     })
+@ActiveProfiles("test")
 class DeliveryPollClaimerTest {
 
   private static final String REGION = "9999999997";
@@ -223,7 +225,7 @@ class DeliveryPollClaimerTest {
 
   @Test
   void 전달_확인_기한이_없는_보낸_통지는_가져가지도_바꾸지도_않고_정상_통지를_막지_않는다() {
-    // V9 이전에 보냈거나 이전 버전 앱이 적은 줄: 기한을 지어내거나 실패로 끝내지 않고, 시각을 계속 옮기며 다시 가져가지도 않는다
+    // 기한 칸이 생기기 전에 보냈거나 이전 버전 앱이 적은 줄: 기한을 지어내거나 실패로 끝내지 않고, 시각을 계속 옮기며 다시 가져가지도 않는다
     Instant now = SENT.plus(Duration.ofDays(4));
     UUID legacy = notice("SENT", SENT.plus(Duration.ofMinutes(1)), null);
     UUID noSentAt = notice("SENT", SENT.plus(Duration.ofMinutes(1)), null);

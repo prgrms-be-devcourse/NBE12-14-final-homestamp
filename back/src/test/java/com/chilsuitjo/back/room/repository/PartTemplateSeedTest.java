@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.test.context.ActiveProfiles;
 
 /**
  * 기본 부위 목록 시드(V7, #142). 6구역 29개이고 설비·가전만 호실마다 켜고 끄는 부위다(03 2장 H "부위"). 목록을 바꾸면 새 V 파일과 함께 이 테스트를
@@ -16,6 +17,7 @@ import org.springframework.context.annotation.Import;
  */
 @Import(TestcontainersConfiguration.class)
 @SpringBootTest
+@ActiveProfiles("test")
 class PartTemplateSeedTest {
 
   /** [구역, 부위, 켜고 끄는 부위인지]. 보이는 순서(sort_order)대로. */

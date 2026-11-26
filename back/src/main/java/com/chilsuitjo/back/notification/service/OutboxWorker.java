@@ -9,6 +9,7 @@ import com.chilsuitjo.back.notification.repository.OutboxRepository;
 import com.chilsuitjo.back.notification.repository.SmsGateway;
 import com.chilsuitjo.back.notification.rule.DeliveryPollSchedule;
 import com.chilsuitjo.back.notification.rule.NoticeText;
+import com.chilsuitjo.back.notification.rule.OutboxStatus;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -45,6 +46,7 @@ public class OutboxWorker {
 
   private final OutboxRepository outbox;
   private final NoticeRepository notices;
+  private final InviteLinks inviteLinks;
   private final RecipientDirectory recipients;
   private final SmsGateway gateway;
   private final Clock clock;
@@ -57,6 +59,7 @@ public class OutboxWorker {
   public OutboxWorker(
       OutboxRepository outbox,
       NoticeRepository notices,
+      InviteLinks inviteLinks,
       RecipientDirectory recipients,
       SmsGateway gateway,
       Clock clock,
@@ -70,6 +73,7 @@ public class OutboxWorker {
     }
     this.outbox = outbox;
     this.notices = notices;
+    this.inviteLinks = inviteLinks;
     this.recipients = recipients;
     this.gateway = gateway;
     this.clock = clock;
@@ -136,6 +140,11 @@ public class OutboxWorker {
             status -> outbox.findById(outboxId).ifPresent(Outbox::markDone));
         return;
       }
+      if (notice.get().getLinkId() != null
+          && inviteLinks.isInvalidatedInvite(notice.get().getLinkId())) {
+        cancelInvalidatedInvite(outboxId, notice.get().getId());
+        return;
+      }
       phone = recipients.phoneOfRecipient(notice.get().getRecipientPartyId());
     } catch (RuntimeException e) {
       log.warn("보내기 전 단계 실패, 다시 시도: outbox={}, error={}", outboxId, e.getClass().getName());
@@ -151,13 +160,34 @@ public class OutboxWorker {
   }
 
   /**
+   * 가져간 줄(첫 시도든 {@code RETRY} 뒤 다시 시도든)의 초대 링크가 업체에 보내기 전에 이미 무효면 이 시도는 보내지 않고 통지와 줄을 함께 취소로 끝낸다.
+   * 줄이 이 작업자가 가져간 {@code SENDING}이고 통지가 발송 요청됨일 때만 바꾼다.
+   */
+  private void cancelInvalidatedInvite(UUID outboxId, UUID noticeId) {
+    transaction.executeWithoutResult(status -> {
+      Notice notice = notices.findForUpdate(noticeId).orElse(null);
+      Outbox row = outbox.findById(outboxId).orElse(null);
+      if (notice != null
+          && row != null
+          && row.getStatus() == OutboxStatus.SENDING
+          && notice.markCancelled()) {
+        row.markCancelledBeforeSend();
+      }
+    });
+  }
+
+  /**
    * 보낼 번호가 없다. 수신 거부·탈퇴·합류처럼 요청을 닫는 일이 넣은 뒤에 일어났거나, 문자 대신 서비스 안 알림으로 갔어야 하는 경우다. 업체 실패가 아니므로 통지를 최종
    * 실패로 두지 않는다("문자가 가지 않았어요"와 [다시 보내기]가 뜨면 이유가 틀리다). 줄만 보내지 않은 채 끝내고 운영이 볼 수 있게 남긴다.
    *
    * <p><b>남는 빈틈(NOTI-1에서 닫음)</b>: 연결된 회원의 번호 인증이 풀린 경우(다른 계정이 같은 번호를 인증, 불변식 8)는 요청이 열린 채 남아 통지가
    * {@code REQUESTED}에 멈추고 기다림이 시작되지 않는다(원칙 4). 05 {@code notice}대로 넣을 때 채널을 고르고(문자를 끈 회원·인증이 풀린
-   * 계정은 {@code IN_APP}), 보낼 때 번호가 사라진 회원은 {@code IN_APP}으로 바꾼다. 번호를 고쳐 다시 초대하면 그 자리의 보내지 않은 통지는
-   * 취소한다(새 번호로 옛 통지가 가지 않게, 03 C). 기다림 타이머가 돌기 전에 넣는다(#93).
+   * 계정은 {@code IN_APP}), 보낼 때 번호가 사라진 회원은 {@code IN_APP}으로 바꾼다. 기다림 타이머가 돌기 전에 넣는다(#93).
+   *
+   * <p>번호를 고쳐 다시 초대할 때 옛 링크의 보내지 않은 문자를 막는 것은 이 작업자가 아니다. room이 {@code save} 안에서 넘긴 링크 ID의 줄을
+   * {@link SmsCancellation}으로 취소하고(03 K "보내기 전 취소", room 호출은 아직 없음), 작업자는 {@code PENDING}만 가져가서 취소된
+   * 줄을 보내지 않는다. 이미 가져간({@code SENDING}) 줄도 발송 직전 링크가 무효인 것을 확인하면 취소한다. 확인을 끝낸 뒤 업체 호출에 들어가는 경합은 막지
+   * 못한다(#100).
    */
   private void skipWithoutPhone(UUID outboxId, UUID noticeId) {
     transaction.executeWithoutResult(

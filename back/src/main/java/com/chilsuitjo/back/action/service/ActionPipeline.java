@@ -118,10 +118,7 @@ public class ActionPipeline {
    * 순서(호실 먼저)도 어긋난다(#94 리뷰, 링크 열람 경합). 호실을 만드는 요청은 아직 잠글 호실을 모른다.
    */
   private Outcome replayIfDone(ActionBatch batch) {
-    RoomGate gate =
-        batch.isNewRoom()
-            ? null
-            : roomGateReader.lockAndRead(batch.roomRecordId(), batch.actor()); // 1
+    RoomGate gate = lock(batch); // 1
     checkAccess(batch, gate);
     List<ActionEntry> done = actionWriter.findRequest(batch.actor().key(), batch.idempotencyKey());
     return done.isEmpty() ? null : replay(batch, done);
@@ -129,8 +126,7 @@ public class ActionPipeline {
 
   private Outcome run(ActionBatch batch) {
     UUID roomRecordId = batch.roomRecordId();
-    RoomGate gate =
-        batch.isNewRoom() ? null : roomGateReader.lockAndRead(roomRecordId, batch.actor()); // 1
+    RoomGate gate = lock(batch); // 1
 
     checkAccess(batch, gate); // 1 뒤(접근 검증이 붙은 요청만)
     List<ActionEntry> done =
@@ -193,6 +189,27 @@ public class ActionPipeline {
 
     // 모든 단계가 when으로 건너뛰어졌으면 남긴 행동 없이 끝난다(예: 정산이 이미 있어 OPEN_SETTLEMENT가 필요 없음).
     return new Outcome(new BatchResult(results, false), lastState);
+  }
+
+  /**
+   * 1. 호실 기록 행을 잠그고 {@link RoomGate}를 읽는다. 호실을 만드는 요청은 아직 잠글 호실이 없어 null이다. 초대 자리로 들어온 요청({@link
+   * ActionBatch#asInvitee})은 당사자 확인 대신 그 자리가 이 호실의 것인지로 잠근다(#249). 처음 실행과 같은 키의 재생이 같은 방법으로 잠근다.
+   */
+  private RoomGate lock(ActionBatch batch) {
+    if (batch.isNewRoom()) {
+      return null;
+    }
+    if (!batch.isInvitee()) {
+      return roomGateReader.lockAndRead(batch.roomRecordId(), batch.actor());
+    }
+    RoomGate gate =
+        roomGateReader.lockAndReadAsInvitee(
+            batch.roomRecordId(), batch.actor(), batch.inviteePartyId());
+    // 초대 자리 표시가 빠지면 당사자가 아닌 회원이 모든 행동을 지나간다
+    if (!gate.invitee()) {
+      throw new IllegalStateException("초대 자리로 잠갔는데 RoomGate.invitee가 거짓이에요");
+    }
+    return gate;
   }
 
   /** 5~9. {@code when}이 거짓이면 null. */

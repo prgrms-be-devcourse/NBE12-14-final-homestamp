@@ -157,19 +157,9 @@ button:disabled {
   gap: 12px;
 }
 .top-left,
-.top-actions,
-.breadcrumb {
+.top-actions {
   display: flex;
   align-items: center;
-}
-.breadcrumb {
-  gap: 12px;
-  font-size: 14px;
-  color: #9aa7b8;
-}
-.breadcrumb strong {
-  color: #5d6c83;
-  font-weight: 600;
 }
 .bell {
   position: relative;
@@ -184,8 +174,8 @@ button:disabled {
   background: #ef866b;
 }
 main {
-  max-width: 1540px;
-  padding: 22px 38px 0;
+  max-width: 1180px;
+  padding: 20px 32px 28px;
   margin: 0 auto;
 }
 .page-heading {
@@ -804,9 +794,6 @@ main {
 .guest-foot {
   margin-top: 20px;
 }
-.mobile-menu {
-  display: none;
-}
 @media (min-width: 1550px) {
   main {
     padding-top: 28px;
@@ -912,9 +899,6 @@ main {
     transform: translateX(-100%);
     transition: transform 0.2s ease;
   }
-  .mobile-menu {
-    display: inline-flex;
-  }
   .sidebar .nav-item {
     font-size: 14px;
   }
@@ -928,23 +912,8 @@ main {
   .top-left {
     gap: 6px;
   }
-  .breadcrumb {
-    color: transparent;
-    font-size: 0;
-    gap: 0;
-  }
-  .breadcrumb svg {
-    display: none;
-  }
-  .breadcrumb > strong {
-    text-overflow: ellipsis;
-    color: #647a99;
-  }
-  .top-actions > .avatar {
-    display: none;
-  }
   main {
-    padding: 17px 18px 0;
+    padding: 14px 16px calc(84px + env(safe-area-inset-bottom));
   }
   .page-heading p {
     font-size: 14px;

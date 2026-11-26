@@ -166,6 +166,21 @@ public class Notice {
   }
 
   /**
+   * 보내기 전에 취소했다(#100 U2, 번호를 고쳐 다시 초대). 다른 전이처럼 발송 요청됨({@code REQUESTED})에서만 바뀌고, 그 밖이면 그대로 둔다.
+   * 바뀌었는지를 돌려준다.
+   *
+   * <p>문자 줄({@link Outbox#markCancelled})이 실제로 취소된 경우에만 같은 트랜잭션에서 함께 부른다. 취소는 전달이 아니므로 전달·열람 시각을
+   * 채우지 않고, 응답 요청의 {@code first_notified_at}도 건드리지 않는다. 취소 시각·이유는 원인 행동 기록이 원본이라 칸을 두지 않는다.
+   */
+  public boolean markCancelled() {
+    if (status != NoticeStatus.REQUESTED) {
+      return false;
+    }
+    this.status = NoticeStatus.CANCELLED;
+    return true;
+  }
+
+  /**
    * 전달 결과 조회 대상으로 가져가면서 다음에 물을 시각을 옮긴다(#120). 잠근 트랜잭션 안에서 부르고, 커밋하면 다른 작업자는 그 시각까지 이 통지를 가져가지 않는다.
    * 보낸(SENT) 통지만 바뀌고, 이미 끝난 통지는 그대로 둔다.
    */

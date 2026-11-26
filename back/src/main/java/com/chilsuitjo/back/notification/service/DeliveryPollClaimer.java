@@ -52,9 +52,10 @@ public class DeliveryPollClaimer {
   /**
    * 시각이 된 보낸 통지를 많아야 {@code limit}개 가져간다. 없으면 빈 목록.
    *
-   * <p>전달 확인 기한이 없는 줄은 {@link NoticeRepository#lockDuePolls}가 가져오지 않는다(V9 제약상 기한이 있으면 보낸 시각도 있다).
-   * 기한은 있는데 묶음 ID가 없는 보낸 통지는 {@code markSent}로는 생기지 않지만 V1이 막지는 않는다. 그런 줄은 돌려주지 않고(업체에 물을 값이 없음)
-   * 상태도 바꾸지 않으며, 다음 조회 시각만 옮겨 다른 통지를 막지 않게 하고 로그를 남긴다.
+   * <p>전달 확인 기한이 없는 줄은 {@link NoticeRepository#lockDuePolls}가 가져오지
+   * 않는다(`ck_notice_delivery_check_due` 제약상 기한이 있으면 보낸 시각도 있다). 기한은 있는데 묶음 ID가 없는 보낸 통지는 {@code
+   * markSent}로는 생기지 않지만 V1이 막지는 않는다. 그런 줄은 돌려주지 않고(업체에 물을 값이 없음) 상태도 바꾸지 않으며, 다음 조회 시각만 옮겨 다른 통지를
+   * 막지 않게 하고 로그를 남긴다.
    */
   public List<ClaimedDeliveryPoll> claim(int limit) {
     return transaction.execute(status -> {

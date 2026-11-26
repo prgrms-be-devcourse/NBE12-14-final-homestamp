@@ -23,6 +23,30 @@ const change = (request: RecordChange["request"]): RecordChange => ({
   },
   options: { roomId: "302" },
 })
+const summary = (id: string) => ({
+  id,
+  alias: `${id}호`,
+  region: {
+    code: "1144012400",
+    sido: "서울특별시",
+    sigungu: "마포구",
+    dong: "연남동",
+  },
+  status: "LIVING",
+  mySide: "TENANT",
+  counterpartStatus: "EMPTY",
+  joinedAway: false,
+  nextStep: "NONE",
+  createdAt: "2026-11-25T01:00:00Z",
+})
+const detail = (id: string) => ({
+  ...summary(id),
+  moveInDate: "2026-03-01",
+  createdBySide: "TENANT",
+  myStatus: "CONNECTED",
+  asOf: null,
+  availableActions: ["repair-cases"],
+})
 // 보낸 요청을 적어 두는 가짜 HTTP 요청 함수
 function fakeHttp(made?: { id: string }) {
   const calls: { method: string; path: string; body?: unknown }[] = []
@@ -33,7 +57,11 @@ function fakeHttp(made?: { id: string }) {
   ) => {
     calls.push({ method, path, body: opts?.body })
     if (method === "POST") return made
-    return path === endpoints.rooms ? [{ id: "302" }] : []
+    // 06 4-3 모양: 목록은 {items, nextCursor}, 상세는 한 호실
+    if (path.startsWith(`${endpoints.rooms}?`))
+      return { items: [summary("302")], nextCursor: null }
+    if (path === endpoints.room("302")) return detail("302")
+    return []
   }) as HttpRequest
   return { calls, request }
 }
@@ -68,19 +96,25 @@ test("HTTP: 06 주소로 POST를 보내고, 만든 ID를 돌려주며, 기록을
   const records = createHttpRecords(request)
   const made = await records.send(
     s,
-    change(post(endpoints.rooms, { side: "임차인" })),
+    change(post(endpoints.rooms, { side: "TENANT" })),
   )
   expect(made.id).toBe("new-room")
   expect(calls[0]).toEqual({
     method: "POST",
     path: "/api/rooms",
-    body: { side: "임차인" },
+    body: { side: "TENANT" },
   })
-  // 보낸 뒤 내 호실·알림을 다시 받아요
+  // 보낸 뒤 내 호실(목록 + 호실마다 상세)·알림을 다시 받아요
   expect(calls.slice(1).map((c) => c.path)).toEqual(
-    expect.arrayContaining([endpoints.rooms, endpoints.notifications]),
+    expect.arrayContaining([
+      endpoints.roomPage(100),
+      endpoints.notifications,
+      endpoints.room("302"),
+    ]),
   )
-  expect(records.getSnapshot().rooms).toEqual([{ id: "302" }])
+  expect(records.getSnapshot().rooms).toMatchObject([
+    { id: "302", name: "302호", since: "2026-03-01" },
+  ])
 })
 
 test("HTTP: 여러 사진처럼 요청 목록이면 차례로 보낸다", async () => {

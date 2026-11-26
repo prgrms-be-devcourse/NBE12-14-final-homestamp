@@ -8,6 +8,10 @@ export const CONNECTED_APIS: readonly {
   method: "GET" | "POST"
   path: RegExp
 }[] = [
+  // 호실 만들기·내 호실 목록·호실 상세(06 4-3, ROOM-1·2, #232)
+  { method: "POST", path: /^\/api\/rooms$/ },
+  { method: "GET", path: /^\/api\/rooms$/ },
+  { method: "GET", path: /^\/api\/rooms\/[^/]+$/ },
   // 법정동 찾기·단계 선택(06 4-3, ROOM-1, #193)
   { method: "GET", path: /^\/api\/regions\/search$/ },
   { method: "GET", path: /^\/api\/regions$/ },

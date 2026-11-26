@@ -2,8 +2,10 @@ import { useState } from "react"
 import { Input } from "@/components/ui/input"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { FormDialog } from "@/components/common/form-dialog"
-import { post } from "@/api/records"
+import { post, roomSide } from "@/api/records"
 import { endpoints } from "@/api/endpoints"
+import { useApi } from "@/api/hooks"
+
 import type { Account } from "@/api/auth"
 import { uid, type Role } from "@/data/demo"
 import { RegionPicker } from "@/features/room/region-picker"
@@ -14,6 +16,9 @@ import {
   MOBILE_PHONE_MESSAGE,
   normalizePhone,
 } from "@/lib/phone"
+
+// 호실 별칭 최대 길이. 서버(CreateRoomRequest)와 같이 05 room_record 별칭 칸(50)에 맞춰요
+const ALIAS_MAX = 50
 
 // 호실 기록 만들기(S-05, ROOM-1). 꼭 적을 것(내 쪽·주소·별칭)은 위, 선택(입주일·상대 번호)은 아래 묶음.
 // initialSide: 마지막에 고른 쪽(내가 만든 가장 최근 호실의 쪽)
@@ -32,6 +37,8 @@ export function RoomForm({
 }) {
   const [side, setSide] = useState<Role>(initialSide)
   const [error, setError] = useState("")
+  // 서버는 만들 때 상대 번호를 아직 받지 않아요(초대 ROOM-4에서 받음, #163). HTTP에서는 칸을 숨기고 초대 때 넣게 안내해요.
+  const askPhone = useApi().mode === "mock"
   return (
     <FormDialog
       title="호실 기록 만들기"
@@ -64,12 +71,12 @@ export function RoomForm({
           address = text("address"),
           since = text("date")
         void send(
+          // 서버 모양(06 4-3, CreateRoomRequest). 목업이 쓰는 상대 번호는 아래 update에만 넣어요.
           post(endpoints.rooms, {
-            side,
+            side: roomSide(side),
             regionCode: text("regionCode"),
             alias: name,
             moveInDate: since || undefined,
-            counterpartPhone: phone || undefined,
           }),
           side,
           "새 호실 기록 만들기",
@@ -142,7 +149,7 @@ export function RoomForm({
           id="title"
           name="title"
           placeholder="예: 302호"
-          maxLength={30}
+          maxLength={ALIAS_MAX}
           required
         />
         <small className="muted">
@@ -164,23 +171,30 @@ export function RoomForm({
               비워 두면 입주 점검을 시작할 때 물어요.
             </small>
           </div>
-          <div className="field">
-            <label htmlFor="room-phone">
-              {side === "임차인" ? "집주인" : "세입자"} 휴대폰 번호 · 선택
-            </label>
-            <Input
-              id="room-phone"
-              name="phone"
-              type="tel"
-              inputMode="numeric"
-              autoComplete="off"
-              className="bg-white"
-              placeholder="초대할 때 넣어도 돼요"
-            />
-            <small className="muted">
-              번호를 넣어도 바로 초대되지 않아요. 초대할 때 이 번호를 써요.
-            </small>
-          </div>
+          {askPhone ? (
+            <div className="field">
+              <label htmlFor="room-phone">
+                {side === "임차인" ? "집주인" : "세입자"} 휴대폰 번호 · 선택
+              </label>
+              <Input
+                id="room-phone"
+                name="phone"
+                type="tel"
+                inputMode="numeric"
+                autoComplete="off"
+                className="bg-white"
+                placeholder="초대할 때 넣어도 돼요"
+              />
+              <small className="muted">
+                번호를 넣어도 바로 초대되지 않아요. 초대할 때 이 번호를 써요.
+              </small>
+            </div>
+          ) : (
+            <p className="muted m-0 self-end text-[13px]">
+              {side === "임차인" ? "집주인" : "세입자"} 휴대폰 번호는 상대를
+              초대할 때 넣을 수 있어요.
+            </p>
+          )}
         </div>
       </section>
     </FormDialog>

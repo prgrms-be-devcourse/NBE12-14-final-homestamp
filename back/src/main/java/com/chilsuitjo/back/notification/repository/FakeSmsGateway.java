@@ -12,6 +12,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /**
@@ -22,9 +23,11 @@ import org.springframework.stereotype.Component;
  * DeliveryOutcome#NONE}이다. 실제로 아무에게도 가지 않은 문자에 전달됨 증거가 저절로 생기지 않게 하려는 것이다(03 불변식 4, #120). 보내기가
  * 성공해도 전달 결과는 바뀌지 않는다.
  *
- * <p>실제 솔라피 구현이 들어오면 이 클래스를 지운다.
+ * <p>{@code app.sms.mode=fake}(local·test)에서만 켜진다. prod에서는 {@code SmsModeGuard}가 기동을 막는다(보내지 않은 문자를
+ * {@code SENT}로 남기지 않게). 실제 솔라피 구현이 들어오면 테스트 코드로 옮길지 정한다.
  */
 @Component
+@ConditionalOnProperty(name = "app.sms.mode", havingValue = "fake")
 public class FakeSmsGateway implements SmsGateway {
 
   private final AtomicReference<SmsSendResult.Outcome> next =

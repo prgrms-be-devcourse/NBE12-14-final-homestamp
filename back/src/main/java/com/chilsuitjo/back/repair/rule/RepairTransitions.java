@@ -25,9 +25,10 @@ import org.springframework.stereotype.Component;
  * <p>정산 완료·거주 종료·합류 전 기록·내 공유 중단은 pipeline이 먼저 막는다(09 3-1 순서 3). 거주 종료 뒤 새 수리 건과 수리 시작은 {@code
  * blockedAfterEnded}로 막힌다(06 REP-1c, 03 A "상태별로 할 수 있는 일").
  *
- * <p>지금은 하자 등록(REP-1), 하자 응답·보충(REP-2), 수리 시작(REP-4)·종료 요청·종료 확인·아직 안 됐어요(REP-5a·5b), 진행 상황
- * 묻기·남기기(REP-6b·6c)가 있다. 혼자 종료·다시 열기(REP-5c~e), [상황이 바뀌었어요](REP-6d) 등은 그 기능을 만들 때 더한다(#174, #219).
- * 그 전까지 다른 행동은 {@code INVALID_STATE}다.
+ * <p>지금은 하자 등록(REP-1), 하자 응답·보충(REP-2), 수리 시작(REP-4)·종료 요청·종료 확인·아직 안 됐어요(REP-5a·5b), 물을 상대가 없을 때의
+ * 혼자 종료와 혼자 끝낸 건의 늦은 종료 확인·이견(REP-5e·5f), 진행 상황 묻기·남기기와 [상황이 바뀌었어요](REP-6b·6c·6d)가 있다. 다시 열기({@code
+ * REOPEN})는 없앴다(#113 ③', decisions 2026-11-25). 상황 변화 응답({@code RESPOND_SITUATION})은 대상이 진행 상황이라
+ * {@code SituationTransitions}가 맡는다. 그 밖의 행동은 {@code INVALID_STATE}다.
  */
 @Component
 public class RepairTransitions implements Transitions<RepairState> {
@@ -59,8 +60,8 @@ public class RepairTransitions implements Transitions<RepairState> {
    * AnswerSupport.canRerequest}(근거는 더한다고 봄). 호실 단위 거절(정산 완료·공유 중단 등)은 여기서 보지 않는다({@code
    * RoomGate.rejection}).
    *
-   * <p>수리 진행은 시작 전이면 시작, 처리 중이면 종료 요청(종료 확인 요청을 열 수 있을 때), 종료 확인 대기면 요청의 상대 측에 종료 확인·아직 안 됐어요다. 혼자
-   * 종료·다시 열기 등은 그 기능을 만들 때 {@link #apply}와 함께 더한다.
+   * <p>수리 진행은 시작 전이면 시작, 처리 중이면 종료 요청(종료 확인 요청을 열 수 있을 때)과 혼자 종료(혼자 종료할 수 있다고 확인됐을 때만, {@code
+   * canCloseAlone}), 종료 확인 대기면 요청의 상대 측에, 혼자 끝낸 처리 완료면 혼자 끝낸 측의 상대에게 종료 확인·아직 안 됐어요다.
    *
    * <p>그 뒤에 진행 상황 묻기(시작 전·처리 중, 묻기 요청을 열 수 있고 간격이 지났을 때), 진행 상황 남기기(언제든)가 온다(03 D).
    *
@@ -87,6 +88,9 @@ public class RepairTransitions implements Transitions<RepairState> {
         if (!state.closeConfirmBlocked()) {
           result.add(ActionType.REQUEST_CLOSE);
         }
+        if (Boolean.TRUE.equals(state.canCloseAlone())) {
+          result.add(ActionType.CLOSE_ALONE);
+        }
       }
       case CLOSE_WAIT -> {
         if (side != state.closeRequestedBy()) {
@@ -94,7 +98,12 @@ public class RepairTransitions implements Transitions<RepairState> {
           result.add(ActionType.NOT_YET);
         }
       }
-      case DONE -> {}
+      case DONE -> {
+        if (state.closedAlone() && !closedBySide(state, side)) {
+          result.add(ActionType.CONFIRM_CLOSE);
+          result.add(ActionType.NOT_YET);
+        }
+      }
     }
     if (canAskProgress(state, now)) {
       result.add(ActionType.ASK_PROGRESS);
@@ -134,7 +143,8 @@ public class RepairTransitions implements Transitions<RepairState> {
     boolean marked =
         type == ActionType.START_REPAIR
             || type == ActionType.REQUEST_CLOSE
-            || type == ActionType.CONFIRM_CLOSE;
+            || type == ActionType.CONFIRM_CLOSE
+            || type == ActionType.CLOSE_ALONE;
     AckState ack = state.defectAck();
     if (marked && (ack == AckState.NEED_MORE || ack == AckState.DISPUTE)) {
       return Optional.of(ack);
@@ -157,6 +167,7 @@ public class RepairTransitions implements Transitions<RepairState> {
       case REQUEST_CLOSE -> requestClose(now, action);
       case CONFIRM_CLOSE -> confirmClose(now, action);
       case NOT_YET -> notYet(now, action);
+      case CLOSE_ALONE -> closeAlone(now, action);
       case ASK_PROGRESS -> askProgress(now, action);
       case NOTE_PROGRESS -> noteProgress(now, action);
       default -> throw new BusinessException(ErrorCode.INVALID_STATE);
@@ -184,7 +195,8 @@ public class RepairTransitions implements Transitions<RepairState> {
         now.canOpenDefectConfirm(),
         now.canOpenCloseConfirm(),
         now.canOpenProgressCheck(),
-        now.hiddenFromCounterpart());
+        now.hiddenFromCounterpart(),
+        null);
   }
 
   /**
@@ -209,7 +221,8 @@ public class RepairTransitions implements Transitions<RepairState> {
   /**
    * 보충하고 다시 확인 요청(06 REP-2e): 등록한 측만, 보류·이견일 때만, 지금 하자 확인 요청을 열 수 있을 때만(거주 종료 뒤 막힘, 03 K), 7일에 한
    * 번({@code AnswerSupport.rerequest}). 근거(사진이나 설명)는 서비스가 pipeline 전에 본다. 하자 인정은 확인 기다림으로 돌아간다.
-   * 재계산이라 요청을 열 수 있는지 모르면 그때 서버가 확인했다고 본다({@link RepairState} "요청할 때만 아는 값").
+   * 재계산이라 요청을 열 수 있는지 모르면 그때 서버가 확인했다고 본다({@link RepairState} "요청할 때만 아는 값"). 7일도 요청할 때만 지금 설정으로
+   * 보고, 재계산이면 간격 0으로 넘겨 기록된 보충을 다시 거절하지 않는다({@link RepairState#atRequest}).
    */
   private RepairState supplement(RepairState now, ActionEntry action) {
     requireExists(now);
@@ -220,7 +233,7 @@ public class RepairTransitions implements Transitions<RepairState> {
             true,
             !now.defectConfirmBlocked(),
             action.createdAt(),
-            rerequestInterval);
+            now.atRequest() ? rerequestInterval : Duration.ZERO);
     return now.withDefectAck(result.state()).withLastRerequestAt(result.rerequestedAt());
   }
 
@@ -252,28 +265,58 @@ public class RepairTransitions implements Transitions<RepairState> {
   }
 
   /**
-   * 종료 확인(06 REP-5a): 요청의 상대 측만, 종료 확인 대기에서만 → 처리 완료(양측 확인). 하자 인정이 확인 기다림이면 같은 요청의 다음 단계 {@code
-   * RESPOND_DEFECT}가 맞아요를 남긴다(REP-3a, decisions 2026-11-17). 거주 종료 뒤에도 정산 완료 전까지 늦게 확인할 수 있다(03 6-6
-   * 1번).
+   * 종료 확인(06 REP-5a·5f): 종료 확인 대기면 요청의 상대 측, 혼자 끝낸 처리 완료면 혼자 끝낸 측의 상대 → 처리 완료(양측 확인). 혼자 끝낸 건에 남긴
+   * 이견 뒤에도 된다(이견은 이력). 하자 인정이 확인 기다림이면 같은 요청의 다음 단계 {@code RESPOND_DEFECT}가 맞아요를 남긴다(REP-3a,
+   * decisions 2026-11-17). 거주 종료 뒤에도 정산 완료 전까지 늦게 확인할 수 있다(03 6-6 1번).
    */
   private static RepairState confirmClose(RepairState now, ActionEntry action) {
     requireCloseAnswer(now, action);
     return now.withProgress(RepairStatus.DONE, null, ClosedBy.BOTH);
   }
 
-  /** 아직 안 됐어요(06 REP-5b): 요청의 상대 측만, 사유 필수 → 처리 중으로 돌아가고 종료 요청은 닫힌다. */
+  /**
+   * 아직 안 됐어요(06 REP-5b·5f): 답할 수 있는 측은 종료 확인과 같고 사유 필수. 종료 확인 대기면 처리 중으로 돌아가고 종료 요청은 닫힌다. 혼자 끝낸 처리
+   * 완료면 상태는 그대로이고 이견으로 남는다(무엇이 이견인지는 행동 기록이 원본, 상세 조회가 계산).
+   */
   private static RepairState notYet(RepairState now, ActionEntry action) {
     requireCloseAnswer(now, action);
     if (action.reason() == null || action.reason().isBlank()) {
       throw new BusinessException(ErrorCode.REASON_REQUIRED);
     }
+    if (now.status() == RepairStatus.DONE) {
+      return now;
+    }
     return now.withProgress(RepairStatus.IN_PROGRESS, null, null);
+  }
+
+  /**
+   * 혼자 종료(06 REP-5e, 03 1-4 "물을 상대가 없는 건의 종료"): 당사자 누구든, 처리 중에서만, 물을 상대가 처음부터 없을 때만 종료 요청 없이 처리
+   * 완료(○○ 확인)로. 할 수 있는지는 {@code WaitService.canGoSoloDirectly(CLOSE_CONFIRM)}의 결과({@code
+   * canCloseAlone})를 그대로 쓰고 여기서 이유를 다시 거르지 않는다. 종료 확인 대기면 상대의 답을 기다리는 중이라 {@code
+   * SOLO_NOT_ALLOWED}(decisions 2026-11-25, #228 리뷰), 시작 전·처리 완료면 {@code INVALID_STATE}. 재계산이라 모르면
+   * 그때 서버가 확인했다고 본다. 거주 종료 뒤에는 pipeline이 {@code ROOM_ENDED}로 막는다({@code
+   * ActionType.blockedAfterEnded}).
+   */
+  private static RepairState closeAlone(RepairState now, ActionEntry action) {
+    requireVisible(now, action);
+    requireSide(action);
+    if (now.status() == RepairStatus.CLOSE_WAIT) {
+      throw new BusinessException(ErrorCode.SOLO_NOT_ALLOWED);
+    }
+    if (now.status() != RepairStatus.IN_PROGRESS) {
+      throw new BusinessException(ErrorCode.INVALID_STATE);
+    }
+    if (now.closeAloneBlocked()) {
+      throw new BusinessException(ErrorCode.SOLO_NOT_ALLOWED);
+    }
+    return now.withProgress(RepairStatus.DONE, null, ClosedBy.valueOf(action.actorSide().name()));
   }
 
   /**
    * 진행 상황 묻기(06 REP-6b, 03 D): 당사자 누구든, 시작 전·처리 중에서만, 지금 진행 상황 묻기 요청을 열 수 있을 때만(거주 중, 03 K), 한 건에
    * {@code progress.ask.interval}에 한 번(누가 물었든, decisions 2026-11-13). 그 안이면 {@code ASKED_RECENTLY}.
-   * 수리 진행·하자 인정은 그대로이고 물은 시각만 남는다. 재계산이라 요청을 열 수 있는지 모르면 그때 서버가 확인했다고 본다.
+   * 수리 진행·하자 인정은 그대로이고 물은 시각만 남는다. 재계산이라 요청을 열 수 있는지 모르면 그때 서버가 확인했다고 본다. 7일도 요청할 때만 지금 설정으로
+   * 본다({@link RepairState#atRequest}).
    */
   private RepairState askProgress(RepairState now, ActionEntry action) {
     requireVisible(now, action);
@@ -281,30 +324,95 @@ public class RepairTransitions implements Transitions<RepairState> {
     if (!askableStatus(now.status()) || now.progressCheckBlocked()) {
       throw new BusinessException(ErrorCode.INVALID_STATE);
     }
-    AnswerSupport.checkInterval(now.lastProgressAskAt(), action.createdAt(), progressAskInterval);
+    if (now.atRequest()) {
+      AnswerSupport.checkInterval(now.lastProgressAskAt(), action.createdAt(), progressAskInterval);
+    }
     return now.withLastProgressAskAt(action.createdAt());
   }
 
   /**
    * 진행 상황 남기기(06 REP-6, 03 D): 당사자 누구든, 언제든(처리 완료 뒤에도 덧붙이기, REP-5). 글·사진 하나 이상은 서비스가 pipeline 전에
    * 본다. 덧붙이기라 상태는 그대로다(03 G "덧붙이기"). 거주 종료 뒤에도 정산 완료 전까지 된다(03 D "언제든", #113 3번 답 전까지).
+   *
+   * <p>[상황이 바뀌었어요]를 켜면(payload {@code asksCheck}, REP-6d) 상대에게 확인을 요청한다. 검사 순서: 행동하는 사람이 공유를 그만뒀으면
+   * {@code SHARING_STOPPED}(진행 상황만은 남길 수 있지만 요청은 열지 않음, 03 B) → 하자를 둘 다 확인한 건(맞아요)이 아니거나 지금 요청을 열 수
+   * 없으면(거주 종료 뒤, 상대가 공유를 그만둬 이 기록이 보이지 않음) {@code INVALID_STATE} → 한 건에 다시 요청끼리 {@code
+   * rerequest.interval}에 한 번(누가 켰든) {@code ASKED_RECENTLY}. 다시 요청끼리는 [보충하고 다시 확인 요청]과 [상황이 바뀌었어요]를
+   * 함께 센다(03 G "다시 확인 요청의 한도", 06 0-1 {@code rerequest.interval}, #259 리뷰): 보충하고 7일 안에 상대가 맞아요로 답해도
+   * 그 7일이 지나야 켠다. 반대 방향(켠 뒤 보충)은 맞아요가 끝이라 생기지 않아 보충 쪽({@code AnswerSupport.rerequest})은 그대로다. 하자
+   * 인정은 그대로다(REP-6d "하자 [맞아요]는 그대로").
+   *
+   * <p>재계산({@code Replay.fold})이면 열 수 있는지({@code opening})를 모르고, 그때 서버가 확인했다고 본다. 7일 검사도 요청할 때만 지금
+   * 설정으로 한다: 설정을 7일에서 14일로 바꾼 뒤 8일 간격으로 기록된 행동을 다시 거절하면 재계산(공유를 그만둔 뒤 상세 조회 등)이 실패한다(#234와 같은 방식,
+   * #259 리뷰).
    */
-  private static RepairState noteProgress(RepairState now, ActionEntry action) {
+  private RepairState noteProgress(RepairState now, ActionEntry action) {
     requireVisible(now, action);
     requireSide(action);
-    return now;
+    if (!Boolean.TRUE.equals(action.payloadAs(ProgressPayload.class).asksCheck())) {
+      return now;
+    }
+    SituationCheck check = now.situationCheck();
+    if (check.opening() == SituationOpening.SHARING_STOPPED) {
+      throw new BusinessException(ErrorCode.SHARING_STOPPED);
+    }
+    if (now.defectAck() != AckState.ACK || check.opening() == SituationOpening.BLOCKED) {
+      throw new BusinessException(ErrorCode.INVALID_STATE);
+    }
+    // opening은 켜는 요청일 때만 load가 채운다(재계산이면 null)
+    if (check.opening() != null) {
+      AnswerSupport.checkInterval(
+          latest(check.lastAskedAt(), now.lastRerequestAt()),
+          action.createdAt(),
+          rerequestInterval);
+    }
+    return now.withSituationCheck(new SituationCheck(action.createdAt(), check.opening()));
   }
 
-  /** 종료 요청에 답하기: 종료 확인 대기 → 요청한 측이 아님(같은 측이면 {@code NOT_COUNTERPART_SIDE}). */
+  /** 두 시각 중 늦은 것. 둘 다 없으면 null. */
+  private static Instant latest(Instant a, Instant b) {
+    if (a == null) {
+      return b;
+    }
+    return b == null || a.isAfter(b) ? a : b;
+  }
+
+  /**
+   * 진행 상황 남기기 행동의 payload. 글은 진행 상황 행에만 두고(05 2-3 "payload는 작은 부가 값만") [상황이 바뀌었어요]를 켰는지만 담는다. 켜지
+   * 않았으면 키를 두지 않는다(그 전에 남긴 행동과 같은 모양).
+   *
+   * @param asksCheck [상황이 바뀌었어요]를 켰으면 true. 아니면 null(키 없음)
+   */
+  public record ProgressPayload(Boolean asksCheck) {
+
+    /** payload의 키. record 칸 이름과 같다({@code ActionEntry.payloadAs}). */
+    public static final String ASKS_CHECK = "asksCheck";
+  }
+
+  /**
+   * 종료에 답하기: 종료 확인 대기면 요청한 측이 아님, 혼자 끝낸 처리 완료면 혼자 끝낸 측이 아님(같은 측이면 {@code NOT_COUNTERPART_SIDE}). 그
+   * 밖(처리 완료(양측) 포함)은 {@code INVALID_STATE}.
+   */
   private static void requireCloseAnswer(RepairState now, ActionEntry action) {
     requireVisible(now, action);
     requireSide(action);
-    if (now.status() != RepairStatus.CLOSE_WAIT) {
+    if (now.status() == RepairStatus.CLOSE_WAIT) {
+      if (action.actorSide() == now.closeRequestedBy()) {
+        throw new BusinessException(ErrorCode.NOT_COUNTERPART_SIDE);
+      }
+      return;
+    }
+    if (!now.closedAlone()) {
       throw new BusinessException(ErrorCode.INVALID_STATE);
     }
-    if (action.actorSide() == now.closeRequestedBy()) {
+    if (closedBySide(now, action.actorSide())) {
       throw new BusinessException(ErrorCode.NOT_COUNTERPART_SIDE);
     }
+  }
+
+  /** 혼자 끝낸 측이 이 측인가. */
+  private static boolean closedBySide(RepairState now, PartySide side) {
+    return side != null && now.closedBy() != null && now.closedBy().name().equals(side.name());
   }
 
   private static void requireExists(RepairState now) {
