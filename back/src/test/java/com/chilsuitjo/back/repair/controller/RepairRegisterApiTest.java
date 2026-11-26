@@ -103,6 +103,41 @@ class RepairRegisterApiTest {
     assertThat(count("state.repair_case")).isZero();
   }
 
+  // ---- 꺼 둔 설비·가전 (#182, 06 ROOM-3d): "이 집에 없음"이라 새 하자를 받지 않는다 ----
+
+  @Test
+  void 꺼_둔_설비_가전에는_VALIDATION_FAILED이고_켜면_등록된다() throws Exception {
+    UUID fridge = appliance(room);
+    toggle(tenant, fridge, false).andExpect(status().isOk());
+
+    register("off-appliance", body(fridge, "고장", null))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    assertThat(count("state.repair_case")).isZero();
+
+    toggle(tenant, fridge, true).andExpect(status().isOk());
+    register("on-appliance", body(fridge, "고장", null)).andExpect(status().isCreated());
+  }
+
+  @Test
+  void 하자가_있는_설비_가전을_꺼도_막지_않고_수리_건은_그대로다() throws Exception {
+    UUID fridge = appliance(room);
+    register("before-off", body(fridge, "고장", null)).andExpect(status().isCreated());
+
+    toggle(tenant, fridge, false).andExpect(status().isOk());
+
+    assertThat(count("state.repair_case")).isOne();
+  }
+
+  @Test
+  void 그만둔_뒤_상대가_끈_설비_가전은_내게는_켜진_설비라_등록된다() throws Exception {
+    UUID fridge = appliance(room);
+    stopSharing(PartySide.TENANT);
+    toggle(landlord, fridge, false).andExpect(status().isOk());
+
+    register("off-by-other", body(fridge, "고장", null)).andExpect(status().isCreated());
+  }
+
   @Test
   void 그만둔_뒤_상대가_더한_부위는_내게_없는_부위라_NOT_FOUND() throws Exception {
     stopSharing(PartySide.TENANT);
@@ -618,6 +653,31 @@ class RepairRegisterApiTest {
         post("/api/rooms/{id}/parts/{partId}/" + verb, room, partId)
             .with(loginAs(memberId))
             .header("Idempotency-Key", verb + "-" + UUID.randomUUID()));
+  }
+
+  /** 기본 목록(V7)에서 복사한 켜진 설비·가전 부위(켜고 끔 대상). */
+  private UUID appliance(UUID roomId) {
+    UUID id = UUID.randomUUID();
+    jdbc.update(
+        """
+        INSERT INTO state.room_part
+          (id, room_record_id, template_id, zone, name, sort_order, created_at, version)
+        SELECT ?, ?, t.id, t.zone, t.name, t.sort_order, CURRENT_TIMESTAMP, 0
+        FROM state.part_template t WHERE t.zone = '설비·가전' ORDER BY t.sort_order LIMIT 1
+        """,
+        id,
+        roomId);
+    return id;
+  }
+
+  /** 설비·가전 켜고 끔(진짜 부위 API, 행동이 남는다). */
+  private ResultActions toggle(UUID memberId, UUID partId, boolean enabled) throws Exception {
+    return mvc.perform(
+        post("/api/rooms/{id}/parts/{partId}/toggle", room, partId)
+            .with(loginAs(memberId))
+            .header("Idempotency-Key", "toggle-" + UUID.randomUUID())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"enabled\":" + enabled + "}"));
   }
 
   /** 부위 추가(진짜 부위 API). 새 부위 ID를 돌려준다. */
