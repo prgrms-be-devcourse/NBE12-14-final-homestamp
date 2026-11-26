@@ -1260,7 +1260,7 @@
               "body": "{\n  \"id\": \"<회원 ID>\",\n  \"email\": \"<가입한 이메일>\",\n  \"displayName\": \"정하늘\",\n  \"phone\": \"<인증한 번호, 숫자만>\",\n  \"smsEnabled\": false\n}"
             },
             {
-              "name": "400 빈 이름·50자 넘는 이름",
+              "name": "400 빈 이름",
               "originalRequest": {
                 "auth": {
                   "type": "bearer",

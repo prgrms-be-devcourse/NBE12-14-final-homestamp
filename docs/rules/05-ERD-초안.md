@@ -53,7 +53,7 @@ A·B·C 원칙은 **기록**을 지키려는 것이다. 사람의 신원·연락
 
 | 예외 칸 | 규칙 |
 |---|---|
-| `member`의 이메일·비밀번호 해시·이름·번호·설정, `party.invite_phone`, `refresh_token`, `phone_verification` | 고치고 지울 수 있다. 바꾼 사실은 행동 기록에 남기되 **값은 남기지 않는다**("초대 번호 변경", "이름 변경"). 기록 테이블은 이 칸들을 복사하지 않고 ID로만 가리킨다(불변식 1) |
+| `member`의 이메일·비밀번호 해시·이름·번호·설정, `party.invite_phone`, `refresh_token`, `phone_verification` | 고치고 지울 수 있다. 바꾼 사실은 남기되 **값은 남기지 않는다**: 호실 안의 변경은 행동 기록("초대 번호 변경"), 호실 밖 계정 변경은 내부 기록("이름 변경"은 앱 로그 한 줄, 2-3 "계정(호실 밖)"). 기록 테이블은 이 칸들을 복사하지 않고 ID로만 가리킨다(불변식 1) |
 
 전화번호는 국내 휴대폰 번호를 숫자만 있는 같은 형식으로 정규화한 뒤 저장·비교한다(예: `010-1234-5678` → `01012345678`). `member.phone`, `party.invite_phone`, 인증 대상, 수신 거부·발송 한도 HMAC 입력에 같은 정규화 규칙을 적용한다. 화면 표시의 하이픈과 저장 형식은 구분하며 정규화 함수·검증 위치는 구현하면서 정한다.
 
@@ -187,7 +187,7 @@ erDiagram
 | 점검 | `START_INSPECTION`, `ADD_ITEM`, `ADD_PART_PHOTO`, `REQUEST_INSPECTION_CONFIRM`, `RESPOND_ITEM`, `SUPPLEMENT_ITEM`, `CONFIRM_ALL`, `LOCK`(서버), `FINISH_INSPECTION` |
 | 정산 | `OPEN_SETTLEMENT`, `INCLUDE_CANDIDATE`, `ADD_SETTLEMENT_ITEM`, `PROPOSE_EXCLUDE`, `RECORD_TRANSFER`, `RESPOND_TRANSFER`, `PROPOSE_FINISH`, `CONFIRM_FINISH`, `NOT_YET_FINISH`, `FINISH_ALONE`, `CLOSE_FINISH_REQUEST`(서버, 정산이 바뀌어 닫힘), `AUTOCLOSE`(서버) |
 | 사진 | `HIDE_PHOTO`, `SHOW_PHOTO`, `MARK_PHOTO_WRONG`, `UNMARK_PHOTO_WRONG`(올린 사람), `ERASE_PHOTO`(올린 사람 또는 `ops:<담당>`) |
-| 계정(호실 밖) | 회원 변경은 행동 기록이 아니라 신원 칸 예외라 값 없이 내부 기록만: 이름 변경, 번호 변경, 탈퇴. 이름 변경의 내부 기록은 테이블이 아니라 앱 로그 한 줄이고, 변경이 커밋된 뒤에만 회원 ID와 변경 사실만 남긴다(같은 이름이면 남기지 않음, decisions 2026-11-26). 번호 변경·탈퇴는 그 기능을 만들 때 정한다 |
+| 계정(호실 밖) | 회원 변경은 행동 기록이 아니라 신원 칸 예외라 값 없이 내부 기록만: 이름 변경, 번호 변경, 탈퇴. 이름 변경의 내부 기록은 테이블이 아니라 앱 로그 한 줄이고, 변경이 커밋된 뒤에만 회원 ID(앞 8자리, 04 "로그")와 변경 사실만 남긴다(같은 이름이면 남기지 않음, decisions 2026-11-26). 번호 변경·탈퇴는 그 기능을 만들 때 정한다 |
 
 `RESPOND_*` 행동은 값 `ACK` / `NEED_MORE` / `DISPUTE`(보류·이견은 사유 필수)를 가진다. 보류·이견 뒤에는 같은 행동으로 `ACK`를 다시 남길 수 있고(정산 완료 전), `ACK` 뒤의 응답은 거절한다(`ACK_FINAL`).
 
