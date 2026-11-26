@@ -1,6 +1,11 @@
 import { expect, test, vi } from "vitest"
-import { fireEvent, render, screen } from "@testing-library/react"
+import { fireEvent, render, screen, within } from "@testing-library/react"
 import App from "../src/App"
+import {
+  activeTabOf,
+  nav,
+  pageAfterRoomChange,
+} from "../src/components/common/app-nav"
 import { parsePath, toPath, type Route } from "../src/lib/router"
 
 const base: Route = { page: "home", roomId: "302", repairId: "leak" }
@@ -93,4 +98,83 @@ test("휴대폰 인증 → 계정 → 확인 항목으로 가입하고, 호실�
   expect(await screen.findByText("정서윤님, 안녕하세요")).toBeTruthy()
   expect(screen.getAllByText(/이 호실에서 집주인 쪽/).length).toBeGreaterThan(0)
   info.mockRestore()
+})
+
+test("주 메뉴는 4개 핵심 탭으로 통합되고 세부 화면은 서브탭으로 전환된다", async () => {
+  expect(nav.map((n) => n.id)).toEqual([
+    "home",
+    "repairs",
+    "inspection",
+    "rooms",
+  ])
+  expect(activeTabOf("money")).toBe("repairs")
+  expect(activeTabOf("detail")).toBe("repairs")
+  expect(activeTabOf("checkout")).toBe("inspection")
+  expect(activeTabOf("connection")).toBe("rooms")
+  expect(activeTabOf("timeline")).toBe("rooms")
+  // 수리 건 상세에서 호실을 바꾸면 그 건 ID로 남지 않고 새 호실의 수리 목록으로 가요
+  expect(pageAfterRoomChange("detail")).toBe("repairs")
+  expect(pageAfterRoomChange("money")).toBe("money")
+  expect(pageAfterRoomChange("home")).toBe("home")
+
+  render(<App />)
+  fireEvent.change(await screen.findByLabelText("이메일"), {
+    target: { value: "test@gmail.com" },
+  })
+  fireEvent.change(screen.getByLabelText("비밀번호"), {
+    target: { value: "aaaa1111" },
+  })
+  fireEvent.click(screen.getByRole("button", { name: "로그인", exact: true }))
+  await screen.findAllByText(/이 호실에서 세입자 쪽/)
+
+  const desktopNav = screen.getByRole("navigation", { name: "주 메뉴" })
+  const mobileNav = screen.getByRole("navigation", { name: "모바일 주 메뉴" })
+  expect(within(desktopNav).getAllByRole("button")).toHaveLength(4)
+  expect(within(mobileNav).getAllByRole("button")).toHaveLength(4)
+
+  fireEvent.click(
+    within(desktopNav).getByRole("button", { name: /하자 · 수리/ }),
+  )
+  expect(
+    within(desktopNav)
+      .getByRole("button", { name: /하자 · 수리/ })
+      .getAttribute("aria-current"),
+  ).toBe("page")
+  expect(
+    within(mobileNav)
+      .getByRole("button", { name: /하자·수리/ })
+      .getAttribute("aria-current"),
+  ).toBe("page")
+  const repairSubtabs = await screen.findByRole("navigation", {
+    name: "세부 메뉴",
+  })
+  expect(
+    within(repairSubtabs)
+      .getByRole("button", { name: /수리 진행/ })
+      .getAttribute("aria-current"),
+  ).toBe("page")
+  fireEvent.click(
+    within(repairSubtabs).getByRole("button", { name: /수리비 · 부담/ }),
+  )
+  expect(await screen.findByText("수리 건별 비용 부담 현황")).toBeTruthy()
+
+  fireEvent.click(
+    within(desktopNav).getByRole("button", { name: /호실 · 연결/ }),
+  )
+  const roomSubtabs = await screen.findByRole("navigation", {
+    name: "세부 메뉴",
+  })
+  fireEvent.click(
+    within(roomSubtabs).getByRole("button", { name: /활동 이력/ }),
+  )
+  expect(
+    within(roomSubtabs)
+      .getByRole("button", { name: /활동 이력/ })
+      .getAttribute("aria-current"),
+  ).toBe("page")
+  expect(
+    within(roomSubtabs)
+      .getByRole("button", { name: /내 호실/ })
+      .getAttribute("aria-current"),
+  ).toBeNull()
 })

@@ -21,6 +21,12 @@ import com.chilsuitjo.back.global.common.dto.RespondRequest;
 import com.chilsuitjo.back.global.common.dto.SupplementRequest;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
+import com.chilsuitjo.back.proposal.dto.AgendaRef;
+import com.chilsuitjo.back.proposal.dto.ProposalCommand;
+import com.chilsuitjo.back.proposal.dto.ProposalRequest;
+import com.chilsuitjo.back.proposal.dto.ProposalResult;
+import com.chilsuitjo.back.proposal.rule.AgendaKind;
+import com.chilsuitjo.back.proposal.service.ProposalService;
 import com.chilsuitjo.back.repair.dto.ConfirmCloseRequest;
 import com.chilsuitjo.back.repair.dto.DefectAckChanged;
 import com.chilsuitjo.back.repair.dto.ProgressAsked;
@@ -58,6 +64,7 @@ public class RepairService {
   private final RepairStateStore store;
   private final RepairTransitions rules;
   private final RepairCaseRepository cases;
+  private final ProposalService proposals;
   private final RoomGateReader gates;
   private final ProgressNoteRepository notes;
 
@@ -173,8 +180,23 @@ public class RepairService {
   }
 
   /**
-   * 수리 건의 호실. 없는 ID면 {@code NOT_FOUND}. 남의 수리 건도 pipeline 잠금의 당사자 확인에서 같은 {@code NOT_FOUND}가 된다.
+   * 수리비 부담 제안(06 MONEY-3). 이 수리 건의 호실을 찾아 돈 안건 장치에 넘긴다(decisions 2026-11-17 "이 호실의 수리 건인지 확인한 뒤
+   * 부른다"). 없는 수리 건이면 {@code NOT_FOUND}이고, 그 호실 당사자가 아니면 pipeline 잠금에서 {@code NOT_FOUND}다. 줄 모양·기다리는
+   * 안·합계 검사는 {@code ProposalService.propose}가 한다. 돈은 수리 진행과 따로라 수리 상태는 보지 않는다.
    */
+  public ProposalResult propose(
+      UUID repairCaseId, UUID memberId, String idempotencyKey, ProposalRequest request) {
+    if (request == null) {
+      throw new BusinessException(ErrorCode.VALIDATION_FAILED);
+    }
+    return proposals.propose(
+        roomOf(repairCaseId),
+        memberId,
+        idempotencyKey,
+        new AgendaRef(AgendaKind.REPAIR_BURDEN, repairCaseId),
+        new ProposalCommand(request.lines(), request.isNoCost(), false, request.reason()));
+  }
+
   /** 수리 시작(06 REP-4a). 시작 전이 아니면 {@code INVALID_STATE}. */
   public RepairProgressChanged start(UUID repairCaseId, UUID memberId, String idempotencyKey) {
     return progress(repairCaseId, memberId, idempotencyKey, ActionType.START_REPAIR, null);
@@ -357,6 +379,9 @@ public class RepairService {
         result.action().replayed());
   }
 
+  /**
+   * 수리 건의 호실. 없는 ID면 {@code NOT_FOUND}. 남의 수리 건도 pipeline 잠금의 당사자 확인에서 같은 {@code NOT_FOUND}가 된다.
+   */
   private UUID roomOf(UUID repairCaseId) {
     return cases
         .findRoomRecordIdById(repairCaseId)

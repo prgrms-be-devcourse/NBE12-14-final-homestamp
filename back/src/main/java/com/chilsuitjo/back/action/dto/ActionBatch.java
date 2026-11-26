@@ -31,6 +31,7 @@ public final class ActionBatch {
   private final boolean newRoom;
   private final List<ActionStep<?>> steps = new ArrayList<>();
   private Runnable accessCheck;
+  private UUID inviteePartyId;
 
   private ActionBatch(UUID roomRecordId, Actor actor, String idempotencyKey, boolean newRoom) {
     this.roomRecordId = roomRecordId;
@@ -158,6 +159,45 @@ public final class ActionBatch {
     }
     this.accessCheck = Objects.requireNonNull(check, "check");
     return this;
+  }
+
+  /**
+   * 초대 자리로 들어온 요청(#163, #249). 아직 연결하지 않은 초대받은 회원은 당사자가 아니라 pipeline 1단계에서 {@code NOT_FOUND}가 나므로,
+   * 이 표시가 있으면 pipeline이 {@code RoomGateReader.lockAndReadAsInvitee}로 잠근다(같은 키의 재생도 같음). 그 요청에서는
+   * {@code Allow.BY_INVITEE} 행동만 된다.
+   *
+   * <pre>{@code
+   * // 연결 [동의하고 연결하기](A의 초대 서비스)
+   * pipeline.executeAll(ActionBatch.of(roomRecordId, Actor.member(memberId), idempotencyKey)
+   *     .asInvitee(partyId)
+   *     .step(ActionType.CONNECT, done -> ActionTarget.party(partyId), partyStateStore, partyTransitions)
+   *     .record(ActionType.SHARE_CONSENT, Map.of("consentVersion", req.consentVersion())));
+   * }</pre>
+   *
+   * <p>회원 주체만, 한 번만 붙인다. 호실을 만드는 요청에는 붙이지 않는다. 자리 상태와 번호는 room의 규칙이 잠금 뒤에 본다.
+   */
+  public ActionBatch asInvitee(UUID partyId) {
+    if (newRoom) {
+      throw new IllegalStateException("호실을 만드는 요청은 초대 자리로 열 수 없어요");
+    }
+    if (!actor.isMember()) {
+      throw new IllegalStateException("초대 자리로 여는 요청은 회원 주체만 써요");
+    }
+    if (inviteePartyId != null) {
+      throw new IllegalStateException("초대 자리는 한 요청에 한 번만 정해요");
+    }
+    this.inviteePartyId = Objects.requireNonNull(partyId, "partyId");
+    return this;
+  }
+
+  /** 초대 자리로 들어온 요청인지. pipeline이 1단계 잠금 방법을 고를 때 본다. */
+  public boolean isInvitee() {
+    return inviteePartyId != null;
+  }
+
+  /** 초대 자리 ID. 초대 자리로 들어온 요청이 아니면 null. */
+  public UUID inviteePartyId() {
+    return inviteePartyId;
   }
 
   /** 접근 검증이 붙었는지. pipeline이 호실 단위 거절을 앞당길지 정할 때 본다. */

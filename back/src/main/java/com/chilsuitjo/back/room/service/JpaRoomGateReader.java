@@ -42,6 +42,29 @@ public class JpaRoomGateReader implements RoomGateReader {
         actor);
   }
 
+  /**
+   * 초대 자리로 들어온 연결·거절 요청(#163, #249). 호실을 잠근 뒤 {@code partyId}가 이 호실의 자리이면 그 자리의 측으로 읽고, 아니면 {@code
+   * NOT_FOUND}다. 자리 상태와 번호는 보지 않는다(Party 규칙이 잠금 뒤에 {@code PHONE_MISMATCH}·{@code INVALID_STATE}를
+   * 정함).
+   */
+  @Override
+  @Transactional(propagation = Propagation.MANDATORY)
+  public RoomGate lockAndReadAsInvitee(UUID roomRecordId, Actor actor, UUID partyId) {
+    if (!actor.isMember()) {
+      throw new IllegalArgumentException("초대 자리로 잠그는 요청은 회원 주체만 써요");
+    }
+    RoomRecord room =
+        rooms
+            .findByIdForUpdate(roomRecordId)
+            .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
+    Party seat =
+        parties.findByRoomRecordId(room.getId()).stream()
+            .filter(party -> party.getId().equals(partyId))
+            .findFirst()
+            .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
+    return gateOf(room, seat.getSide(), false).asInvitee(seat.getSide());
+  }
+
   /** 잠그지 않고 같은 값을 읽는다(상세 조회의 {@code availableActions}). 읽기 트랜잭션 안에서 부른다. */
   @Override
   @Transactional(readOnly = true)
