@@ -10,10 +10,11 @@
 # - 활성 슬롯은 nginx upstream 파일이 가리키는 주소로만 판단한다(트래픽이 실제로 가는 곳)
 # - DB 변경(Migration·GRANT)은 어떤 실패에서도 되돌리지 않는다. 스키마는 이전 앱과도 맞게 쓴다(04 8장)
 # - 비밀값은 읽지도 출력하지도 않는다. 앱은 SSM을 직접 읽고(prod 프로필), Migration 비밀 폴더는 내용을 보지 않고
-#   읽기 전용으로 넘기기만 한다. 앱 로그도 이 출력에 옮기지 않는다(docker logs로 따로 본다)
+#   읽기 전용으로 넘기기만 한다. 웹 앱 로그는 이 출력에 옮기지 않는다(docker logs로 따로 본다). Migration·GRANT 출력은
+#   끝난 뒤 마지막 100줄만 옮긴다(#173·#299: 값을 넣지 않는 문장)
 #
 # 종료 코드: 0 성공·이미 배포됨 | 2 인자·설정 | 3 다른 배포 중 | 4 활성 슬롯을 알 수 없음 | 5 이전 Migration 컨테이너가 아직 실행 중
-#            10 이미지 | 11 --migrate | 12 --apply-grants | 13 새 앱 시작 | 14 헬스 체크 | 15 nginx 전환(이전 앱 유지)
+#            10 이미지 | 11 --migrate(실패·시간 초과) | 12 --apply-grants(실패·시간 초과) | 13 새 앱 시작 | 14 헬스 체크 | 15 nginx 전환(이전 앱 유지)
 #            16 전환 뒤 확인 실패(되돌림 시도) | 17 되돌리기 실패(두 앱 모두 남김, 손으로 복구) | 129·130·143 신호로 중단
 set -euo pipefail
 set +x
@@ -57,7 +58,8 @@ done
 
 # ---- 설정: KEY=value 줄만 읽는다(source 하지 않음). 비밀값은 넣지 않는 파일이다
 KEYS="IMAGE_REPOSITORY BLUE_PORT GREEN_PORT NAME_PREFIX MIGRATION_UID MIGRATION_SECRETS_DIR UPSTREAM_FILE SWITCH_CMD
-POST_SWITCH_URL POST_SWITCH_RESOLVE STATE_DIR LOCK_FILE HEALTH_TIMEOUT APP_MEMORY STOP_TIMEOUT"
+POST_SWITCH_URL POST_SWITCH_RESOLVE POST_SWITCH_EXPECT STATE_DIR LOCK_FILE HEALTH_TIMEOUT APP_MEMORY STOP_TIMEOUT
+MIGRATE_TIMEOUT GRANTS_TIMEOUT"
 BLUE_PORT=8081
 GREEN_PORT=8082
 NAME_PREFIX=homestamp-app
@@ -65,6 +67,11 @@ MIGRATION_SECRETS_DIR=/run/secrets/homestamp-migration
 UPSTREAM_FILE=/opt/homestamp/nginx/run/upstream/upstream.conf
 SWITCH_CMD=/opt/homestamp/nginx/switch-upstream.sh
 POST_SWITCH_RESOLVE=""
+# 인증 없이 /api/에 가면 앱(Spring Security)만 401을 준다. nginx 자신의 404·503은 통과하지 못한다
+POST_SWITCH_EXPECT=401
+# 일회성 실행의 제한 시간(초). --apply-grants를 모르는 이미지는 웹 앱으로 떠 끝나지 않으므로 반드시 끝을 둔다
+MIGRATE_TIMEOUT=900
+GRANTS_TIMEOUT=300
 STATE_DIR=/var/lib/homestamp/deploy
 LOCK_FILE=/run/lock/homestamp-deploy.lock
 HEALTH_TIMEOUT=120
@@ -100,6 +107,9 @@ check POST_SWITCH_URL "$POST_SWITCH_URL" '^https?://[A-Za-z0-9.-]+(:[0-9]+)?/[A-
 check HEALTH_TIMEOUT "$HEALTH_TIMEOUT" '^[1-9][0-9]{0,2}$'
 check APP_MEMORY "$APP_MEMORY" '^[1-9][0-9]*[mg]$'
 check STOP_TIMEOUT "$STOP_TIMEOUT" '^[1-9][0-9]{0,2}$'
+check POST_SWITCH_EXPECT "$POST_SWITCH_EXPECT" '^[1-5][0-9][0-9]$'
+check MIGRATE_TIMEOUT "$MIGRATE_TIMEOUT" '^[1-9][0-9]{0,4}$'
+check GRANTS_TIMEOUT "$GRANTS_TIMEOUT" '^[1-9][0-9]{0,4}$'
 for tool in docker curl flock; do
   command -v "$tool" >/dev/null || die $EXIT_USAGE "$tool 명령이 없습니다"
 done
@@ -243,19 +253,47 @@ fi
   step=migrate
   die $EXIT_MIGRATE "Migration 비밀 폴더가 없습니다"
 }
+# 떼어 놓고 돌려 끝날 때까지(최대 제한 시간) 기다린다. 끝나면 출력(#173·#299: 값을 넣지 않는 문장)을 옮기고 지운다.
+# 제한 시간을 넘기면 멈추고, 멈춘 것을 확인한 뒤에만 실패로 끝낸다. 멈춘 컨테이너는 docker logs로 보도록 남기고
+# 다음 배포가 지운다. 멈추지 못하면 다음 배포는 그것이 끝날 때까지 종료 5로 거절한다(잠금이 풀려도 겹치지 않게)
 run_once() {
-  docker run --rm --name "$NAME_PREFIX-$1" --pull never \
+  local name="$NAME_PREFIX-$1" limit=$3 code deadline
+  docker run -d --name "$name" --pull never \
     --user "$MIGRATION_UID" --read-only --tmpfs /tmp:rw,nosuid,nodev,size=64m \
     --cap-drop ALL --security-opt no-new-privileges --memory "$APP_MEMORY" \
     --mount "type=bind,src=$MIGRATION_SECRETS_DIR,dst=/run/secrets/homestamp-migration,readonly" \
-    -e TZ=UTC "$image" "$2"
+    -e TZ=UTC "$image" "$2" >/dev/null || return 1
+  deadline=$((SECONDS + limit))
+  while c_running "$name"; do
+    if ((SECONDS >= deadline)); then
+      log "$2가 ${limit}초 안에 끝나지 않았습니다(이 인자를 모르는 이미지면 웹 앱으로 뜸). 멈춥니다"
+      docker stop -t "$STOP_TIMEOUT" "$name" >/dev/null 2>&1 || true
+      if c_running "$name"; then
+        log "$name을 멈추지 못했습니다. 끝날 때까지 다음 배포는 종료 5로 거절됩니다"
+      else
+        log "멈춘 $name은 남겨 둡니다(docker logs $name, 다음 배포가 지움)"
+      fi
+      return 1
+    fi
+    sleep 2
+  done
+  # inspect가 잠깐 실패해도 끝난 것으로 보지 않는다: 끝났음(exited)을 확인한 뒤에만 결과를 읽고 지운다
+  if [[ "$(c_field "$name" '{{.State.Status}}')" != exited ]]; then
+    log "$name 상태를 확인하지 못했습니다. 지우지 않고 남깁니다(실행 중이면 다음 배포는 종료 5)"
+    return 1
+  fi
+  code="$(c_field "$name" '{{.State.ExitCode}}')"
+  docker logs --tail 100 "$name" 2>&1 || true
+  docker rm "$name" >/dev/null 2>&1 || true
+  [[ $code == 0 ]]
 }
 step=migrate
 log "--migrate"
-run_once migrate --migrate || die $EXIT_MIGRATE "--migrate가 실패했습니다. 새 앱을 시작하지 않습니다"
+run_once migrate --migrate "$MIGRATE_TIMEOUT" || die $EXIT_MIGRATE "--migrate가 실패했습니다. 새 앱을 시작하지 않습니다"
 step=grants
 log "--apply-grants"
-run_once grants --apply-grants || die $EXIT_GRANTS "--apply-grants가 실패했습니다. 새 앱을 시작하지 않습니다(Migration은 이미 반영됨)"
+run_once grants --apply-grants "$GRANTS_TIMEOUT" ||
+  die $EXIT_GRANTS "--apply-grants가 실패했습니다. 새 앱을 시작하지 않습니다(Migration은 이미 반영됨, GRANT는 한 트랜잭션이라 바뀐 권한 없음)"
 
 # ---- 5. 비활성 슬롯에 새 앱(이전에 멈춰 둔 앱이나 실패해 남긴 앱은 여기서 지운다)
 park_new() { docker stop -t "$STOP_TIMEOUT" "$target_name" >/dev/null 2>&1 || true; }
@@ -296,30 +334,32 @@ if ! "$SWITCH_CMD" "127.0.0.1:$target_port"; then
   die $EXIT_SWITCH "nginx 전환이 실패했습니다. 이전 앱을 그대로 둡니다"
 fi
 
-# ---- 8. 전환 뒤 확인: upstream이 새 슬롯이고, nginx를 거친 요청에 앱이 답한다(502·503·504·연결 실패가 아님)
+# ---- 8. 전환 뒤 확인: upstream이 그 슬롯이고, nginx를 거친 요청에 앱이 답한다(POST_SWITCH_EXPECT, 기본 401).
+#      nginx 자신의 404·503(@api_unavailable)·연결 실패는 통과하지 못한다
 step=verify
-verify() {
-  [[ "$(read_active)" == "$target" ]] || return 1
+verify() { # <슬롯>
+  [[ "$(read_active)" == "$1" ]] || return 1
   local code args=(-sS -o /dev/null -w '%{http_code}' --max-time 5)
   [[ -z $POST_SWITCH_RESOLVE ]] || args+=(--resolve "$POST_SWITCH_RESOLVE")
   for _ in 1 2 3; do
     code="$(curl "${args[@]}" "$POST_SWITCH_URL" 2>/dev/null || true)"
-    [[ $code =~ ^[1-4][0-9][0-9]$ ]] && return 0
+    [[ $code == "$POST_SWITCH_EXPECT" ]] && return 0
     sleep 2
   done
   return 1
 }
-if ! verify; then
+if ! verify "$target"; then
   log "전환 뒤 확인이 실패했습니다. 이 사이 새 앱이 받은 요청의 DB 변경은 그대로 남습니다"
   if [[ $prev_running == true ]]; then
     step=rollback
-    if "$SWITCH_CMD" "127.0.0.1:$(slot_port "$active")" && [[ "$(read_active)" == "$active" ]]; then
+    # 되돌린 주소만으로 끝내지 않는다: 이전 앱이 nginx를 거쳐 다시 답해야 되돌린 것으로 본다
+    if "$SWITCH_CMD" "127.0.0.1:$(slot_port "$active")" && verify "$active"; then
       rolled_back=true
       park_new
       step=verify
       die $EXIT_VERIFY "이전 슬롯($active)으로 되돌렸습니다"
     fi
-    die $EXIT_ROLLBACK "되돌리기도 실패했습니다. 두 앱을 모두 남깁니다(런북 복구)"
+    die $EXIT_ROLLBACK "되돌리기를 확인하지 못했습니다. 두 앱을 모두 남깁니다(런북 \"손으로 되돌리기\")"
   fi
   die $EXIT_VERIFY "되돌릴 이전 앱이 없어 새 앱을 그대로 둡니다"
 fi
