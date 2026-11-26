@@ -124,4 +124,16 @@ public class Member {
     this.phone = null;
     this.phoneVerifiedAt = null;
   }
+
+  /**
+   * 비밀번호 해시를 바꾼다(06 ACC-4a 변경, ACC-5b 재설정). 해시만 받는다(해시 방식은 부르는 쪽이 정한다). 탈퇴한 회원은 바꿀 수 없다.
+   *
+   * @throws IllegalStateException 탈퇴한 회원
+   */
+  public void changePasswordHash(String passwordHash) {
+    if (status != MemberStatus.ACTIVE) {
+      throw new IllegalStateException("탈퇴한 회원의 비밀번호는 바꾸지 않는다");
+    }
+    this.passwordHash = Objects.requireNonNull(passwordHash);
+  }
 }
