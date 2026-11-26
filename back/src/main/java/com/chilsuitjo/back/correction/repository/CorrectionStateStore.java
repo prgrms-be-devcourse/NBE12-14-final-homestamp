@@ -13,6 +13,7 @@ import com.chilsuitjo.back.action.service.ActionRequestContext;
 import com.chilsuitjo.back.action.service.StateStore;
 import com.chilsuitjo.back.correction.dto.AppliedVersion;
 import com.chilsuitjo.back.correction.dto.CorrectableSnapshot;
+import com.chilsuitjo.back.correction.dto.CorrectionView;
 import com.chilsuitjo.back.correction.entity.CorrectionRequest;
 import com.chilsuitjo.back.correction.rule.CorrectionState;
 import com.chilsuitjo.back.correction.rule.CorrectionStatus;
@@ -27,10 +28,13 @@ import com.chilsuitjo.back.notification.dto.OpenRequestCommand;
 import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.service.WaitService;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -89,7 +93,21 @@ public class CorrectionStateStore {
 
   /** 고친 내용 응답(REP-7e·7i·7m)의 저장 방법. */
   public StateStore<CorrectionState> responding(Correctable target) {
-    return new Responding(target);
+    return new Responding(target, null, null);
+  }
+
+  /**
+   * [모두 확인]의 저장 방법. 한 묶음의 모든 {@code RESPOND_CORRECTION} 단계가 이 하나를 함께 쓴다.
+   *
+   * <p>본 번호는 묶음을 시작할 때의 앞모습이다: 앞 단계의 맞아요가 도장 판을 하나씩 올리므로 그만큼 빼고 비교한다(호실 잠금 안이라 그사이 다른 행동은 끼지 않음). 첫
+   * 단계에서 화면이 본 고친 내용 목록과 지금 기다리는 목록이 다르면 {@code VERSION_CONFLICT}다(그사이 더 고쳤거나 거뒀음).
+   *
+   * @param targetKey 그 기록의 대상 글자. 다른 기록의 고친 내용이 섞이면 {@code VALIDATION_FAILED}
+   * @param seenIds 화면이 본 확인 전 고친 내용들
+   */
+  public StateStore<CorrectionState> acceptingAll(
+      Correctable target, String targetKey, Set<UUID> seenIds) {
+    return new Responding(target, targetKey, Set.copyOf(seenIds));
   }
 
   /** 고친 내용 거두기의 저장 방법. */
@@ -275,43 +293,110 @@ public class CorrectionStateStore {
    * decisions 2026-11-16: 처리 상태는 {@code REJECTED} 하나이고 구분은 행동 기록에 있음).
    */
   private AckState answerOf(CorrectionRequest row) {
+    return answerOf(row, lastResponse(row));
+  }
+
+  private static AckState answerOf(CorrectionRequest row, ActionEntry last) {
     return switch (row.getStatus()) {
       case ACCEPTED -> AckState.ACK;
       case REJECTED -> {
-        Answer last = null;
-        for (ActionEntry entry :
-            actions.findByTarget(ActionTarget.correctionRequest(row.getId()))) {
-          if (entry.type() == ActionType.RESPOND_CORRECTION) {
-            last = entry.payloadAs(AnswerPayload.class).answer();
-          }
-        }
-        if (last == null || last == Answer.ACK) {
+        Answer answer = last == null ? null : last.payloadAs(AnswerPayload.class).answer();
+        if (answer == null || answer == Answer.ACK) {
           throw new IllegalStateException("거절된 고친 내용에 보류·이견 응답이 없어요: " + row.getId());
         }
-        yield AckState.valueOf(last.name());
+        yield AckState.valueOf(answer.name());
       }
       default -> AckState.PENDING;
     };
+  }
+
+  /** 고친 내용의 마지막 응답 행동. 없으면 null. */
+  private ActionEntry lastResponse(CorrectionRequest row) {
+    ActionEntry last = null;
+    for (ActionEntry entry : actions.findByTarget(ActionTarget.correctionRequest(row.getId()))) {
+      if (entry.type() == ActionType.RESPOND_CORRECTION) {
+        last = entry;
+      }
+    }
+    return last;
+  }
+
+  /**
+   * 그 기록의 고친 내용 모두(만든 순서). 응답 종류·사유는 마지막 응답 행동에서 읽는다(사유는 보류·이견일 때만 보인다, decisions 2026-11-16).
+   *
+   * @param targetKey 기록의 대상 글자({@code CorrectionTargetKind.targetKey})
+   */
+  public List<CorrectionView> views(String targetKey) {
+    List<CorrectionView> result = new ArrayList<>();
+    for (CorrectionRequest row : corrections.findByTargetKeyOrderByCreatedAtAscIdAsc(targetKey)) {
+      ActionEntry last = lastResponse(row);
+      AckState answer = answerOf(row, last);
+      boolean objected = answer == AckState.NEED_MORE || answer == AckState.DISPUTE;
+      result.add(
+          new CorrectionView(
+              row.getId(),
+              row.getField(),
+              valueOf(row),
+              row.getRequestedBySide(),
+              row.getReason(),
+              row.getStatus(),
+              answer,
+              objected ? last.reason() : null,
+              last == null ? null : last.createdAt(),
+              row.getClosedReason(),
+              row.getCreatedAt()));
+    }
+    return List.copyOf(result);
   }
 
   private final class Responding implements StateStore<CorrectionState> {
 
     private final Correctable target;
 
-    private Responding(Correctable target) {
+    /** [모두 확인]일 때만: 그 기록의 대상 글자와 화면이 본 고친 내용들. 하나씩 응답이면 null. */
+    private final String targetKey;
+
+    private final Set<UUID> seenIds;
+
+    /** 이 묶음에서 앞 단계가 맞아요로 올린 도장 판 수. */
+    private int merged;
+
+    private Responding(Correctable target, String targetKey, Set<UUID> seenIds) {
       this.target = target;
+      this.targetKey = targetKey;
+      this.seenIds = seenIds;
     }
 
     @Override
     public CorrectionState load(ActionCommand command) {
       CorrectionRequest row = row(command);
+      if (targetKey != null) {
+        checkSeen(row);
+      }
       CorrectableSnapshot snapshot = snapshot(target, row.targetId(), command);
+      Integer startNo = snapshot.confirmedNo() == null ? null : snapshot.confirmedNo() - merged;
       return CorrectionState.forAnswering(
           row.getRequestedBySide(),
           row.getStatus(),
           row.getClosedReason() == ClosedReason.CLOSED_BY_BOTH,
           answerOf(row),
-          snapshot.confirmedNo());
+          startNo);
+    }
+
+    private void checkSeen(CorrectionRequest row) {
+      if (!row.getTargetKey().equals(targetKey)) {
+        throw new BusinessException(ErrorCode.VALIDATION_FAILED);
+      }
+      if (merged > 0) {
+        return;
+      }
+      Set<UUID> waiting = new HashSet<>();
+      corrections
+          .findByTargetKeyAndStatus(targetKey, CorrectionStatus.WAITING)
+          .forEach(waitingRow -> waiting.add(waitingRow.getId()));
+      if (!waiting.equals(seenIds)) {
+        throw new BusinessException(ErrorCode.VERSION_CONFLICT);
+      }
     }
 
     /**
@@ -325,6 +410,7 @@ public class CorrectionStateStore {
       if (next.answer() == AckState.ACK) {
         target.mergeConfirmed(row.targetId(), row.getBaseVersionId(), row.getField(), valueOf(row));
         row.accept();
+        merged++;
       } else {
         row.reject();
       }

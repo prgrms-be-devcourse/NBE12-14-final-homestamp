@@ -45,10 +45,7 @@ public interface Correctable {
    */
   AppliedVersion mergeConfirmed(UUID targetId, UUID baseVersionId, String field, Object newValue);
 
-  /**
-   * 확인할 때 본 판의 지문 재료({@code RESPOND_CORRECTION}·{@code ACCEPT_ALL_CORRECTIONS}의 {@code
-   * content_digest}).
-   */
+  /** 확인할 때 본 판의 지문 재료({@code RESPOND_CORRECTION}([모두 확인] 포함)의 {@code content_digest}). */
   DigestInput digestOf(UUID versionId);
 
   /**
