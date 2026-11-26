@@ -1,4 +1,4 @@
-package com.chilsuitjo.back.member.dto;
+package com.chilsuitjo.back.global.common;
 
 import jakarta.validation.Constraint;
 import jakarta.validation.ConstraintValidator;

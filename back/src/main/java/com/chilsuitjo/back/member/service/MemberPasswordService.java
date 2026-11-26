@@ -1,12 +1,11 @@
 package com.chilsuitjo.back.member.service;
 
+import com.chilsuitjo.back.global.common.PasswordRule;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
-import com.chilsuitjo.back.member.dto.SignupRequest;
 import com.chilsuitjo.back.member.entity.Member;
 import com.chilsuitjo.back.member.repository.MemberRepository;
 import com.chilsuitjo.back.member.rule.MemberStatus;
-import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -27,8 +26,10 @@ public class MemberPasswordService {
   private final PasswordEncoder passwordEncoder;
 
   /**
-   * 현재 비밀번호를 확인하고 새 비밀번호로 바꾼다(06 ACC-4a). 해시 확인과 새 해시 만들기는 이 안에서 하고, 잠금은 잡지 않는다. 같은 회원의 변경이 동시에 오면
-   * {@code member.version}이 늦은 쪽을 {@code VERSION_CONFLICT}로 거절한다.
+   * 현재 비밀번호를 확인하고 새 비밀번호로 바꾼다(06 ACC-4a). 해시 확인과 새 해시 만들기는 이 안에서 하고, 행 잠금은 마지막 {@code
+   * flush}(UPDATE)에서만 잡는다. 이 잠금은 토큰을 주는 중인 로그인의 공유 잠금과 서로 기다린다({@code
+   * MemberLoginService#confirmUnchanged}, #262). 같은 회원의 변경이 동시에 오면 {@code member.version}이 늦은 쪽을
+   * {@code VERSION_CONFLICT}로 거절한다.
    *
    * @throws BusinessException {@code LOGIN_REQUIRED}(탈퇴했거나 없는 회원의 남은 토큰), {@code
    *     PASSWORD_MISMATCH}(현재 비밀번호가 틀림)
@@ -41,7 +42,8 @@ public class MemberPasswordService {
             .filter(m -> m.getStatus() == MemberStatus.ACTIVE)
             .orElseThrow(() -> new BusinessException(ErrorCode.LOGIN_REQUIRED));
     // BCrypt는 72바이트를 넘는 입력을 확인하지 못한다(예외). 가입에서 막으므로 넘으면 맞을 수 없다
-    if (tooLong(currentPassword) || !member.canLogInWith(currentPassword, passwordEncoder)) {
+    if (PasswordRule.Bytes.exceedsMax(currentPassword)
+        || !member.canLogInWith(currentPassword, passwordEncoder)) {
       throw new BusinessException(ErrorCode.PASSWORD_MISMATCH);
     }
     member.changePasswordHash(passwordEncoder.encode(newPassword));
@@ -62,9 +64,5 @@ public class MemberPasswordService {
     member.ifPresent(m -> m.changePasswordHash(passwordHash));
     members.flush();
     return member.map(Member::getId);
-  }
-
-  private static boolean tooLong(String password) {
-    return password.getBytes(StandardCharsets.UTF_8).length > SignupRequest.PASSWORD_MAX_BYTES;
   }
 }

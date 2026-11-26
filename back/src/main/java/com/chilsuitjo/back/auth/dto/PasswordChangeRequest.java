@@ -1,6 +1,6 @@
 package com.chilsuitjo.back.auth.dto;
 
-import com.chilsuitjo.back.member.dto.PasswordRule;
+import com.chilsuitjo.back.global.common.PasswordRule;
 import jakarta.validation.constraints.NotNull;
 
 /**

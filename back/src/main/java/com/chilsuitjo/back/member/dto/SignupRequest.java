@@ -1,5 +1,6 @@
 package com.chilsuitjo.back.member.dto;
 
+import com.chilsuitjo.back.global.common.PasswordRule;
 import com.chilsuitjo.back.member.rule.SignupAcknowledgements;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
@@ -27,9 +28,6 @@ public record SignupRequest(
     String termsTextVersion,
     Boolean privacyNoticeAcknowledged,
     String privacyNoticeTextVersion) {
-
-  /** BCrypt가 해시에 쓰는 최대 길이(UTF-8 바이트). 넘는 비밀번호는 해시하지 못한다. */
-  public static final int PASSWORD_MAX_BYTES = 72;
 
   /**
    * 확인 항목 세 개와 문구 판을 확인한다.
