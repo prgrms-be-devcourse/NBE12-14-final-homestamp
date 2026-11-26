@@ -11,7 +11,7 @@ import java.util.UUID;
  * @param author 점검의 기준 측
  * @param unanswered 이 사람이 답할 미응답 항목(확인 기다림·확인 없음)의 ID와 지금 판 번호. 이 사람에게 보이는 항목만
  * @param totalItems 점검의 전체 항목 수(보이지 않는 항목·답한 항목 포함)
- * @param itemsHidden 항목이 모두 가려져 있나(작성 중, 불변식 18)
+ * @param draftHidden 기준 측의 작성 중 항목이 이 사람에게 가려져 있나(06 INSP-1a, 불변식 18). 그때는 "하자 기록 없음"을 확인할 수 없다
  * @param confirmedNoItems 이 사람이 이미 "하자 기록 없음"을 확인했나(항목 없는 점검에 앞서 남긴 {@code CONFIRM_ALL})
  */
 public record ConfirmAllState(
@@ -19,7 +19,7 @@ public record ConfirmAllState(
     PartySide author,
     Map<UUID, Integer> unanswered,
     int totalItems,
-    boolean itemsHidden,
+    boolean draftHidden,
     boolean confirmedNoItems) {
 
   public ConfirmAllState {

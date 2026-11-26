@@ -16,9 +16,8 @@ import org.springframework.stereotype.Component;
 /**
  * 점검 항목의 규칙(03 H "항목"·"상대의 확인", G "응답과 그 뒤"). 순수 함수다. 응답·보충은 공통 규칙({@code AnswerSupport})을 그대로 쓴다.
  *
- * <p><b>현재 구현 범위의 한계</b>: 항목 더하기는 작성 중 기준 측만 있다. 규칙으로는 누구든 점검이 있는 동안 언제든 더할 수 있고 상대가 더한 것은 기준 측이
- * 확인한다(03 H "빠뜨린 하자 더하기", 6-6 2번). 상대가 더하기·잠긴 뒤 추가(INSP-1d·1e)는 그 기능을 만들 때 더하고, 그 전까지는 {@code
- * INVALID_STATE}다.
+ * <p>항목은 누구든 점검이 있는 동안 언제든 더하고 더하지 않은 쪽이 확인한다(03 H "빠뜨린 하자 더하기", 6-6 2번·6번, INSP-1d·1e). 작성 중에 상대가
+ * 더한 항목은 기준 측이 작성 중에도 답한다(#286).
  */
 @Component
 public class InspectionItemTransitions implements Transitions<InspectionItemState> {
@@ -49,15 +48,14 @@ public class InspectionItemTransitions implements Transitions<InspectionItemStat
    * 이 측이 지금 이 점검에 항목을 더할 수 있나(상세 조회의 {@code availableActions}, 06 4-0). {@link #apply}의 항목 더하기와 같은
    * 판단이다. 호실 단위 거절(정산 완료·공유 중단 등)은 여기서 보지 않는다({@code RoomGate.rejection}).
    */
-  public static boolean canAdd(
-      InspectionStatus inspectionStatus, PartySide author, PartySide side) {
-    return inspectionStatus == InspectionStatus.DRAFT && side != null && side == author;
+  public static boolean canAdd(InspectionStatus inspectionStatus, PartySide side) {
+    return inspectionStatus != null && side != null;
   }
 
   /** 이 측이 지금 이 항목에 답할 수 있나({@link #apply}의 응답이 맞아요로 성공하는지와 같음). 호실 단위 거절은 보지 않는다. */
   public static boolean canRespond(InspectionItemState state, PartySide side) {
     return state.exists()
-        && answerable(state.inspectionStatus())
+        && itemAnswerable(state)
         && !Boolean.TRUE.equals(state.hiddenFromActor())
         && AnswerSupport.canAnswer(state.answerable(), side);
   }
@@ -82,7 +80,19 @@ public class InspectionItemTransitions implements Transitions<InspectionItemStat
     return AnswerSupport.nextRerequestAt(state.answerable(), rerequestInterval);
   }
 
-  /** 항목에 답할 수 있는 점검 상태: 확인 요청 뒤. 잠긴 뒤에도 정산 완료 전까지 늦게 답한다(03 H). 모르면(재계산) 서버가 확인했다고 본다. */
+  /**
+   * 이 항목에 답할 수 있는 점검 상태: 확인 요청 뒤({@link #answerable}), 또는 작성 중이라도 기준 측이 아닌 쪽(상대)이 더한 항목이면 기준 측이 바로
+   * 답한다(03 H "상대가 더한 것은 기준 측이 확인", 6-6 2번, #286). 기준 측이 작성 중에 쓴 항목은 확인 요청 때 함께 묻는다.
+   */
+  static boolean itemAnswerable(InspectionItemState state) {
+    InspectionStatus status = state.inspectionStatus();
+    return answerable(status)
+        || (status == InspectionStatus.DRAFT
+            && state.addedBy() != null
+            && state.addedBy() != state.inspectionAuthor());
+  }
+
+  /** 확인 요청 뒤인 점검 상태. 잠긴 뒤에도 정산 완료 전까지 늦게 답한다(03 H). 모르면(재계산) 서버가 확인했다고 본다. */
   static boolean answerable(InspectionStatus status) {
     return status == null
         || status == InspectionStatus.REQUESTED
@@ -98,15 +108,14 @@ public class InspectionItemTransitions implements Transitions<InspectionItemStat
   }
 
   /**
-   * 항목 더하기: 사용자가 적은 하자 하나(부위 + 설명 + 사진, 03 H "항목"). 확인 기다림에서 시작하고 더한 측이 기록한 측이다. 현재 구현 범위의 한계로 작성 중
-   * 기준 측만 받는다(위 클래스 설명). 점검 상태를 모르면(재계산) 그때 서버가 확인했다고 본다.
+   * 항목 더하기: 사용자가 적은 하자 하나(부위 + 설명 + 사진, 03 H "항목"). 확인 기다림에서 시작하고 더한 측이 기록한 측이다. 누구든 점검이 있는 동안(작성
+   * 중·확인 요청·잠김) 더하고, 점검 상태는 바뀌지 않는다(잠긴 뒤 추가여도 잠금은 그대로, INSP-1e). 점검 상태를 모르면(재계산) 그때 서버가 확인했다고 본다.
    */
   private static InspectionItemState add(InspectionItemState now, ActionEntry action) {
     if (now.exists() || action.actorSide() == null) {
       throw new BusinessException(ErrorCode.INVALID_STATE);
     }
-    if (now.inspectionStatus() != null
-        && !canAdd(now.inspectionStatus(), now.inspectionAuthor(), action.actorSide())) {
+    if (now.inspectionStatus() != null && !canAdd(now.inspectionStatus(), action.actorSide())) {
       throw new BusinessException(ErrorCode.INVALID_STATE);
     }
     return new InspectionItemState(
@@ -121,15 +130,13 @@ public class InspectionItemTransitions implements Transitions<InspectionItemStat
   }
 
   /**
-   * 항목 응답(06 4-7 {@code respond}): 확인 요청 뒤에만(작성 중이면 {@code INVALID_STATE}), 답하는 사람에게 보이는 항목만(작성 중에
-   * 가려졌거나 공유를 그만둔 뒤라 보이지 않으면 {@code INVALID_STATE}, 불변식 18). 그 뒤는 공통 순서다({@code
-   * AnswerSupport.answer}: 상대 측 → 판 번호 → 맞아요는 끝 → 보류·이견에서는 맞아요로만 → 사유 필수). 사유는 행동 기록의 {@code
-   * reason}이다.
+   * 항목 응답(06 4-7 {@code respond}): 확인 요청 뒤에만(작성 중이면 {@code INVALID_STATE}, 상대가 더한 항목은 작성 중에도,
+   * {@link #itemAnswerable}), 답하는 사람에게 보이는 항목만(작성 중에 가려졌거나 공유를 그만둔 뒤라 보이지 않으면 {@code
+   * INVALID_STATE}, 불변식 18). 그 뒤는 공통 순서다({@code AnswerSupport.answer}: 상대 측 → 판 번호 → 맞아요는 끝 →
+   * 보류·이견에서는 맞아요로만 → 사유 필수). 사유는 행동 기록의 {@code reason}이다.
    */
   private static InspectionItemState respond(InspectionItemState now, ActionEntry action) {
-    if (!now.exists()
-        || !answerable(now.inspectionStatus())
-        || Boolean.TRUE.equals(now.hiddenFromActor())) {
+    if (!now.exists() || !itemAnswerable(now) || Boolean.TRUE.equals(now.hiddenFromActor())) {
       throw new BusinessException(ErrorCode.INVALID_STATE);
     }
     AnswerPayload in = action.payloadAs(AnswerPayload.class);

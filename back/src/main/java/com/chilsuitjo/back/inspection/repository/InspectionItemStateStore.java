@@ -22,11 +22,15 @@ import com.chilsuitjo.back.inspection.entity.InspectionItem;
 import com.chilsuitjo.back.inspection.entity.InspectionItemVersion;
 import com.chilsuitjo.back.inspection.rule.ConfirmAllState;
 import com.chilsuitjo.back.inspection.rule.InspectionItemState;
+import com.chilsuitjo.back.inspection.rule.InspectionStatus;
 import com.chilsuitjo.back.notification.dto.OpenRequestCommand;
 import com.chilsuitjo.back.notification.dto.RequestTarget;
+import com.chilsuitjo.back.notification.dto.RoomParties;
 import com.chilsuitjo.back.notification.rule.RequestKind;
+import com.chilsuitjo.back.notification.rule.RoomPhase;
 import com.chilsuitjo.back.notification.service.CounterpartReader;
 import com.chilsuitjo.back.notification.service.WaitService;
+import com.chilsuitjo.back.room.dto.RoomPartSummary;
 import com.chilsuitjo.back.room.service.RoomQueryService;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -197,7 +201,7 @@ public class InspectionItemStateStore {
         row.getAuthorSide(),
         unanswered,
         all.size(),
-        seen.itemsHidden(),
+        seen.draftHidden(),
         confirmedNoItems);
   }
 
@@ -287,13 +291,21 @@ public class InspectionItemStateStore {
      * 머리와 판 #1을 한 트랜잭션에 만든다(05 0장 "머리·판 네 쌍", 지연 FK). 내용 지문은 새로 만든 판 #1이다(안내서 3-3). 사진은 머리·판을 DB에
      * 내보낸 뒤 항목에 붙이고, 지문은 행동 payload {@code photos}로 남는다. 사진이 실패하면 항목도 함께 되돌려진다.
      *
-     * <p>작성 중 기준 측이 더한 항목이라 잠긴 뒤·거주 종료 뒤 추가가 아니다. 그 표시는 잠긴 뒤 추가(INSP-1e)·퇴거 점검(INSP-3a)에서 서버가 정한다.
+     * <p>표시는 서버가 정한다(06 4-7 {@code items}): 점검이 잠겼으면 "잠긴 뒤 추가"({@code added_after_lock}, INSP-1e),
+     * 거주가 끝났으면 "거주 종료 뒤 추가"({@code added_after_end}, 03 H). 점검 상태는 바꾸지 않는다(잠금 그대로).
+     *
+     * <p>점검 확인 요청(요청한 측 = 더한 측)은 같은 트랜잭션에서 연다. 같은 방향의 요청이 열려 있으면 그것에 묶인다({@code WaitService#open}).
+     * 작성 중 기준 측이 쓴 항목은 확인 요청을 보낼 때 함께 묻으므로 열지 않는다(03 H). 상대가 공유를 그만뒀거나 받을 상대가 없으면 열지 않는다(#234와 같은
+     * 기준 {@code InspectionSight.reachable}, 03 B·불변식 18). 서비스 안 알림은 #116(U3-2) 뒤에 붙인다.
      */
     @Override
     public SavedState save(ActionCommand command, InspectionItemState next) {
       UUID roomRecordId = command.roomRecordId();
-      // 남의 부위·없는 부위는 NOT_FOUND(RoomQueryService). 숨긴 부위는 새 기록을 받지 않는다(06 ROOM-3a).
-      if (rooms.findPart(roomRecordId, roomPartId).hidden()) {
+      // 남의 부위·없는 부위는 NOT_FOUND(RoomQueryService). 숨긴 부위와 꺼 둔 설비·가전은 새 기록을 받지 않는다(06 ROOM-3a·3d,
+      // decisions 2026-11-26 #182). 공유를 그만둔 뒤에는 더하는 사람에게 보이는 부위 상태로 본다(수리 건 등록과 같음, 불변식 18)
+      RoomPartSummary seenPart =
+          rooms.findPartAsSeenBy(roomRecordId, roomPartId, command.actor().memberId());
+      if (seenPart.hidden() || !seenPart.enabled()) {
         throw new BusinessException(ErrorCode.VALIDATION_FAILED);
       }
       Inspection parent = inspection(roomRecordId, parentId(command));
@@ -301,14 +313,36 @@ public class InspectionItemStateStore {
       UUID itemId = Uuids.v7();
       UUID versionId = Uuids.v7();
 
+      RoomParties room = parties.read(roomRecordId, next.addedBy());
+      boolean afterLock = parent.getStatus() == InspectionStatus.LOCKED;
+      boolean afterEnd = room.phase() != RoomPhase.LIVING;
       items.save(
           new InspectionItem(
-              itemId, roomRecordId, parent.getId(), versionId, next.addedBy(), false, false, at));
+              itemId,
+              roomRecordId,
+              parent.getId(),
+              versionId,
+              next.addedBy(),
+              afterLock,
+              afterEnd,
+              at));
       InspectionItemVersion first =
           new InspectionItemVersion(
               versionId, roomRecordId, itemId, 1, roomPartId, description, null, at);
       versions.save(first);
       items.flush();
+      boolean authorDraft =
+          parent.getStatus() == InspectionStatus.DRAFT && next.addedBy() == parent.getAuthorSide();
+      if (!authorDraft
+          && InspectionSight.reachable(room)
+          && waits.canOpen(roomRecordId, RequestKind.INSPECTION_CONFIRM)) {
+        waits.open(
+            new OpenRequestCommand(
+                roomRecordId,
+                RequestKind.INSPECTION_CONFIRM,
+                confirmRequest(parent.getId()),
+                next.addedBy()));
+      }
 
       return new SavedState(ActionTarget.of(TargetKind.INSPECTION_ITEM, itemId), digest(first))
           .withPhotos(

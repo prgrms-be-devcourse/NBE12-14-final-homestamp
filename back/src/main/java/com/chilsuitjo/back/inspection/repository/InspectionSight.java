@@ -43,8 +43,8 @@ public class InspectionSight {
    *   <li>보이는 범위를 고정하는 시각({@code asOf}): 제한이 살아 있는 공유 중단 시각 중 이른 것. 없으면 null
    *   <li>보이는 상태: 고정됐으면 그 시각까지의 행동과 보는 사람 측의 행동만으로 다시 계산한다(수리 건의 {@code
    *       RepairQueryService.visibleState}와 같은 방법)
-   *   <li>항목을 가리나: 기준 측이 아닌 사람에게 작성 중이면 가린다(06 INSP-1a). 고정됐으면 <b>그 시각까지의 행동만</b>으로 보아, 그때 작성 중이었으면
-   *       그 뒤 누가 확인 요청을 보냈든 가린다(#218 리뷰)
+   *   <li>기준 측 항목을 가리나: 기준 측이 아닌 사람에게 작성 중이면 기준 측이 쓴 항목을 가린다(06 INSP-1a). 자기가 더한 항목은 보인다(#286).
+   *       고정됐으면 <b>그 시각까지의 행동만</b>으로 보아, 그때 작성 중이었으면 그 뒤 누가 확인 요청을 보냈든 가린다(#218 리뷰)
    * </ul>
    */
   public Sight of(Inspection row, PartySide viewer) {
@@ -118,17 +118,20 @@ public class InspectionSight {
    * @param viewer 보는 사람의 측
    * @param asOf 보이는 범위를 고정하는 시각. 없으면 null
    * @param shownStatus 이 사람에게 보이는 점검 상태
-   * @param itemsHidden 항목을 모두 가리나(작성 중 점검을 기준 측이 아닌 사람이 볼 때)
+   * @param draftHidden 기준 측이 쓴 항목을 가리나(작성 중 점검을 기준 측이 아닌 사람이 볼 때). 자기가 더한 항목은 보인다
    */
   public record Sight(
-      PartySide viewer, Instant asOf, InspectionStatus shownStatus, boolean itemsHidden) {
+      PartySide viewer, Instant asOf, InspectionStatus shownStatus, boolean draftHidden) {
 
-    /** 이 항목이 보이나: 항목을 가리지 않고, 자신이 더했거나 범위를 고정한 시각까지 상대가 더한 것. */
+    /**
+     * 이 항목이 보이나: 자신이 더한 것은 늘 보이고, 상대가 더한 것은 가리지 않을 때 범위를 고정한 시각까지 더한 것만. 기준 측 작성 중 항목을 가리면 상대 항목은
+     * 모두 가린다.
+     */
     public boolean sees(InspectionItem item) {
-      return !itemsHidden
-          && (Objects.equals(item.getAddedBySide(), viewer)
-              || asOf == null
-              || !item.getCreatedAt().isAfter(asOf));
+      if (Objects.equals(item.getAddedBySide(), viewer)) {
+        return true;
+      }
+      return !draftHidden && (asOf == null || !item.getCreatedAt().isAfter(asOf));
     }
   }
 }
