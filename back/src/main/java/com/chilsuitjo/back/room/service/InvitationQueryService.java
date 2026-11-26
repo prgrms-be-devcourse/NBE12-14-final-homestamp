@@ -32,7 +32,9 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <ul>
  *   <li>인증 번호가 없으면(인증이 풀림·탈퇴) 빈 목록이다. 옛 번호로 받은 초대는 보이지 않는다(06 ACC-4c)
- *   <li>거주 중이 아닌 호실. 거주 종료 뒤 연결을 받을지는 팀 확인 전이다(#163 3-1 "3. 이미 초대된 상대의 연결"). 정해지면 여기와 연결 규칙을 함께 바꾼다
+ *   <li>정산 완료된 호실. 거주 종료 전에 초대받은 상대는 정산 완료 전까지 연결할 수 있어서 거주 종료 호실은 보여 준다(연결 규칙 {@code
+ *       PartyTransitions}와 같은 기준). 팀 최종 합의 전 임시 정책이다(#163 3-1 "3. 이미 초대된 상대의 연결"). 정해지면 여기와 연결 규칙을
+ *       함께 바꾼다
  *   <li>합류 전 기록(새 행동을 받지 않음, 03 B)과 내가 이미 당사자인 호실({@code uq_party_room_member}, 불변식 13)
  * </ul>
  *
@@ -104,7 +106,7 @@ public class InvitationQueryService {
       Map<UUID, List<Party>> seatsByRoom,
       UUID memberId) {
     RoomRecord room = roomById.get(seat.getRoomRecordId());
-    if (room == null || room.getStatus() != RoomStatus.LIVING || room.getJoinedIntoId() != null) {
+    if (room == null || room.getStatus() == RoomStatus.SETTLED || room.getJoinedIntoId() != null) {
       return null;
     }
     List<Party> seats = seatsByRoom.getOrDefault(room.getId(), List.of());

@@ -15,7 +15,9 @@ import org.springframework.stereotype.Component;
  *   <li>{@code INVITE}: 호실을 만든 측이, 거주 중에, 비어 있음·번호만 자리에 → 초대됨. 그 밖이면 {@code INVALID_STATE}, 내 인증
  *       번호면 {@code SELF_INVITE}
  *   <li>{@code CONNECT}: 초대됨 자리에 초대 번호와 같은 번호로 인증한 회원이 → 연결됨. 초대됨이 아니면 {@code INVALID_STATE}, 번호가
- *       다르면 {@code PHONE_MISMATCH}
+ *       다르면 {@code PHONE_MISMATCH}. 거주 종료는 보지 않는다: 거주 종료 전에 초대받은 상대는 정산 완료 전까지 연결할 수 있다(정산 완료는
+ *       pipeline이 {@code SETTLED}로 막음). 팀 최종 합의 전 임시 정책이다(#163 3-1). 받은 초대 목록({@code
+ *       InvitationQueryService})도 같은 기준이다
  *   <li>{@code REJECT_INVITE}("제 집이 아니에요"): 초대됨 자리에 초대받은 사람이 → 거절됨. 03 3장 "연결 확인 / 제 집이 아니에요"는 초대받은
  *       사람만이라 지금은 연결과 같이 번호가 다르면 {@code PHONE_MISMATCH}로 둔다. 06 4-3 {@code reject} 오류 칸("-")과 맞는지는
  *       아직 정하지 않았다. reject API를 만들 때 정하고 06을 함께 고친다(#163)

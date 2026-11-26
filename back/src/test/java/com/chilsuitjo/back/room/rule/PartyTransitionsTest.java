@@ -128,6 +128,14 @@ class PartyTransitionsTest {
     return new PartyState(status, false, true, false, phoneMatches);
   }
 
+  @Test
+  void 거주가_끝난_호실이어도_초대받은_사람은_연결할_수_있다() {
+    // 임시 정책(#163 3-1, 팀 최종 합의 전): 정산 완료 전까지 연결. 정산 완료는 pipeline이 SETTLED로 막는다
+    PartyState endedRoom = new PartyState(PartyStatus.INVITED, false, false, false, true);
+    assertThat(rules.apply(endedRoom, entry(ActionType.CONNECT)).status())
+        .isEqualTo(PartyStatus.CONNECTED);
+  }
+
   private void expect(ErrorCode code, PartyState now, ActionType type) {
     assertThatThrownBy(() -> rules.apply(now, entry(type)))
         .isInstanceOfSatisfying(

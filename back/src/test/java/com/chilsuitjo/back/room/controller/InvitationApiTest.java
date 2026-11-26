@@ -120,12 +120,22 @@ class InvitationApiTest {
   }
 
   @Test
-  void 거주_중이_아니거나_합류_전_기록이면_보이지_않는다() throws Exception {
-    for (String roomStatus : new String[] {"ENDED", "SETTLED"}) {
-      UUID room = room(roomStatus, "TENANT");
-      seat(room, "TENANT", inviter, "CONNECTED", null);
-      seat(room, "LANDLORD", null, "INVITED", phone);
-    }
+  void 거주_종료_전에_받은_초대는_정산_완료_전까지_보인다() throws Exception {
+    // 임시 정책(#163 3-1, 팀 최종 합의 전): 거주 종료 호실은 보이고 정산 완료 호실은 빠진다. 연결 규칙과 같은 기준
+    UUID ended = room("ENDED", "TENANT");
+    seat(ended, "TENANT", inviter, "CONNECTED", null);
+    UUID endedSeat = seat(ended, "LANDLORD", null, "INVITED", phone);
+    UUID settled = room("SETTLED", "TENANT");
+    seat(settled, "TENANT", inviter, "CONNECTED", null);
+    seat(settled, "LANDLORD", null, "INVITED", phone);
+
+    list(me)
+        .andExpect(jsonPath("$.length()").value(1))
+        .andExpect(jsonPath("$[0].partyId").value(endedSeat.toString()));
+  }
+
+  @Test
+  void 합류_전_기록이면_보이지_않는다() throws Exception {
     UUID target = room("LIVING", "TENANT");
     UUID joined = room("LIVING", "TENANT");
     jdbc.update(
