@@ -139,3 +139,13 @@ app:
     refresh-token: local-test-only-refresh-token-rotation-key
   # Vite 개발 서버
   origin: http://localhost:5173
+
+---
+# local 전용: 가짜 인증 문자의 인증번호를 로그에 남겨 화면에서 가입을 이어 간다(#248). test·prod에서는 남기지 않는다
+spring:
+  config:
+    activate:
+      on-profile: local & !prod
+app:
+  sms:
+    log-code: true
