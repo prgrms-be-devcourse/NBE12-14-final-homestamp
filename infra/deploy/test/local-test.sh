@@ -64,6 +64,9 @@ build unhealthy VERSION=unhealthy HEALTH_CODE=503 HEALTH_STATUS=DOWN
 build api503 VERSION=api503 API_CODE=503
 build slow VERSION=slow MIGRATE_SLEEP=6
 build slow2 VERSION=slow2 MIGRATE_SLEEP=10
+build api404 VERSION=api404 API_CODE=404
+build hang VERSION=hang MIGRATE_SLEEP=60
+build oldimg VERSION=oldimg GRANTS_WEB=1
 
 cat >"$W/edge.conf" <<'EOF'
 pid /tmp/edge.pid;
@@ -83,6 +86,7 @@ cat >"$W/bin/switch" <<EOF
 set -euo pipefail
 addr=\$1
 [[ \$addr =~ ^127\.0\.0\.1:[0-9]+\$ ]] || exit 2
+if [[ -e $W/flags/switch-fail-to && "\$(cat $W/flags/switch-fail-to)" == "\$addr" ]]; then echo "mock: 이 주소로 전환 실패" >&2; exit 1; fi
 conf=$W/upstream/upstream.conf
 had=0; if [[ -f \$conf ]]; then cp "\$conf" "\$conf.prev"; had=1; fi
 restore() { if ((had)); then mv "\$conf.prev" "\$conf"; else rm -f "\$conf"; fi; }
@@ -237,6 +241,41 @@ expect "새 green은 멈춤" "$(state green)" exited
 check_last "기록: verify, rolled_back true, DB 롤백 없음" '"exit_code":16,"failed_step":"verify","prev_slot":"blue","prev_running":true,"active_slot":"blue","rolled_back":true,"db_changes_rolled_back":false'
 if grep -q '새 앱이 받은 요청의 DB 변경은 그대로' "$(lastout)"; then ok "출력에 DB 변경 안내"; else bad "출력에 DB 변경 안내"; fi
 
+echo "== 10b. 전환 뒤 nginx·앱이 401이 아닌 답(404)도 실패로 보고 되돌림"
+expect "종료 16" "$(deploy "$IMG_api404")" 16
+after_fail verify-404
+check_last "기록: verify, rolled_back true" '"exit_code":16,"failed_step":"verify","prev_slot":"blue","prev_running":true,"active_slot":"blue","rolled_back":true'
+
+echo "== 10c. 되돌리기 실패 → 두 앱 남김(17)"
+echo 127.0.0.1:18081 >"$W/flags/switch-fail-to"
+expect "종료 17" "$(deploy "$IMG_api503")" 17
+rm -f "$W/flags/switch-fail-to"
+expect "upstream은 새 슬롯(green)에 남음" "$(active)" 127.0.0.1:18082
+expect "두 앱 모두 실행 중(지우지 않음)" "$(state blue) $(state green)" "running running"
+check_last "기록: rollback 단계, rolled_back false" '"exit_code":17,"failed_step":"rollback","prev_slot":"blue","prev_running":true,"active_slot":"green","rolled_back":false'
+# 런북 "손으로 되돌리기"처럼 이전 슬롯으로 되돌린다
+runner bash "$W/bin/switch" 127.0.0.1:18081 >/dev/null 2>&1
+docker stop -t 5 $T-app-green >/dev/null
+after_fail manual-rollback
+
+cp "$W/deploy.env" "$W/deploy.env.bak"
+printf 'MIGRATE_TIMEOUT=4\nGRANTS_TIMEOUT=4\n' >>"$W/deploy.env"
+echo "== 10d. Migration 시간 초과"
+expect "종료 11" "$(deploy "$IMG_hang")" 11
+after_fail migrate-timeout
+expect "Migration 컨테이너는 멈춰 남김(실행 중 아님)" "$(docker container inspect -f '{{.State.Running}}' $T-app-migrate 2>/dev/null)" false
+check_last "기록: failed_step migrate" '"exit_code":11,"failed_step":"migrate"'
+if grep -q '4초 안에 끝나지 않았습니다' "$(lastout)"; then ok "출력에 시간 초과 안내"; else bad "출력에 시간 초과 안내"; fi
+
+echo "== 10e. --apply-grants를 모르는 이미지(웹 앱으로 뜸) → 시간 초과로 끝냄"
+expect "종료 12" "$(deploy "$IMG_oldimg")" 12
+after_fail grants-old-image
+expect "멈춰 남긴 Migration 컨테이너는 이번 배포가 지움" "$(docker ps -aq --filter "name=^$T-app-migrate$" | wc -l | tr -d ' ')" 0
+expect "GRANT 컨테이너는 멈춰 남김" "$(docker container inspect -f '{{.State.Running}}' $T-app-grants 2>/dev/null)" false
+expect "새 앱은 만들지 않음(green은 앞 시험의 멈춘 앱)" "$(state green) $(cimage green)" "exited $IMG_api503"
+check_last "기록: failed_step grants" '"exit_code":12,"failed_step":"grants"'
+mv "$W/deploy.env.bak" "$W/deploy.env"
+
 echo "== 11. 동시 배포"
 deploy "$IMG_slow" >"$W/first.rc" &
 first=$!
@@ -253,7 +292,8 @@ expect "upstream 그대로 green" "$(active)" 127.0.0.1:18082
 expect "Migration 컨테이너가 남아 있으면 거절(5)" "$(deploy "$IMG_v1")" 5
 check_last "기록: 이전 배포를 interrupted로 남긴 뒤 이번은 failed" '"exit_code":5'
 if grep -q '"result":"interrupted"' "$W/state/history.jsonl"; then ok "강제 종료된 배포가 interrupted로 기록됨"; else bad "강제 종료된 배포가 interrupted로 기록됨"; fi
-for _ in $(seq 1 30); do docker container inspect $T-app-migrate >/dev/null 2>&1 || break; sleep 1; done
+# Migration 컨테이너는 끝나도 남는다(--rm 아님, 다음 배포가 지움). 실행이 끝날 때까지만 기다린다
+for _ in $(seq 1 30); do [ "$(docker container inspect -f '{{.State.Running}}' $T-app-migrate 2>/dev/null)" = true ] || break; sleep 1; done
 expect "남은 Migration이 끝난 뒤 다시 실행하면 성공" "$(deploy "$IMG_v1")" 0
 expect "upstream=blue" "$(active)" 127.0.0.1:18081
 expect "nginx 경유 응답=v1" "$(edge_version)" v1
@@ -281,7 +321,7 @@ for c in $(docker ps -aq --filter "name=^$T-app-"); do
 done
 expect "canary 값 노출 없음" "$leak" 0
 if grep -q 'mock migrate exit=0' "$W/out/"*; then ok "Migration 컨테이너는 비밀 폴더를 읽을 수 있었음(값은 출력 안 함)"; else bad "Migration 비밀 폴더 연결"; fi
-expect "Migration은 --rm으로 남지 않음" "$(docker ps -aq --filter "name=^$T-app-(migrate|grants)$" | wc -l | tr -d ' ')" 0
+expect "끝난 Migration·GRANT 컨테이너는 다음 배포가 지워 남지 않음" "$(docker ps -aq --filter "name=^$T-app-(migrate|grants)$" | wc -l | tr -d ' ')" 0
 
 echo "== 기록 형식"
 lines="$(wc -l <"$W/state/history.jsonl" | tr -d ' ')"
