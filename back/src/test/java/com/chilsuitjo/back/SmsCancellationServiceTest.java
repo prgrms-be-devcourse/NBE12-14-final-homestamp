@@ -2,6 +2,8 @@ package com.chilsuitjo.back;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import com.chilsuitjo.back.action.service.ActionRequestContext;
 import com.chilsuitjo.back.notification.dto.DeliveryQuery;
@@ -20,6 +22,7 @@ import com.chilsuitjo.back.notification.service.InMemoryRecipientDirectory;
 import com.chilsuitjo.back.notification.service.InviteLinks;
 import com.chilsuitjo.back.notification.service.NoticeOutbox;
 import com.chilsuitjo.back.notification.service.OutboxWorker;
+import com.chilsuitjo.back.notification.service.RecipientDirectory;
 import com.chilsuitjo.back.notification.service.SmsCancellation;
 import java.time.Clock;
 import java.time.Duration;
@@ -456,6 +459,35 @@ class SmsCancellationServiceTest {
     assertThat(noticeStatus(notice)).isEqualTo("CANCELLED");
     assertThat(attempts(notice)).isEqualTo(1);
     assertThat(gateway.sentBatchIds()).doesNotContain(notice);
+  }
+
+  /** disabled에서도 무효 초대 링크 취소가 먼저다(#243). 받는 사람을 읽지 않고 업체도 부르지 않는다(#282). */
+  @Test
+  void disabled에서도_무효_초대_링크면_받는_사람을_읽지_않고_통지와_함께_취소한다() {
+    UUID invalid = link(room, party, true);
+    UUID notice = enqueue(room, party, invalid);
+    RecipientDirectory directory = mock(RecipientDirectory.class);
+    SmsGateway never = mock(SmsGateway.class);
+    OutboxWorker disabled =
+        new OutboxWorker(
+            outboxRepository,
+            noticeRepository,
+            inviteLinks,
+            directory,
+            never,
+            clock,
+            transactionManager,
+            50,
+            List.of(Duration.ofMinutes(1)),
+            Duration.ofDays(3),
+            deliveryPollSchedule,
+            "disabled");
+
+    disabled.runOnce();
+
+    assertThat(outboxStatus(notice)).isEqualTo("CANCELLED");
+    assertThat(noticeStatus(notice)).isEqualTo("CANCELLED");
+    verifyNoInteractions(directory, never);
   }
 
   @Test
