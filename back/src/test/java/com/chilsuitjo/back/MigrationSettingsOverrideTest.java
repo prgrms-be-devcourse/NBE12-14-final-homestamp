@@ -18,6 +18,8 @@ import org.flywaydb.core.api.Location;
 import org.flywaydb.core.api.configuration.FluentConfiguration;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -27,6 +29,11 @@ import org.junit.jupiter.params.provider.ValueSource;
  *
  * <p>통과 조건은 (1) 입력 자체를 거절하거나 (2) 입력이 있어도 최종 설정 객체가 파일 값·고정 계약과 같은 것. DB·AWS에 연결하지 않는다.
  */
+// 운영 Migration은 Linux 컨테이너에서만 돈다. 설정 계약(sslrootcert는 POSIX 절대 경로, 파일 권한·심볼릭 링크·FIFO 거절)을
+// 그대로 시험하므로 Windows에서는 건너뛴다(CI는 Linux에서 모두 돈다, #173 리뷰)
+@EnabledOnOs(
+    value = {OS.LINUX, OS.MAC},
+    disabledReason = "운영 Migration 설정은 POSIX 경로·권한 계약이다(Linux 컨테이너 전용)")
 class MigrationSettingsOverrideTest {
 
   /** 내용 검사는 드라이버 몫이라 여기서는 읽을 수 있는 일반 파일이면 된다(값 검증 단위 테스트용). */

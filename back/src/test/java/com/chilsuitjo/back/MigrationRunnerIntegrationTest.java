@@ -33,6 +33,8 @@ import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.WebApplicationType;
@@ -57,6 +59,11 @@ import org.testcontainers.utility.MountableFile;
  * trigger(DDL마다 session_user·current_user를 서버 로그에 남김)를 붙인다. 운영 Migration 파일·grants.sql은 쓰지 않는다. 값은
  * 출력하지 않는다.
  */
+// 운영 Migration은 Linux 컨테이너에서만 돈다. 설정 계약(sslrootcert는 POSIX 절대 경로, 파일 권한·심볼릭 링크·FIFO 거절)을
+// 그대로 시험하므로 Windows에서는 건너뛴다(CI는 Linux에서 모두 돈다, #173 리뷰)
+@EnabledOnOs(
+    value = {OS.LINUX, OS.MAC},
+    disabledReason = "운영 Migration 설정은 POSIX 경로·권한 계약이다(Linux 컨테이너 전용)")
 class MigrationRunnerIntegrationTest {
 
   static final String OWNER = "hs_owner";
@@ -73,6 +80,8 @@ class MigrationRunnerIntegrationTest {
   // 운영 Dockerfile 런타임과 같은 base 이미지(UID 10002로 실행)
   static final String RUNTIME_IMAGE = "eclipse-temurin:25-jre-noble";
   static final String SECRET_DIR = "/run/secrets/homestamp-migration/";
+  // 기대 이력은 운영 Migration 폴더(db/migration)의 V 파일에서 구한다. 새 V 파일이 생겨도 이 테스트를 고치지 않는다
+  static final List<String> MIGRATION_VERSIONS = migrationVersions();
 
   static final Network INTERNAL =
       Network.builder().createNetworkCmdModifier(cmd -> cmd.withInternal(true)).build();
@@ -131,7 +140,7 @@ class MigrationRunnerIntegrationTest {
   // ---------------------------------------------------------------- 정상·소유권·이력·재실행
 
   @Test
-  void 정상_실행은_owner로_전환해_V1부터_V8까지_만들고_재실행은_아무것도_바꾸지_않는다() throws Exception {
+  void 정상_실행은_owner로_전환해_모든_V_파일을_적용하고_재실행은_아무것도_바꾸지_않는다() throws Exception {
     String db = "hs_main";
     prepareDatabase(db);
     roleContract(db);
@@ -222,7 +231,7 @@ class MigrationRunnerIntegrationTest {
         .isEqualTo(OWNER);
     List<String> history = history(db);
     history.forEach(row -> report("history " + row));
-    assertThat(history).hasSize(8);
+    assertThat(history).hasSize(MIGRATION_VERSIONS.size());
     assertThat(history).allSatisfy(row -> assertThat(row).contains("|true|"));
     report(
         "history_acl="
@@ -298,7 +307,9 @@ class MigrationRunnerIntegrationTest {
         db, "missing_applied_4.1", historyRow("4.1", "test missing locally"), ": 4.1", before);
     admin(db, "DELETE FROM public.flyway_schema_history WHERE version = '4.1'");
 
-    for (String future : List.of("9", "99")) {
+    // 미래 버전: 이 이미지의 마지막 V 파일 다음 번호와 먼 번호(실제 V 파일과 겹치지 않게 폴더에서 구한다)
+    String next = String.valueOf(Integer.parseInt(MIGRATION_VERSIONS.getLast()) + 1);
+    for (String future : List.of(next, "9999")) {
       assertDriftRejected(
           db, "future_V" + future, historyRow(future, "test future"), ": " + future, before);
       admin(db, "DELETE FROM public.flyway_schema_history WHERE version = '" + future + "'");
@@ -525,7 +536,7 @@ class MigrationRunnerIntegrationTest {
     Cli first = cli(db, MIGRATION, PASSWORD, Map.of());
     report("cli normal exit=" + first.exit() + " " + first.summary());
     assertThat(first.exit()).isZero();
-    assertThat(history(db)).hasSize(8);
+    assertThat(history(db)).hasSize(MIGRATION_VERSIONS.size());
 
     Map<String, String> attack = new LinkedHashMap<>();
     attack.put("SPRING_DATASOURCE_URL", "jdbc:postgresql://hs-attacker:5432/x");
@@ -556,7 +567,7 @@ class MigrationRunnerIntegrationTest {
     Cli wrong = cli(db, MIGRATION, "wrong-" + PASSWORD.length(), Map.of());
     report("cli wrong_password exit=" + wrong.exit() + " " + wrong.summary());
     assertThat(wrong.exit()).isEqualTo(1);
-    assertThat(history(db)).hasSize(8);
+    assertThat(history(db)).hasSize(MIGRATION_VERSIONS.size());
 
     // 미래 버전: DB 이력에 이 이미지가 모르는 V99 → 종료 1, 이력·객체 그대로
     admin(db, historyRow("99", "test future"));
@@ -575,7 +586,8 @@ class MigrationRunnerIntegrationTest {
 
   @Test
   void 운영_프로필의_앱은_Flyway를_끄고_DB를_바꾸지_않는다() throws Exception {
-    for (String profiles : List.of("prod", "prod,test", "test,prod")) {
+    // prod와 local·test를 함께 켠 조합은 #216 ProfileGuard가 시작부터 막아 실제로 생기지 않는다(ProfileGuard 테스트 몫)
+    for (String profiles : List.of("prod")) {
       String db = "hs_app_" + profiles.replace(",", "_");
       admin(POSTGRES.getDatabaseName(), "CREATE DATABASE " + db);
       assertFlywayProfile(db, profiles, false);
@@ -586,7 +598,7 @@ class MigrationRunnerIntegrationTest {
   }
 
   @Test
-  void local과_test_프로필은_Flyway를_켜고_V1부터_V8까지_적용한다() throws Exception {
+  void local과_test_프로필은_Flyway를_켜고_모든_V_파일을_적용한다() throws Exception {
     for (String profiles : List.of("local", "test")) {
       String db = "hs_app_" + profiles;
       admin(POSTGRES.getDatabaseName(), "CREATE DATABASE " + db);
@@ -595,7 +607,7 @@ class MigrationRunnerIntegrationTest {
               list(
                   db,
                   "SELECT version FROM public.flyway_schema_history WHERE success AND version IS NOT NULL ORDER BY installed_rank"))
-          .containsExactly("1", "2", "3", "4", "5", "6", "7", "8");
+          .containsExactlyElementsOf(MIGRATION_VERSIONS);
     }
   }
 
@@ -622,7 +634,7 @@ class MigrationRunnerIntegrationTest {
 
   static void assertFlywayProfile(String db, String profiles, boolean enabled) {
     SsmTestParameterSource.setParameters(
-        appParameters(url(db), POSTGRES.getUsername(), POSTGRES.getPassword()));
+        prodParameters(db, POSTGRES.getUsername(), POSTGRES.getPassword()));
     try {
       SpringApplication application = new SpringApplication(FlywayOnlyConfiguration.class);
       application.setWebApplicationType(WebApplicationType.NONE);
@@ -647,23 +659,28 @@ class MigrationRunnerIntegrationTest {
     }
   }
 
-  static List<SsmConfigParameter> appParameters(String url, String username, String password) {
-    String prefix = "/homestamp/prod/app/";
-    return List.of(
-        new SsmConfigParameter(prefix + "spring.datasource.url", url, "String"),
-        new SsmConfigParameter(prefix + "spring.datasource.username", username, "SecureString"),
-        new SsmConfigParameter(prefix + "spring.datasource.password", password, "SecureString"),
-        new SsmConfigParameter(prefix + "app.keys.verify-code", "fake-verify-code", "SecureString"),
-        new SsmConfigParameter(
-            prefix + "app.keys.verify-ticket", "fake-verify-ticket", "SecureString"),
-        new SsmConfigParameter(prefix + "app.keys.phone-hmac", "fake-phone-hmac", "SecureString"),
-        new SsmConfigParameter(
-            prefix + "app.keys.access-token", "fake-access-token-long-enough-0001", "SecureString"),
-        new SsmConfigParameter(
-            prefix + "app.keys.refresh-token",
-            "fake-refresh-token-long-enough-0002",
-            "SecureString"),
-        new SsmConfigParameter(prefix + "app.origin", "https://homestamp.example", "String"));
+  /**
+   * #165의 운영 SSM 설정 12개(테스트 {@code config/application.yml}과 맞춘 값)에서 DB 접속만 이 DB로 바꾼다. 운영 주소 계약상
+   * {@code sslmode=verify-full}과 절대 경로 인증서가 있어야 시작한다. 테스트 DB는 TLS가 없으므로, 운영 앱이 실수로 Flyway를 켜고 붙으면
+   * 시작이 실패해 이 테스트가 깨진다(꺼져 있으면 연결하지 않는다).
+   */
+  static List<SsmConfigParameter> prodParameters(String db, String username, String password) {
+    String prefix = "/homestamp/prod/app/spring.datasource.";
+    Map<String, String> database =
+        Map.of(
+            prefix + "url",
+            url(db) + "?sslmode=verify-full&sslrootcert=" + SsmTestParameterSource.ROOT_CERT,
+            prefix + "username",
+            username,
+            prefix + "password",
+            password);
+    return SsmTestParameterSource.validParameters().stream()
+        .map(parameter ->
+            database.containsKey(parameter.name())
+                ? new SsmConfigParameter(
+                    parameter.name(), database.get(parameter.name()), parameter.type())
+                : parameter)
+        .toList();
   }
 
   @Configuration(proxyBeanMethods = false)
@@ -1180,6 +1197,29 @@ class MigrationRunnerIntegrationTest {
     @Override
     public String toString() {
       return "TestTls[" + rootCertificate + "]";
+    }
+  }
+
+  /** {@code db/migration}의 {@code V<버전>__*.sql}에서 버전만 숫자 순서로 모은다(Flyway installed_rank 순서와 같다). */
+  static List<String> migrationVersions() {
+    try {
+      Path dir = Path.of(MigrationRunnerIntegrationTest.class.getResource("/db/migration").toURI());
+      Pattern versioned = Pattern.compile("V([0-9]+)__.+\\.sql");
+      try (var files = Files.list(dir)) {
+        List<String> versions =
+            files
+                .map(file -> versioned.matcher(file.getFileName().toString()))
+                .filter(java.util.regex.Matcher::matches)
+                .map(matcher -> matcher.group(1))
+                .sorted(java.util.Comparator.comparingInt(Integer::parseInt))
+                .toList();
+        if (versions.isEmpty()) {
+          throw new IllegalStateException("db/migration에 V 파일이 없다");
+        }
+        return versions;
+      }
+    } catch (Exception exception) {
+      throw new IllegalStateException("db/migration 목록을 읽지 못했다", exception);
     }
   }
 }

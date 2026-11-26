@@ -10,9 +10,16 @@ import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
 /** Migration 설정 파일이 정해진 4개 파일만 받고 나머지는 모두 거절하는지(값은 메시지에 나오지 않는지) 본다. */
+// 운영 Migration은 Linux 컨테이너에서만 돈다. 설정 계약(sslrootcert는 POSIX 절대 경로, 파일 권한·심볼릭 링크·FIFO 거절)을
+// 그대로 시험하므로 Windows에서는 건너뛴다(CI는 Linux에서 모두 돈다, #173 리뷰)
+@EnabledOnOs(
+    value = {OS.LINUX, OS.MAC},
+    disabledReason = "운영 Migration 설정은 POSIX 경로·권한 계약이다(Linux 컨테이너 전용)")
 class MigrationSettingsTest {
 
   static final String FAKE_PASSWORD = "MIGRATION-TEST-FAKE-PASSWORD";
