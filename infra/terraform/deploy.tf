@@ -43,7 +43,8 @@ resource "aws_ssm_document" "deploy" {
         StringEquals = ["platformType", "Linux"]
       }
       inputs = {
-        timeoutSeconds = "900"
+        # deploy.sh 상한: --migrate 900 + --apply-grants 300 + 헬스 120 = 1320초에 이미지 받기·멈춤·전환·되돌리기를 더한 여유(#205)
+        timeoutSeconds = "2400"
         runCommand     = split("\n", trimspace(templatefile("${path.module}/ssm/deploy-command.sh.tftpl", { expected_sha256 = var.deploy_script_sha256 })))
       }
     }]

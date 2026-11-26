@@ -49,7 +49,8 @@ jobs:
     needs: preflight
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # 결과 기다림 2700초(문서 실행 2400 + 전달 60 + 여유) + 앞 단계. OIDC 세션(3600초) 안에서 끝난다
+    timeout-minutes: 50
     environment: production
     permissions:
       contents: read
@@ -88,6 +89,7 @@ jobs:
           role-session-name: homestamp-deploy-${{ github.run_id }}
           aws-region: ap-northeast-2
           mask-aws-account-id: true
+          role-duration-seconds: 3600
 
       - name: 배포(SSM → deploy.sh)
         env:
