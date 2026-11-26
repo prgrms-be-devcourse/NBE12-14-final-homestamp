@@ -21,6 +21,9 @@ import java.util.UUID;
  */
 public interface InviteLinks {
 
+  /** 초대 링크가 이미 무효인지 확인한다. 초대가 아닌 링크 ID나 없는 ID는 {@code false}. */
+  boolean isInvalidatedInvite(UUID linkId);
+
   /**
    * 초대 링크를 만들고 ID를 돌려준다. 같은 호실·같은 받는 자리·같은 기록에 아직 유효한 초대 링크가 있으면 새로 만들지 않고 그 ID를 돌려준다(같은 번호로 다시
    * 보내기는 같은 링크, #163).

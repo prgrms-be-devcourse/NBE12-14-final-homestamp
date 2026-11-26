@@ -8,6 +8,13 @@ export const CONNECTED_APIS: readonly {
   method: "GET" | "POST"
   path: RegExp
 }[] = [
+  // 수리 건 상세와 그 버튼(06 4-6, REP-2~5·8, #179). 하자 등록·사진 추가는 부위(A)·업로드 표(C) 연결 뒤에 더해요
+  { method: "GET", path: /^\/api\/repair-cases\/[^/]+$/ },
+  {
+    method: "POST",
+    path: /^\/api\/repair-cases\/[^/]+\/(respond|supplement|start|request-close|confirm-close|not-yet|close-alone|cause-notes)$/,
+  },
+  { method: "POST", path: /^\/api\/cause-notes\/[^/]+\/respond$/ },
   // 호실 만들기·내 호실 목록·호실 상세(06 4-3, ROOM-1·2, #232)
   { method: "POST", path: /^\/api\/rooms$/ },
   { method: "GET", path: /^\/api\/rooms$/ },
