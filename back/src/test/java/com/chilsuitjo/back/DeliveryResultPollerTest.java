@@ -904,6 +904,14 @@ class DeliveryResultPollerTest {
     assertThat(column(id, "status")).isEqualTo("SENT");
     assertThat(time(id, "delivered_at")).isNull();
     assertThat(requestTime(request, "first_notified_at")).isNull();
+
+    // 가져갈 때 옮겨 둔 다음 조회 시각(보호 시간 뒤, 전달 확인 기한 전)에 다시 가져가 이번에는 함께 적는다
+    Instant nextPoll = time(id, "next_poll_at");
+    assertThat(nextPoll).isAfter(FIRST_POLL).isBefore(DEADLINE);
+    poller(nextPoll, nextPoll, fake).runOnce(50);
+
+    assertThat(column(id, "status")).isEqualTo("DELIVERED");
+    assertThat(requestTime(request, "first_notified_at")).isEqualTo(time(id, "delivered_at"));
   }
 
   @Test
