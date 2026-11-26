@@ -3,8 +3,8 @@ package com.chilsuitjo.back.repair.rule;
 import java.time.Instant;
 
 /**
- * 수리 건의 [상황이 바뀌었어요] 확인 요청 값(06 REP-6d). 한 건에 {@code rerequest.interval}에 한 번이고, 보충과는 따로
- * 센다(decisions 2026-11-26).
+ * 수리 건의 [상황이 바뀌었어요] 확인 요청 값(06 REP-6d). 한 건에 다시 요청끼리 {@code rerequest.interval}에 한 번이고, 보충({@code
+ * RepairState.lastRerequestAt})과 함께 센다(03 G "다시 확인 요청의 한도", decisions 2026-11-26).
  *
  * @param lastAskedAt 마지막으로 [상황이 바뀌었어요]를 켜서 진행 상황을 남긴 시각(행동 기록 {@code NOTE_PROGRESS}의 payload {@code
  *     asksCheck}가 원본, 누가 남겼든). 없으면 null

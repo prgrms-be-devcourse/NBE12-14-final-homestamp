@@ -332,9 +332,11 @@ public class RepairTransitions implements Transitions<RepairState> {
    *
    * <p>[상황이 바뀌었어요]를 켜면(payload {@code asksCheck}, REP-6d) 상대에게 확인을 요청한다. 검사 순서: 행동하는 사람이 공유를 그만뒀으면
    * {@code SHARING_STOPPED}(진행 상황만은 남길 수 있지만 요청은 열지 않음, 03 B) → 하자를 둘 다 확인한 건(맞아요)이 아니거나 지금 요청을 열 수
-   * 없으면(거주 종료 뒤, 상대가 공유를 그만둬 이 기록이 보이지 않음) {@code INVALID_STATE} → 한 건에 [상황이 바뀌었어요]끼리 {@code
-   * rerequest.interval}에 한 번(누가 켰든, 보충과 따로, decisions 2026-11-26) {@code ASKED_RECENTLY}. 하자 인정은
-   * 그대로다(REP-6d "하자 [맞아요]는 그대로"). 재계산이라 열 수 있는지 모르면 그때 서버가 확인했다고 본다.
+   * 없으면(거주 종료 뒤, 상대가 공유를 그만둬 이 기록이 보이지 않음) {@code INVALID_STATE} → 한 건에 다시 요청끼리 {@code
+   * rerequest.interval}에 한 번(누가 켰든) {@code ASKED_RECENTLY}. 다시 요청끼리는 [보충하고 다시 확인 요청]과 [상황이 바뀌었어요]를
+   * 함께 센다(03 G "다시 확인 요청의 한도", 06 0-1 {@code rerequest.interval}, #259 리뷰): 보충하고 7일 안에 상대가 맞아요로 답해도
+   * 그 7일이 지나야 켠다. 반대 방향(켠 뒤 보충)은 맞아요가 끝이라 생기지 않아 보충 쪽({@code AnswerSupport.rerequest})은 그대로다. 하자
+   * 인정은 그대로다(REP-6d "하자 [맞아요]는 그대로"). 재계산이라 열 수 있는지 모르면 그때 서버가 확인했다고 본다.
    */
   private RepairState noteProgress(RepairState now, ActionEntry action) {
     requireVisible(now, action);
@@ -349,8 +351,17 @@ public class RepairTransitions implements Transitions<RepairState> {
     if (now.defectAck() != AckState.ACK || check.opening() == SituationOpening.BLOCKED) {
       throw new BusinessException(ErrorCode.INVALID_STATE);
     }
-    AnswerSupport.checkInterval(check.lastAskedAt(), action.createdAt(), rerequestInterval);
+    AnswerSupport.checkInterval(
+        latest(check.lastAskedAt(), now.lastRerequestAt()), action.createdAt(), rerequestInterval);
     return now.withSituationCheck(new SituationCheck(action.createdAt(), check.opening()));
+  }
+
+  /** 두 시각 중 늦은 것. 둘 다 없으면 null. */
+  private static Instant latest(Instant a, Instant b) {
+    if (a == null) {
+      return b;
+    }
+    return b == null || a.isAfter(b) ? a : b;
   }
 
   /**

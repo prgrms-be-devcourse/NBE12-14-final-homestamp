@@ -840,16 +840,21 @@ class RepairTransitionsTest {
   }
 
   @Test
-  void 보충한_시각은_상황이_바뀌었어요의_7일에_세지_않는다() {
+  void 보충과_상황이_바뀌었어요는_다시_요청끼리_함께_7일을_센다() {
+    // 03 G "다시 확인 요청의 한도", 06 0-1 rerequest.interval(#259 리뷰): 보충하고 7일 안에 맞아요가 와도 그 7일이 지나야 켠다
     RepairState supplemented =
         situation(AckState.ACK, null, SituationOpening.OPEN).withLastRerequestAt(NOW);
 
+    assertError(
+        ErrorCode.ASKED_RECENTLY,
+        () -> rules.apply(supplemented, asksCheck(PartySide.TENANT, NOW.plus(Duration.ofDays(6)))));
+    Instant later = NOW.plus(INTERVAL);
     assertThat(
             rules
-                .apply(supplemented, asksCheck(PartySide.TENANT, NOW))
+                .apply(supplemented, asksCheck(PartySide.TENANT, later))
                 .situationCheck()
                 .lastAskedAt())
-        .isEqualTo(NOW);
+        .isEqualTo(later);
   }
 
   @Test

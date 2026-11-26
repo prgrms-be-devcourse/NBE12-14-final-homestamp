@@ -98,6 +98,25 @@ class RepairSituationApiTest {
   }
 
   @Test
+  void 보충하고_7일_안에_맞아요가_와도_다시_요청끼리라_ASKED_RECENTLY() throws Exception {
+    // 03 G "다시 확인 요청의 한도", 06 0-1 rerequest.interval: 보충과 [상황이 바뀌었어요]를 함께 센다(#259 리뷰)
+    UUID caseId = register();
+    act(
+            caseId,
+            landlord,
+            "respond",
+            "{\"answer\":\"NEED_MORE\",\"reason\":\"사진이 흐려요\",\"seenVersionNo\":1}")
+        .andExpect(status().isOk());
+    act(caseId, tenant, "supplement", "{\"description\":\"밝게 다시 찍었어요\"}")
+        .andExpect(status().isOk());
+    act(caseId, landlord, "respond", "{\"answer\":\"ACK\",\"seenVersionNo\":1}")
+        .andExpect(status().isOk());
+
+    asksCheck(caseId, tenant).andExpect(jsonPath("$.code").value("ASKED_RECENTLY"));
+    assertThat(noteCount(caseId)).isZero();
+  }
+
+  @Test
   void 누가_켰든_한_건에_7일에_한_번이고_켜지_않은_진행_상황은_그대로_남는다() throws Exception {
     UUID caseId = acked();
     asksCheck(caseId, tenant).andExpect(status().isCreated());
