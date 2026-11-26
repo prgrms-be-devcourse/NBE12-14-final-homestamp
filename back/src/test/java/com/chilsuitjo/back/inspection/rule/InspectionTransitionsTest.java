@@ -24,7 +24,7 @@ class InspectionTransitionsTest {
   private static final Duration STALE = Duration.ofDays(7);
 
   private final InspectionTransitions rules = new InspectionTransitions(STALE);
-  private final InspectionItemTransitions itemRules = new InspectionItemTransitions();
+  private final InspectionItemTransitions itemRules = new InspectionItemTransitions(STALE);
 
   // ---- 점검 시작 ----
 
@@ -242,7 +242,14 @@ class InspectionTransitionsTest {
   void 이미_있는_항목에는_다시_더할_수_없다() {
     InspectionItemState existing =
         new InspectionItemState(
-            InspectionStatus.DRAFT, PartySide.TENANT, AckState.PENDING, PartySide.TENANT, 1);
+            InspectionStatus.DRAFT,
+            PartySide.TENANT,
+            AckState.PENDING,
+            PartySide.TENANT,
+            1,
+            null,
+            null,
+            null);
 
     assertThatThrownBy(
             () -> itemRules.apply(existing, entry(ActionType.ADD_ITEM, PartySide.TENANT, Map.of())))
