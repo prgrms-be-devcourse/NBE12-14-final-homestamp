@@ -5,9 +5,11 @@ import com.chilsuitjo.back.action.dto.ActionTarget;
 import com.chilsuitjo.back.action.dto.Actor;
 import com.chilsuitjo.back.action.dto.RoomGate;
 import com.chilsuitjo.back.action.rule.ActionType;
+import com.chilsuitjo.back.action.rule.AnswerPayload;
 import com.chilsuitjo.back.action.rule.Replay;
 import com.chilsuitjo.back.action.rule.RoomGateReader;
 import com.chilsuitjo.back.action.service.ActionReader;
+import com.chilsuitjo.back.global.common.AckState;
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
@@ -16,19 +18,28 @@ import com.chilsuitjo.back.photo.dto.PhotoTarget;
 import com.chilsuitjo.back.photo.rule.PhotoTargetType;
 import com.chilsuitjo.back.photo.service.PhotoService;
 import com.chilsuitjo.back.repair.dto.RepairCaseDetail;
+import com.chilsuitjo.back.repair.entity.CauseNote;
 import com.chilsuitjo.back.repair.entity.RepairCase;
 import com.chilsuitjo.back.repair.entity.RepairContent;
+import com.chilsuitjo.back.repair.repository.CauseNoteRepository;
+import com.chilsuitjo.back.repair.repository.CauseNoteStateStore;
 import com.chilsuitjo.back.repair.repository.RepairCaseRepository;
 import com.chilsuitjo.back.repair.repository.RepairContentRepository;
 import com.chilsuitjo.back.repair.repository.RepairStateStore;
+import com.chilsuitjo.back.repair.rule.CauseNoteTransitions;
 import com.chilsuitjo.back.repair.rule.RepairState;
 import com.chilsuitjo.back.repair.rule.RepairTransitions;
+import com.chilsuitjo.back.room.dto.RoomAccess;
 import com.chilsuitjo.back.room.service.RoomAccessService;
 import com.chilsuitjo.back.room.service.RoomQueryService;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -47,7 +58,18 @@ public class RepairQueryService {
    * RepairTransitions.available}이 정한다.
    */
   private static final Map<ActionType, String> ACTION_NAMES =
-      Map.of(ActionType.RESPOND_DEFECT, "respond", ActionType.SUPPLEMENT, "supplement");
+      Map.of(
+          ActionType.RESPOND_DEFECT, "respond",
+          ActionType.SUPPLEMENT, "supplement",
+          ActionType.START_REPAIR, "start",
+          ActionType.REQUEST_CLOSE, "request-close",
+          ActionType.CONFIRM_CLOSE, "confirm-close",
+          ActionType.NOT_YET, "not-yet",
+          ActionType.ASK_PROGRESS, "ask-progress",
+          ActionType.NOTE_PROGRESS, "progress-notes");
+
+  /** 원인 설명 남기기·고치기의 {@code availableActions} 이름(06 4-6 {@code cause-notes}). */
+  static final String CAUSE_NOTES = "cause-notes";
 
   private final RepairCaseRepository cases;
   private final RepairContentRepository contents;
@@ -58,6 +80,9 @@ public class RepairQueryService {
   private final ActionReader actionReader;
   private final PhotoService photos;
   private final RoomAccessService access;
+  private final CauseNoteRepository causeNoteRows;
+  private final CauseNoteStateStore causeStore;
+  private final CauseNoteTransitions causeRules;
   private final Clock clock;
 
   /**
@@ -100,19 +125,25 @@ public class RepairQueryService {
             .orElseThrow(() -> new IllegalStateException("보이는 판이 없어요: " + row.getId()));
     String partName = rooms.findPart(roomRecordId, content.getRoomPartId()).name();
     List<String> actions =
-        rules.available(state, gate.side(), clock.instant()).stream()
-            .filter(type -> gate.rejection(type).isEmpty())
-            .map(ACTION_NAMES::get)
-            .toList();
+        new ArrayList<>(
+            rules.available(state, gate.side(), clock.instant()).stream()
+                .filter(type -> gate.rejection(type).isEmpty())
+                .map(ACTION_NAMES::get)
+                .toList());
+    // 원인 설명은 수리 진행과 따로라 상태와 상관없이 남기고 고친다(03 D-2). 호실 단위 거절만 본다
+    if (gate.side() != null && gate.rejection(ActionType.NOTE_CAUSE).isEmpty()) {
+      actions.add(CAUSE_NOTES);
+    }
+    RoomAccess viewer = access.require(roomRecordId, memberId);
     PhotoTarget photoTarget = new PhotoTarget.Ref(PhotoTargetType.REPAIR_CASE, row.getId());
-    List<PhotoCard> photoCards =
-        photos.cards(access.require(roomRecordId, memberId), List.of(photoTarget)).get(photoTarget);
+    List<PhotoCard> photoCards = photos.cards(viewer, List.of(photoTarget)).get(photoTarget);
     return new RepairCaseDetail(
         row.getId(),
         roomRecordId,
         gate.side(),
         row.getCreatedBySide(),
         shown.status(),
+        shown.closeRequestedBy(),
         row.isSolo(),
         row.getCreatedAt(),
         asOf,
@@ -125,7 +156,84 @@ public class RepairQueryService {
         new RepairCaseDetail.Defect(shown.defectAck(), rules.nextRerequestAt(shown)),
         new RepairCaseDetail.Money(shown.moneyStatus()),
         photoCards,
-        actions);
+        causeNotesOf(row, gate, viewer),
+        List.copyOf(actions));
+  }
+
+  /**
+   * 원인 설명(06 REP-8). 측마다 지금 설명(보이는 것 중 다음 수정본이 없는 것) 하나를 남긴 순서로 주고, 고치기 전 설명은 {@code previous}에
+   * 새것부터 접는다(REP-8c). 공유를 그만둔 뒤에는 그 시각까지의 설명·응답과 보는 사람 자신의 것만 보인다(03 6-6 9번, 불변식 18). 응답 버튼({@code
+   * canRespond})은 실제 요청과 같은 판단이다: 호실 단위 거절은 {@code RoomGate.rejection}, 설명 규칙은 {@code
+   * CauseNoteTransitions.canRespond}(지금 설명인지는 보이는 범위가 아니라 실제 기록으로 본다).
+   */
+  private List<RepairCaseDetail.CauseNote> causeNotesOf(
+      RepairCase row, RoomGate gate, RoomAccess viewer) {
+    CauseNoteStateStore.Visibility visibility = causeStore.visibilityFor(row, gate.side());
+    List<CauseNote> visible =
+        causeNoteRows.findByRepairCaseIdOrderByCreatedAtAscIdAsc(row.getId()).stream()
+            .filter(note -> visibility.sees(note.getSide(), note.getCreatedAt()))
+            .toList();
+    if (visible.isEmpty()) {
+      return List.of();
+    }
+    Map<UUID, CauseNote> byId = new HashMap<>();
+    Set<UUID> replaced = new HashSet<>();
+    List<PhotoTarget> targets = new ArrayList<>();
+    for (CauseNote note : visible) {
+      byId.put(note.getId(), note);
+      if (note.getPreviousId() != null) {
+        replaced.add(note.getPreviousId());
+      }
+      targets.add(new PhotoTarget.Ref(PhotoTargetType.CAUSE_NOTE, note.getId()));
+    }
+    Map<PhotoTarget, List<PhotoCard>> cards = photos.cards(viewer, targets);
+    boolean canAnswer = gate.side() != null && gate.rejection(ActionType.RESPOND_CAUSE).isEmpty();
+    List<RepairCaseDetail.CauseNote> result = new ArrayList<>();
+    for (CauseNote note : visible) {
+      if (replaced.contains(note.getId())) {
+        continue;
+      }
+      List<RepairCaseDetail.CauseNote> previous = new ArrayList<>();
+      for (CauseNote before = byId.get(note.getPreviousId());
+          before != null;
+          before = byId.get(before.getPreviousId())) {
+        previous.add(causeNoteView(before, visibility, cards, false, List.of()));
+      }
+      boolean canRespond =
+          canAnswer && causeRules.canRespond(causeStore.responseState(note), gate.side());
+      result.add(causeNoteView(note, visibility, cards, canRespond, previous));
+    }
+    return List.copyOf(result);
+  }
+
+  private RepairCaseDetail.CauseNote causeNoteView(
+      CauseNote note,
+      CauseNoteStateStore.Visibility visibility,
+      Map<PhotoTarget, List<PhotoCard>> cards,
+      boolean canRespond,
+      List<RepairCaseDetail.CauseNote> previous) {
+    RepairCaseDetail.CauseResponse response =
+        causeStore
+            .lastResponse(note.getId(), visibility)
+            .map(entry ->
+                new RepairCaseDetail.CauseResponse(
+                    AckState.valueOf(entry.payloadAs(AnswerPayload.class).answer().name()),
+                    entry.reason(),
+                    entry.createdAt()))
+            .orElse(null);
+    return new RepairCaseDetail.CauseNote(
+        note.getId(),
+        note.getSide(),
+        note.getText(),
+        note.getBasis(),
+        note.getExpertName(),
+        note.getPreviousId(),
+        note.getCreatedAt(),
+        response,
+        cards.getOrDefault(
+            new PhotoTarget.Ref(PhotoTargetType.CAUSE_NOTE, note.getId()), List.of()),
+        canRespond,
+        List.copyOf(previous));
   }
 
   /**

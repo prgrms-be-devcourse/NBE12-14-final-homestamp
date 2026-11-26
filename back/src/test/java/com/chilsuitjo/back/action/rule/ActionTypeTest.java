@@ -100,9 +100,9 @@ class ActionTypeTest {
   }
 
   @Test
-  void 거주가_끝난_호실에서_막히는_행동은_하자_등록뿐이다() {
+  void 거주가_끝난_호실에서_막히는_행동은_하자_등록과_수리_시작뿐이다() {
     assertThat(Arrays.stream(ActionType.values()).filter(ActionType::blockedAfterEnded))
-        .containsExactly(ActionType.REGISTER);
+        .containsExactly(ActionType.REGISTER, ActionType.START_REPAIR);
   }
 
   private static List<ActionType> allowed(Allow allow) {

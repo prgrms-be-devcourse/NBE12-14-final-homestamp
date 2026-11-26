@@ -187,12 +187,13 @@ export default function App() {
         key={account?.id ?? "guest"}
         account={account}
         onRequireAuth={() => setAuthOpen(true)}
-        onLogout={() => {
-          void auth.logout().finally(() => {
+        // 로그아웃이 서버에서 끝났을 때만 로그인 화면으로 가요. 실패하면 오류를 내 계정 창에 알리고 로그인 상태를 지켜요
+        onLogout={() =>
+          auth.logout().then(() => {
             replaceUrl(null, "", "/")
             setAccount(null)
           })
-        }}
+        }
       />
     </ApiProvider>
   )
@@ -205,7 +206,7 @@ function HomeStampApp({
 }: {
   account: Account | null
   onRequireAuth: () => void
-  onLogout: () => void
+  onLogout: () => Promise<void>
 }) {
   const query = new URLSearchParams(window.location.search)
   const accountId = account?.id
@@ -764,10 +765,7 @@ function HomeStampApp({
           roomCount={accessibleRooms.length}
           invitationCount={receivedInvitations.length}
           onCancel={closeModal}
-          onLogout={() => {
-            setModal(null)
-            onLogout()
-          }}
+          onLogout={onLogout}
         />
       )}
       {modal === "room" && account && (
