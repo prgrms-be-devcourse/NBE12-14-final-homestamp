@@ -5,6 +5,7 @@ import com.chilsuitjo.back.action.rule.AnswerPayload;
 import com.chilsuitjo.back.action.rule.AnswerSupport;
 import com.chilsuitjo.back.action.rule.Transitions;
 import com.chilsuitjo.back.global.common.AckState;
+import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import org.springframework.stereotype.Component;
@@ -18,13 +19,31 @@ import org.springframework.stereotype.Component;
  *       {@code VERSION_CONFLICT} → 같은 값이면 {@code SAME_VALUE} → 도장 뒤인데 사유가 없으면 {@code
  *       REASON_REQUIRED}
  *   <li>응답({@code RESPOND_CORRECTION}): 고친 측의 반대 측 → 같은 칸을 다시 고쳐 대신된 내용이면 {@code
- *       VERSION_CONFLICT}(REP-7j) → 처리 완료로 닫혔으면 {@code CLOSED_BY_BOTH}(REP-7l) → 거뒀거나 그 밖에 닫혔으면
- *       {@code INVALID_STATE} → 그 뒤는 {@code AnswerSupport.answer}(본 번호, 맞아요는 끝, 보류·이견에서는 맞아요로만, 사유)
+ *       VERSION_CONFLICT}(REP-7j) → 처리 완료로 닫혔거나 기록이 처리 완료(양측)면 {@code CLOSED_BY_BOTH}(REP-7k·7l,
+ *       보류·이견도 맞아요로 못 바꿈) → 거뒀거나 그 밖에 닫혔으면 {@code INVALID_STATE} → 그 뒤는 {@code
+ *       AnswerSupport.answer}(본 번호, 맞아요는 끝, 보류·이견에서는 맞아요로만, 사유)
  *   <li>거두기({@code WITHDRAW_CORRECTION}): 고친 측 → 기다리는 고친 내용만({@code INVALID_STATE})
  * </ul>
  */
 @Component
 public class CorrectionTransitions implements Transitions<CorrectionState> {
+
+  /**
+   * 화면의 응답 버튼(06 4-0 "할 수 있는 행동"). {@link #apply}의 응답 순서와 같다: 고친 측의 반대 측이고, 기다림·미확인이거나 보류·이견(맞아요로
+   * 바꾸기)일 때. 호실 단위 거절은 부르는 쪽이 {@code RoomGate.rejection}으로 본다.
+   */
+  public static boolean canRespond(CorrectionStatus status, PartySide owner, PartySide side) {
+    return side != null
+        && side != owner
+        && (status == CorrectionStatus.WAITING
+            || status == CorrectionStatus.UNCONFIRMED
+            || status == CorrectionStatus.REJECTED);
+  }
+
+  /** 화면의 거두기 버튼. {@link #apply}의 거두기와 같다: 고친 측이고 기다리는 고친 내용일 때. */
+  public static boolean canWithdraw(CorrectionStatus status, PartySide owner, PartySide side) {
+    return side != null && side == owner && status == CorrectionStatus.WAITING;
+  }
 
   @Override
   public CorrectionState initial() {
@@ -73,7 +92,12 @@ public class CorrectionTransitions implements Transitions<CorrectionState> {
           throw new BusinessException(
               now.closedByBoth() ? ErrorCode.CLOSED_BY_BOTH : ErrorCode.INVALID_STATE);
       case WITHDRAWN -> throw new BusinessException(ErrorCode.INVALID_STATE);
-      default -> {}
+      default -> {
+        // 처리 완료(양측)된 기록: 보류·이견이던 것도 맞아요로 바꾸지 못한다(REP-7k, #287 리뷰)
+        if (now.closedByBoth()) {
+          throw new BusinessException(ErrorCode.CLOSED_BY_BOTH);
+        }
+      }
     }
     AckState next =
         AnswerSupport.answer(

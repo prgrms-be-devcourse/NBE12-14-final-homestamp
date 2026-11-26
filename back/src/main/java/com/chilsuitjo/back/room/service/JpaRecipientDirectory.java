@@ -33,31 +33,10 @@ public class JpaRecipientDirectory implements RecipientDirectory {
   private final PartyRepository parties;
   private final MemberQueryService members;
 
-  /** 자리의 초대 번호(상태와 상관없이 칸 값). 지워졌으면 빈 값. 없는 자리도 빈 값이다(옛 계약 그대로, 지울 메서드). */
-  @Override
-  public Optional<String> phoneOfParty(UUID partyId) {
-    return parties.findById(partyId).flatMap(Party::invitePhoneForSending);
-  }
-
   /** 회원의 인증 번호. 탈퇴했거나 인증이 풀렸으면 빈 값. */
   @Override
   public Optional<String> phoneOfMember(UUID memberId) {
     return members.verifiedPhone(memberId);
-  }
-
-  /**
-   * 지금 문자를 보낼 번호. {@link #resolve}와 같은 판단이라 연결된 회원(인증 번호 있음)과 초대 자리(초대 번호 있음)만 번호가 있고, 그 밖은 빈
-   * 값이다(번호만 있는 자리·거절·탈퇴 등은 #100 합의대로 받을 사람이 없음).
-   */
-  @Override
-  public Optional<String> phoneOfRecipient(UUID partyId) {
-    return switch (resolve(partyId)) {
-      case Recipient.VerifiedMember member -> Optional.of(member.phone());
-      case Recipient.Invitee invitee -> Optional.of(invitee.phone());
-      case Recipient.UnverifiedMember ignored -> Optional.empty();
-      case Recipient.InviteeWithoutPhone ignored -> Optional.empty();
-      case Recipient.Unavailable ignored -> Optional.empty();
-    };
   }
 
   /**

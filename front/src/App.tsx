@@ -20,6 +20,7 @@ import {
   type RecordTarget,
 } from "@/data/demo"
 import { useRouter, type Page } from "@/lib/router"
+import { roomOptions } from "@/lib/room-options"
 import { LoadingState, NotFoundState } from "@/components/common/states"
 import { NotificationsPage } from "@/pages/notifications-page"
 import { RepairDetailPage } from "@/pages/repair-detail-page"
@@ -912,9 +913,10 @@ function HomeStampApp({
       serverOnly={!isGuest && serverOnlyRepair}
     />
   )
-  const roomNames = accessibleRooms.map((r) => r.name)
-  const selectRoomByName = (v: string) => {
-    const found = db.rooms.find((r) => r.name === v)
+  // 호실 이름은 겹칠 수 있어서 ID로 골라요
+  const roomChoices = roomOptions(accessibleRooms)
+  const selectRoom = (id: string) => {
+    const found = db.rooms.find((r) => r.id === id)
     if (!found) return
     setRoomId(found.id)
     go(pageAfterRoomChange(page))
@@ -935,10 +937,10 @@ function HomeStampApp({
       openCount={openCount}
       invitations={receivedInvitations.length}
       room={hasRoomAccess ? room : undefined}
-      roomNames={roomNames}
+      roomOptions={roomChoices}
       account={account}
       roleText={sideText(role)}
-      onRoom={selectRoomByName}
+      onRoom={selectRoom}
       onGo={(p) => go(p)}
       onAccount={() => open("account")}
     />
@@ -971,12 +973,13 @@ function HomeStampApp({
           <aside className="sidebar">{sideMenu}</aside>
           <div className="main-shell">
             <AppTopbar
+              roomId={hasRoomAccess ? room.id : undefined}
               roomName={hasRoomAccess ? room.name : undefined}
-              roomNames={roomNames}
+              roomOptions={roomChoices}
               invitations={receivedInvitations.length}
               unread={unread}
               accountInitial={account?.name.slice(0, 1) || "나"}
-              onRoom={selectRoomByName}
+              onRoom={selectRoom}
               onInvitations={() => go("connection")}
               onNotifications={() => go("notifications")}
               onAccount={() => open("account")}
