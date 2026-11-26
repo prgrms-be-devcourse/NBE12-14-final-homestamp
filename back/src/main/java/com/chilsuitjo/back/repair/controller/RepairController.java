@@ -124,8 +124,8 @@ public class RepairController {
   }
 
   /**
-   * 종료 확인(REP-5a). 요청의 상대 측만. {@code alsoAckDefect}면 하자 인정이 확인 기다림일 때 하자 맞아요까지 한 요청에 남긴다(REP-3a).
-   * 본문은 없어도 된다.
+   * 종료 확인(REP-5a·5f). 요청의 상대 측만(혼자 끝낸 건이면 혼자 끝낸 측의 상대가 늦게 확인). {@code alsoAckDefect}면 하자 인정이 확인
+   * 기다림일 때 하자 맞아요까지 한 요청에 남긴다(REP-3a). 본문은 없어도 된다.
    */
   @PostMapping("/api/repair-cases/{id}/confirm-close")
   public ResponseEntity<RepairProgressResponse> confirmClose(
@@ -136,7 +136,22 @@ public class RepairController {
     return progressed(repairs.confirmClose(id, memberId, idempotencyKey, request));
   }
 
-  /** 아직 안 됐어요(REP-5b). 요청의 상대 측만, 사유 필수. 처리 중으로 돌아간다. */
+  /**
+   * 혼자 종료(REP-5e). 누구든, 처리 중이고 물을 상대가 처음부터 없을 때만(상대 없음·KEEP-4 뒤 상대 탈퇴). 종료 요청 없이 처리 완료(○○ 확인)가 된다.
+   * 처음 성공과 다시 온 요청 모두 200이다.
+   */
+  @PostMapping("/api/repair-cases/{id}/close-alone")
+  public ResponseEntity<RepairProgressResponse> closeAlone(
+      @PathVariable UUID id,
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey) {
+    return progressed(repairs.closeAlone(id, memberId, idempotencyKey));
+  }
+
+  /**
+   * 아직 안 됐어요(REP-5b·5f). 종료 요청의 상대 측, 혼자 끝낸 건이면 혼자 끝낸 측의 상대만, 사유 필수. 종료 확인 대기면 처리 중으로 돌아가고, 혼자 끝낸
+   * 건이면 상태는 그대로 이견으로 남는다.
+   */
   @PostMapping("/api/repair-cases/{id}/not-yet")
   public ResponseEntity<RepairProgressResponse> notYet(
       @PathVariable UUID id,
