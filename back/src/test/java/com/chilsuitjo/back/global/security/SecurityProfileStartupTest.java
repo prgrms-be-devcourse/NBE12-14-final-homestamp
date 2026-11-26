@@ -3,13 +3,14 @@ package com.chilsuitjo.back.global.security;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.chilsuitjo.back.global.config.ClockConfig;
+import com.chilsuitjo.back.global.config.ssm.ResetSsmTestParameterSource;
 import com.chilsuitjo.back.global.config.ssm.SsmConfigParameter;
 import com.chilsuitjo.back.global.config.ssm.SsmParameterSource;
 import com.chilsuitjo.back.global.config.ssm.SsmTestParameterSource;
 import java.util.ArrayList;
 import java.util.List;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.boot.bootstrap.DefaultBootstrapContext;
 import org.springframework.boot.context.config.ConfigDataEnvironmentPostProcessor;
 import org.springframework.boot.convert.ApplicationConversionService;
@@ -27,6 +28,7 @@ import org.springframework.web.servlet.config.annotation.EnableWebMvc;
  * 프로필마다 토큰 검증기가 켜지는지, {@code prod}가 키 없이 시작을 거부하는지 본다. DB 없이 보안 설정만 띄우고, 설정 파일({@code
  * application.yml})을 실제로 읽어 프로필별 키가 맞게 들어가는지까지 본다.
  */
+@ExtendWith(ResetSsmTestParameterSource.class)
 class SecurityProfileStartupTest {
 
   /**
@@ -39,11 +41,6 @@ class SecurityProfileStartupTest {
           .withInitializer(context ->
               context.getBeanFactory().setConversionService(new ApplicationConversionService()))
           .withUserConfiguration(보안만.class);
-
-  @AfterEach
-  void resetSsmSource() {
-    SsmTestParameterSource.reset();
-  }
 
   @Test
   void prod는_SSM_필수_설정이_없으면_시작하지_않는다() {
