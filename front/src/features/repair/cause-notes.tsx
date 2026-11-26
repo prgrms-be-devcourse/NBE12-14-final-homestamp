@@ -141,6 +141,8 @@ export function CauseNotes({
         company,
         source,
         photos: [...photos],
+        // 고치면 내 지금 설명을 가리켜요(서버는 지금 설명과 다르면 거절)
+        previousId: mine?.id,
       }),
     )
   }

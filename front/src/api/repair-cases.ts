@@ -33,6 +33,8 @@ export interface NewCauseNote {
   company?: string
   source?: string
   photos: string[]
+  // 고칠 때는 내 지금 설명 ID(06 4-6 `previousId`). 처음 남기면 비워요
+  previousId?: string
 }
 
 export interface RepairCasesApi {
@@ -87,7 +89,8 @@ export interface RepairCasesApi {
   confirmClose(
     s: Session,
     id: string,
-    body?: { alsoAckDefect?: boolean },
+    // alsoAckDefect면 본 판 번호(seenVersionNo, 상세 content.no)도 함께 보내요(하자 응답과 같음)
+    body?: { alsoAckDefect?: boolean; seenVersionNo?: number },
   ): Promise<RepairCaseView>
   // POST /not-yet {reason}
   notYet(
