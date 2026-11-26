@@ -10,7 +10,6 @@ import com.chilsuitjo.back.action.rule.Replay;
 import com.chilsuitjo.back.action.rule.RoomGateReader;
 import com.chilsuitjo.back.action.service.ActionReader;
 import com.chilsuitjo.back.global.common.AckState;
-import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.photo.dto.PhotoCard;
@@ -27,6 +26,7 @@ import com.chilsuitjo.back.repair.repository.RepairCaseRepository;
 import com.chilsuitjo.back.repair.repository.RepairContentRepository;
 import com.chilsuitjo.back.repair.repository.RepairStateStore;
 import com.chilsuitjo.back.repair.rule.CauseNoteTransitions;
+import com.chilsuitjo.back.repair.rule.RepairSight;
 import com.chilsuitjo.back.repair.rule.RepairState;
 import com.chilsuitjo.back.repair.rule.RepairStatus;
 import com.chilsuitjo.back.repair.rule.RepairTransitions;
@@ -119,8 +119,9 @@ public class RepairQueryService {
     if (state.hiddenFromCounterpartKnown() && gate.side() != state.registeredBy()) {
       throw new BusinessException(ErrorCode.NOT_FOUND);
     }
-    Instant asOf = store.sharingCutoff(row, gate.side()).orElse(null);
-    List<ActionEntry> visible = visibleActions(row, gate.side(), asOf);
+    RepairSight sight = store.sightFor(row, gate.side());
+    Instant asOf = sight.asOf();
+    List<ActionEntry> visible = visibleActions(row, sight);
     RepairState shown = asOf == null ? state : Replay.fold(rules, visible);
     if (state.status() == RepairStatus.IN_PROGRESS) {
       // 혼자 종료 버튼은 실제 혼자 종료와 같은 판단(06 4-0). 측마다 달라 상세에서만 채운다
@@ -177,7 +178,7 @@ public class RepairQueryService {
    */
   private List<RepairCaseDetail.CauseNote> causeNotesOf(
       RepairCase row, RoomGate gate, RoomAccess viewer) {
-    CauseNoteStateStore.Visibility visibility = causeStore.visibilityFor(row, gate.side());
+    RepairSight visibility = causeStore.visibilityFor(row, gate.side());
     List<CauseNote> visible =
         causeNoteRows.findByRepairCaseIdOrderByCreatedAtAscIdAsc(row.getId()).stream()
             .filter(note -> visibility.sees(note.getSide(), note.getCreatedAt()))
@@ -217,7 +218,7 @@ public class RepairQueryService {
 
   private RepairCaseDetail.CauseNote causeNoteView(
       CauseNote note,
-      CauseNoteStateStore.Visibility visibility,
+      RepairSight visibility,
       Map<PhotoTarget, List<PhotoCard>> cards,
       boolean canRespond,
       List<RepairCaseDetail.CauseNote> previous) {
@@ -247,12 +248,12 @@ public class RepairQueryService {
 
   /**
    * 보는 사람에게 보이는 이 수리 건의 행동(03 6-6 9번). 고정 시각까지의 행동(그 시각에 남은 것 포함, 불변식 18 "뒤에 남긴 것은 ✕")과 보는 사람 측의
-   * 행동이다. 고정되지 않았으면 모두. 행동 기록이 원본이라 같은 규칙({@link RepairTransitions})으로 다시 계산하면 그때의 상태가 나온다(REP-10).
+   * 행동이다. 상대가 탈퇴했으면 중단 동안 그 측이 남긴 행동은 계속 뺀다(03 6-4, {@link RepairSight}). 고정되지 않았으면 모두. 행동 기록이 원본이라
+   * 같은 규칙({@link RepairTransitions})으로 다시 계산하면 그때의 상태가 나온다(REP-10).
    */
-  private List<ActionEntry> visibleActions(RepairCase row, PartySide viewer, Instant asOf) {
+  private List<ActionEntry> visibleActions(RepairCase row, RepairSight sight) {
     return actionReader.findByTarget(ActionTarget.repairCase(row.getId())).stream()
-        .filter(entry ->
-            asOf == null || !entry.createdAt().isAfter(asOf) || entry.actorSide() == viewer)
+        .filter(entry -> sight.sees(entry.actorSide(), entry.createdAt()))
         .toList();
   }
 

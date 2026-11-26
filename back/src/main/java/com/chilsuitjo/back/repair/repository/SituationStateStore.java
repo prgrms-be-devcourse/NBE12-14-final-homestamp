@@ -20,7 +20,6 @@ import com.chilsuitjo.back.repair.entity.ProgressNoteResponse;
 import com.chilsuitjo.back.repair.entity.RepairCase;
 import com.chilsuitjo.back.repair.rule.RepairState;
 import com.chilsuitjo.back.repair.rule.SituationState;
-import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -77,15 +76,15 @@ public class SituationStateStore {
 
   /**
    * 행동하는 사람이 이 진행 상황을 볼 수 있나(03 불변식 18): 공유를 그만둔 뒤 상대가 등록한 수리 건이 아니고, 공유를 그만둔 시각 뒤에 상대가 남긴 진행 상황도
-   * 아니다. 기준은 수리 건 상세와 같다({@code RepairStateStore.sharingCutoff}).
+   * 아니다. 상대가 탈퇴했어도 중단 동안 그 측이 남긴 진행 상황은 보이지 않는다(03 6-4). 기준은 수리 건 상세와 같다({@code
+   * RepairStateStore.sightFor}).
    */
   private boolean visible(RepairCase row, ProgressNote note, PartySide side) {
     RepairState state = repairs.current(row);
     if (state.hiddenFromCounterpartKnown() && side != state.registeredBy()) {
       return false;
     }
-    Instant cutoff = repairs.sharingCutoff(row, side).orElse(null);
-    return cutoff == null || note.getSide() == side || !note.getCreatedAt().isAfter(cutoff);
+    return repairs.sightFor(row, side).sees(note.getSide(), note.getCreatedAt());
   }
 
   private final class Responding implements StateStore<SituationState> {
