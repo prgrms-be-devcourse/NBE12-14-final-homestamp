@@ -89,7 +89,7 @@ public class RepairTransitions implements Transitions<RepairState> {
 }
 ```
 
-`apply`에서 **보지 않는 것**: 정산 완료·합류 전 기록·내 공유 중단, 거주 종료 뒤 새 수리 건(`REGISTER`)·수리 시작(`START_REPAIR`). pipeline이 3단계에서 먼저 막아요(09 3-1 순서 3). **그 밖의 "거주 중에만" 규칙**(거주 종료 뒤 종료 요청, 진행 상황 묻기 등)은 pipeline이 막지 않으니 `load`가 호실 단계를 상태에 담고 `apply`에서 막아요.
+`apply`에서 **보지 않는 것**: 정산 완료·합류 전 기록·내 공유 중단, 거주 종료 뒤 새 수리 건(`REGISTER`)·수리 시작(`START_REPAIR`)·혼자 종료(`CLOSE_ALONE`). pipeline이 3단계에서 먼저 막아요(09 3-1 순서 3). **그 밖의 "거주 중에만" 규칙**(거주 종료 뒤 종료 요청, 진행 상황 묻기 등)은 pipeline이 막지 않으니 `load`가 호실 단계를 상태에 담고 `apply`에서 막아요.
 `apply`에서 **보는 것**: 기록 단위 규칙(`NOT_COUNTERPART_SIDE`, `ACK_FINAL` …), 그리고 행동마다 결과가 다른 호실 사실(예: 상대 공유 중단에 따른 정산 끝내기 막기). 뒤의 것은 `load`가 상태 값에 담아 줘요(09 3-1 "계약").
 
 ### 3-2. 저장
@@ -259,10 +259,11 @@ assertThat(fx.actions().findByRoom(roomId))
 | 거주 중, 막히는 것 없음 | `fx.gates().member(room, memberId, side)` | 통과 |
 | 당사자가 아님 | 아무것도 넣지 않음 | `NOT_FOUND` |
 | 정산 완료 | `put(memberId, new RoomGate(room, side, true, false, false, true))` | `SETTLED` (예외: `ActionType`에 `AFTER_SETTLED` 표시) |
-| 거주 종료 | `new RoomGate(room, side, false, false, false, true)` | `REGISTER`·`START_REPAIR`만 `ROOM_ENDED` |
+| 거주 종료 | `new RoomGate(room, side, false, false, false, true)` | `REGISTER`·`START_REPAIR`·`CLOSE_ALONE`만 `ROOM_ENDED` |
 | 합류 전 기록 | `new RoomGate(room, side, false, true, false, false)` | `JOINED_RECORD` (예외: `ON_JOINED`) |
 | 내가 공유를 그만둠 | `new RoomGate(room, side, false, false, true, false)` | `SHARING_STOPPED` (예외: `WHILE_SHARING_STOPPED`) |
 | 서버·운영 행동 | `fx.gates().putRoom(new RoomGate(room, null, …))` | 호실 단위 거절을 건너뜀 |
+| 아직 연결하지 않은 초대받은 회원(연결·거절) | `fx.gates().invitee(room, partyId, side)` + `ActionBatch…asInvitee(partyId)` | `CONNECT`·`REJECT_INVITE`·`SHARE_CONSENT`만 통과, 그 밖은 `NOT_FOUND`(호실 상태는 `putRoom` 값, #249) |
 
 어떤 행동에 어떤 표시가 있는지는 `ActionType`(09 3-1 `ActionType` 줄)을 보세요.
 
