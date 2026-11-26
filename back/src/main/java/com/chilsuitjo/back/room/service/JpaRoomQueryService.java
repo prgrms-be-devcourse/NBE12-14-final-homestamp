@@ -3,6 +3,7 @@ package com.chilsuitjo.back.room.service;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.room.dto.RoomPartSummary;
+import com.chilsuitjo.back.room.dto.RoomPartView;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.util.List;
@@ -21,13 +22,26 @@ public class JpaRoomQueryService implements RoomQueryService {
 
   @PersistenceContext private EntityManager entityManager;
 
+  private final PartViews partViews;
+
+  public JpaRoomQueryService(PartViews partViews) {
+    this.partViews = partViews;
+  }
+
+  /** 부위 목록과 같은 계산({@link PartViews#one})을 쓴다. 목록과 등록 판단이 어긋나지 않게 따로 계산하지 않는다(#183). */
+  @Override
+  public RoomPartSummary findPartAsSeenBy(UUID roomRecordId, UUID roomPartId, UUID memberId) {
+    RoomPartView seen = partViews.one(roomRecordId, memberId, roomPartId);
+    return new RoomPartSummary(seen.name(), seen.hidden(), seen.enabled());
+  }
+
   @Override
   public RoomPartSummary findPart(UUID roomRecordId, UUID roomPartId) {
     @SuppressWarnings("unchecked")
     List<Object[]> rows =
         entityManager
             .createNativeQuery(
-                "SELECT name, hidden_at IS NOT NULL FROM state.room_part"
+                "SELECT name, hidden_at IS NOT NULL, enabled FROM state.room_part"
                     + " WHERE id = :part AND room_record_id = :room")
             .setParameter("part", roomPartId)
             .setParameter("room", roomRecordId)
@@ -37,6 +51,6 @@ public class JpaRoomQueryService implements RoomQueryService {
       throw new BusinessException(ErrorCode.NOT_FOUND);
     }
     Object[] row = rows.getFirst();
-    return new RoomPartSummary((String) row[0], (Boolean) row[1]);
+    return new RoomPartSummary((String) row[0], (Boolean) row[1], (Boolean) row[2]);
   }
 }

@@ -1,0 +1,741 @@
+/* Readable type hierarchy and content-driven sizing, without page zoom. */
+.app-shell,
+.guest-shell {
+  font-size: 16px;
+  line-height: 1.65;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+@layer base {
+  .app-shell *,
+  .guest-shell *,
+  .app-dialog * {
+    min-width: 0;
+  }
+}
+.sidebar {
+  width: 240px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 22px 14px 12px;
+  gap: 14px;
+}
+.main-shell {
+  margin-left: 240px;
+}
+.side-room-box {
+  border-radius: 12px;
+  border: 1px solid #e7edf5;
+  background: #f8fafd;
+  padding: 11px 12px;
+}
+.side-room-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #6b7a90;
+  margin-bottom: 6px;
+}
+.side-room-name {
+  display: block;
+  font-size: 15px;
+  font-weight: 750;
+  color: #172033;
+}
+.side-room-select [data-slot="select-trigger"] {
+  width: 100%;
+  min-height: 38px;
+  height: auto;
+  font-size: 14px;
+  font-weight: 650;
+  background: #fff;
+}
+.brand small {
+  white-space: normal;
+  line-height: 1.5;
+}
+.sidebar .nav-item {
+  font-size: 15px;
+  min-height: 46px;
+  height: auto;
+  padding: 10px 12px;
+  white-space: normal;
+  line-height: 1.45;
+}
+.nav-item svg {
+  flex-shrink: 0;
+}
+.profile {
+  min-height: 70px;
+  height: auto;
+}
+.profile > span:nth-child(2) {
+  flex: 1;
+}
+.topbar {
+  min-height: 58px;
+  height: auto;
+  padding: 10px 32px;
+  flex-wrap: nowrap;
+  position: sticky;
+  top: 0;
+  z-index: 25;
+  backdrop-filter: blur(10px);
+}
+.top-actions {
+  gap: 8px;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+}
+.top-left {
+  flex: 1;
+  min-width: 0;
+}
+.mobile-brand-mark {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 9px;
+  background: linear-gradient(145deg, #4b8fff, #175ce0);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 850;
+}
+.mobile-room-select {
+  min-width: 0;
+  max-width: 210px;
+}
+.mobile-room-select [data-slot="select-trigger"] {
+  height: 36px;
+  min-height: 36px;
+  font-size: 14px;
+  font-weight: 700;
+  border-radius: 10px;
+  background: #f5f7fb;
+  border-color: #e5eaf2;
+  padding: 0 10px;
+}
+.bell > span {
+  min-width: 20px;
+  height: 20px;
+  font-size: 11px;
+  font-weight: 750;
+  display: grid;
+  place-items: center;
+  top: -2px;
+  right: -2px;
+}
+.page-heading {
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 18px;
+  margin-bottom: 18px;
+}
+.page-heading h1 {
+  font-size: 26px;
+  line-height: 1.3;
+  letter-spacing: -0.6px;
+  font-weight: 800;
+  color: #172033;
+}
+.page-heading p {
+  margin-top: 4px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #5f6b7d;
+}
+.heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+/* 모바일 하단 고정 4탭 바. 보이고 숨기는 것은 아래 760px 미디어 쿼리가 정한다
+   (이 파일의 규칙은 Tailwind 층 밖이라 md:hidden 같은 유틸리티보다 우선해서, 클래스로 숨기면 PC에서도 보인다) */
+.mobile-tabbar {
+  position: fixed;
+  inset: auto 0 0 0;
+  z-index: 40;
+  display: none;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(12px);
+  border-top: 1px solid #e5eaf2;
+  padding: 4px 6px calc(6px + env(safe-area-inset-bottom));
+  box-shadow: 0 -2px 12px rgba(23, 32, 51, 0.05);
+}
+.mobile-tabbar-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-height: 52px;
+  border: 0;
+  background: transparent;
+  color: #6b7a90;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 10px;
+  padding: 4px 2px;
+}
+.mobile-tabbar-item.active {
+  color: #2457d6;
+  font-weight: 750;
+}
+.mobile-tabbar-item.active::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  width: 24px;
+  height: 3px;
+  border-radius: 0 0 4px 4px;
+  background: #2457d6;
+}
+.mobile-tabbar-badge {
+  position: absolute;
+  top: -5px;
+  right: -10px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #f08a24;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 750;
+  display: grid;
+  place-items: center;
+  border: 1.5px solid #fff;
+}
+.panel {
+  padding-top: 24px;
+  padding-bottom: 24px;
+}
+.panel-head > button {
+  min-height: 36px;
+  height: auto;
+  padding: 4px 0;
+}
+.person-card h3 {
+  font-size: 18px;
+  line-height: 1.5;
+}
+.status,
+[data-slot="badge"] {
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  height: auto;
+}
+.status {
+  padding: 4px 8px;
+}
+.repair-summary > strong,
+.task strong,
+.event strong,
+.notice-row strong {
+  font-size: 16px;
+  line-height: 1.65;
+}
+.repair-summary > small,
+.task small,
+.event small {
+  font-size: 14px;
+  line-height: 1.7;
+}
+.repair-summary .badges {
+  gap: 6px;
+}
+.task {
+  padding: 16px 12px;
+  align-items: flex-start;
+}
+.task > svg {
+  flex-shrink: 0;
+  margin-top: 8px;
+}
+.event {
+  padding-bottom: 26px;
+  gap: 14px;
+}
+.event-dot {
+  margin-top: 8px;
+}
+.event strong,
+.event small {
+  overflow-wrap: anywhere;
+}
+.description {
+  font-size: 16px;
+  line-height: 1.85;
+}
+.info-box,
+.info-box p,
+.info-box strong,
+.muted {
+  font-size: 14px;
+  line-height: 1.8;
+}
+.info-box {
+  padding: 20px;
+}
+.proposal {
+  gap: 12px;
+}
+.proposal strong {
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.comparison-record {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.comparison-record > div:last-child {
+  flex: 1;
+  min-width: 150px;
+}
+.comparison-record p {
+  font-size: 16px;
+  line-height: 1.8;
+}
+.notice-row {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.notice-row > div {
+  flex: 1 1 190px;
+}
+.notice-row > button {
+  flex-shrink: 0;
+}
+.main-footer {
+  flex-wrap: wrap;
+  font-size: 14px;
+  line-height: 1.8;
+}
+.main-footer > span:last-child {
+  font-size: 14px;
+}
+.app-dialog {
+  font-size: 16px;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.app-dialog [data-slot="dialog-title"] {
+  font-size: 24px;
+  line-height: 1.4;
+  padding-right: 24px;
+}
+.app-dialog [data-slot="dialog-description"] {
+  font-size: 14px;
+  line-height: 1.8;
+}
+.field > label,
+.field > label > span {
+  font-size: 14px;
+  line-height: 1.6;
+}
+.field input,
+.field textarea,
+.field [data-slot="select-trigger"] {
+  font-size: 16px;
+  min-height: 44px;
+}
+.field .actions {
+  align-items: stretch;
+}
+.field .actions > input {
+  flex: 1 1 150px;
+  width: auto;
+}
+.upload-zone strong,
+.upload-zone small,
+.consent,
+.form-error {
+  font-size: 14px;
+  line-height: 1.75;
+}
+.upload-zone input {
+  font-size: 14px;
+  min-height: 40px;
+}
+.toast {
+  font-size: 14px;
+  align-items: flex-start;
+}
+.toast > button {
+  flex-shrink: 0;
+}
+[data-slot="button"]:not(.photo-trigger) {
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: normal;
+  height: auto;
+  min-height: 40px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+.actions [data-slot="button"],
+.heading-actions > button,
+.modal-footer button,
+.photo-viewer-controls button {
+  min-height: 44px;
+}
+.guest-banner h1 {
+  font-weight: 750;
+  font-size: 30px;
+  line-height: 1.4;
+}
+.guest-banner p,
+.guest-cta p,
+.guest-foot {
+  font-size: 16px;
+  line-height: 1.75;
+}
+.guest-cta h2 {
+  font-weight: 700;
+  font-size: 22px;
+}
+
+/* The same gallery is used for inspection, repair and move-out photos. */
+.description-preview {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.record-description p,
+.photo-full-description {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.8;
+}
+.photo-full-description {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+.photo-viewer-thumbnails {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.photo-viewer-thumbnails button {
+  width: 64px;
+  height: 64px;
+  padding: 3px;
+}
+.photo-viewer-thumbnails img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 5px;
+}
+.photo-more {
+  min-height: 64px;
+}
+.after-record {
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+  margin-top: 16px;
+}
+.after-record h4 {
+  font-size: 16px;
+  font-weight: 650;
+}
+.dispute-callout {
+  background: #fff0ed;
+  color: #a85f52;
+  border: 1px solid #f1d8d1;
+  border-radius: 8px;
+  padding: 14px;
+  line-height: 1.8;
+}
+
+.photo-gallery {
+  min-width: 0;
+}
+.gallery-cover {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.gallery-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
+  gap: 12px;
+  margin: 20px 0 12px;
+}
+.photo-trigger {
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  position: relative;
+  display: block;
+  cursor: zoom-in;
+  background: var(--muted);
+}
+.photo-trigger:focus-visible {
+  outline: 3px solid var(--ring);
+  outline-offset: 3px;
+}
+.photo-trigger .record-photo,
+.photo-trigger .photo-art {
+  width: 100%;
+  height: 100%;
+  min-height: 64px;
+  object-fit: cover;
+  display: block;
+}
+.gallery-cover .photo-cover {
+  grid-column: 1/-1;
+  height: 190px;
+}
+.gallery-cover .photo-trigger:not(.photo-cover) {
+  height: 72px;
+}
+.gallery-strip .photo-trigger {
+  height: 230px;
+}
+.gallery-compact {
+  flex-shrink: 0;
+  width: 78px;
+  height: 82px;
+}
+.photo-count {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  padding: 3px 7px;
+  border-radius: 5px;
+  color: var(--foreground);
+  background: var(--background);
+  font-size: 14px;
+  line-height: 1.5;
+  box-shadow: 0 1px 4px #0002;
+}
+.gallery-compact .photo-count {
+  right: 2px;
+  bottom: 2px;
+  padding: 2px 4px;
+}
+.photo-viewer {
+  width: min(960px, calc(100vw - 32px));
+  max-width: 960px;
+  max-height: 92dvh;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 24px;
+  overflow-y: auto;
+  word-break: keep-all;
+}
+.photo-viewer-header {
+  flex-shrink: 0;
+  padding-right: 36px;
+}
+.photo-viewer-header [data-slot="dialog-title"] {
+  font-size: 22px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.photo-viewer-header [data-slot="dialog-description"] {
+  font-size: 14px;
+  line-height: 1.7;
+}
+.photo-viewer-stage {
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--muted);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.photo-viewer-stage > img {
+  max-width: 100%;
+  width: auto;
+  height: auto;
+  max-height: 60dvh;
+  object-fit: contain;
+}
+.photo-viewer-stage > .photo-art {
+  width: 100%;
+  height: 50dvh;
+}
+.photo-viewer-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.photo-viewer-controls p {
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.photo-viewer-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  min-width: 44px;
+  min-height: 44px;
+}
+
+@media (max-width: 1000px) {
+  .sidebar {
+    width: 210px;
+  }
+  .main-shell {
+    margin-left: 210px;
+  }
+  .topbar {
+    padding: 10px 20px;
+  }
+}
+/* PC는 내 계정을 옆 메뉴 아래에만 둔다(.avatar의 display: grid가 md:hidden보다 우선해서 여기서 숨김) */
+.topbar .avatar.small {
+  display: none;
+}
+@media (max-width: 760px) {
+  .mobile-tabbar {
+    display: grid;
+  }
+  .topbar .avatar.small {
+    display: grid;
+  }
+  .sidebar {
+    display: none;
+  }
+  .main-shell {
+    margin-left: 0;
+  }
+  .topbar {
+    padding: 8px 14px;
+    min-height: 56px;
+    height: 56px;
+    gap: 8px;
+  }
+  .top-left {
+    flex: 1 1 auto;
+  }
+  .top-actions {
+    justify-content: flex-end;
+    flex: 0 0 auto;
+    gap: 6px;
+  }
+  .page-heading {
+    flex-direction: row;
+    align-items: center;
+    margin-bottom: 14px;
+  }
+  .page-heading h1 {
+    font-size: 21px;
+  }
+  .heading-actions > button {
+    min-height: 40px;
+    padding: 0 12px;
+  }
+  .toast {
+    bottom: calc(74px + env(safe-area-inset-bottom));
+  }
+  .panel-head [data-slot="card-title"] {
+    font-size: 18px;
+  }
+  .panel-head {
+    gap: 10px;
+  }
+  .gallery-compact {
+    width: 68px;
+    height: 76px;
+  }
+  .gallery-compact .photo-count {
+    font-size: 14px;
+  }
+  .form-grid {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+  .modal-footer {
+    flex-wrap: wrap;
+  }
+  .field input,
+  .field textarea {
+    font-size: 16px;
+  }
+  .guest-banner h1 {
+    font-size: 26px;
+  }
+  .guest-banner {
+    align-items: flex-start;
+  }
+  .guest-shell > header {
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .photo-viewer {
+    width: calc(100vw - 20px);
+    max-width: calc(100vw - 20px);
+    padding: 18px 14px;
+    gap: 16px;
+  }
+  .photo-viewer-header [data-slot="dialog-title"] {
+    font-size: 20px;
+  }
+  .photo-viewer-stage > img {
+    max-height: 52dvh;
+  }
+  .photo-viewer-close {
+    right: 8px;
+    top: 8px;
+  }
+}
+.part-photo-record {
+  min-width: 0;
+}
+.part-photo-record > div:not(.photo-gallery) {
+  padding: 16px;
+}
+[data-slot="comparison"] .part-photo-record {
+  margin: 14px 0;
+}
+.app-dialog [data-slot="tabs-list"] {
+  height: auto;
+  min-height: 44px;
+}
+.app-dialog [data-slot="tabs-trigger"] {
+  white-space: normal;
+  min-height: 40px;
+}
+
+.received-invitation {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 16px 0;
+  border-top: 1px solid var(--border);
+  margin-top: 16px;
+}
+.received-invitation .status {
+  margin-left: 12px;
+}
+.received-invitation h3 {
+  font-size: 18px;
+  line-height: 1.5;
+  font-weight: 650;
+}
