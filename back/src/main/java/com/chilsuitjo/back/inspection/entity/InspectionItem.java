@@ -90,4 +90,14 @@ public class InspectionItem {
     this.createdAt = Objects.requireNonNull(createdAt, "createdAt");
     this.status = AckState.PENDING;
   }
+
+  /** 항목 응답을 바꾼다(맞아요·보류·이견, 보충하면 확인 기다림). 규칙은 {@code InspectionItemTransitions}가 먼저 본다. */
+  public void changeStatus(AckState next) {
+    this.status = Objects.requireNonNull(next, "next");
+  }
+
+  /** 지금 판에 도장을 찍는다(03 1-3 "[맞아요]·보류·이견 모두 도장"). 수리 건의 {@code RepairCase.stampCurrent}와 같다. */
+  public void stampCurrent() {
+    this.confirmedVersionId = currentVersionId;
+  }
 }

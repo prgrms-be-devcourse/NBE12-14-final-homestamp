@@ -55,6 +55,8 @@ public record InspectionDetail(
    * @param createdAt 더한 시각(위 두 표시의 날짜)
    * @param version 지금 판
    * @param photos 항목 사진({@code sortOrder} 순). 보는 사람이 볼 수 있는 것만이고 지운 사진은 흔적으로 남는다
+   * @param nextRerequestAt 다음에 보충할 수 있는 시각. 보충한 적이 없으면 null(06 4-0 "다음 가능 시각")
+   * @param availableActions 이 항목에 지금 누를 수 있는 행동({@code respond}·{@code supplement})
    */
   public record Item(
       UUID id,
@@ -64,7 +66,9 @@ public record InspectionDetail(
       boolean addedAfterEnd,
       Instant createdAt,
       Version version,
-      List<PhotoCard> photos) {}
+      List<PhotoCard> photos,
+      Instant nextRerequestAt,
+      List<String> availableActions) {}
 
   /**
    * 항목의 판({@code inspection_item_version}).
