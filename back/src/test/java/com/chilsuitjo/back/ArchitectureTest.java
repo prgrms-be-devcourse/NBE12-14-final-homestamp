@@ -41,7 +41,8 @@ class ArchitectureTest {
           "payment",
           "settlement",
           "photo",
-          "link");
+          "link",
+          "download");
 
   /** global(바닥) 위의 모든 패키지. */
   private static final String[] GLOBAL_위 =
@@ -59,6 +60,7 @@ class ArchitectureTest {
           "photo",
           "notification",
           "link",
+          "download",
           "respond");
 
   @ArchTest
