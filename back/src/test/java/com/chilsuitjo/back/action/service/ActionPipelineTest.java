@@ -2,6 +2,7 @@ package com.chilsuitjo.back.action.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 
 import com.chilsuitjo.back.action.dto.ActionBatch;
 import com.chilsuitjo.back.action.dto.ActionCommand;
@@ -210,6 +211,138 @@ class ActionPipelineTest {
   }
 
   @Test
+  void 초대_자리로_들어온_요청은_허용된_행동만_되고_측은_그_자리의_측이다() {
+    UUID inviteeId = UUID.randomUUID();
+    UUID partyId = UUID.randomUUID();
+    gates.invitee(room, partyId, PartySide.LANDLORD);
+
+    pipeline.executeAll(
+        ActionBatch.of(room, Actor.member(inviteeId), "k1")
+            .asInvitee(partyId)
+            .record(ActionType.CONNECT, Map.of())
+            .record(ActionType.SHARE_CONSENT, Map.of("consentVersion", 3)));
+
+    assertThat(writer.findByRoom(room))
+        .extracting(ActionEntry::type, ActionEntry::actorSide, ActionEntry::actorKey)
+        .containsExactly(
+            tuple(ActionType.CONNECT, PartySide.LANDLORD, inviteeId.toString()),
+            tuple(ActionType.SHARE_CONSENT, PartySide.LANDLORD, inviteeId.toString()));
+    // 초대 자리로 열지 않으면 당사자가 아니라 NOT_FOUND(ROOM-2a), 초대 자리여도 허용되지 않은 행동은 NOT_FOUND
+    assertThatThrownBy(() ->
+            pipeline.executeAll(
+                ActionBatch.of(room, Actor.member(inviteeId), "k2")
+                    .record(ActionType.REJECT_INVITE, Map.of())))
+        .hasMessage(ErrorCode.NOT_FOUND.name());
+    assertThatThrownBy(() ->
+            pipeline.executeAll(
+                ActionBatch.of(room, Actor.member(inviteeId), "k3")
+                    .asInvitee(partyId)
+                    .creating(ActionType.REGISTER, store, rules)))
+        .hasMessage(ErrorCode.NOT_FOUND.name());
+    assertThat(writer.findByRoom(room)).hasSize(2);
+  }
+
+  @Test
+  void 초대_자리의_허용되지_않은_행동은_정산_완료_호실에서도_SETTLED가_아니라_NOT_FOUND다() {
+    UUID inviteeId = UUID.randomUUID();
+    UUID partyId = UUID.randomUUID();
+    gates.invitee(room, partyId, PartySide.LANDLORD);
+    gates.putRoom(new RoomGate(room, null, true, false, false, true));
+
+    assertThatThrownBy(() ->
+            pipeline.executeAll(
+                ActionBatch.of(room, Actor.member(inviteeId), "k1")
+                    .asInvitee(partyId)
+                    .record(ActionType.NOTE_PROGRESS, Map.of())))
+        .hasMessage(ErrorCode.NOT_FOUND.name());
+    // 허용된 행동은 호실의 다른 막힘을 그대로 받는다
+    assertThatThrownBy(() ->
+            pipeline.executeAll(
+                ActionBatch.of(room, Actor.member(inviteeId), "k2")
+                    .asInvitee(partyId)
+                    .record(ActionType.CONNECT, Map.of())))
+        .hasMessage(ErrorCode.SETTLED.name());
+  }
+
+  @Test
+  void 같은_키로_다시_온_초대_자리_요청은_초대_자리로_잠가_처음_결과를_돌려준다() {
+    UUID inviteeId = UUID.randomUUID();
+    UUID partyId = UUID.randomUUID();
+    gates.invitee(room, partyId, PartySide.LANDLORD);
+    ActionBatch connect =
+        ActionBatch.of(room, Actor.member(inviteeId), "k1")
+            .asInvitee(partyId)
+            .record(ActionType.CONNECT, Map.of());
+
+    BatchResult first = pipeline.executeAll(connect);
+    BatchResult again = pipeline.executeAll(connect);
+
+    assertThat(again.replayed()).isTrue();
+    assertThat(again.first().actionId()).isEqualTo(first.first().actionId());
+    assertThat(writer.findByRoom(room)).hasSize(1);
+  }
+
+  @Test
+  void 이_호실의_자리가_아니면_초대_자리로_잠글_때_NOT_FOUND다() {
+    UUID otherRoom = UUID.randomUUID();
+    UUID partyId = UUID.randomUUID();
+    gates.invitee(otherRoom, partyId, PartySide.LANDLORD);
+
+    assertThatThrownBy(() ->
+            pipeline.executeAll(
+                ActionBatch.of(room, Actor.member(UUID.randomUUID()), "k1")
+                    .asInvitee(partyId)
+                    .record(ActionType.CONNECT, Map.of())))
+        .hasMessage(ErrorCode.NOT_FOUND.name());
+  }
+
+  @Test
+  void 초대_자리는_회원_주체의_기존_호실_요청에만_한_번_붙인다() {
+    UUID partyId = UUID.randomUUID();
+
+    assertThatThrownBy(() -> ActionBatch.newRoom(Actor.member(tenantId), "k1").asInvitee(partyId))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> ActionBatch.of(room, Actor.server(), "k2").asInvitee(partyId))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() ->
+            ActionBatch.of(room, Actor.member(tenantId), "k3")
+                .asInvitee(partyId)
+                .asInvitee(partyId))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
+  void 초대_자리로_잠갔는데_invitee가_아닌_값이_오면_실행하지_않는다() {
+    RoomGateReader forgetful =
+        new RoomGateReader() {
+          @Override
+          public RoomGate lockAndRead(UUID roomRecordId, Actor actor) {
+            return gates.lockAndRead(roomRecordId, actor);
+          }
+
+          @Override
+          public RoomGate lockAndReadAsInvitee(UUID roomRecordId, Actor actor, UUID partyId) {
+            return RoomGate.open(roomRecordId, PartySide.LANDLORD); // invitee 표시를 빠뜨림
+          }
+
+          @Override
+          public RoomGate read(UUID roomRecordId, Actor actor) {
+            return gates.read(roomRecordId, actor);
+          }
+        };
+    ActionPipeline broken =
+        new ActionPipeline(forgetful, writer, followUps, requestContext, transactionManager, clock);
+
+    assertThatThrownBy(() ->
+            broken.executeAll(
+                ActionBatch.of(room, Actor.member(UUID.randomUUID()), "k1")
+                    .asInvitee(UUID.randomUUID())
+                    .creating(ActionType.REGISTER, store, rules)))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(writer.findByRoom(room)).isEmpty();
+  }
+
+  @Test
   void when이_거짓이면_기록_없이_건너뛴다() {
     BatchResult result =
         pipeline.executeAll(
@@ -331,6 +464,12 @@ class ActionPipelineTest {
           public RoomGate lockAndRead(UUID roomRecordId, Actor actor) {
             events.add("lock");
             return gates.lockAndRead(roomRecordId, actor);
+          }
+
+          @Override
+          public RoomGate lockAndReadAsInvitee(UUID roomRecordId, Actor actor, UUID partyId) {
+            events.add("lock");
+            return gates.lockAndReadAsInvitee(roomRecordId, actor, partyId);
           }
 
           @Override
