@@ -73,8 +73,8 @@ public class ProgressNoteResponse {
 
   /**
    * 답을 바꾼다(보류·이견 → 맞아요, 03 G "나중에 답 바꾸기"). 지금 답 하나만 두고 바뀐 이력은 {@code RESPOND_SITUATION} 행동에 남는다(05
-   * 2-5). 처음 답한 시각({@code created_at})과 응답한 측은 그대로다. 바꿀 수 있는지는 규칙({@code SituationTransitions})이 먼저
-   * 본다.
+   * 2-5). 사유는 지금 답의 일부라 함께 바꾼다(05 0장 C 행의 예외: 그대로 두면 맞아요로 바뀐 행에 예전 보류 사유가 남음). 처음 답한 시각({@code
+   * created_at})과 응답한 측은 그대로다. 바꿀 수 있는지는 규칙({@code SituationTransitions})이 먼저 본다.
    */
   public void answerAgain(Answer next, String nextReason) {
     this.answer = next;
