@@ -5,6 +5,7 @@ import type { Room } from "@/data/demo"
 import type { Page } from "@/lib/router"
 import { activeTabOf, nav, type NavTabId } from "@/components/common/app-nav"
 import { connectionText } from "@/lib/workflows"
+import type { RoomOption } from "@/lib/room-options"
 
 // PC 전용 좌측 슬림 사이드바: 로고 → 호실 전환 → 4개 핵심 메뉴 → 내 계정
 export function SideMenu({
@@ -12,7 +13,7 @@ export function SideMenu({
   openCount,
   invitations,
   room,
-  roomNames,
+  roomOptions,
   account,
   roleText,
   onRoom,
@@ -23,10 +24,11 @@ export function SideMenu({
   openCount: number
   invitations: number
   room?: Room
-  roomNames: string[]
+  // 호실 이름은 겹칠 수 있어서 값은 호실 ID로 골라요
+  roomOptions: RoomOption[]
   account: { name: string; email: string } | null
   roleText: string
-  onRoom: (name: string) => void
+  onRoom: (roomId: string) => void
   onGo: (p: NavTabId) => void
   onAccount: () => void
 }) {
@@ -42,12 +44,12 @@ export function SideMenu({
             <Building2 size={14} aria-hidden />
             <span>지금 보는 호실</span>
           </div>
-          {roomNames.length > 1 ? (
+          {roomOptions.length > 1 ? (
             <div className="side-room-select">
               <Choice
                 label="현재 호실 선택"
-                value={room.name}
-                values={roomNames}
+                value={room.id}
+                values={roomOptions}
                 onChange={onRoom}
               />
             </div>
