@@ -2,27 +2,49 @@ package com.chilsuitjo.back;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.chilsuitjo.back.global.config.ssm.ResetSsmTestParameterSource;
+import com.chilsuitjo.back.global.config.ssm.SsmTestParameterSource;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
 
 /**
  * 일반 앱은 잘못된 프로필·문자 방식이면 빈을 만들기 전에 멈춘다(ProfileGuard·SmsModeGuard, decisions 2026-11-25 운영 문자 모드).
- * 검사가 빠지면 닿을 수 없는 DB 주소에서 다른 오류로 실패하므로 문구로 구분한다. 설정은 명령줄 인자로 넘긴다(yml보다 우선해야 "값 없음"을 만들 수 있다).
+ * 검사가 빠지면 닿을 수 없는 DB 주소에서 다른 오류로 실패하므로 문구로 구분한다. 설정은 명령줄 인자로 넘긴다(yml보다 우선해야 "값 없음"을 만들 수 있다). prod는
+ * 운영처럼 가짜 SSM에서 설정을 받는다. SSM이 정하는 DB 주소를 명령줄로 덮으면 SsmProdSettingsGuard가 먼저 멈추므로, prod에는 닿을 수 없는 DB
+ * 주소를 넘기지 않는다(가짜 SSM 주소 db.example도 닿지 않는다).
  */
+@ExtendWith(ResetSsmTestParameterSource.class)
 class StartupGuardTest {
+
+  @BeforeEach
+  void provideFakeSsmSettings() {
+    SsmTestParameterSource.setParameters(SsmTestParameterSource.validParameters());
+  }
 
   private static final String NO_DB = "--spring.datasource.url=jdbc:postgresql://127.0.0.1:1/none";
 
   private static void start(String... args) {
-    String[] all = new String[args.length + 3];
-    all[0] = NO_DB;
-    all[1] = "--spring.main.banner-mode=off";
-    all[2] = "--app.outbox.worker.enabled=false";
-    System.arraycopy(args, 0, all, 3, args.length);
+    boolean prod =
+        Arrays.stream(args)
+            .anyMatch(arg -> arg.startsWith("--spring.profiles.active=") && arg.contains("prod"));
+    List<String> all = new ArrayList<>();
+    if (!prod) {
+      all.add(NO_DB);
+    }
+    all.add("--spring.main.banner-mode=off");
+    all.add("--app.outbox.worker.enabled=false");
+    all.addAll(List.of(args));
     try (ConfigurableApplicationContext ignored =
-        new SpringApplicationBuilder(BackApplication.class).web(WebApplicationType.NONE).run(all)) {
+        new SpringApplicationBuilder(BackApplication.class)
+            .web(WebApplicationType.NONE)
+            .run(all.toArray(String[]::new))) {
       throw new AssertionError("기동하면 안 되는 설정으로 기동했다");
     }
   }

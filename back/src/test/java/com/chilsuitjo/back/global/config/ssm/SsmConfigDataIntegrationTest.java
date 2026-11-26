@@ -177,7 +177,8 @@ class SsmConfigDataIntegrationTest {
       assertNull(environment.getProperty("spring.profiles.include"));
       assertNull(environment.getProperty("spring.flyway.enabled"));
       assertNull(environment.getProperty("spring.main.web-application-type"));
-      assertNull(environment.getProperty("app.sms.mode"));
+      // yml prod 기본값(#216)이 남고 SSM의 fake는 적용되지 않는다
+      assertEquals("disabled", environment.getProperty("app.sms.mode"));
       // local 문서의 고정 화면 주소가 섞이지 않고 SSM 값 그대로
       assertEquals("https://homestamp.example", environment.getProperty("app.origin"));
       assertEquals(12, ssmPropertyNames(context).length);
