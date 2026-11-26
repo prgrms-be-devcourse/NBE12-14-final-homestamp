@@ -165,8 +165,9 @@ export function RepairsPage({
                       r.payments?.length ? (
                         <Status>{`지불 기록 ${r.payments.length}건`}</Status>
                       ) : undefined
-                    ) : r.status !== "처리 완료" ? (
-                      // "N일째"는 마지막 당사자 행동부터 세요(03 G "멈춘 기간", 06 4-6 lastActionAt)
+                    ) : r.status !== "처리 완료" && !r.closeBy ? (
+                      // "N일째"는 시작 전·처리 중에서만, 마지막 당사자 행동부터 세요(03 G "멈춘 기간", 06 4-6 lastActionAt).
+                      // 종료 확인 대기도 화면 상태는 "처리 중"이라 요청한 측(closeBy)으로 빼요
                       <Status>{`${daysSince(lastActivity(r, events))}일째`}</Status>
                     ) : undefined
                   }
