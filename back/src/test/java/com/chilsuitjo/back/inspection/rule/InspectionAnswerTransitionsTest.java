@@ -203,6 +203,18 @@ class InspectionAnswerTransitionsTest {
         .hasMessage(ErrorCode.INVALID_STATE.name());
   }
 
+  @Test
+  void 보이지_않는_항목이_있으면_하자_기록_없음으로_확인할_수_없다() {
+    // 보이는 항목은 0개지만 점검에는 항목이 있다(상대 더하기 INSP-1d 등). 전체 항목 수로 본다(#272 리뷰)
+    ConfirmAllState unseen = confirmAllState(Map.of(), 1, false, false);
+
+    assertThat(unseen.noItems()).isFalse();
+    assertThatThrownBy(
+            () -> confirmAll.apply(unseen, confirmAllEntry(PartySide.LANDLORD, Map.of())))
+        .hasMessage(ErrorCode.INVALID_STATE.name());
+    assertThat(ConfirmAllTransitions.canConfirmAll(unseen, PartySide.LANDLORD)).isFalse();
+  }
+
   // ---- 도우미 ----
 
   /** 세입자가 기준 측으로 더한 항목, 점검은 확인 요청. */
@@ -217,9 +229,9 @@ class InspectionAnswerTransitionsTest {
   }
 
   private static ConfirmAllState confirmAllState(
-      Map<UUID, Integer> unanswered, int shown, boolean hidden, boolean confirmed) {
+      Map<UUID, Integer> unanswered, int total, boolean hidden, boolean confirmed) {
     return new ConfirmAllState(
-        InspectionStatus.REQUESTED, PartySide.TENANT, unanswered, shown, hidden, confirmed);
+        InspectionStatus.REQUESTED, PartySide.TENANT, unanswered, total, hidden, confirmed);
   }
 
   private static ActionEntry respond(PartySide side, String answer, String reason, Integer seen) {

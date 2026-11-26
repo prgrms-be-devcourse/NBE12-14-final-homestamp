@@ -160,12 +160,12 @@ public class InspectionItemStateStore {
 
   /**
    * 모두 확인을 판단할 상태. 이 사람에게 보이는 항목 가운데 상대가 더했고 아직 답하지 않은 것(확인 기다림·확인 없음)이 대상이다. 상세 조회의 {@code
-   * confirm-all} 버튼도 같은 값을 쓴다.
+   * confirm-all} 버튼도 같은 값을 쓴다. "항목이 없는 점검"은 보이는 항목이 아니라 점검의 전체 항목 수로 본다(#272 리뷰).
    */
   public ConfirmAllState confirmAll(Inspection row, PartySide actor) {
     InspectionSight.Sight seen = sight.of(row, actor);
-    List<InspectionItem> shown =
-        items.findByInspectionIdOrderByIdAsc(row.getId()).stream().filter(seen::sees).toList();
+    List<InspectionItem> all = items.findByInspectionIdOrderByIdAsc(row.getId());
+    List<InspectionItem> shown = all.stream().filter(seen::sees).toList();
     Map<UUID, Integer> unanswered = new LinkedHashMap<>();
     for (InspectionItem item : shown) {
       if (item.getAddedBySide() != actor && UNANSWERED.contains(item.getStatus())) {
@@ -179,7 +179,7 @@ public class InspectionItemStateStore {
         row.getStatus(),
         row.getAuthorSide(),
         unanswered,
-        shown.size(),
+        all.size(),
         seen.itemsHidden(),
         confirmedNoItems);
   }
