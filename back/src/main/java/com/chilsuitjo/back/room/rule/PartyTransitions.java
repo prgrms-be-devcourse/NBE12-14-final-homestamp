@@ -15,12 +15,13 @@ import org.springframework.stereotype.Component;
  *   <li>{@code INVITE}: 호실을 만든 측이, 거주 중에, 비어 있음·번호만 자리에 → 초대됨. 그 밖이면 {@code INVALID_STATE}, 내 인증
  *       번호면 {@code SELF_INVITE}
  *   <li>{@code CONNECT}: 초대됨 자리에 초대 번호와 같은 번호로 인증한 회원이 → 연결됨. 초대됨이 아니면 {@code INVALID_STATE}, 번호가
- *       다르면 {@code PHONE_MISMATCH}. 거주 종료는 보지 않는다: 거주 종료 전에 초대받은 상대는 정산 완료 전까지 연결할 수 있다(정산 완료는
- *       pipeline이 {@code SETTLED}로 막음). 팀 최종 합의 전 임시 정책이다(#163 3-1). 받은 초대 목록({@code
+ *       다르면 {@code PHONE_MISMATCH}, 이 호실의 다른 자리에 이미 있는 회원이면 {@code INVALID_STATE}(한 호실에 한 회원은 한 자리,
+ *       불변식 13. 초대한 사람이 나중에 번호를 바꿔 초대 번호와 같아진 경우 등). 거주 종료는 보지 않는다: 거주 종료 전에 초대받은 상대는 정산 완료 전까지 연결할
+ *       수 있다(정산 완료는 pipeline이 {@code SETTLED}로 막음). 팀 최종 합의 전 임시 정책이다(#163 3-1). 받은 초대 목록({@code
  *       InvitationQueryService})도 같은 기준이다
- *   <li>{@code REJECT_INVITE}("제 집이 아니에요"): 초대됨 자리에 초대받은 사람이 → 거절됨. 03 3장 "연결 확인 / 제 집이 아니에요"는 초대받은
- *       사람만이라 지금은 연결과 같이 번호가 다르면 {@code PHONE_MISMATCH}로 둔다. 06 4-3 {@code reject} 오류 칸("-")과 맞는지는
- *       아직 정하지 않았다. reject API를 만들 때 정하고 06을 함께 고친다(#163)
+ *   <li>{@code REJECT_INVITE}("제 집이 아니에요"): 초대됨 자리에 초대받은 사람이 → 거절됨. 03 3장 "제 집이 아니에요"는 초대받은
+ *       사람만이라(권한 표 "△ 초대받은 사람") 연결과 같이 번호가 다르면 {@code PHONE_MISMATCH}, 초대됨이 아니면 {@code
+ *       INVALID_STATE}다(06 4-3 {@code reject} 오류 칸, #252 리뷰)
  * </ul>
  *
  * <p>수신 거부 번호({@code PHONE_OPTED_OUT})는 D의 확인 창구가 정해진 뒤 더한다(#163 1-3).
@@ -50,6 +51,9 @@ public class PartyTransitions implements Transitions<PartyState> {
       }
       case CONNECT -> {
         requireInvitee(now);
+        if (Boolean.TRUE.equals(now.alreadyInRoom())) {
+          throw invalidState();
+        }
         yield withStatus(now, PartyStatus.CONNECTED);
       }
       case REJECT_INVITE -> {
@@ -76,7 +80,12 @@ public class PartyTransitions implements Transitions<PartyState> {
 
   private static PartyState withStatus(PartyState now, PartyStatus status) {
     return new PartyState(
-        status, now.byCreatorSide(), now.living(), now.selfInvite(), now.phoneMatches());
+        status,
+        now.byCreatorSide(),
+        now.living(),
+        now.selfInvite(),
+        now.phoneMatches(),
+        now.alreadyInRoom());
   }
 
   private static BusinessException invalidState() {

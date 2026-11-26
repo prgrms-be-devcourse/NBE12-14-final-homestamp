@@ -137,6 +137,21 @@ class PartyTransitionsTest {
   }
 
   @Test
+  void 이_호실의_다른_자리에_이미_있으면_연결할_수_없다() {
+    expect(
+        ErrorCode.INVALID_STATE,
+        new PartyState(PartyStatus.INVITED, null, null, null, true, true),
+        ActionType.CONNECT);
+    assertThat(
+            rules
+                .apply(
+                    new PartyState(PartyStatus.INVITED, null, null, null, true, false),
+                    entry(ActionType.CONNECT))
+                .status())
+        .isEqualTo(PartyStatus.CONNECTED);
+  }
+
+  @Test
   void 행동_기록만으로_다시_계산하면_요청할_때만_아는_값은_검사하지_않는다() {
     // initial()은 요청할 때만 아는 값을 비워 둔다(RepairState·InspectionState와 같은 방식, #252 리뷰)
     PartyState invited = rules.apply(rules.initial(), entry(ActionType.INVITE));
