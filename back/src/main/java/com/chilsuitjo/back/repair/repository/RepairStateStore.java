@@ -386,8 +386,10 @@ public class RepairStateStore {
         RequestTarget.of(TargetKind.REPAIR_CASE, repairCaseId), RequestKind.PROGRESS_CHECK, side);
   }
 
-  /** 판의 내용 지문 재료. 칸 순서도 형식의 일부라 바꾸면 옛 지문과 달라진다(05 2-3, 테스트로 고정). */
-  private static DigestInput digest(RepairContent content) {
+  /**
+   * 판의 내용 지문 재료. 칸 순서도 형식의 일부라 바꾸면 옛 지문과 달라진다(05 2-3, 테스트로 고정). 고치기({@code RepairCorrectable})도 쓴다.
+   */
+  public static DigestInput digest(RepairContent content) {
     return new DigestInput(
         CONTENT_KIND,
         content.getId(),

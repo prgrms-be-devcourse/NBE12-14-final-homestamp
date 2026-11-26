@@ -17,6 +17,13 @@ import type {
 } from "@/data/demo"
 import { hasAction, type RepairAction } from "@/api/actions"
 import { useApi } from "@/api/hooks"
+import { errorMessage } from "@/api/errors"
+import { isNotFound } from "@/api/http-rooms"
+import {
+  ErrorState,
+  LoadingState,
+  NotFoundState,
+} from "@/components/common/states"
 import { CorrectionHistory } from "@/components/common/correction-box"
 import { RepairDetail } from "@/features/repair/repair-detail"
 import {
@@ -83,6 +90,8 @@ export interface RepairDetailPageProps {
   itemMasks: (i: Inspection) => ReturnType<typeof maskOf>[]
   moneyPrefill?: { from: Role; to: Role; amount: number }
   onPrefillUsed: () => void
+  // 화면 기록에 없고 서버에서만 받는 수리 건(http 모드, 수리 건 목록 연결 전 #264). 받기 전에는 불러오는 중, 404면 '찾을 수 없음'
+  serverOnly?: boolean
 }
 
 // S-12 수리 건 상세. 버튼은 서버가 준 availableActions로만 그려요(08 0장 원칙 6, 09 5장).
@@ -110,11 +119,12 @@ export function RepairDetailPage({
   itemMasks,
   moneyPrefill,
   onPrefillUsed,
+  serverOnly = false,
 }: RepairDetailPageProps) {
   const correctionsRef = useRef<RepairCorrectionsHandle>(null)
   // 수리 건은 API(GET /api/repair-cases/{id})로 읽고, 버튼은 응답의 availableActions로만 그려요.
   // 목업 동안은 다른 도메인(지불·고치기 등)이 기록을 바꾸면 db가 바뀌어 다시 불러와요.
-  const { view, run } = useRepairCase(
+  const { view, run, error } = useRepairCase(
     initial.id,
     isGuest || !accountId ? null : { accountId },
     db,
@@ -147,6 +157,12 @@ export function RepairDetailPage({
   const sameZonePhotos = partPhotos.filter(
     (p) => p.kind === "in" && p.zone === r.zone,
   )
+  // 서버에서만 받는 건은 응답이 오기 전까지 빈 값으로 그리지 않아요(남의 수리 건·없는 건은 404, 06 4-6)
+  if (serverOnly && !view) {
+    if (error && isNotFound(error)) return <NotFoundState onHome={onBack} />
+    if (error) return <ErrorState message={errorMessage(error)} />
+    return <LoadingState />
+  }
   return (
     <RepairDetail
       r={r}
