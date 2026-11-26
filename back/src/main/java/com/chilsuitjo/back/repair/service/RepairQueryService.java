@@ -28,6 +28,7 @@ import com.chilsuitjo.back.repair.repository.RepairContentRepository;
 import com.chilsuitjo.back.repair.repository.RepairStateStore;
 import com.chilsuitjo.back.repair.rule.CauseNoteTransitions;
 import com.chilsuitjo.back.repair.rule.RepairState;
+import com.chilsuitjo.back.repair.rule.RepairStatus;
 import com.chilsuitjo.back.repair.rule.RepairTransitions;
 import com.chilsuitjo.back.room.dto.RoomAccess;
 import com.chilsuitjo.back.room.service.RoomAccessService;
@@ -65,6 +66,7 @@ public class RepairQueryService {
           ActionType.REQUEST_CLOSE, "request-close",
           ActionType.CONFIRM_CLOSE, "confirm-close",
           ActionType.NOT_YET, "not-yet",
+          ActionType.CLOSE_ALONE, "close-alone",
           ActionType.ASK_PROGRESS, "ask-progress",
           ActionType.NOTE_PROGRESS, "progress-notes");
 
@@ -118,7 +120,12 @@ public class RepairQueryService {
       throw new BusinessException(ErrorCode.NOT_FOUND);
     }
     Instant asOf = store.sharingCutoff(row, gate.side()).orElse(null);
-    RepairState shown = asOf == null ? state : visibleState(row, gate.side(), asOf);
+    List<ActionEntry> visible = visibleActions(row, gate.side(), asOf);
+    RepairState shown = asOf == null ? state : Replay.fold(rules, visible);
+    if (state.status() == RepairStatus.IN_PROGRESS) {
+      // 혼자 종료 버튼은 실제 혼자 종료와 같은 판단(06 4-0). 측마다 달라 상세에서만 채운다
+      state = state.withCanCloseAlone(store.canCloseAlone(row, gate.side()));
+    }
     RepairContent content =
         contents
             .findByRepairCaseIdAndNo(row.getId(), shown.contentNo())
@@ -144,6 +151,8 @@ public class RepairQueryService {
         row.getCreatedBySide(),
         shown.status(),
         shown.closeRequestedBy(),
+        shown.closedBy(),
+        closeObjection(shown, visible),
         row.isSolo(),
         row.getCreatedAt(),
         asOf,
@@ -237,14 +246,36 @@ public class RepairQueryService {
   }
 
   /**
-   * 보는 사람에게 보이는 행동만으로 다시 계산한 상태(03 6-6 9번). 고정 시각까지의 행동(그 시각에 남은 것 포함, 불변식 18 "뒤에 남긴 것은 ✕")과 보는 사람
-   * 측의 행동을 남긴다. 행동 기록이 원본이라 같은 규칙({@link RepairTransitions})으로 다시 계산하면 그때의 상태가 나온다(REP-10).
+   * 보는 사람에게 보이는 이 수리 건의 행동(03 6-6 9번). 고정 시각까지의 행동(그 시각에 남은 것 포함, 불변식 18 "뒤에 남긴 것은 ✕")과 보는 사람 측의
+   * 행동이다. 고정되지 않았으면 모두. 행동 기록이 원본이라 같은 규칙({@link RepairTransitions})으로 다시 계산하면 그때의 상태가 나온다(REP-10).
    */
-  private RepairState visibleState(RepairCase row, PartySide viewer, Instant asOf) {
-    List<ActionEntry> visible =
-        actionReader.findByTarget(ActionTarget.repairCase(row.getId())).stream()
-            .filter(entry -> !entry.createdAt().isAfter(asOf) || entry.actorSide() == viewer)
-            .toList();
-    return Replay.fold(rules, visible);
+  private List<ActionEntry> visibleActions(RepairCase row, PartySide viewer, Instant asOf) {
+    return actionReader.findByTarget(ActionTarget.repairCase(row.getId())).stream()
+        .filter(entry ->
+            asOf == null || !entry.createdAt().isAfter(asOf) || entry.actorSide() == viewer)
+        .toList();
+  }
+
+  /**
+   * 혼자 끝낸 처리 완료에 남은 이견(06 REP-5f): 마지막 혼자 종료 뒤의 마지막 [아직 안 됐어요]. 혼자 끝낸 처리 완료가 아니면(양측 확인이 되면 이견은 이력)
+   * 없다. 상태 행에 칸이 없고 행동 기록이 원본이다.
+   */
+  private static RepairCaseDetail.CloseObjection closeObjection(
+      RepairState shown, List<ActionEntry> visible) {
+    if (!shown.closedAlone()) {
+      return null;
+    }
+    ActionEntry objection = null;
+    for (ActionEntry entry : visible) {
+      if (entry.type() == ActionType.CLOSE_ALONE) {
+        objection = null;
+      } else if (entry.type() == ActionType.NOT_YET) {
+        objection = entry;
+      }
+    }
+    return objection == null
+        ? null
+        : new RepairCaseDetail.CloseObjection(
+            objection.actorSide(), objection.reason(), objection.createdAt());
   }
 }

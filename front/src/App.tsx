@@ -73,6 +73,7 @@ import {
 } from "@/lib/inspection-rules"
 import {
   canAccessRoom,
+  isPreJoin,
   canSeeInspection,
   declineInvitation,
   canReceiveInvitation,
@@ -92,15 +93,16 @@ import { Welcome } from "@/features/room/welcome"
 import { SideMenu } from "@/components/common/side-menu"
 import { AppTopbar } from "@/components/common/app-topbar"
 import { PageHeading } from "@/components/common/page-heading"
+import { MobileTabbar } from "@/components/common/mobile-tabbar"
+import { SubTabs } from "@/components/common/sub-tabs"
 import { Toast } from "@/components/common/toast"
-import { nav, pageIntro } from "@/components/common/app-nav"
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet"
+  activeTabOf,
+  pageAfterRoomChange,
+  pageIntro,
+  pageTitleOf,
+  subTabsByGroup,
+} from "@/components/common/app-nav"
 
 // 브라우저가 주소 변경을 막는 환경에서도 화면 동작은 계속되게 합니다.
 function replaceUrl(_state: null, _title: string, url: string) {
@@ -229,6 +231,13 @@ function HomeStampApp({
     if (accountId)
       api.records.load({ accountId }).catch((e) => toast(errorMessage(e)))
   }, [api, accountId])
+  // 호실에 들어가면 그 호실 상세(입주일·availableActions)를 새로 받아요(GET /api/rooms/{id}). 목업은 할 일이 없어요
+  useEffect(() => {
+    if (accountId && route.roomId)
+      api.records
+        .loadRoom({ accountId }, route.roomId)
+        .catch((e) => toast(errorMessage(e)))
+  }, [api, accountId, route.roomId])
   // 내 호실: 내가 만들었거나 연결을 수락한 호실. 호실마다 내 측(임차인/임대인)은 연결로 정해져요.
   const myRooms = db.rooms.filter((r) => {
     const s = sideOf(r, accountId)
@@ -262,7 +271,6 @@ function HomeStampApp({
     to: Role
     amount: number
   }>()
-  const [mobile, setMobile] = useState(false)
   // 지금 열린 입력 창(입력 상태는 창 부품마다 따로 가져요)
   const [modal, setModal] = useState<Modal>(null)
   const [message, setMessage] = useState("")
@@ -378,7 +386,9 @@ function HomeStampApp({
     (r) => r.status === "처리 완료" && hasUnsettledMoney(r),
   )
   // 정산 완료 또는 상대 기록에 합류한 '합류 전 기록'은 읽기만
-  const readOnly = room.status === "정산 완료" || Boolean(room.preJoinOf)
+  const readOnly = room.status === "정산 완료" || isPreJoin(room)
+  // 합류한 상대 기록의 이름(서버는 어느 기록에 합류했는지 주지 않아 HTTP에서는 비어 있어요)
+  const joinedName = db.rooms.find((x) => x.id === room.preJoinOf)?.name
   // 호실 단위 버튼(초대·하자 등록·거주 종료)은 서버가 준 availableActions로만 그려요(GET /api/rooms/{id}).
   // 서버가 연결되면 응답 값을 그대로 쓰고, 그 전에는 Mock이 서버 대신 계산해요.
   const roomActions = api.actions.room(room, role, { guest, readOnly })
@@ -416,6 +426,16 @@ function HomeStampApp({
   const moveInDefectClosed = moveIn === "확인 요청"
   // 호실마다 다음에 할 일 한 줄(홈·호실 목록 공통)
   const nextStep = (r: Room) => {
+    // HTTP: 서버가 고른 코드에 문구만 붙여요(06 4-3 nextStep). 초대·입주 점검·수리 건수 코드는 서버가 그 기능에서 더해요(#190)
+    const code = r.server?.nextStep
+    if (code)
+      return code === "SETTLE"
+        ? "퇴거 정산을 마무리해 주세요"
+        : code === "READ_ONLY"
+          ? r.server?.joinedAway
+            ? "합류 전 기록이에요 · 읽기 전용"
+            : "정산이 끝난 기록이에요 · 읽기 전용"
+          : "새로 확인할 일이 없어요"
     const openRepairs = db.repairs.filter(
       (x) => x.roomId === r.id && x.status !== "처리 완료",
     ).length
@@ -441,10 +461,13 @@ function HomeStampApp({
           ? v === "돈이 남은 건"
             ? moneyLeft.length
             : repairs.filter((r) => (r.proposal?.status || "미정") === v).length
-          : repairs.filter((r) => r.status === v).length
+          : v === "진행 중"
+            ? repairs.filter((r) => r.status !== "처리 완료").length
+            : repairs.filter((r) => r.status === v).length
   function go(p: Page) {
+    if (p === "inspection") setKind("in")
+    else if (p === "checkout") setKind("out")
     navigate((r) => ({ ...r, page: p, roomId: r.roomId || roomId }))
-    setMobile(false)
     setSearch("")
     setFilter("전체")
     window.scrollTo({ top: 0 })
@@ -875,19 +898,34 @@ function HomeStampApp({
       onPrefillUsed={() => setMoneyPrefill(undefined)}
     />
   )
-  // 옆 메뉴: 넓은 화면은 옆에, 좁은 화면은 [메뉴]로 여는 시트에 같은 메뉴를 보여요
+  const roomNames = accessibleRooms.map((r) => r.name)
+  const selectRoomByName = (v: string) => {
+    const found = db.rooms.find((r) => r.name === v)
+    if (!found) return
+    setRoomId(found.id)
+    go(pageAfterRoomChange(page))
+  }
+  const showFirstSteps =
+    roomHas("repair-cases") &&
+    !sessionOf(room, "in") &&
+    !repairs.length &&
+    !partPhotos.length
+  const subTabs =
+    page !== "detail" && page !== "notifications"
+      ? subTabsByGroup[activeTabOf(page)]
+      : undefined
+  // PC 전용 좌측 사이드바(모바일은 하단 고정 MobileTabbar 사용)
   const sideMenu = (
     <SideMenu
       page={page}
-      repairCount={repairs.length}
       openCount={openCount}
+      invitations={receivedInvitations.length}
       room={hasRoomAccess ? room : undefined}
+      roomNames={roomNames}
       account={account}
       roleText={sideText(role)}
-      onGo={(p) => {
-        if (p === "inspection") setKind("in")
-        go(p)
-      }}
+      onRoom={selectRoomByName}
+      onGo={(p) => go(p)}
       onAccount={() => open("account")}
     />
   )
@@ -916,29 +954,15 @@ function HomeStampApp({
         />
       ) : (
         <div className="app-shell">
-          <Sheet open={mobile} onOpenChange={setMobile}>
-            <SheetContent side="left" className="mobile-nav">
-              <SheetHeader className="sr-only">
-                <SheetTitle>메뉴</SheetTitle>
-                <SheetDescription>화면 이동과 내 계정</SheetDescription>
-              </SheetHeader>
-              {sideMenu}
-            </SheetContent>
-          </Sheet>
           <aside className="sidebar">{sideMenu}</aside>
           <div className="main-shell">
             <AppTopbar
-              title={
-                page === "detail"
-                  ? "하자 상세"
-                  : page === "notifications"
-                    ? "알림"
-                    : nav.find((n) => n.id === page)?.label
-              }
+              roomName={hasRoomAccess ? room.name : undefined}
+              roomNames={roomNames}
               invitations={receivedInvitations.length}
               unread={unread}
               accountInitial={account?.name.slice(0, 1) || "나"}
-              onMenu={() => setMobile(true)}
+              onRoom={selectRoomByName}
               onInvitations={() => go("connection")}
               onNotifications={() => go("notifications")}
               onAccount={() => open("account")}
@@ -966,35 +990,21 @@ function HomeStampApp({
                 <>
                   {page !== "detail" && (
                     <PageHeading
-                      eyebrow={
-                        page === "rooms"
-                          ? `내 호실 ${accessibleRooms.length}곳`
-                          : `${room.name} · ${room.status}`
-                      }
                       title={
                         page === "home"
                           ? `${account?.name ?? ""}님, 안녕하세요`
-                          : page === "notifications"
-                            ? "내 알림"
-                            : nav.find((n) => n.id === page)?.label
+                          : pageTitleOf(page)
                       }
                       greeting={page === "home"}
                       intro={
                         page === "home"
-                          ? "답할 일과 진행 중인 기록을 먼저 보여 드려요."
-                          : (pageIntro[page] ??
-                            "사실과 합의를 구분하고, 서로의 행동을 기록으로 남겨요.")
+                          ? `${room.name} · 답할 일과 진행 중인 기록을 모았어요.`
+                          : pageIntro[page]
                       }
-                      hideIntroOnMobile={page === "home"}
-                      roomName={room.name}
-                      roomNames={accessibleRooms.map((r) => r.name)}
-                      onRoom={(v) => {
-                        setRoomId(db.rooms.find((r) => r.name === v)!.id)
-                        go(page)
-                      }}
                       action={
                         roomHas("repair-cases") &&
-                        page === "repairs" && (
+                        (page === "repairs" ||
+                          (page === "home" && !showFirstSteps)) && (
                           <Button onClick={() => open("repair")}>
                             <Plus />
                             하자 등록
@@ -1003,17 +1013,28 @@ function HomeStampApp({
                       }
                     />
                   )}
+                  {subTabs && (
+                    <SubTabs
+                      items={subTabs}
+                      value={page}
+                      badges={{
+                        money: moneyLeft.length,
+                        connection: receivedInvitations.length,
+                      }}
+                      onChange={(next) => go(next)}
+                    />
+                  )}
                   {readOnly && (
                     <Notice className="mb-5" icon={<ShieldCheck aria-hidden />}>
                       정산 완료 · 읽기 전용으로 보관 중이에요. 정산 완료 뒤
                       1년이 지나면 삭제돼요.
                     </Notice>
                   )}
-                  {room.preJoinOf && (
+                  {isPreJoin(room) && (
                     <Notice className="mb-5">
-                      합류 전 기록이에요. 같은 집의 상대 기록(
-                      {db.rooms.find((x) => x.id === room.preJoinOf)?.name})에
-                      합류해서 이 기록은 읽기만 할 수 있어요.
+                      합류 전 기록이에요. 같은 집의 상대 기록
+                      {joinedName ? `(${joinedName})` : ""}에 합류해서 이 기록은
+                      읽기만 할 수 있어요.
                     </Notice>
                   )}
                   {page !== "rooms" &&
@@ -1030,16 +1051,8 @@ function HomeStampApp({
                     )}
                   {page === "home" && (
                     <HomePage
-                      showFirstSteps={
-                        roomHas("repair-cases") &&
-                        !sessionOf(room, "in") &&
-                        !repairs.length &&
-                        !partPhotos.length
-                      }
-                      onStartInspection={() => {
-                        setKind("in")
-                        go("inspection")
-                      }}
+                      showFirstSteps={showFirstSteps}
+                      onStartInspection={() => go("inspection")}
                       role={role}
                       room={room}
                       rooms={accessibleRooms}
@@ -1258,6 +1271,14 @@ function HomeStampApp({
               )}
             </main>
           </div>
+          {hasRoomAccess && (
+            <MobileTabbar
+              page={page}
+              openRepairCount={openCount}
+              invitations={receivedInvitations.length}
+              onGo={(p) => go(p)}
+            />
+          )}
         </div>
       )}
       <Dialog

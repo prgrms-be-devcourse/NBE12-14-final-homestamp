@@ -1,6 +1,8 @@
 package com.chilsuitjo.back.proposal.entity;
 
 import com.chilsuitjo.back.global.common.PartySide;
+import com.chilsuitjo.back.proposal.dto.AgendaRef;
+import com.chilsuitjo.back.proposal.rule.AgendaKind;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -199,5 +201,23 @@ public class Proposal {
         false,
         null,
         createdAt);
+  }
+
+  /**
+   * 이 제안이 붙은 안건. 대상 칸은 꼭 하나만 채워져 있다(V1 {@code num_nonnulls(...) = 1}, 팩토리도 하나만 채운다).
+   *
+   * @throws IllegalStateException 대상 칸이 모두 비어 있으면(DB 제약상 생길 수 없어 코드 버그다)
+   */
+  public AgendaRef agenda() {
+    if (repairCaseId != null) {
+      return new AgendaRef(AgendaKind.REPAIR_BURDEN, repairCaseId);
+    }
+    if (settlementItemId != null) {
+      return new AgendaRef(AgendaKind.SETTLEMENT_ITEM, settlementItemId);
+    }
+    if (settlementId != null) {
+      return new AgendaRef(AgendaKind.DEPOSIT, settlementId);
+    }
+    throw new IllegalStateException("대상이 없는 제안이에요: " + id);
   }
 }
