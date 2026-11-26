@@ -211,7 +211,7 @@ class MeControllerTest {
         .andExpect(jsonPath("$.displayName").value("정서윤"));
   }
 
-  // 05 2-3 이름 변경 내부 기록: 실제로 바뀌었을 때만 회원 ID와 변경 사실, 값은 남기지 않는다(decisions 2026-11-26)
+  // 05 2-3 이름 변경 내부 기록: 실제로 바뀌었을 때만 회원 ID(앞 8자리)와 변경 사실, 값은 남기지 않는다(decisions 2026-11-26)
 
   @Test
   void 이름이_바뀌면_회원_ID와_변경_사실만_로그에_남는다(CapturedOutput output) throws Exception {
@@ -219,7 +219,15 @@ class MeControllerTest {
 
     update(memberId, "{\"displayName\":\"정하늘\"}").andExpect(status().isOk());
 
-    assertThat(output.getOut()).contains("이름 변경: 회원 " + memberId).doesNotContain("정하늘");
+    assertThat(output.getOut())
+        .contains(nameChangeLog(memberId))
+        .doesNotContain(memberId.toString())
+        .doesNotContain("정하늘");
+  }
+
+  /** 04 11장 "로그": ID는 앞 8자리만. */
+  private static String nameChangeLog(UUID memberId) {
+    return "이름 변경: 회원 " + memberId.toString().substring(0, 8);
   }
 
   @Test
@@ -229,7 +237,7 @@ class MeControllerTest {
     update(memberId, "{\"displayName\":\"정서윤\"}").andExpect(status().isOk());
     update(memberId, "{\"smsEnabled\":false}").andExpect(status().isOk());
 
-    assertThat(output.getOut()).doesNotContain("이름 변경: 회원 " + memberId);
+    assertThat(output.getOut()).doesNotContain(nameChangeLog(memberId));
   }
 
   @Test
@@ -239,7 +247,7 @@ class MeControllerTest {
     update(memberId, "{\"displayName\":\"%s\"}".formatted("가".repeat(51)))
         .andExpect(status().isBadRequest());
 
-    assertThat(output.getOut()).doesNotContain("이름 변경: 회원 " + memberId);
+    assertThat(output.getOut()).doesNotContain(nameChangeLog(memberId));
   }
 
   @Test

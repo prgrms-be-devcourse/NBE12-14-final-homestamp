@@ -62,15 +62,16 @@ public class MeService {
   }
 
   /**
-   * 이름 변경 내부 기록(05 2-3 "계정(호실 밖)"): 변경이 커밋된 뒤에만 회원 ID와 변경 사실을 앱 로그에 남긴다. 이름 값은 남기지 않는다(05 0장 신원 예외,
-   * 04 "개인정보 로그"). 롤백되거나 같은 이름이면 남기지 않는다.
+   * 이름 변경 내부 기록(05 2-3 "계정(호실 밖)"): 변경이 커밋된 뒤에만 회원 ID(앞 8자리)와 변경 사실을 앱 로그에 남긴다. 이름 값은 남기지 않는다(05 0장
+   * 신원 예외, 04 "개인정보 로그"). 롤백되거나 같은 이름이면 남기지 않는다.
    */
   private static void logNameChangeAfterCommit(UUID memberId) {
     TransactionSynchronizationManager.registerSynchronization(
         new TransactionSynchronization() {
           @Override
           public void afterCommit() {
-            log.info("이름 변경: 회원 {}", memberId);
+            // ID는 앞 8자리만(04 11장 "로그")
+            log.info("이름 변경: 회원 {}", memberId.toString().substring(0, 8));
           }
         });
   }
