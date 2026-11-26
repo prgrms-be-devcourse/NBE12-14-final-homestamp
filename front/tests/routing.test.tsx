@@ -1,7 +1,11 @@
 import { expect, test, vi } from "vitest"
 import { fireEvent, render, screen, within } from "@testing-library/react"
 import App from "../src/App"
-import { activeTabOf, nav } from "../src/components/common/app-nav"
+import {
+  activeTabOf,
+  nav,
+  pageAfterRoomChange,
+} from "../src/components/common/app-nav"
 import { parsePath, toPath, type Route } from "../src/lib/router"
 
 const base: Route = { page: "home", roomId: "302", repairId: "leak" }
@@ -108,6 +112,10 @@ test("주 메뉴는 4개 핵심 탭으로 통합되고 세부 화면은 서브�
   expect(activeTabOf("checkout")).toBe("inspection")
   expect(activeTabOf("connection")).toBe("rooms")
   expect(activeTabOf("timeline")).toBe("rooms")
+  // 수리 건 상세에서 호실을 바꾸면 그 건 ID로 남지 않고 새 호실의 수리 목록으로 가요
+  expect(pageAfterRoomChange("detail")).toBe("repairs")
+  expect(pageAfterRoomChange("money")).toBe("money")
+  expect(pageAfterRoomChange("home")).toBe("home")
 
   render(<App />)
   fireEvent.change(await screen.findByLabelText("이메일"), {

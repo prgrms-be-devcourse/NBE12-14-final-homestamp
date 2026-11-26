@@ -98,6 +98,7 @@ import { SubTabs } from "@/components/common/sub-tabs"
 import { Toast } from "@/components/common/toast"
 import {
   activeTabOf,
+  pageAfterRoomChange,
   pageIntro,
   pageTitleOf,
   subTabsByGroup,
@@ -902,7 +903,7 @@ function HomeStampApp({
     const found = db.rooms.find((r) => r.name === v)
     if (!found) return
     setRoomId(found.id)
-    go(page)
+    go(pageAfterRoomChange(page))
   }
   const showFirstSteps =
     roomHas("repair-cases") &&

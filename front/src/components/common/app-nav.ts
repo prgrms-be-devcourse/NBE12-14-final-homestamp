@@ -41,6 +41,12 @@ export function activeTabOf(page: Page): NavTabId {
   return "home"
 }
 
+// 호실을 바꾼 뒤 갈 화면. 수리 건 상세는 그 호실의 건이라 새 호실의 수리 목록으로 가고(같은 건 ID로 남으면 '찾을 수 없음'),
+// 나머지는 새 호실의 같은 화면으로 가요(#229 리뷰)
+export function pageAfterRoomChange(page: Page): Page {
+  return page === "detail" ? "repairs" : page
+}
+
 // 4개 탭 안에서 쓰는 보조 탭(기존 URL과 1:1 연결)
 export const subTabsByGroup: Partial<
   Record<NavTabId, readonly { id: Page; label: string }[]>
