@@ -14,87 +14,205 @@
   }
 }
 .sidebar {
-  width: 256px;
+  width: 240px;
   overflow-y: auto;
   overscroll-behavior: contain;
+  padding: 22px 14px 12px;
+  gap: 14px;
 }
 .main-shell {
-  margin-left: 256px;
+  margin-left: 240px;
+}
+.side-room-box {
+  border-radius: 12px;
+  border: 1px solid #e7edf5;
+  background: #f8fafd;
+  padding: 11px 12px;
+}
+.side-room-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #6b7a90;
+  margin-bottom: 6px;
+}
+.side-room-name {
+  display: block;
+  font-size: 15px;
+  font-weight: 750;
+  color: #172033;
+}
+.side-room-select [data-slot="select-trigger"] {
+  width: 100%;
+  min-height: 38px;
+  height: auto;
+  font-size: 14px;
+  font-weight: 650;
+  background: #fff;
 }
 .brand small {
   white-space: normal;
-  line-height: 1.6;
+  line-height: 1.5;
 }
 .sidebar .nav-item {
   font-size: 15px;
-  min-height: 48px;
+  min-height: 46px;
   height: auto;
-  padding: 12px;
+  padding: 10px 12px;
   white-space: normal;
-  line-height: 1.5;
+  line-height: 1.45;
 }
 .nav-item svg {
   flex-shrink: 0;
 }
 .profile {
-  min-height: 80px;
+  min-height: 70px;
   height: auto;
 }
 .profile > span:nth-child(2) {
   flex: 1;
 }
 .topbar {
-  min-height: 76px;
+  min-height: 58px;
   height: auto;
-  padding-top: 14px;
-  padding-bottom: 14px;
-  flex-wrap: wrap;
+  padding: 10px 32px;
+  flex-wrap: nowrap;
+  position: sticky;
+  top: 0;
+  z-index: 25;
+  backdrop-filter: blur(10px);
 }
 .top-actions {
-  gap: 12px;
-  flex-wrap: wrap;
-}
-.top-left {
+  gap: 8px;
+  flex-wrap: nowrap;
   flex-shrink: 0;
 }
-.breadcrumb {
-  line-height: 1.6;
+.top-left {
+  flex: 1;
+  min-width: 0;
 }
-.bell > span {
-  min-width: 22px;
-  height: 22px;
+.mobile-brand-mark {
   display: grid;
   place-items: center;
-  top: -6px;
-  right: -8px;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 9px;
+  background: linear-gradient(145deg, #4b8fff, #175ce0);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 850;
+}
+.mobile-room-select {
+  min-width: 0;
+  max-width: 210px;
+}
+.mobile-room-select [data-slot="select-trigger"] {
+  height: 36px;
+  min-height: 36px;
+  font-size: 14px;
+  font-weight: 700;
+  border-radius: 10px;
+  background: #f5f7fb;
+  border-color: #e5eaf2;
+  padding: 0 10px;
+}
+.bell > span {
+  min-width: 20px;
+  height: 20px;
+  font-size: 11px;
+  font-weight: 750;
+  display: grid;
+  place-items: center;
+  top: -2px;
+  right: -2px;
 }
 .page-heading {
   flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 22px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 18px;
+  margin-bottom: 18px;
 }
 .page-heading h1 {
-  font-size: 32px;
-  line-height: 1.35;
-  letter-spacing: -0.8px;
+  font-size: 26px;
+  line-height: 1.3;
+  letter-spacing: -0.6px;
+  font-weight: 800;
+  color: #172033;
 }
 .page-heading p {
-  font-size: 16px;
-  line-height: 1.75;
-}
-.eyebrow {
-  line-height: 1.7;
+  margin-top: 4px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #5f6b7d;
 }
 .heading-actions {
-  flex-wrap: wrap;
-  align-self: center;
-  max-width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
-.room-select [data-slot="select-trigger"] {
-  font-size: 14px;
-  height: auto;
-  min-height: 44px;
-  min-width: 210px;
+/* 모바일 하단 고정 4탭 바. 보이고 숨기는 것은 아래 760px 미디어 쿼리가 정한다
+   (이 파일의 규칙은 Tailwind 층 밖이라 md:hidden 같은 유틸리티보다 우선해서, 클래스로 숨기면 PC에서도 보인다) */
+.mobile-tabbar {
+  position: fixed;
+  inset: auto 0 0 0;
+  z-index: 40;
+  display: none;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(12px);
+  border-top: 1px solid #e5eaf2;
+  padding: 4px 6px calc(6px + env(safe-area-inset-bottom));
+  box-shadow: 0 -2px 12px rgba(23, 32, 51, 0.05);
+}
+.mobile-tabbar-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-height: 52px;
+  border: 0;
+  background: transparent;
+  color: #6b7a90;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 10px;
+  padding: 4px 2px;
+}
+.mobile-tabbar-item.active {
+  color: #2457d6;
+  font-weight: 750;
+}
+.mobile-tabbar-item.active::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  width: 24px;
+  height: 3px;
+  border-radius: 0 0 4px 4px;
+  background: #2457d6;
+}
+.mobile-tabbar-badge {
+  position: absolute;
+  top: -5px;
+  right: -10px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #f08a24;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 750;
+  display: grid;
+  place-items: center;
+  border: 1.5px solid #fff;
 }
 .panel {
   padding-top: 24px;
@@ -477,51 +595,62 @@
   min-height: 44px;
 }
 
-@media (max-width: 1280px) {
-  .page-heading {
-    flex-direction: column;
+@media (max-width: 1000px) {
+  .sidebar {
+    width: 210px;
   }
-  .heading-actions {
-    align-self: stretch;
+  .main-shell {
+    margin-left: 210px;
+  }
+  .topbar {
+    padding: 10px 20px;
   }
 }
+/* PC는 내 계정을 옆 메뉴 아래에만 둔다(.avatar의 display: grid가 md:hidden보다 우선해서 여기서 숨김) */
+.topbar .avatar.small {
+  display: none;
+}
 @media (max-width: 760px) {
+  .mobile-tabbar {
+    display: grid;
+  }
+  .topbar .avatar.small {
+    display: grid;
+  }
   .sidebar {
-    width: min(300px, 85vw);
+    display: none;
   }
   .main-shell {
     margin-left: 0;
   }
   .topbar {
-    padding: 10px 14px;
-    min-height: 72px;
+    padding: 8px 14px;
+    min-height: 56px;
+    height: 56px;
     gap: 8px;
   }
   .top-left {
-    flex: 1 1 90px;
+    flex: 1 1 auto;
   }
   .top-actions {
     justify-content: flex-end;
-    flex: 1 1 auto;
-    gap: 8px;
+    flex: 0 0 auto;
+    gap: 6px;
   }
-  .breadcrumb > strong {
-    font-size: 14px;
-    max-width: none;
-    white-space: normal;
-    overflow: visible;
+  .page-heading {
+    flex-direction: row;
+    align-items: center;
+    margin-bottom: 14px;
   }
   .page-heading h1 {
-    font-size: 28px;
-  }
-  .heading-actions {
-    gap: 10px;
-  }
-  .room-select {
-    flex: 1 1 200px;
+    font-size: 21px;
   }
   .heading-actions > button {
-    flex: 1 1 110px;
+    min-height: 40px;
+    padding: 0 12px;
+  }
+  .toast {
+    bottom: calc(74px + env(safe-area-inset-bottom));
   }
   .panel-head [data-slot="card-title"] {
     font-size: 18px;

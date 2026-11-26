@@ -1,8 +1,9 @@
 import type { RecordRequest } from "@/api/records"
 import { useRef, type ReactNode } from "react"
-import { Link2, ShieldCheck } from "lucide-react"
+import { ClipboardCheck, MessageSquareText, ShieldCheck } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Empty, Panel, Status, Timeline } from "@/components/common/blocks"
+import { Empty, Status, Timeline } from "@/components/common/blocks"
+import { Fold } from "@/components/common/fold"
 import { Notice } from "@/components/common/notice"
 import { PhotoGallery } from "@/features/photo/photo-gallery"
 import { RecordDescription } from "@/components/common/record-description"
@@ -16,6 +17,13 @@ import type {
 } from "@/data/demo"
 import { hasAction, type RepairAction } from "@/api/actions"
 import { useApi } from "@/api/hooks"
+import { errorMessage } from "@/api/errors"
+import { isNotFound } from "@/api/http-rooms"
+import {
+  ErrorState,
+  LoadingState,
+  NotFoundState,
+} from "@/components/common/states"
 import { CorrectionHistory } from "@/components/common/correction-box"
 import { RepairDetail } from "@/features/repair/repair-detail"
 import {
@@ -82,6 +90,8 @@ export interface RepairDetailPageProps {
   itemMasks: (i: Inspection) => ReturnType<typeof maskOf>[]
   moneyPrefill?: { from: Role; to: Role; amount: number }
   onPrefillUsed: () => void
+  // 화면 기록에 없고 서버에서만 받는 수리 건(http 모드, 수리 건 목록 연결 전 #264). 받기 전에는 불러오는 중, 404면 '찾을 수 없음'
+  serverOnly?: boolean
 }
 
 // S-12 수리 건 상세. 버튼은 서버가 준 availableActions로만 그려요(08 0장 원칙 6, 09 5장).
@@ -109,11 +119,12 @@ export function RepairDetailPage({
   itemMasks,
   moneyPrefill,
   onPrefillUsed,
+  serverOnly = false,
 }: RepairDetailPageProps) {
   const correctionsRef = useRef<RepairCorrectionsHandle>(null)
   // 수리 건은 API(GET /api/repair-cases/{id})로 읽고, 버튼은 응답의 availableActions로만 그려요.
   // 목업 동안은 다른 도메인(지불·고치기 등)이 기록을 바꾸면 db가 바뀌어 다시 불러와요.
-  const { view, run } = useRepairCase(
+  const { view, run, error } = useRepairCase(
     initial.id,
     isGuest || !accountId ? null : { accountId },
     db,
@@ -146,6 +157,12 @@ export function RepairDetailPage({
   const sameZonePhotos = partPhotos.filter(
     (p) => p.kind === "in" && p.zone === r.zone,
   )
+  // 서버에서만 받는 건은 응답이 오기 전까지 빈 값으로 그리지 않아요(남의 수리 건·없는 건은 404, 06 4-6)
+  if (serverOnly && !view) {
+    if (error && isNotFound(error)) return <NotFoundState onHome={onBack} />
+    if (error) return <ErrorState message={errorMessage(error)} />
+    return <LoadingState />
+  }
   return (
     <RepairDetail
       r={r}
@@ -360,89 +377,88 @@ export function RepairDetailPage({
       }
       causes={
         !isGuest ? (
-          <CauseNotes
-            repair={r}
-            role={role}
-            readOnly={!has("cause-notes")}
-            onCommand={command}
-          />
+          <Fold
+            title="원인 설명"
+            count={r.causes?.length ?? 0}
+            icon={<MessageSquareText size={16} />}
+            className="mt-0 rounded-[18px] shadow-[0_1px_2px_#1720330a]"
+          >
+            <CauseNotes
+              repair={r}
+              role={role}
+              readOnly={!has("cause-notes")}
+              onCommand={command}
+            />
+          </Fold>
         ) : undefined
       }
       sameZone={
-        !isGuest && (
-          <Panel title="같은 부위의 입주 기록">
-            {sameZonePhotos.map((p) => (
-              <div key={p.id}>{renderPartPhoto(p)}</div>
-            ))}
-            {sameZoneItems.map((i) => (
-              <div className="comparison-record" key={i.id}>
-                <PhotoGallery
-                  title={i.title}
-                  description={i.description}
-                  photos={i.photos}
-                  masks={itemMasks(i)}
-                  art={i.art}
-                  layout="compact"
-                />
-                <div>
-                  <strong>{i.title}</strong>
-                  <RecordDescription text={i.description} />
-                  <Status>
-                    {i.publication === "draft"
-                      ? i.solo
-                        ? "작성 중 · 혼자 남긴 기록"
-                        : "작성 중"
-                      : i.solo
-                        ? "혼자 남긴 기록(상대 확인 없음)"
-                        : ackText(i.ack)}
-                  </Status>
-                  {i.author === role && i.publication !== "draft" && (
-                    <Button
-                      variant="link"
-                      onClick={() => onCopyShareLink("inspection", i.id)}
-                    >
-                      공유 링크 복사
-                    </Button>
-                  )}
-                  {i.late && (
-                    <small className="block mt-2 muted">
-                      입주 후 등록 · 입주 당시 상태와 다를 수 있어요.
-                    </small>
-                  )}
-                  {i.afterEnd && (
-                    <small className="block mt-2 muted">
-                      거주 종료 뒤 추가된 기록이에요.
-                    </small>
-                  )}
+        !isGuest && (sameZoneItems.length > 0 || sameZonePhotos.length > 0) ? (
+          <Fold
+            title="같은 부위의 입주 기록"
+            count={sameZoneItems.length + sameZonePhotos.length}
+            icon={<ClipboardCheck size={16} />}
+            className="mt-0 rounded-[18px] shadow-[0_1px_2px_#1720330a]"
+          >
+            <div className="space-y-3">
+              {sameZonePhotos.map((p) => (
+                <div key={p.id}>{renderPartPhoto(p)}</div>
+              ))}
+              {sameZoneItems.map((i) => (
+                <div className="comparison-record" key={i.id}>
+                  <PhotoGallery
+                    title={i.title}
+                    description={i.description}
+                    photos={i.photos}
+                    masks={itemMasks(i)}
+                    art={i.art}
+                    layout="compact"
+                  />
+                  <div>
+                    <strong>{i.title}</strong>
+                    <RecordDescription text={i.description} />
+                    <Status>
+                      {i.publication === "draft"
+                        ? i.solo
+                          ? "작성 중 · 혼자 남긴 기록"
+                          : "작성 중"
+                        : i.solo
+                          ? "혼자 남긴 기록(상대 확인 없음)"
+                          : ackText(i.ack)}
+                    </Status>
+                    {i.author === role && i.publication !== "draft" && (
+                      <Button
+                        variant="link"
+                        onClick={() => onCopyShareLink("inspection", i.id)}
+                      >
+                        공유 링크 복사
+                      </Button>
+                    )}
+                    {i.late && (
+                      <small className="mt-2 block muted">
+                        입주 후 등록 · 입주 당시 상태와 다를 수 있어요.
+                      </small>
+                    )}
+                    {i.afterEnd && (
+                      <small className="mt-2 block muted">
+                        거주 종료 뒤 추가된 기록이에요.
+                      </small>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
-            {!sameZoneItems.length && !sameZonePhotos.length && (
-              <p className="muted">입주 점검에 같은 부위의 기록이 없어요.</p>
-            )}
-          </Panel>
-        )
+              ))}
+            </div>
+          </Fold>
+        ) : undefined
       }
       extra={
-        <>
-          {!isGuest && (
-            <p className="svc-note">
-              <ShieldCheck size={16} aria-hidden />
-              하자를 확인해도 비용을 누가 낼지는 따로 정해요. HomeStamp는 누가
-              맞는지 판단하지 않아요.
-            </p>
-          )}
-          {!isGuest && room.status === "거주 중" && (
-            <Button
-              variant="outline"
-              className="w-full"
-              onClick={() => onCopyShareLink("repair", r.id)}
-            >
-              <Link2 />
-              공유 링크 복사
-            </Button>
-          )}
-        </>
+        !isGuest ? (
+          <p className="svc-note">
+            <ShieldCheck size={16} aria-hidden />
+            하자를 확인해도 비용을 누가 낼지는 따로 정해요. HomeStamp는 누가
+            맞는지 판단하지 않아요.
+          </p>
+        ) : undefined
       }
       photoSettings={
         canAct ? (
@@ -461,6 +477,11 @@ export function RepairDetailPage({
       }
       onNewRepair={canAddRepair ? () => onOpenModal("repair") : undefined}
       onShare={onInvite}
+      onCopyLink={
+        !isGuest && room.status === "거주 중"
+          ? () => onCopyShareLink("repair", r.id)
+          : undefined
+      }
     />
   )
 }

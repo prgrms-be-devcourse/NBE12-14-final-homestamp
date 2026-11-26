@@ -29,6 +29,7 @@ DECLARE
         'record.repair_content',
         'record.settlement_transfer_version',
         'record.supplement',
+        'state.action_chain_head',
         'state.correction_request',
         'state.in_app_notification',
         'state.inspection',
@@ -81,6 +82,7 @@ DECLARE
         'record.repair_content',
         'record.settlement_transfer_version',
         'record.supplement',
+        'state.action_chain_head',
         'state.correction_request',
         'state.in_app_notification',
         'state.inspection',
@@ -125,7 +127,7 @@ DECLARE
     human_no_access_tables text[] := ARRAY[]::text[];
     -- Columns Human may read even though their names look sensitive. Reviewed reasons:
     -- keyed HMAC pseudonyms (phone_hmac; linkable to each other, not reversible without the server key),
-    -- record hash-chain values, timestamps/flags, region and part lookup codes/labels (room_part.name is user input),
+    -- record hash-chain values (including the chain head's last_hash in state), timestamps/flags, region and part lookup codes/labels (room_part.name is user input),
     -- small action payload values (today: answer, consentVersion, photo digests; open map, review new keys).
     human_approved_sensitive_columns text[] := ARRAY[
         'log.deletion_log.action_hash',
@@ -136,6 +138,7 @@ DECLARE
         'record.action.payload',
         'record.action.prev_hash',
         'record.photo.device_taken_at',
+        'state.action_chain_head.last_hash',
         'state.member.phone_verified_at',
         'state.part_template.name',
         'state.region.code',
@@ -253,7 +256,9 @@ BEGIN
     IF actual_tables IS DISTINCT FROM (
         SELECT array_agg(table_name ORDER BY table_name) FROM unnest(expected_tables) table_name
     ) THEN
-        RAISE EXCEPTION 'unclassified or missing table inventory: %', actual_tables;
+        RAISE EXCEPTION 'unclassified or missing table inventory: %. If a new V file added, renamed, or dropped a table, '
+            'update expected_tables, the Human lists, and the C-table UPDATE/DELETE grants in db/grants/grants.sql together',
+            actual_tables;
     END IF;
     IF to_regclass('public.flyway_schema_history') IS NULL THEN
         RAISE EXCEPTION 'public.flyway_schema_history must exist before grants are applied';
@@ -377,6 +382,9 @@ BEGIN
         app_role);
     EXECUTE format('GRANT DELETE ON TABLE state.sms_opt_out TO %I', app_role);
     EXECUTE format('GRANT UPDATE ON TABLE state.room_record TO %I', app_role);
+    -- Chain head (05 2-3, V9): the app advances last_seq/last_hash but never deletes it, so a deleted last action
+    -- cannot make the next action reuse its room_seq. It goes away only with the whole room (CASCADE from purge).
+    EXECUTE format('GRANT UPDATE ON TABLE state.action_chain_head TO %I', app_role);
     EXECUTE format('REVOKE INSERT, UPDATE, DELETE ON TABLE state.part_template, state.region FROM %I', app_role);
     EXECUTE format('REVOKE UPDATE ON TABLE state.sms_opt_out FROM %I', app_role);
     EXECUTE format('REVOKE DELETE ON TABLE state.room_record FROM %I', app_role);

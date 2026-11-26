@@ -5,3 +5,5 @@ app:
     verify-code: test-only-verify-code-key
     verify-ticket: test-only-verify-ticket-key
     phone-hmac: test-only-phone-hmac-key
+    upload-ticket: test-only-photo-upload-ticket-signing-key
+    link-token: test-only-link-token-hmac-key-32bytes

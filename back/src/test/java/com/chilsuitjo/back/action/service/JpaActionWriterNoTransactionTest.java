@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.IllegalTransactionStateException;
 
 /** 행동 기록은 pipeline의 트랜잭션 안에서만 쓴다. 이 테스트는 트랜잭션을 열지 않으므로 DB에 아무것도 남기지 않는다. */
@@ -20,6 +21,7 @@ import org.springframework.transaction.IllegalTransactionStateException;
 @SpringBootTest(
     properties =
         "spring.datasource.hikari.connection-init-sql=SET search_path TO state, record, log, public")
+@ActiveProfiles("test")
 class JpaActionWriterNoTransactionTest {
 
   @Autowired private ActionWriter writer;

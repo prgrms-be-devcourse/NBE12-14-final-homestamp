@@ -17,10 +17,11 @@ export interface Region {
   sigungu: string | null
   dong: string
 }
-// 단계 선택 한 칸(06 4-3 GET /api/regions?parent=). 06에 응답 모양이 아직 없어 코드와 이름만 써요.
+// 단계 선택 한 칸(06 4-3 GET /api/regions?parent=). 세 단계 모두 코드와 이름이에요.
+// 시·군·구가 없는 세종은 parent=36에 이름이 null인 칸(36110) 하나가 와요. 화면은 그 칸을 저절로 고르고 단계를 건너뛰어요.
 export interface RegionOption {
   code: string
-  name: string
+  name: string | null
 }
 export interface HomeStampApi {
   mode: "mock" | "http"

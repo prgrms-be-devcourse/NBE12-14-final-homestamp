@@ -91,11 +91,11 @@ Migration이나 GRANT가 실패하면 Green을 시작하지 않고 Blue를 유�
 스키마 배치는 05 0장 「DB 스키마와 권한」이 원본이다. 실제 역할 이름은 배포에서 정하며 V1은 운영 역할을 만들거나 GRANT하지 않는다.
 
 - 소유자 역할로 `ALTER DEFAULT PRIVILEGES FOR ROLE <소유자> IN SCHEMA record GRANT SELECT, INSERT ON TABLES TO <앱>`을 설정한다. 새 `state` 테이블에는 SELECT·INSERT만 기본 부여하고, UPDATE·DELETE는 분류된 기존 C 테이블에 명시적으로 부여한다. `log`에는 INSERT를 기본 부여한다. 이미 마이그레이션된 테이블에는 `GRANT ... ON ALL TABLES IN SCHEMA ...`와 객체별 C 권한을 함께 적용한다.
-- `state.part_template`·`state.region`은 고정 조회 데이터이므로 앱의 INSERT·UPDATE·DELETE를 회수하고 SELECT만 남긴다. `state.sms_opt_out`은 SELECT·INSERT·DELETE만 허용한다.
+- `state.part_template`·`state.region`은 고정 조회 데이터이므로 앱의 INSERT·UPDATE·DELETE를 회수하고 SELECT만 남긴다. `state.sms_opt_out`은 SELECT·INSERT·DELETE만 허용한다. 체인 머리 `state.action_chain_head`(V9)는 SELECT·INSERT·UPDATE만 허용하고 DELETE는 주지 않는다(지우면 다음 행동이 지운 번호를 다시 쓸 수 있음, 05 2-10). 호실 통째 삭제 때 CASCADE로만 지워진다.
 - 앱에 `record`, `state`, `log` USAGE를 주고, 스키마 CREATE·public 접근·소유자 멤버십은 주지 않는다. Flyway는 소유자로 실행하며 이력은 `public`, 관리 스키마는 `public,record,state,log`다.
 - 삭제 작업 역할은 필요한 `record`·`state`·`log` 조회, 감사·아웃박스 INSERT와 `state.purge_room_record(uuid)` EXECUTE만 받는다. 앱에는 이 함수 EXECUTE가 없다.
 - 사람별 읽기 전용 역할(Human)은 장애 대응 조회에 필요한 범위만 읽는다. 쓰기·TRUNCATE·함수 실행·다른 역할 전환은 없다.
-  - 테이블 단위 SELECT는 `grants.sql`의 명시 목록(기록·상태·감사 테이블 31개)에만 준다. 기본 권한(Default Privileges)으로는 주지 않으므로 새 테이블은 분류하기 전까지 읽을 수 없고, 분류되지 않은 테이블이 있으면 GRANT가 실패한다.
+  - 테이블 단위 SELECT는 `grants.sql`의 명시 목록(기록·상태·감사 테이블 32개)에만 준다. 기본 권한(Default Privileges)으로는 주지 않으므로 새 테이블은 분류하기 전까지 읽을 수 없고, 분류되지 않은 테이블이 있으면 GRANT가 실패한다.
   - 민감 테이블 7개는 컬럼 단위 SELECT만 준다. 읽을 수 없는 컬럼: `member`의 `email`·`password_hash`·`display_name`·`phone`, `refresh_token`의 `token_hash`·`device_label`, `phone_verification`의 `phone`·`code_hash`, `link`의 `token_hash`, `party`의 `invite_phone`, `outbox`의 `payload`·`dedupe_key`, `cause_note`의 `expert_name`(제3자의 실제 이름). 이 컬럼은 SELECT 목록·WHERE·`SELECT *`·행 전체 참조 어디에 써도 권한 오류(SQLState `42501`)로 거부된다.
   - 새 컬럼이 Human에게 보이는지는 테이블 분류에 따라 다르다.
     - 컬럼 단위 7개 테이블: 새 컬럼은 `grants.sql`의 허용 컬럼 목록에 넣고 GRANT를 다시 실행하기 전까지 읽을 수 없다.
@@ -127,7 +127,7 @@ GRANT SQL은 `back/src/main/resources/db/grants/grants.sql` 하나다(앱 이미
 ## 호출 트랜잭션
 
 1. 삭제 자격(보관 기한·탈퇴 규칙)을 확인하고 호실 행부터 잠근다. 모든 기록 작성자는 같은 호실 잠금 순서를 따른다.
-2. 삭제 대상 행동마다 UUID를 발급해 `deletion_log`에 원본 ID·호실·번호·prev_hash·hash와 삭제 이유를 보존한다. 이 값 중 하나라도 원본과 다르면 함수가 거절한다.
+2. 삭제 대상 행동마다 UUID를 발급해 `deletion_log`에 원본 ID·호실·번호·prev_hash·hash와 삭제 이유를 보존한다. 이 값 중 하나라도 원본과 다르면 함수가 거절한다. 탈퇴 때 초안만 지우는 부분 삭제(05 2-10)는 체인 머리 `action_chain_head`를 고치지 않는다(다음 행동이 지운 번호를 다시 쓰지 않게).
 3. 원본 키를 읽을 수 있을 때 S3_DELETE 작업과 삭제 감사 보관용 AUDIT_WRITE 작업을 아웃박스에 넣는다. 파일 삭제와 DB 삭제를 별개 트랜잭션으로 먼저 실행하지 않는다.
 4. 삭제 작업 역할로 `purge_room_record`를 호출하고 커밋한다. 함수는 호실을 잠그고 행동 감사 기록을 대조한 뒤 내부에서만 purge 플래그를 켠다. 종료 시 기존 플래그 값으로 되돌린다. 오류가 나면 전체 트랜잭션을 롤백한다.
 5. 아웃박스 작업자가 S3 파일 삭제와 감사 보관을 재시도한다. 함수는 아웃박스 생성 여부·삭제 기한을 검사하지 않으므로 이 단계까지 호출 서비스가 책임진다.
