@@ -10,7 +10,7 @@
 #   (manage_master_user_password). 상태 파일에는 비밀값이 아니라 비밀의 ARN만 남는다.
 #   마스터 계정은 Role Bootstrap(infra/db/bootstrap_roles.sql, #185)을 돌리는 신뢰된 DB 관리자만 쓴다.
 #   앱 EC2 역할은 Secrets Manager 값 읽기가 명시적으로 거부돼 있다(iam_web.tf DenySecretsManagerValues).
-#   그 Secret을 읽는 운영 관리자 권한은 별도 PR이다(decisions 2026-11-25). Secrets Manager는 과정 사용 가능 서비스
+#   그 Secret 하나를 읽는 권한은 운영 관리 역할에만 있다(iam_ops.tf ReadRdsMasterSecretOnly, decisions 2026-11-25). Secrets Manager는 과정 사용 가능 서비스
 # - RDS가 만드는 Secret은 Terraform이 관리하지 않아 default_tags(Team)가 붙는지 보장되지 않는다.
 #   apply 뒤 Secret 메타데이터의 태그만 확인하고(값은 읽지 않음), 없으면 붙인다(04 13-1 RDS 단계)
 # - 인스턴스 클래스 기본값은 과정 계정의 db.t4g.micro, 개인 계정은 tfvars로 바꾼다. 서울 리전에서 PostgreSQL 18.1~18.6이

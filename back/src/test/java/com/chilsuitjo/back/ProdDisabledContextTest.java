@@ -108,8 +108,6 @@ class ProdDisabledContextTest {
   @Test
   void 번호_조회는_지어낸_번호를_돌려주지_않는다() {
     UUID any = UUID.randomUUID();
-    assertThat(recipients.phoneOfRecipient(any)).isEmpty();
-    assertThat(recipients.phoneOfParty(any)).isEmpty();
     assertThat(recipients.phoneOfMember(any)).isEmpty();
   }
 

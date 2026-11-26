@@ -2,9 +2,12 @@ package com.chilsuitjo.back;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import com.chilsuitjo.back.action.service.ActionRequestContext;
 import com.chilsuitjo.back.notification.dto.DeliveryQuery;
+import com.chilsuitjo.back.notification.dto.Recipient;
 import com.chilsuitjo.back.notification.dto.SmsMessage;
 import com.chilsuitjo.back.notification.dto.SmsNoticeCommand;
 import com.chilsuitjo.back.notification.dto.SmsSendResult;
@@ -19,6 +22,7 @@ import com.chilsuitjo.back.notification.service.InMemoryRecipientDirectory;
 import com.chilsuitjo.back.notification.service.InviteLinks;
 import com.chilsuitjo.back.notification.service.NoticeOutbox;
 import com.chilsuitjo.back.notification.service.OutboxWorker;
+import com.chilsuitjo.back.notification.service.RecipientDirectory;
 import com.chilsuitjo.back.notification.service.SmsCancellation;
 import java.time.Clock;
 import java.time.Duration;
@@ -433,7 +437,7 @@ class SmsCancellationServiceTest {
   void 취소한_줄은_작업자가_가져가지_않는다() {
     UUID link = link(room, party, false);
     UUID notice = enqueue(room, party, link);
-    recipients.seedParty(party, "01012345678");
+    recipients.seedRecipient(party, new Recipient.Invitee("01012345678"));
     inSave(() -> cancellation.cancelPendingSms(room, List.of(link)));
 
     worker.runOnce();
@@ -447,7 +451,7 @@ class SmsCancellationServiceTest {
   void 작업자는_가져간_줄의_초대_링크가_이미_무효면_보내지_않고_통지와_함께_취소한다() {
     UUID invalid = link(room, party, true);
     UUID notice = enqueue(room, party, invalid);
-    recipients.seedParty(party, "01012345678");
+    recipients.seedRecipient(party, new Recipient.Invitee("01012345678"));
 
     worker.runOnce();
 
@@ -457,11 +461,40 @@ class SmsCancellationServiceTest {
     assertThat(gateway.sentBatchIds()).doesNotContain(notice);
   }
 
+  /** disabled에서도 무효 초대 링크 취소가 먼저다(#243). 받는 사람을 읽지 않고 업체도 부르지 않는다(#282). */
+  @Test
+  void disabled에서도_무효_초대_링크면_받는_사람을_읽지_않고_통지와_함께_취소한다() {
+    UUID invalid = link(room, party, true);
+    UUID notice = enqueue(room, party, invalid);
+    RecipientDirectory directory = mock(RecipientDirectory.class);
+    SmsGateway never = mock(SmsGateway.class);
+    OutboxWorker disabled =
+        new OutboxWorker(
+            outboxRepository,
+            noticeRepository,
+            inviteLinks,
+            directory,
+            never,
+            clock,
+            transactionManager,
+            50,
+            List.of(Duration.ofMinutes(1)),
+            Duration.ofDays(3),
+            deliveryPollSchedule,
+            "disabled");
+
+    disabled.runOnce();
+
+    assertThat(outboxStatus(notice)).isEqualTo("CANCELLED");
+    assertThat(noticeStatus(notice)).isEqualTo("CANCELLED");
+    verifyNoInteractions(directory, never);
+  }
+
   @Test
   void 업체_RETRY_뒤_초대_링크가_무효가_되면_다시_시도할_때_보내지_않고_취소한다() {
     UUID link = link(room, party, false);
     UUID notice = enqueue(room, party, link);
-    recipients.seedParty(party, "01012345678");
+    recipients.seedRecipient(party, new Recipient.Invitee("01012345678"));
     gateway.respondWith(SmsSendResult.Outcome.RETRY);
     worker.runOnce();
     assertThat(outboxStatus(notice)).isEqualTo("PENDING");
@@ -489,7 +522,7 @@ class SmsCancellationServiceTest {
   void 취소가_줄을_잡고_있으면_작업자는_기다리지_않고_건너뛴다() throws Exception {
     UUID link = link(room, party, false);
     UUID notice = enqueue(room, party, link);
-    recipients.seedParty(party, "01012345678");
+    recipients.seedRecipient(party, new Recipient.Invitee("01012345678"));
 
     int cancelled =
         inSave(() -> {
@@ -511,7 +544,7 @@ class SmsCancellationServiceTest {
   void 작업자가_먼저_가져가_보내는_중인_줄은_취소하지_못한다() throws Exception {
     UUID link = link(room, party, false);
     UUID notice = enqueue(room, party, link);
-    recipients.seedParty(party, "01012345678");
+    recipients.seedRecipient(party, new Recipient.Invitee("01012345678"));
     // 같은 DB의 다른 보낼 줄보다 먼저 가져가게 한다.
     jdbc.update(
         "UPDATE outbox SET next_attempt_at = TIMESTAMPTZ '2000-01-01 00:00:00+00' WHERE dedupe_key = ?",
@@ -546,7 +579,8 @@ class SmsCancellationServiceTest {
             1,
             List.of(Duration.ofMinutes(1)),
             Duration.ofDays(3),
-            deliveryPollSchedule);
+            deliveryPollSchedule,
+            "fake");
     CompletableFuture<Integer> running = CompletableFuture.supplyAsync(slowWorker::runOnce);
     assertThat(sending.await(30, TimeUnit.SECONDS)).isTrue();
 
