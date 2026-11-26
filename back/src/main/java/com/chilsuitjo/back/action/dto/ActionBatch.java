@@ -30,6 +30,8 @@ public final class ActionBatch {
   private final String idempotencyKey;
   private final boolean newRoom;
   private final List<ActionStep<?>> steps = new ArrayList<>();
+  private Runnable accessCheck;
+  private UUID inviteePartyId;
 
   private ActionBatch(UUID roomRecordId, Actor actor, String idempotencyKey, boolean newRoom) {
     this.roomRecordId = roomRecordId;
@@ -138,6 +140,76 @@ public final class ActionBatch {
       Function<List<ActionResult>, ActionTarget> target,
       Map<String, Object> payload) {
     return step(ActionStep.record(type, target, payload));
+  }
+
+  /**
+   * 현재 접근 검증(09 3-1 순서 1 뒤). 처음 실행과 같은 키의 재생 모두에서, pipeline이 호실을 잠그고 <b>이 요청의 모든 단계에 호실 단위 거절(순서
+   * 3)을 먼저 한 뒤</b>, 멱등 조회(순서 2)보다 앞에서 부른다. 그래서 재생도 지금 호실 상태와 이 검증을 통과해야 하고, 06 4-10 오류 순서(정산 완료 →
+   * 거주 종료 → …)가 이 검증의 업무 오류보다 앞선다.
+   *
+   * <p>잠금과 지금 대상 확인에만 쓴다(예: 링크 열람이 링크 행을 잠그고 무효 여부를 다시 봄). 호실 상태는 pipeline이 보므로 여기서 판단하지 않는다. 도메인
+   * 행을 잠그면 호실 다음 순서로 얻는다. 한 요청에 하나만 붙일 수 있다(두 번 붙이면 앞의 검증이 사라지므로 개발 오류).
+   */
+  public ActionBatch accessCheck(Runnable check) {
+    if (newRoom) {
+      throw new IllegalStateException("호실을 만드는 요청에는 접근 검증을 붙일 수 없어요");
+    }
+    if (accessCheck != null) {
+      throw new IllegalStateException("접근 검증은 한 요청에 하나만 붙여요");
+    }
+    this.accessCheck = Objects.requireNonNull(check, "check");
+    return this;
+  }
+
+  /**
+   * 초대 자리로 들어온 요청(#163, #249). 아직 연결하지 않은 초대받은 회원은 당사자가 아니라 pipeline 1단계에서 {@code NOT_FOUND}가 나므로,
+   * 이 표시가 있으면 pipeline이 {@code RoomGateReader.lockAndReadAsInvitee}로 잠근다(같은 키의 재생도 같음). 그 요청에서는
+   * {@code Allow.BY_INVITEE} 행동만 된다.
+   *
+   * <pre>{@code
+   * // 연결 [동의하고 연결하기](A의 초대 서비스)
+   * pipeline.executeAll(ActionBatch.of(roomRecordId, Actor.member(memberId), idempotencyKey)
+   *     .asInvitee(partyId)
+   *     .step(ActionType.CONNECT, done -> ActionTarget.party(partyId), partyStateStore, partyTransitions)
+   *     .record(ActionType.SHARE_CONSENT, Map.of("consentVersion", req.consentVersion())));
+   * }</pre>
+   *
+   * <p>회원 주체만, 한 번만 붙인다. 호실을 만드는 요청에는 붙이지 않는다. 자리 상태와 번호는 room의 규칙이 잠금 뒤에 본다.
+   */
+  public ActionBatch asInvitee(UUID partyId) {
+    if (newRoom) {
+      throw new IllegalStateException("호실을 만드는 요청은 초대 자리로 열 수 없어요");
+    }
+    if (!actor.isMember()) {
+      throw new IllegalStateException("초대 자리로 여는 요청은 회원 주체만 써요");
+    }
+    if (inviteePartyId != null) {
+      throw new IllegalStateException("초대 자리는 한 요청에 한 번만 정해요");
+    }
+    this.inviteePartyId = Objects.requireNonNull(partyId, "partyId");
+    return this;
+  }
+
+  /** 초대 자리로 들어온 요청인지. pipeline이 1단계 잠금 방법을 고를 때 본다. */
+  public boolean isInvitee() {
+    return inviteePartyId != null;
+  }
+
+  /** 초대 자리 ID. 초대 자리로 들어온 요청이 아니면 null. */
+  public UUID inviteePartyId() {
+    return inviteePartyId;
+  }
+
+  /** 접근 검증이 붙었는지. pipeline이 호실 단위 거절을 앞당길지 정할 때 본다. */
+  public boolean hasAccessCheck() {
+    return accessCheck != null;
+  }
+
+  /** 접근 검증 실행. {@code ActionPipeline}만 부른다(호실 잠금과 호실 단위 거절 뒤, 멱등 조회 전). */
+  public void runAccessCheck() {
+    if (accessCheck != null) {
+      accessCheck.run();
+    }
   }
 
   public UUID roomRecordId() {

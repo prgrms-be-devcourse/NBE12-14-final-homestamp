@@ -15,7 +15,12 @@ import {
   logRepairNotice,
 } from "@/lib/workflows"
 import { type Commit } from "@/lib/record-commands"
-import { isMobilePhone, maskPhone, normalizePhone } from "@/lib/phone"
+import {
+  isMobilePhone,
+  maskPhone,
+  MOBILE_PHONE_MESSAGE,
+  normalizePhone,
+} from "@/lib/phone"
 
 // 공유 확인 · 상대 초대(ROOM-4, S-07). target이 있으면 그 기록 한 건과 함께 알려요.
 export function InviteForm({
@@ -55,7 +60,7 @@ export function InviteForm({
           changing ? text("phone") : room.phone || text("phone"),
         )
         if (!isMobilePhone(phone)) {
-          setError("010으로 시작하는 11자리 번호를 입력해 주세요.")
+          setError(MOBILE_PHONE_MESSAGE)
           return
         }
         if (sessionPhone && phone === sessionPhone) {

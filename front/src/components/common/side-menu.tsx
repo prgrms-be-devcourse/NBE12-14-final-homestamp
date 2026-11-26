@@ -1,75 +1,104 @@
-import { LogOut } from "lucide-react"
+import { Building2, LogOut } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Logo, Status } from "@/components/common/blocks"
+import { Choice, Logo, Status } from "@/components/common/blocks"
 import type { Room } from "@/data/demo"
 import type { Page } from "@/lib/router"
-import { nav } from "@/components/common/app-nav"
+import { activeTabOf, nav, type NavTabId } from "@/components/common/app-nav"
+import { connectionText } from "@/lib/workflows"
 
+// PC 전용 좌측 슬림 사이드바: 로고 → 호실 전환 → 4개 핵심 메뉴 → 내 계정
 export function SideMenu({
   page,
-  repairCount,
   openCount,
+  invitations,
   room,
+  roomNames,
   account,
   roleText,
+  onRoom,
   onGo,
   onAccount,
 }: {
   page: Page
-  repairCount: number
   openCount: number
-  // 지금 보는 호실(접근할 수 있을 때만)
+  invitations: number
   room?: Room
+  roomNames: string[]
   account: { name: string; email: string } | null
   roleText: string
-  onGo: (p: (typeof nav)[number]["id"]) => void
+  onRoom: (name: string) => void
+  onGo: (p: NavTabId) => void
   onAccount: () => void
 }) {
+  const activeTab = page === "notifications" ? null : activeTabOf(page)
   return (
     <>
       <div className="side-top">
         <Logo />
       </div>
+      {room && (
+        <div className="side-room-box">
+          <div className="side-room-head">
+            <Building2 size={14} aria-hidden />
+            <span>지금 보는 호실</span>
+          </div>
+          {roomNames.length > 1 ? (
+            <div className="side-room-select">
+              <Choice
+                label="현재 호실 선택"
+                value={room.name}
+                values={roomNames}
+                onChange={onRoom}
+              />
+            </div>
+          ) : (
+            <strong className="side-room-name">{room.name}</strong>
+          )}
+          <div className="badges mt-2">
+            <Status>{room.status}</Status>
+            <Status>{connectionText(room)}</Status>
+          </div>
+        </div>
+      )}
       <nav aria-label="주 메뉴">
-        {nav.map((n) => (
-          <Button
-            variant="ghost"
-            key={n.id}
-            className={`nav-item ${page === n.id || (page === "detail" && n.id === "repairs") ? "active" : ""}`}
-            onClick={() => onGo(n.id)}
-          >
-            <n.icon size={19} />
-            {n.label}
-            {n.id === "repairs" && repairCount > 0 && (
-              <span
-                className="nav-count"
-                title={`전체 ${repairCount}건 · 진행 중 ${openCount}건`}
-                aria-label={`전체 ${repairCount}건, 진행 중 ${openCount}건`}
-              >
-                {repairCount}
-              </span>
-            )}
-          </Button>
-        ))}
+        {nav.map((n) => {
+          const active = activeTab === n.id
+          const badge =
+            n.id === "repairs" ? openCount : n.id === "rooms" ? invitations : 0
+          return (
+            <Button
+              variant="ghost"
+              key={n.id}
+              aria-current={active ? "page" : undefined}
+              className={`nav-item ${active ? "active" : ""}`}
+              onClick={() => onGo(n.id)}
+            >
+              <n.icon size={19} aria-hidden />
+              {n.label}
+              {badge > 0 && (
+                <span
+                  className="nav-count"
+                  aria-label={
+                    n.id === "repairs"
+                      ? `진행 중 ${badge}건`
+                      : `받은 초대 ${badge}건`
+                  }
+                >
+                  {badge}
+                </span>
+              )}
+            </Button>
+          )
+        })}
       </nav>
       <div className="sidebar-bottom">
-        {room && (
-          <div className="side-room">
-            <small>지금 보는 호실</small>
-            <strong>{room.name}</strong>
-            <span className="badges">
-              <Status>{room.status}</Status>
-              <Status>{room.connection}</Status>
-            </span>
-          </div>
-        )}
         <Button variant="ghost" className="profile" onClick={onAccount}>
           <span className="avatar">{account?.name.slice(0, 1) || "나"}</span>
           <span>
             <strong>{account?.name} 님</strong>
             <small>{room ? `이 호실에서 ${roleText}` : account?.email}</small>
           </span>
-          <LogOut size={16} />
+          <LogOut size={16} aria-hidden />
         </Button>
       </div>
     </>

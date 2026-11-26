@@ -2,6 +2,7 @@ package com.chilsuitjo.back.action.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 
 import com.chilsuitjo.back.action.dto.ActionBatch;
 import com.chilsuitjo.back.action.dto.ActionCommand;
@@ -210,6 +211,138 @@ class ActionPipelineTest {
   }
 
   @Test
+  void 초대_자리로_들어온_요청은_허용된_행동만_되고_측은_그_자리의_측이다() {
+    UUID inviteeId = UUID.randomUUID();
+    UUID partyId = UUID.randomUUID();
+    gates.invitee(room, partyId, PartySide.LANDLORD);
+
+    pipeline.executeAll(
+        ActionBatch.of(room, Actor.member(inviteeId), "k1")
+            .asInvitee(partyId)
+            .record(ActionType.CONNECT, Map.of())
+            .record(ActionType.SHARE_CONSENT, Map.of("consentVersion", 3)));
+
+    assertThat(writer.findByRoom(room))
+        .extracting(ActionEntry::type, ActionEntry::actorSide, ActionEntry::actorKey)
+        .containsExactly(
+            tuple(ActionType.CONNECT, PartySide.LANDLORD, inviteeId.toString()),
+            tuple(ActionType.SHARE_CONSENT, PartySide.LANDLORD, inviteeId.toString()));
+    // 초대 자리로 열지 않으면 당사자가 아니라 NOT_FOUND(ROOM-2a), 초대 자리여도 허용되지 않은 행동은 NOT_FOUND
+    assertThatThrownBy(() ->
+            pipeline.executeAll(
+                ActionBatch.of(room, Actor.member(inviteeId), "k2")
+                    .record(ActionType.REJECT_INVITE, Map.of())))
+        .hasMessage(ErrorCode.NOT_FOUND.name());
+    assertThatThrownBy(() ->
+            pipeline.executeAll(
+                ActionBatch.of(room, Actor.member(inviteeId), "k3")
+                    .asInvitee(partyId)
+                    .creating(ActionType.REGISTER, store, rules)))
+        .hasMessage(ErrorCode.NOT_FOUND.name());
+    assertThat(writer.findByRoom(room)).hasSize(2);
+  }
+
+  @Test
+  void 초대_자리의_허용되지_않은_행동은_정산_완료_호실에서도_SETTLED가_아니라_NOT_FOUND다() {
+    UUID inviteeId = UUID.randomUUID();
+    UUID partyId = UUID.randomUUID();
+    gates.invitee(room, partyId, PartySide.LANDLORD);
+    gates.putRoom(new RoomGate(room, null, true, false, false, true));
+
+    assertThatThrownBy(() ->
+            pipeline.executeAll(
+                ActionBatch.of(room, Actor.member(inviteeId), "k1")
+                    .asInvitee(partyId)
+                    .record(ActionType.NOTE_PROGRESS, Map.of())))
+        .hasMessage(ErrorCode.NOT_FOUND.name());
+    // 허용된 행동은 호실의 다른 막힘을 그대로 받는다
+    assertThatThrownBy(() ->
+            pipeline.executeAll(
+                ActionBatch.of(room, Actor.member(inviteeId), "k2")
+                    .asInvitee(partyId)
+                    .record(ActionType.CONNECT, Map.of())))
+        .hasMessage(ErrorCode.SETTLED.name());
+  }
+
+  @Test
+  void 같은_키로_다시_온_초대_자리_요청은_초대_자리로_잠가_처음_결과를_돌려준다() {
+    UUID inviteeId = UUID.randomUUID();
+    UUID partyId = UUID.randomUUID();
+    gates.invitee(room, partyId, PartySide.LANDLORD);
+    ActionBatch connect =
+        ActionBatch.of(room, Actor.member(inviteeId), "k1")
+            .asInvitee(partyId)
+            .record(ActionType.CONNECT, Map.of());
+
+    BatchResult first = pipeline.executeAll(connect);
+    BatchResult again = pipeline.executeAll(connect);
+
+    assertThat(again.replayed()).isTrue();
+    assertThat(again.first().actionId()).isEqualTo(first.first().actionId());
+    assertThat(writer.findByRoom(room)).hasSize(1);
+  }
+
+  @Test
+  void 이_호실의_자리가_아니면_초대_자리로_잠글_때_NOT_FOUND다() {
+    UUID otherRoom = UUID.randomUUID();
+    UUID partyId = UUID.randomUUID();
+    gates.invitee(otherRoom, partyId, PartySide.LANDLORD);
+
+    assertThatThrownBy(() ->
+            pipeline.executeAll(
+                ActionBatch.of(room, Actor.member(UUID.randomUUID()), "k1")
+                    .asInvitee(partyId)
+                    .record(ActionType.CONNECT, Map.of())))
+        .hasMessage(ErrorCode.NOT_FOUND.name());
+  }
+
+  @Test
+  void 초대_자리는_회원_주체의_기존_호실_요청에만_한_번_붙인다() {
+    UUID partyId = UUID.randomUUID();
+
+    assertThatThrownBy(() -> ActionBatch.newRoom(Actor.member(tenantId), "k1").asInvitee(partyId))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() -> ActionBatch.of(room, Actor.server(), "k2").asInvitee(partyId))
+        .isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(() ->
+            ActionBatch.of(room, Actor.member(tenantId), "k3")
+                .asInvitee(partyId)
+                .asInvitee(partyId))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
+  void 초대_자리로_잠갔는데_invitee가_아닌_값이_오면_실행하지_않는다() {
+    RoomGateReader forgetful =
+        new RoomGateReader() {
+          @Override
+          public RoomGate lockAndRead(UUID roomRecordId, Actor actor) {
+            return gates.lockAndRead(roomRecordId, actor);
+          }
+
+          @Override
+          public RoomGate lockAndReadAsInvitee(UUID roomRecordId, Actor actor, UUID partyId) {
+            return RoomGate.open(roomRecordId, PartySide.LANDLORD); // invitee 표시를 빠뜨림
+          }
+
+          @Override
+          public RoomGate read(UUID roomRecordId, Actor actor) {
+            return gates.read(roomRecordId, actor);
+          }
+        };
+    ActionPipeline broken =
+        new ActionPipeline(forgetful, writer, followUps, requestContext, transactionManager, clock);
+
+    assertThatThrownBy(() ->
+            broken.executeAll(
+                ActionBatch.of(room, Actor.member(UUID.randomUUID()), "k1")
+                    .asInvitee(UUID.randomUUID())
+                    .creating(ActionType.REGISTER, store, rules)))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(writer.findByRoom(room)).isEmpty();
+  }
+
+  @Test
   void when이_거짓이면_기록_없이_건너뛴다() {
     BatchResult result =
         pipeline.executeAll(
@@ -334,6 +467,12 @@ class ActionPipelineTest {
           }
 
           @Override
+          public RoomGate lockAndReadAsInvitee(UUID roomRecordId, Actor actor, UUID partyId) {
+            events.add("lock");
+            return gates.lockAndReadAsInvitee(roomRecordId, actor, partyId);
+          }
+
+          @Override
           public RoomGate read(UUID roomRecordId, Actor actor) {
             return gates.read(roomRecordId, actor);
           }
@@ -451,6 +590,110 @@ class ActionPipelineTest {
         .isInstanceOfSatisfying(
             BusinessException.class,
             e -> assertThat(e.errorCode()).isEqualTo(ErrorCode.IDEMPOTENCY_KEY_REUSED));
+  }
+
+  @Test
+  void 현재_접근_검증은_새_요청과_멱등_replay_모두_멱등_조회보다_먼저_실행된다() {
+    List<String> order = new ArrayList<>();
+    ActionTarget target = ActionTarget.of(TargetKind.LINK, UUID.randomUUID());
+    ActionBatch first =
+        ActionBatch.of(room, Actor.link(target.id(), PartySide.TENANT), "view")
+            .accessCheck(() -> order.add("guard"))
+            .record(ActionType.LINK_VIEW, done -> target, Map.of());
+
+    pipeline.executeAll(first);
+    assertThat(order).containsExactly("guard");
+
+    pipeline.executeAll(
+        ActionBatch.of(room, Actor.link(target.id(), PartySide.TENANT), "view")
+            .accessCheck(() -> order.add("guard"))
+            .record(ActionType.LINK_VIEW, done -> target, Map.of()));
+
+    assertThat(order).containsExactly("guard", "guard");
+    assertThat(writer.findByTarget(target)).hasSize(1);
+  }
+
+  @Test
+  void 현재_접근_검증이_거절하면_저장된_성공도_replay하지_않는다() {
+    ActionTarget target = ActionTarget.of(TargetKind.LINK, UUID.randomUUID());
+    Actor actor = Actor.link(target.id(), PartySide.TENANT);
+    pipeline.executeAll(
+        ActionBatch.of(room, actor, "view").record(ActionType.LINK_VIEW, done -> target, Map.of()));
+
+    assertThatThrownBy(() ->
+            pipeline.executeAll(
+                ActionBatch.of(room, actor, "view")
+                    .accessCheck(() -> {
+                      throw new BusinessException(ErrorCode.LINK_INVALID);
+                    })
+                    .record(ActionType.LINK_VIEW, done -> target, Map.of())))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            e -> assertThat(e.errorCode()).isEqualTo(ErrorCode.LINK_INVALID));
+    assertThat(writer.findByTarget(target)).hasSize(1);
+  }
+
+  @Test
+  void 접근_검증이_붙은_요청은_호실_단위_거절이_접근_검증의_업무_오류보다_먼저다() {
+    // 06 4-10 순서: 정산 완료면 접근 검증이 무엇을 던지든 SETTLED이고, 접근 검증은 부르지 않는다
+    gates.putRoom(new RoomGate(room, null, true, false, false, true));
+    List<String> order = new ArrayList<>();
+    ActionTarget target = ActionTarget.of(TargetKind.LINK, UUID.randomUUID());
+
+    assertThatThrownBy(() ->
+            pipeline.executeAll(
+                ActionBatch.of(room, Actor.link(target.id(), PartySide.TENANT), "view")
+                    .accessCheck(() -> {
+                      order.add("guard");
+                      throw new BusinessException(ErrorCode.NOT_FOUND);
+                    })
+                    .record(ActionType.LINK_VIEW, done -> target, Map.of())))
+        .isInstanceOfSatisfying(
+            BusinessException.class, e -> assertThat(e.errorCode()).isEqualTo(ErrorCode.SETTLED));
+    assertThat(order).isEmpty();
+  }
+
+  @Test
+  void 접근_검증이_붙은_요청은_정산_완료_뒤_같은_키로_와도_저장된_성공을_재생하지_않는다() {
+    ActionTarget target = ActionTarget.of(TargetKind.LINK, UUID.randomUUID());
+    Actor actor = Actor.link(target.id(), PartySide.TENANT);
+    pipeline.executeAll(
+        ActionBatch.of(room, actor, "view")
+            .accessCheck(() -> {})
+            .record(ActionType.LINK_VIEW, done -> target, Map.of()));
+    gates.putRoom(new RoomGate(room, null, true, false, false, true));
+
+    assertThatThrownBy(() ->
+            pipeline.executeAll(
+                ActionBatch.of(room, actor, "view")
+                    .accessCheck(() -> {})
+                    .record(ActionType.LINK_VIEW, done -> target, Map.of())))
+        .isInstanceOfSatisfying(
+            BusinessException.class, e -> assertThat(e.errorCode()).isEqualTo(ErrorCode.SETTLED));
+    assertThat(writer.findByTarget(target)).hasSize(1);
+  }
+
+  @Test
+  void 접근_검증이_없는_요청은_지금처럼_멱등_재생이_호실_단위_거절보다_먼저다() {
+    // 같은 키로 다시 온 요청은 처음 결과를 돌려준다(06 4-0). 접근 검증을 붙인 요청만 재생 전에 호실을 본다
+    PipelineResult<Sample> first = pipeline.create(register("k1"), store, rules);
+    gates.put(tenantId, new RoomGate(room, PartySide.TENANT, true, false, false, true));
+
+    PipelineResult<Sample> again = pipeline.create(register("k1"), store, rules);
+
+    assertThat(again.action().replayed()).isTrue();
+    assertThat(again.action().actionId()).isEqualTo(first.action().actionId());
+  }
+
+  @Test
+  void 접근_검증을_두_번_붙이면_앞의_검증이_사라지지_않게_개발_오류다() {
+    ActionBatch batch =
+        ActionBatch.of(room, Actor.link(UUID.randomUUID(), PartySide.TENANT), "view")
+            .accessCheck(() -> {});
+
+    assertThatThrownBy(() -> batch.accessCheck(() -> {}))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("하나만");
   }
 
   @Test

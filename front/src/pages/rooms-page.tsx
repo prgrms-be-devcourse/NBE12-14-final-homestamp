@@ -5,7 +5,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { CountChip } from "@/components/common/fold"
 import { Status } from "@/components/common/blocks"
 import { won, type DemoState, type Role, type Room } from "@/data/demo"
-import { sideOf } from "@/lib/workflows"
+import { connectionText, sideOf } from "@/lib/workflows"
 import { sideText } from "@/lib/words"
 
 // 내 호실 목록(GET /api/rooms). 사는 집 / 관리하는 호실로 나눠 보여 줘요(06 S-03).
@@ -51,7 +51,7 @@ export function RoomsPage({
           </div>
           <div className="badges">
             <Status>{r.status}</Status>
-            <Status>{r.connection}</Status>
+            <Status>{connectionText(r)}</Status>
             {r.creator && (
               <Badge variant="outline">
                 {r.creator === role

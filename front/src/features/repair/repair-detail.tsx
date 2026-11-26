@@ -4,13 +4,16 @@ import {
   ArrowLeft,
   Camera,
   Eye,
+  History,
+  Link2,
   MoreHorizontal,
   Pencil,
   Plus,
   Share2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
+import { Fold } from "@/components/common/fold"
 import { type Event, type Repair, type Role, type Room } from "@/data/demo"
 import { StatusTag, TurnBadge } from "@/components/common/home-dashboard"
 import { repairSummary } from "@/features/repair/repair-summary"
@@ -77,6 +80,7 @@ export interface RepairDetailProps {
   onAddPhotos?: () => void
   onNewRepair?: () => void
   onShare?: () => void
+  onCopyLink?: () => void
 }
 // 내 차례가 오른쪽 칸(수리비 · 지불) 카드에 있는 경우: 휴대폰에서 그 카드를 사진 카드 바로 아래로 올리고 주황 테두리로 강조
 const turnCard = (turn?: string) =>
@@ -134,7 +138,8 @@ export function RepairDetail(p: RepairDetailProps) {
     p.onAddPhotos ||
     p.onNewRepair ||
     p.photoSettings ||
-    p.onShare,
+    p.onShare ||
+    p.onCopyLink,
   )
   const step =
     r.status === "처리 완료"
@@ -275,6 +280,17 @@ export function RepairDetail(p: RepairDetailProps) {
                 상대에게 알리기 · 이 기록으로 초대
               </button>
             )}
+            {p.onCopyLink && (
+              <button
+                type="button"
+                role="menuitem"
+                className={menuItem}
+                onClick={close(p.onCopyLink)}
+              >
+                <Link2 size={16} aria-hidden />
+                공유 링크 복사
+              </button>
+            )}
           </div>
         )}
       </header>
@@ -383,14 +399,17 @@ export function RepairDetail(p: RepairDetailProps) {
               {showPhotos && p.photoSettings}
             </CardContent>
           </Card>
-          <Card className={cn(card, "max-lg:order-7")}>
-            <CardHeader className="flex items-start justify-between gap-3 px-5">
-              <CardTitle className="text-[17px] leading-[1.45] font-bold text-ink">
-                경과
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="px-5">{p.timeline}</CardContent>
-          </Card>
+          {/* 지난 이력은 접어 둬요(08-화면-기본-틀 0장 원칙 1) */}
+          <div className="max-lg:order-7">
+            <Fold
+              title="경과"
+              count={events.length}
+              icon={<History size={16} />}
+              className="mt-0 rounded-[18px] shadow-[0_1px_2px_#1720330a]"
+            >
+              {p.timeline}
+            </Fold>
+          </div>
           {p.sameZone && <div className="max-lg:order-8">{p.sameZone}</div>}
         </div>
         <div className="flex min-w-0 flex-col gap-4 max-lg:contents">

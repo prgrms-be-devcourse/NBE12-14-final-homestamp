@@ -6,7 +6,12 @@ import { notInSpec } from "@/api/records"
 import type { Role, Room } from "@/data/demo"
 import { updateNumberOnlyPhone } from "@/lib/workflows"
 import { type Commit } from "@/lib/record-commands"
-import { isMobilePhone, maskPhone, normalizePhone } from "@/lib/phone"
+import {
+  isMobilePhone,
+  maskPhone,
+  MOBILE_PHONE_MESSAGE,
+  normalizePhone,
+} from "@/lib/phone"
 
 // 초대 전 상대 번호 고치기: 번호만 바꾸고 초대·링크 발급은 하지 않아요.
 export function PhoneForm({
@@ -33,7 +38,7 @@ export function PhoneForm({
       onSubmit={(text) => {
         const phone = normalizePhone(text("phone"))
         if (!isMobilePhone(phone)) {
-          setError("010으로 시작하는 11자리 번호를 입력해 주세요.")
+          setError(MOBILE_PHONE_MESSAGE)
           return
         }
         if (sessionPhone && phone === sessionPhone) {
@@ -70,7 +75,7 @@ export function PhoneForm({
           id="edit-phone"
           name="phone"
           type="tel"
-          placeholder="010으로 시작하는 번호"
+          placeholder="휴대폰 번호"
           required
         />
       </div>

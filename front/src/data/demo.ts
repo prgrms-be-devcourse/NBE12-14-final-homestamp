@@ -51,6 +51,8 @@ export interface CauseClaim {
   edits?: { text: string; at: string }[]
   supersededBy?: string
   supersedes?: string
+  // 서버가 이 설명에 지금 응답할 수 있다고 했는지(06 4-6 causeNotes[].canRespond). 목업은 비워 둬요
+  canRespond?: boolean
 }
 export interface AfterRecord {
   id: string
@@ -378,6 +380,31 @@ export interface Room {
     invalidatedReason?: string
   }[]
   shareTarget?: { kind: "repair" | "inspection"; id: string }
+  // HTTP: 서버가 준 원래 값(06 4-3 GET /api/rooms, /api/rooms/{id}). 위 화면 칸은 이 값에서 바꿔 채우고,
+  // 바꾸며 뭉뚱그린 상태(공유 그만둠·탈퇴·합류 전)는 여기서 그대로 읽어요. 목업에는 없어요.
+  server?: RoomServerState
+}
+// 당사자 자리 상태(05 party.status). 서버 값 그대로예요.
+export type PartyStatus =
+  | "EMPTY"
+  | "NUMBER_ONLY"
+  | "INVITED"
+  | "CONNECTED"
+  | "SHARING_STOPPED"
+  | "REJECTED"
+  | "WITHDRAWN"
+export interface RoomServerState {
+  mySide: "TENANT" | "LANDLORD"
+  counterpartStatus: PartyStatus
+  joinedAway: boolean
+  // 목록만 줘요(SETTLE·READ_ONLY·NONE). 문구는 화면이 골라요(06 4-3)
+  nextStep?: "SETTLE" | "READ_ONLY" | "NONE"
+  // 아래는 상세(GET /api/rooms/{id})를 받은 뒤에만 있어요
+  myStatus?: PartyStatus
+  createdBySide?: "TENANT" | "LANDLORD"
+  // 두 측 중 이른 공유 그만둔 시각(ISO). 이 시각 뒤 상대 기록은 보이지 않아요(03 3-1)
+  asOf?: string | null
+  availableActions?: string[]
 }
 // 초대 링크 목업(ERD link). 번호 값은 남기지 않고 발급·무효 사실만 남깁니다.
 export interface InviteLink {

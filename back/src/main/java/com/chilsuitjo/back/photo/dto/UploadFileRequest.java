@@ -1,5 +1,7 @@
 package com.chilsuitjo.back.photo.dto;
 
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Positive;
 import java.time.Instant;
 
 /**
@@ -13,8 +15,8 @@ import java.time.Instant;
  *     서명에 넣어 두고 {@code attach}에서 꺼낸다
  */
 public record UploadFileRequest(
-    long originalBytes,
-    long thumbBytes,
-    String originalSha256,
-    String thumbSha256,
+    @Positive long originalBytes,
+    @Positive long thumbBytes,
+    @NotBlank String originalSha256,
+    @NotBlank String thumbSha256,
     Instant deviceTakenAt) {}

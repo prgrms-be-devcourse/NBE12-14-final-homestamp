@@ -284,14 +284,20 @@ export function Choice({
   onChange,
   values,
   label,
+  disabled,
 }: {
   value: string
   onChange: (v: string) => void
   values: string[]
   label: string
+  disabled?: boolean
 }) {
   return (
-    <Select value={value} onValueChange={(v) => v && onChange(v)}>
+    <Select
+      value={value}
+      onValueChange={(v) => v && onChange(v)}
+      disabled={disabled}
+    >
       <SelectTrigger className="w-full" aria-label={label}>
         <SelectValue>{value}</SelectValue>
       </SelectTrigger>

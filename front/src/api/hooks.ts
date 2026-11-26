@@ -18,6 +18,8 @@ export function useApiQuery<T>(
   const [state, setState] = useState<{
     data?: T
     error?: string
+    // 실패 원인 그대로(상태 코드로 404 등을 가르려고). error는 보여 줄 문구예요
+    failure?: unknown
     loading: boolean
   }>({ loading: true })
   const [tick, setTick] = useState(0)
@@ -29,7 +31,12 @@ export function useApiQuery<T>(
     prev.some((v, i) => !Object.is(v, inputs[i]))
   ) {
     setPrev(inputs)
-    setState((s) => ({ ...s, loading: true, error: undefined }))
+    setState((s) => ({
+      ...s,
+      loading: true,
+      error: undefined,
+      failure: undefined,
+    }))
   }
   useEffect(() => {
     let alive = true
@@ -38,7 +45,8 @@ export function useApiQuery<T>(
         if (alive) setState({ data, loading: false })
       },
       (e) => {
-        if (alive) setState({ error: errorMessage(e), loading: false })
+        if (alive)
+          setState({ error: errorMessage(e), failure: e, loading: false })
       },
     )
     return () => {

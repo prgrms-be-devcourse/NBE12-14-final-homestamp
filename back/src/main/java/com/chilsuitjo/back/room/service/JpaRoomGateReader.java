@@ -3,6 +3,7 @@ package com.chilsuitjo.back.room.service;
 import com.chilsuitjo.back.action.dto.Actor;
 import com.chilsuitjo.back.action.dto.RoomGate;
 import com.chilsuitjo.back.action.rule.RoomGateReader;
+import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.room.entity.Party;
@@ -41,6 +42,29 @@ public class JpaRoomGateReader implements RoomGateReader {
         actor);
   }
 
+  /**
+   * 초대 자리로 들어온 연결·거절 요청(#163, #249). 호실을 잠근 뒤 {@code partyId}가 이 호실의 자리이면 그 자리의 측으로 읽고, 아니면 {@code
+   * NOT_FOUND}다. 자리 상태와 번호는 보지 않는다(Party 규칙이 잠금 뒤에 {@code PHONE_MISMATCH}·{@code INVALID_STATE}를
+   * 정함).
+   */
+  @Override
+  @Transactional(propagation = Propagation.MANDATORY)
+  public RoomGate lockAndReadAsInvitee(UUID roomRecordId, Actor actor, UUID partyId) {
+    if (!actor.isMember()) {
+      throw new IllegalArgumentException("초대 자리로 잠그는 요청은 회원 주체만 써요");
+    }
+    RoomRecord room =
+        rooms
+            .findByIdForUpdate(roomRecordId)
+            .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
+    Party seat =
+        parties.findByRoomRecordId(room.getId()).stream()
+            .filter(party -> party.getId().equals(partyId))
+            .findFirst()
+            .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
+    return gateOf(room, seat.getSide(), false).asInvitee(seat.getSide());
+  }
+
   /** 잠그지 않고 같은 값을 읽는다(상세 조회의 {@code availableActions}). 읽기 트랜잭션 안에서 부른다. */
   @Override
   @Transactional(readOnly = true)
@@ -51,18 +75,29 @@ public class JpaRoomGateReader implements RoomGateReader {
   }
 
   private RoomGate gate(RoomRecord room, Actor actor) {
-    UUID roomRecordId = room.getId();
-    boolean settled = room.getStatus() == RoomStatus.SETTLED;
-    boolean ended = room.getStatus() != RoomStatus.LIVING; // 거주 종료 또는 정산 완료
-    boolean joinedAway = room.getJoinedIntoId() != null;
-
     if (!actor.isMember()) {
       // 공유 중단은 회원 기준이라 링크·서버·운영 주체면 거짓(09 3-1 RoomGate)
-      return new RoomGate(roomRecordId, actor.side(), settled, joinedAway, false, ended);
+      return gateOf(room, actor.side(), false);
     }
-    RoomSeats seats = new RoomSeats(room, parties.findByRoomRecordId(roomRecordId));
-    Party mine = seats.seatOf(actor.memberId());
+    RoomSeats seats = new RoomSeats(room, parties.findByRoomRecordId(room.getId()));
+    return memberGate(seats, seats.seatOf(actor.memberId()));
+  }
+
+  /**
+   * 이미 읽은 호실과 자리로 회원의 {@link RoomGate}를 만든다. {@link #read}와 같은 값이다. 호실 목록({@link RoomViewService})이
+   * 호실마다 다시 읽지 않고 같은 판단을 쓰게 둔다.
+   */
+  static RoomGate memberGate(RoomSeats seats, Party mine) {
+    return gateOf(seats.room(), mine.getSide(), seats.sharingStoppedFor(mine));
+  }
+
+  private static RoomGate gateOf(RoomRecord room, PartySide side, boolean mySharingStopped) {
     return new RoomGate(
-        roomRecordId, mine.getSide(), settled, joinedAway, seats.sharingStoppedFor(mine), ended);
+        room.getId(),
+        side,
+        room.getStatus() == RoomStatus.SETTLED,
+        room.getJoinedIntoId() != null,
+        mySharingStopped,
+        room.getStatus() != RoomStatus.LIVING); // 거주 종료 또는 정산 완료
   }
 }
