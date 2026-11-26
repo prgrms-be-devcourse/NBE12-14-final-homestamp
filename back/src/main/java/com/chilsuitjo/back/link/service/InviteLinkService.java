@@ -6,6 +6,8 @@ import com.chilsuitjo.back.action.service.ActionRequestContext;
 import com.chilsuitjo.back.global.common.LinkInvalidReason;
 import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.global.common.Uuids;
+import com.chilsuitjo.back.global.error.BusinessException;
+import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.link.entity.Link;
 import com.chilsuitjo.back.link.repository.LinkRepository;
 import com.chilsuitjo.back.link.rule.LinkKind;
@@ -14,8 +16,11 @@ import com.chilsuitjo.back.notification.service.InviteLinks;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.hibernate.exception.ConstraintViolationException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,8 +32,9 @@ import org.springframework.transaction.annotation.Transactional;
  *   <li>잠금: 부르는 쪽 pipeline이 이미 호실을 잠갔어도 여기서 한 번 더 호실을 잠근 뒤(같은 트랜잭션이라 기다리지 않음) 링크를 다룬다. 공개 열람·{@link
  *       LinkInvalidationService}와 같은 호실 → 링크 순서다(09 3-1). 그래서 같은 조건의 발급이 동시에 와도 한 줄로 서서 링크가 하나만 생긴다
  *   <li>모양: 자리·기록이 그 호실의 것인지는 DB 외래 키({@code fk_link_party_id_room}·{@code
- *       fk_link_repair_case_id_room}·{@code fk_link_inspection_id_room})가 막는다. 어긋나면 개발 오류라 바로
- *       flush해 부르는 쪽 트랜잭션째 실패시킨다
+ *       fk_link_repair_case_id_room}·{@code fk_link_inspection_id_room})가 막고, 바로 flush해 부르는 쪽 트랜잭션째
+ *       실패시킨다. 기록 외래 키 두 개의 위반만 {@code NOT_FOUND}로 바꾸고(요청에서 온 기록 ID), 자리 외래 키와 그 밖의 위반은 개발 오류로 그대로
+ *       올린다. 외래 키는 그대로 두고 미리 조회하지 않는다: 같은 트랜잭션에서 DB가 한 번에 확인해 확인과 저장 사이의 틈이 없다
  *   <li>다시 쓰기: 호실·자리·기록이 같은 유효한 초대 링크가 있으면 행을 바꾸지 않고 그 ID를 돌려준다. 발급자·번호는 보지 않는다(이유와 번호를 고칠 때의 순서는
  *       {@link InviteLinks#issueInvite})
  *   <li>토큰: 링크 ID로 다시 만들 수 있는 HMAC 토큰의 해시만 저장한다({@link LinkTokenKeys}). 원래 토큰은 만들자마자 버린다
@@ -44,6 +50,10 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @RequiredArgsConstructor
 public class InviteLinkService implements InviteLinks {
+
+  /** 링크가 가리키는 기록과 호실을 함께 묶는 외래 키(V1). 자리 외래 키({@code fk_link_party_id_room})는 넣지 않는다(개발 오류). */
+  private static final Set<String> RECORD_FOREIGN_KEYS =
+      Set.of("fk_link_repair_case_id_room", "fk_link_inspection_id_room");
 
   private final LinkRepository links;
   private final RoomGateReader roomGateReader;
@@ -77,17 +87,27 @@ public class InviteLinkService implements InviteLinks {
       return existing.get().getId();
     }
     UUID id = Uuids.v7();
-    links.saveAndFlush(
-        new Link(
-            id,
-            roomRecordId,
-            LinkKind.INVITE,
-            recipientPartyId,
-            repairCaseId,
-            inspectionId,
-            tokenKeys.tokenHash(id),
-            issuedByMemberId,
-            at));
+    try {
+      links.saveAndFlush(
+          new Link(
+              id,
+              roomRecordId,
+              LinkKind.INVITE,
+              recipientPartyId,
+              repairCaseId,
+              inspectionId,
+              tokenKeys.tokenHash(id),
+              issuedByMemberId,
+              at));
+    } catch (DataIntegrityViolationException e) {
+      // 기록 ID는 요청에서 온 값이라, 없거나 다른 호실의 기록이면 사용자 요청 오류다(#163). 기록 외래 키 두 개만 바꾸고 나머지는 그대로 올린다.
+      // 이 문장이 실패해 트랜잭션은 되돌리기만 할 수 있다. 부르는 쪽은 잡지 말고 올려 행동·자리·링크·통지를 함께 되돌린다
+      String violated = constraintName(e);
+      if (record != null && violated != null && RECORD_FOREIGN_KEYS.contains(violated)) {
+        throw new BusinessException(ErrorCode.NOT_FOUND);
+      }
+      throw e;
+    }
     return id;
   }
 
@@ -113,6 +133,16 @@ public class InviteLinkService implements InviteLinks {
     List<Link> all = links.lockAllForParty(roomRecordId, partyId, LinkKind.INVITE);
     invalidate(all.stream().filter(link -> !link.isInvalidated()).toList(), reason, at);
     return all.stream().map(Link::getId).toList();
+  }
+
+  /** 위반한 제약 이름. Hibernate가 PostgreSQL 오류에서 꺼낸 값만 믿고, 찾지 못하면 {@code null}(원래 예외 그대로). */
+  private static String constraintName(DataIntegrityViolationException e) {
+    for (Throwable cause = e; cause != null; cause = cause.getCause()) {
+      if (cause instanceof ConstraintViolationException violation) {
+        return violation.getConstraintName();
+      }
+    }
+    return null;
   }
 
   private static int invalidate(List<Link> valid, LinkInvalidReason reason, Instant at) {
