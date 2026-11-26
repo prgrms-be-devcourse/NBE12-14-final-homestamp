@@ -127,25 +127,46 @@ test("주 메뉴는 4개 핵심 탭으로 통합되고 세부 화면은 서브�
   fireEvent.click(
     within(desktopNav).getByRole("button", { name: /하자 · 수리/ }),
   )
-  const repairSubtabs = await screen.findByRole("tablist", {
+  expect(
+    within(desktopNav)
+      .getByRole("button", { name: /하자 · 수리/ })
+      .getAttribute("aria-current"),
+  ).toBe("page")
+  expect(
+    within(mobileNav)
+      .getByRole("button", { name: /하자·수리/ })
+      .getAttribute("aria-current"),
+  ).toBe("page")
+  const repairSubtabs = await screen.findByRole("navigation", {
     name: "세부 메뉴",
   })
   expect(
-    within(repairSubtabs).getByRole("tab", { name: /수리 진행/ }),
-  ).toBeTruthy()
+    within(repairSubtabs)
+      .getByRole("button", { name: /수리 진행/ })
+      .getAttribute("aria-current"),
+  ).toBe("page")
   fireEvent.click(
-    within(repairSubtabs).getByRole("tab", { name: /수리비 · 부담/ }),
+    within(repairSubtabs).getByRole("button", { name: /수리비 · 부담/ }),
   )
   expect(await screen.findByText("수리 건별 비용 부담 현황")).toBeTruthy()
 
   fireEvent.click(
     within(desktopNav).getByRole("button", { name: /호실 · 연결/ }),
   )
-  const roomSubtabs = await screen.findByRole("tablist", { name: "세부 메뉴" })
-  fireEvent.click(within(roomSubtabs).getByRole("tab", { name: /활동 이력/ }))
+  const roomSubtabs = await screen.findByRole("navigation", {
+    name: "세부 메뉴",
+  })
+  fireEvent.click(
+    within(roomSubtabs).getByRole("button", { name: /활동 이력/ }),
+  )
   expect(
     within(roomSubtabs)
-      .getByRole("tab", { name: /활동 이력/ })
-      .getAttribute("aria-selected"),
-  ).toBe("true")
+      .getByRole("button", { name: /활동 이력/ })
+      .getAttribute("aria-current"),
+  ).toBe("page")
+  expect(
+    within(roomSubtabs)
+      .getByRole("button", { name: /내 호실/ })
+      .getAttribute("aria-current"),
+  ).toBeNull()
 })

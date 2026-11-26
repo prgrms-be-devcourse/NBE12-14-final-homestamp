@@ -46,6 +46,13 @@ export function MobileTabbar({
               )}
             </span>
             <span>{item.shortLabel}</span>
+            {badge > 0 && (
+              <span className="sr-only">
+                {item.id === "repairs"
+                  ? `, 진행 중 ${badge}건`
+                  : `, 받은 초대 ${badge}건`}
+              </span>
+            )}
           </button>
         )
       })}
