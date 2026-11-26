@@ -28,19 +28,22 @@ import org.springframework.stereotype.Component;
 @Component
 public class PartyTransitions implements Transitions<PartyState> {
 
+  /** 비어 있음. 요청할 때만 아는 값은 비워 둔다({@link PartyState}: 다시 계산할 때는 검사하지 않음). */
   @Override
   public PartyState initial() {
-    return new PartyState(PartyStatus.EMPTY, false, false, false, false);
+    return new PartyState(PartyStatus.EMPTY, null, null, null, null);
   }
 
   @Override
   public PartyState apply(PartyState now, ActionEntry action) {
     return switch (action.type()) {
       case INVITE -> {
-        if (!now.byCreatorSide() || !now.living() || !invitable(now.status())) {
+        if (Boolean.FALSE.equals(now.byCreatorSide())
+            || Boolean.FALSE.equals(now.living())
+            || !invitable(now.status())) {
           throw invalidState();
         }
-        if (now.selfInvite()) {
+        if (Boolean.TRUE.equals(now.selfInvite())) {
           throw new BusinessException(ErrorCode.SELF_INVITE);
         }
         yield withStatus(now, PartyStatus.INVITED);
@@ -66,7 +69,7 @@ public class PartyTransitions implements Transitions<PartyState> {
     if (now.status() != PartyStatus.INVITED) {
       throw invalidState();
     }
-    if (!now.phoneMatches()) {
+    if (Boolean.FALSE.equals(now.phoneMatches())) {
       throw new BusinessException(ErrorCode.PHONE_MISMATCH);
     }
   }

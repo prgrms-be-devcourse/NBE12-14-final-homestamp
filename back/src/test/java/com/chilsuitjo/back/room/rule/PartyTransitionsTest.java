@@ -136,6 +136,24 @@ class PartyTransitionsTest {
         .isEqualTo(PartyStatus.CONNECTED);
   }
 
+  @Test
+  void 행동_기록만으로_다시_계산하면_요청할_때만_아는_값은_검사하지_않는다() {
+    // initial()은 요청할 때만 아는 값을 비워 둔다(RepairState·InspectionState와 같은 방식, #252 리뷰)
+    PartyState invited = rules.apply(rules.initial(), entry(ActionType.INVITE));
+    assertThat(invited.status()).isEqualTo(PartyStatus.INVITED);
+    assertThat(rules.apply(invited, entry(ActionType.CONNECT)).status())
+        .isEqualTo(PartyStatus.CONNECTED);
+    assertThat(rules.apply(invited, entry(ActionType.REJECT_INVITE)).status())
+        .isEqualTo(PartyStatus.REJECTED);
+  }
+
+  @Test
+  void 다시_계산해도_자리_상태는_검사한다() {
+    PartyState invited = rules.apply(rules.initial(), entry(ActionType.INVITE));
+    expect(ErrorCode.INVALID_STATE, invited, ActionType.INVITE);
+    expect(ErrorCode.INVALID_STATE, rules.initial(), ActionType.CONNECT);
+  }
+
   private void expect(ErrorCode code, PartyState now, ActionType type) {
     assertThatThrownBy(() -> rules.apply(now, entry(type)))
         .isInstanceOfSatisfying(
