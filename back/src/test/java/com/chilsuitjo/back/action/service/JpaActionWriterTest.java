@@ -34,6 +34,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.InvalidDataAccessApiUsageException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -43,6 +44,7 @@ import tools.jackson.databind.json.JsonMapper;
     properties =
         "spring.datasource.hikari.connection-init-sql=SET search_path TO state, record, log, public")
 @Transactional
+@ActiveProfiles("test")
 class JpaActionWriterTest {
 
   private static final JsonMapper JSON = JsonMapper.builder().build();

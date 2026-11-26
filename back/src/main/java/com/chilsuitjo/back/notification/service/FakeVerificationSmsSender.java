@@ -7,6 +7,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.env.Environment;
 import org.springframework.core.env.Profiles;
 import org.springframework.stereotype.Service;
@@ -16,9 +17,11 @@ import org.springframework.stereotype.Service;
  * 허용된 로컬 개발 환경(local 프로필이 켜져 있고 test·prod 프로필은 꺼져 있을 때)에서 {@code app.sms.log-code=true}면(#248) 화면에서
  * 가입을 이어 가도록 인증번호 원문과 가린 전화번호를 한 줄 남긴다. 전화번호 원문은 남기지 않는다(decisions 2026-11-18·2026-11-26, 04 4-2).
  *
- * <p>솔라피 연동(NOTI-11)이 들어오면 실제 구현으로 바꾸고 이 클래스를 지운다.
+ * <p>{@code app.sms.mode=fake}(local·test)에서만 켜진다. prod에서는 {@code SmsModeGuard}가 기동을 막는다. 솔라피
+ * 연동(NOTI-11)이 들어오면 실제 구현으로 바꾸고 이 클래스를 지운다.
  */
 @Service
+@ConditionalOnProperty(name = "app.sms.mode", havingValue = "fake")
 public class FakeVerificationSmsSender implements VerificationSmsSender {
 
   private static final Logger log = LoggerFactory.getLogger(FakeVerificationSmsSender.class);
