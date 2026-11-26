@@ -118,8 +118,10 @@ nginx가 죽어도 앱 컨테이너는 그대로다. `docker compose --env-file 
 ```
 - `switch-upstream.sh`는 주소 모양을 검사하고 `nginx -t`가 통과할 때만 reload한다. 검사나 reload가 실패하면 이전 주소로 되돌리고 0이 아닌 값으로 끝난다 → 배포 스크립트는 green을 지우고 blue를 그대로 둔다
 - 1~4 중 하나라도 실패하면 5를 부르지 않는다. **앞 단계에서 적용된 DB 변경(Migration)은 되돌리지 않는다**(스키마는 이전 앱과도 맞게, 04 8장)
-- 앱 포트는 blue `127.0.0.1:8081`·green `127.0.0.1:8082`를 제안한다(관리 포트 9091·9092와 짝, decisions 2026-11-25). 배포 스크립트를 만들 때 확정한다
-- 화면(React)은 배포 스크립트가 `/srv/homestamp/front/releases/<버전>`에 풀고 `current` 링크만 바꾼다. nginx reload는 필요 없다
+- 앱 포트는 blue `127.0.0.1:8081`·green `127.0.0.1:8082`다(관리 포트 9091·9092와 짝, decisions 2026-11-25). #205 배포 스크립트가 확정한다(#205가 먼저 들어가면 "확정(#205)"으로 고친다)
+- `switch-upstream.sh` 계약: 인자 `<host:port>` 하나(`--write-only`는 첫 설치용), 종료 0 성공·1 검사나 reload 실패(이전 주소로 되돌림, 처음이라 이전 파일이 없으면 되돌릴 것 없이 1)·2 주소 형식 오류(파일을 바꾸지 않음, 인자가 없으면 1). 지금 앱은 `run/upstream/upstream.conf`의 `server` 줄로 판단한다. 헬스는 다시 보지 않는다
+- 화면(React)은 배포 스크립트가 `/srv/homestamp/front/releases/<버전>`에 풀고 `current` 링크만 바꾼다. nginx reload는 필요 없다. **아직 이 단계를 맡은 곳이 없다**(#205 `deploy.sh`·#206 `deploy.yml`에 프론트 빌드·풀기가 없음). 첫 배포 전에 #205·#206 쪽에서 맡을 곳을 정한다(후속)
+- 요청 제한(04 3-2 `limit_req`: 로그인·인증 문자·링크 조회)은 이 PR에 넣지 않았다. 경로와 기준을 정하는 후속 작업으로 둔다. 로그인·인증 문자의 횟수 제한은 앱이 따로 한다(`RATE_LIMITED`·`DAILY_LIMIT`). 링크 조회의 IP 제한이 비어 있다
 
 ## 8. HSTS 켜기 (HTTPS가 잘 도는 것을 확인한 뒤)
 
@@ -139,4 +141,4 @@ nginx가 죽어도 앱 컨테이너는 그대로다. `docker compose --env-file 
 ```sh
 mkdir -p /tmp/hs-nginx-work && infra/nginx/test/local-test.sh /tmp/hs-nginx-work   # 빈 폴더를 준다
 ```
-운영과 같은 nginx 이미지·설정·컨테이너 보안 옵션으로, 시험용 자체 CA 인증서를 써서 확인한다(45개): HTTP 전용 모드·ACME·모르는 Host 끊기, HTTPS 체인·이름·TLS 1.2/1.3·1.1 거절·모르는 SNI 거절, 화면·SPA·캐시, Actuator·점 파일 막기, 보안 헤더·HSTS 기본 꺼짐, API 경로·가짜 X-Forwarded-* 덮어쓰기·413, 블루/그린 전환·실패 시 유지, 앱 꺼짐 503. 실제 Let's Encrypt·DNS·EC2·systemd는 시험하지 않는다.
+운영과 같은 nginx 이미지·설정·컨테이너 보안 옵션으로, 시험용 자체 CA 인증서를 써서 확인한다(52개): HTTP 전용 모드·ACME·모르는 Host 끊기, HTTPS 체인·이름·TLS 1.2/1.3·1.1 거절·모르는 SNI 거절, 화면·SPA·캐시, Actuator·점 파일 막기, 보안 헤더·HSTS 기본 꺼짐·`/api/`에서 앱 헤더 중복 없음(가짜 앱이 Spring Security 기본 헤더를 낸다)·503에도 보안 헤더, API 경로·가짜 X-Forwarded-* 덮어쓰기·413, 블루/그린 전환·실패 시 유지, 앱 꺼짐 503. 실제 Let's Encrypt·DNS·EC2·systemd는 시험하지 않는다.
