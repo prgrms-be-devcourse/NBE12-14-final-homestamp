@@ -14,6 +14,7 @@ import com.chilsuitjo.back.notification.repository.NoticeRepository;
 import com.chilsuitjo.back.notification.repository.OutboxRepository;
 import com.chilsuitjo.back.notification.rule.NoticeKind;
 import com.chilsuitjo.back.notification.service.InMemoryRecipientDirectory;
+import com.chilsuitjo.back.notification.service.InviteLinks;
 import com.chilsuitjo.back.notification.service.NoticeOutbox;
 import com.chilsuitjo.back.notification.service.OutboxPoller;
 import com.chilsuitjo.back.notification.service.OutboxWorker;
@@ -58,8 +59,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 class OutboxWorkerTest {
 
   /**
-   * 번호 조회는 test 코드의 가짜로 둔다. main의 {@code FakeRecipientDirectory}나 나중의 room 실제 구현이 있어도
-   * {@code @Primary}라 작업자는 이것을 받는다.
+   * 번호 조회는 test 코드의 가짜로 둔다. room 실제 구현({@code JpaRecipientDirectory})이 있어도 {@code @Primary}라 작업자는
+   * 이것을 받는다.
    */
   @TestConfiguration
   static class RecipientsConfig {
@@ -74,6 +75,7 @@ class OutboxWorkerTest {
   @Autowired private OutboxWorker worker;
   @Autowired private FakeSmsGateway gateway;
   @Autowired private InMemoryRecipientDirectory recipients;
+  @Autowired private InviteLinks inviteLinks;
   @Autowired private TransactionTemplate transaction;
   @Autowired private JdbcTemplate jdbc;
   @Autowired private ApplicationContext context;
@@ -383,6 +385,7 @@ class OutboxWorkerTest {
     return new OutboxWorker(
         outboxRepository,
         repository,
+        inviteLinks,
         directory,
         gateway,
         clock,
@@ -416,6 +419,7 @@ class OutboxWorkerTest {
         new OutboxWorker(
             outboxRepository,
             noticeRepository,
+            inviteLinks,
             recipients,
             message -> {
               sending.countDown();
