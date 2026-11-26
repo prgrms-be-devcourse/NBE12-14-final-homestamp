@@ -263,6 +263,7 @@ assertThat(fx.actions().findByRoom(roomId))
 | 합류 전 기록 | `new RoomGate(room, side, false, true, false, false)` | `JOINED_RECORD` (예외: `ON_JOINED`) |
 | 내가 공유를 그만둠 | `new RoomGate(room, side, false, false, true, false)` | `SHARING_STOPPED` (예외: `WHILE_SHARING_STOPPED`) |
 | 서버·운영 행동 | `fx.gates().putRoom(new RoomGate(room, null, …))` | 호실 단위 거절을 건너뜀 |
+| 아직 연결하지 않은 초대받은 회원(연결·거절) | `fx.gates().invitee(room, partyId, side)` + `ActionBatch…asInvitee(partyId)` | `CONNECT`·`REJECT_INVITE`·`SHARE_CONSENT`만 통과, 그 밖은 `NOT_FOUND`(호실 상태는 `putRoom` 값, #249) |
 
 어떤 행동에 어떤 표시가 있는지는 `ActionType`(09 3-1 `ActionType` 줄)을 보세요.
 
@@ -294,7 +295,7 @@ pipeline은 진짜이고, 안쪽 부품도 아래 표처럼 하나씩 진짜로 
 
 | 부품 | 지금 | 진짜로 바뀌면 | 누가 |
 |---|---|---|---|
-| 행동 기록 저장 `ActionWriter` | **진짜** `JpaActionWriter`: `record.action`에 저장, `room_seq`·해시 체인. 메모리 가짜 `FakeActionWriter`는 테스트 코드에만 있고 `ActionPipelineFixture`가 써요 | — | B |
+| 행동 기록 저장 `ActionWriter` | **진짜** `JpaActionWriter`: `record.action`에 저장, `room_seq`·해시 체인(다음 번호·이전 해시는 호실마다 한 행인 체인 머리 `state.action_chain_head`에서, 05 2-3). 메모리 가짜 `FakeActionWriter`는 테스트 코드에만 있고 `ActionPipelineFixture`가 써요 | — | B |
 | 호실 잠금·읽기 `RoomGateReader` | **진짜** `JpaRoomGateReader`(#143): `room_record`를 `FOR UPDATE`로 잠그고 `party`로 당사자 확인. `FakeRoomGateReader`는 DB 없는 테스트(`ActionPipelineFixture`)가 `new`로 써요 | — | A (ROOM-2) |
 | 부위 조회 `RoomQueryService.findPart`·`findPartAsSeenBy` | **진짜** `JpaRoomQueryService`: `room_part`를 읽음. 보는 사람 기준은 부위 목록과 같은 `PartViews.one`(#183) | — | room (#140) |
 | 자리 상태 `CounterpartReader` | **진짜** `JpaCounterpartReader`: `room_record`·`party`·`member`를 읽음. 수신 거부(`optedOut`)·가린 이름(`maskedName`)은 아직 채우지 않음(거짓·null, 문자 보내기 PR에서 채움) | — | room (#140) |
