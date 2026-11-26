@@ -24,6 +24,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -33,8 +34,11 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  *
  * <p>트랜잭션 안에서 붙인 사진은 롤백 때 메모리에서도 지운다. 실제 구현(검사·S3 복사·주소, #112)이 들어오면 이 클래스를 지운다. 다른 도메인은 {@link
  * PhotoService}만 쓰므로 바뀌지 않는다.
+ *
+ * <p>{@code photo.service}가 없거나 {@code fake}일 때만 뜬다. {@code jpa}면 {@link JpaPhotoService}가 대신 뜬다.
  */
 @Service
+@ConditionalOnProperty(name = "photo.service", havingValue = "fake", matchIfMissing = true)
 public class FakePhotoService implements PhotoService {
 
   private static final Comparator<PhotoCard> CARD_ORDER =

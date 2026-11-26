@@ -26,9 +26,9 @@ import org.springframework.stereotype.Component;
  * blockedAfterEnded}로 막힌다(06 REP-1c, 03 A "상태별로 할 수 있는 일").
  *
  * <p>지금은 하자 등록(REP-1), 하자 응답·보충(REP-2), 수리 시작(REP-4)·종료 요청·종료 확인·아직 안 됐어요(REP-5a·5b), 물을 상대가 없을 때의
- * 혼자 종료와 혼자 끝낸 건의 늦은 종료 확인·이견(REP-5e·5f), 진행 상황 묻기·남기기(REP-6b·6c)가 있다. 다시 열기({@code REOPEN})는
- * 없앴다(#113 ③', decisions 2026-11-25). [상황이 바뀌었어요](REP-6d) 등은 그 기능을 만들 때 더한다(#219). 그 전까지 다른 행동은
- * {@code INVALID_STATE}다.
+ * 혼자 종료와 혼자 끝낸 건의 늦은 종료 확인·이견(REP-5e·5f), 진행 상황 묻기·남기기와 [상황이 바뀌었어요](REP-6b·6c·6d)가 있다. 다시 열기({@code
+ * REOPEN})는 없앴다(#113 ③', decisions 2026-11-25). 상황 변화 응답({@code RESPOND_SITUATION})은 대상이 진행 상황이라
+ * {@code SituationTransitions}가 맡는다. 그 밖의 행동은 {@code INVALID_STATE}다.
  */
 @Component
 public class RepairTransitions implements Transitions<RepairState> {
@@ -221,7 +221,8 @@ public class RepairTransitions implements Transitions<RepairState> {
   /**
    * 보충하고 다시 확인 요청(06 REP-2e): 등록한 측만, 보류·이견일 때만, 지금 하자 확인 요청을 열 수 있을 때만(거주 종료 뒤 막힘, 03 K), 7일에 한
    * 번({@code AnswerSupport.rerequest}). 근거(사진이나 설명)는 서비스가 pipeline 전에 본다. 하자 인정은 확인 기다림으로 돌아간다.
-   * 재계산이라 요청을 열 수 있는지 모르면 그때 서버가 확인했다고 본다({@link RepairState} "요청할 때만 아는 값").
+   * 재계산이라 요청을 열 수 있는지 모르면 그때 서버가 확인했다고 본다({@link RepairState} "요청할 때만 아는 값"). 7일도 요청할 때만 지금 설정으로
+   * 보고, 재계산이면 간격 0으로 넘겨 기록된 보충을 다시 거절하지 않는다({@link RepairState#atRequest}).
    */
   private RepairState supplement(RepairState now, ActionEntry action) {
     requireExists(now);
@@ -232,7 +233,7 @@ public class RepairTransitions implements Transitions<RepairState> {
             true,
             !now.defectConfirmBlocked(),
             action.createdAt(),
-            rerequestInterval);
+            now.atRequest() ? rerequestInterval : Duration.ZERO);
     return now.withDefectAck(result.state()).withLastRerequestAt(result.rerequestedAt());
   }
 
@@ -314,7 +315,8 @@ public class RepairTransitions implements Transitions<RepairState> {
   /**
    * 진행 상황 묻기(06 REP-6b, 03 D): 당사자 누구든, 시작 전·처리 중에서만, 지금 진행 상황 묻기 요청을 열 수 있을 때만(거주 중, 03 K), 한 건에
    * {@code progress.ask.interval}에 한 번(누가 물었든, decisions 2026-11-13). 그 안이면 {@code ASKED_RECENTLY}.
-   * 수리 진행·하자 인정은 그대로이고 물은 시각만 남는다. 재계산이라 요청을 열 수 있는지 모르면 그때 서버가 확인했다고 본다.
+   * 수리 진행·하자 인정은 그대로이고 물은 시각만 남는다. 재계산이라 요청을 열 수 있는지 모르면 그때 서버가 확인했다고 본다. 7일도 요청할 때만 지금 설정으로
+   * 본다({@link RepairState#atRequest}).
    */
   private RepairState askProgress(RepairState now, ActionEntry action) {
     requireVisible(now, action);
@@ -322,18 +324,69 @@ public class RepairTransitions implements Transitions<RepairState> {
     if (!askableStatus(now.status()) || now.progressCheckBlocked()) {
       throw new BusinessException(ErrorCode.INVALID_STATE);
     }
-    AnswerSupport.checkInterval(now.lastProgressAskAt(), action.createdAt(), progressAskInterval);
+    if (now.atRequest()) {
+      AnswerSupport.checkInterval(now.lastProgressAskAt(), action.createdAt(), progressAskInterval);
+    }
     return now.withLastProgressAskAt(action.createdAt());
   }
 
   /**
    * 진행 상황 남기기(06 REP-6, 03 D): 당사자 누구든, 언제든(처리 완료 뒤에도 덧붙이기, REP-5). 글·사진 하나 이상은 서비스가 pipeline 전에
    * 본다. 덧붙이기라 상태는 그대로다(03 G "덧붙이기"). 거주 종료 뒤에도 정산 완료 전까지 된다(03 D "언제든", #113 3번 답 전까지).
+   *
+   * <p>[상황이 바뀌었어요]를 켜면(payload {@code asksCheck}, REP-6d) 상대에게 확인을 요청한다. 검사 순서: 행동하는 사람이 공유를 그만뒀으면
+   * {@code SHARING_STOPPED}(진행 상황만은 남길 수 있지만 요청은 열지 않음, 03 B) → 하자를 둘 다 확인한 건(맞아요)이 아니거나 지금 요청을 열 수
+   * 없으면(거주 종료 뒤, 상대가 공유를 그만둬 이 기록이 보이지 않음) {@code INVALID_STATE} → 한 건에 다시 요청끼리 {@code
+   * rerequest.interval}에 한 번(누가 켰든) {@code ASKED_RECENTLY}. 다시 요청끼리는 [보충하고 다시 확인 요청]과 [상황이 바뀌었어요]를
+   * 함께 센다(03 G "다시 확인 요청의 한도", 06 0-1 {@code rerequest.interval}, #259 리뷰): 보충하고 7일 안에 상대가 맞아요로 답해도
+   * 그 7일이 지나야 켠다. 반대 방향(켠 뒤 보충)은 맞아요가 끝이라 생기지 않아 보충 쪽({@code AnswerSupport.rerequest})은 그대로다. 하자
+   * 인정은 그대로다(REP-6d "하자 [맞아요]는 그대로").
+   *
+   * <p>재계산({@code Replay.fold})이면 열 수 있는지({@code opening})를 모르고, 그때 서버가 확인했다고 본다. 7일 검사도 요청할 때만 지금
+   * 설정으로 한다: 설정을 7일에서 14일로 바꾼 뒤 8일 간격으로 기록된 행동을 다시 거절하면 재계산(공유를 그만둔 뒤 상세 조회 등)이 실패한다(#234와 같은 방식,
+   * #259 리뷰).
    */
-  private static RepairState noteProgress(RepairState now, ActionEntry action) {
+  private RepairState noteProgress(RepairState now, ActionEntry action) {
     requireVisible(now, action);
     requireSide(action);
-    return now;
+    if (!Boolean.TRUE.equals(action.payloadAs(ProgressPayload.class).asksCheck())) {
+      return now;
+    }
+    SituationCheck check = now.situationCheck();
+    if (check.opening() == SituationOpening.SHARING_STOPPED) {
+      throw new BusinessException(ErrorCode.SHARING_STOPPED);
+    }
+    if (now.defectAck() != AckState.ACK || check.opening() == SituationOpening.BLOCKED) {
+      throw new BusinessException(ErrorCode.INVALID_STATE);
+    }
+    // opening은 켜는 요청일 때만 load가 채운다(재계산이면 null)
+    if (check.opening() != null) {
+      AnswerSupport.checkInterval(
+          latest(check.lastAskedAt(), now.lastRerequestAt()),
+          action.createdAt(),
+          rerequestInterval);
+    }
+    return now.withSituationCheck(new SituationCheck(action.createdAt(), check.opening()));
+  }
+
+  /** 두 시각 중 늦은 것. 둘 다 없으면 null. */
+  private static Instant latest(Instant a, Instant b) {
+    if (a == null) {
+      return b;
+    }
+    return b == null || a.isAfter(b) ? a : b;
+  }
+
+  /**
+   * 진행 상황 남기기 행동의 payload. 글은 진행 상황 행에만 두고(05 2-3 "payload는 작은 부가 값만") [상황이 바뀌었어요]를 켰는지만 담는다. 켜지
+   * 않았으면 키를 두지 않는다(그 전에 남긴 행동과 같은 모양).
+   *
+   * @param asksCheck [상황이 바뀌었어요]를 켰으면 true. 아니면 null(키 없음)
+   */
+  public record ProgressPayload(Boolean asksCheck) {
+
+    /** payload의 키. record 칸 이름과 같다({@code ActionEntry.payloadAs}). */
+    public static final String ASKS_CHECK = "asksCheck";
   }
 
   /**

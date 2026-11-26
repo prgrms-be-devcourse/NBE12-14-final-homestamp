@@ -1,7 +1,13 @@
 package com.chilsuitjo.back.notification.repository;
 
+import com.chilsuitjo.back.notification.dto.DeliveryQuery;
 import com.chilsuitjo.back.notification.dto.SmsMessage;
 import com.chilsuitjo.back.notification.dto.SmsSendResult;
+import com.chilsuitjo.back.notification.rule.DeliveryOutcome;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -13,6 +19,9 @@ import org.springframework.stereotype.Component;
  *
  * <p>{@code RETRY}로 두지 않는 이유: 꺼진 동안의 문자가 쌓였다가 연동을 켜는 순간 오래된 통지가 한꺼번에 나간다. 성공({@code SENT})도 돌려주지
  * 않는다(보내지 않은 문자를 보낸 것으로 남기지 않음). 번호·본문은 로그에 남기지 않는다.
+ *
+ * <p>전달 결과 조회(#124)도 업체를 부르지 않고 모든 묶음에 결과 없음({@code NONE})을 돌려준다. 가짜 발송기의 정하지 않은 묶음과 같이, 보내지 않은 문자에
+ * 전달됨 증거를 만들지 않는다(03 불변식 4). 그래서 보낸 상태인 통지는 저장된 전달 확인 기한이 지나면 실패로 끝난다.
  */
 @Component
 @ConditionalOnProperty(name = "app.sms.mode", havingValue = "disabled")
@@ -24,5 +33,14 @@ public class DisabledSmsGateway implements SmsGateway {
   public SmsSendResult send(SmsMessage message) {
     log.warn("문자 발송이 꺼져 있어(app.sms.mode=disabled) 보내지 않음: batch={}", message.batchLeadId());
     return SmsSendResult.rejected();
+  }
+
+  @Override
+  public Map<UUID, DeliveryOutcome> queryResults(List<DeliveryQuery> queries) {
+    Map<UUID, DeliveryOutcome> results = new LinkedHashMap<>();
+    for (DeliveryQuery query : queries) {
+      results.put(query.batchLeadId(), DeliveryOutcome.NONE);
+    }
+    return results;
   }
 }

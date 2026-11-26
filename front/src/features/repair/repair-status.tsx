@@ -399,9 +399,13 @@ export function RepairActions({
         onSubmit={() =>
           // 하자 "맞아요"만 종료 확인과 함께 보내요(06 REP-3a). 보류·이견은 하자 응답으로 따로
           exec((api, s) =>
-            api.confirmClose(s, r.id, {
-              alsoAckDefect: closeAck === CLOSE_WITH_ACK,
-            }),
+            api.confirmClose(
+              s,
+              r.id,
+              closeAck === CLOSE_WITH_ACK
+                ? { alsoAckDefect: true, seenVersionNo: versionOf(r) }
+                : { alsoAckDefect: false },
+            ),
           )
         }
       >

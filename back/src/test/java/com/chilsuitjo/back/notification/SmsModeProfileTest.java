@@ -6,10 +6,10 @@ import com.chilsuitjo.back.TestcontainersConfiguration;
 import com.chilsuitjo.back.notification.repository.FakeSmsGateway;
 import com.chilsuitjo.back.notification.repository.SmsGateway;
 import com.chilsuitjo.back.notification.service.DisabledRecipientDirectory;
-import com.chilsuitjo.back.notification.service.FakeRecipientDirectory;
 import com.chilsuitjo.back.notification.service.FakeVerificationSmsSender;
 import com.chilsuitjo.back.notification.service.RecipientDirectory;
 import com.chilsuitjo.back.notification.service.VerificationSmsSender;
+import com.chilsuitjo.back.room.service.JpaRecipientDirectory;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -27,8 +27,8 @@ abstract class SmsModeProfileTest {
     assertThat(context.getBean(SmsGateway.class)).isInstanceOf(FakeSmsGateway.class);
     assertThat(context.getBean(VerificationSmsSender.class))
         .isInstanceOf(FakeVerificationSmsSender.class);
-    assertThat(context.getBean(RecipientDirectory.class))
-        .isInstanceOf(FakeRecipientDirectory.class);
+    // 번호 조회는 가짜가 아니라 room 실제 구현이다(main 가짜는 지움, #163)
+    assertThat(context.getBean(RecipientDirectory.class)).isInstanceOf(JpaRecipientDirectory.class);
     assertThat(context.getBeanNamesForType(DisabledRecipientDirectory.class)).isEmpty();
   }
 

@@ -5,15 +5,23 @@ import com.chilsuitjo.back.action.dto.ActionTarget;
 import com.chilsuitjo.back.action.dto.SavedState;
 import com.chilsuitjo.back.action.service.ActionRequestContext;
 import com.chilsuitjo.back.action.service.StateStore;
+import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.inspection.entity.Inspection;
 import com.chilsuitjo.back.inspection.rule.InspectionKind;
 import com.chilsuitjo.back.inspection.rule.InspectionState;
+import com.chilsuitjo.back.notification.dto.OpenRequestCommand;
+import com.chilsuitjo.back.notification.dto.RequestTarget;
+import com.chilsuitjo.back.notification.dto.RoomParties;
+import com.chilsuitjo.back.notification.rule.PartyPresence;
+import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.rule.RoomPhase;
 import com.chilsuitjo.back.notification.service.CounterpartReader;
+import com.chilsuitjo.back.notification.service.WaitService;
 import com.chilsuitjo.back.room.service.RoomMoveInDates;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Objects;
 import lombok.RequiredArgsConstructor;
@@ -34,10 +42,16 @@ public class InspectionStateStore {
   private final RoomMoveInDates moveInDates;
   private final CounterpartReader parties;
   private final ActionRequestContext requestContext;
+  private final WaitService waits;
 
   /** 점검 시작(06 INSP-1a·2b)의 저장 방법. 종류와 채울 입주일은 payload에 있다. */
   public StateStore<InspectionState> starting() {
     return new Starting();
+  }
+
+  /** 확인 요청(06 4-7 {@code request-confirm}, INSP-1f)의 저장 방법. */
+  public StateStore<InspectionState> requesting() {
+    return new Requesting();
   }
 
   /**
@@ -51,16 +65,32 @@ public class InspectionStateStore {
       if (target.kind() != TargetKind.INSPECTION) {
         throw new IllegalArgumentException("점검이 아닌 대상이에요: " + target);
       }
-      return stateOf(
-          inspections
-              .findByIdAndRoomRecordId(target.id(), command.roomRecordId())
-              .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND)));
+      return current(row(command));
     }
     InspectionKind kind = kindOf(command);
     return inspections
         .findByRoomRecordIdAndKind(command.roomRecordId(), kind)
-        .map(InspectionStateStore::stateOf)
+        .map(this::current)
         .orElseGet(() -> notStarted(command));
+  }
+
+  /**
+   * 이 점검 행의 지금 상태({@link #load}와 같은 값). 상세 조회가 {@code availableActions}를 계산할 때도 쓴다(06 4-0 "서버의 같은
+   * 함수"). 지금 호실 단계에서 점검 확인 요청을 열 수 있는지를 함께 담는다(03 K).
+   */
+  public InspectionState current(Inspection row) {
+    RoomParties room = parties.read(row.getRoomRecordId(), row.getAuthorSide());
+    boolean canOpen =
+        room.canOpen(RequestKind.INSPECTION_CONFIRM)
+            && waits.canOpen(row.getRoomRecordId(), RequestKind.INSPECTION_CONFIRM);
+    return new InspectionState(
+        row.getKind(),
+        row.getStatus(),
+        row.getAuthorSide(),
+        row.getCreatedAt(),
+        null,
+        null,
+        canOpen);
   }
 
   private InspectionState notStarted(ActionCommand command) {
@@ -72,8 +102,10 @@ public class InspectionStateStore {
     return InspectionState.notStarted(dateMissing, phase != RoomPhase.LIVING);
   }
 
-  private static InspectionState stateOf(Inspection row) {
-    return new InspectionState(row.getKind(), row.getStatus(), row.getAuthorSide(), null, null);
+  private Inspection row(ActionCommand command) {
+    return inspections
+        .findByIdAndRoomRecordId(command.target().id(), command.roomRecordId())
+        .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
   }
 
   private static InspectionKind kindOf(ActionCommand command) {
@@ -106,6 +138,55 @@ public class InspectionStateStore {
               new Inspection(
                   command.roomRecordId(), next.kind(), next.authorSide(), requestContext.at()));
       return SavedState.created(ActionTarget.inspection(row.getId()));
+    }
+  }
+
+  private final class Requesting implements StateStore<InspectionState> {
+
+    @Override
+    public InspectionState load(ActionCommand command) {
+      return InspectionStateStore.this.load(command);
+    }
+
+    /**
+     * 점검을 확인 요청으로 바꾼다. 상태는 상대 자리와 상관없이 바뀌고, 같은 트랜잭션에서 점검 확인 요청({@code INSPECTION_CONFIRM}, 요청한 측 =
+     * 기준 측)을 열지와 {@code first_shown_at}을 채울지는 상대 자리로 나눈다(#163 6-1 D 추천).
+     *
+     * <ul>
+     *   <li>공유 중단 제한이 살아 있으면(어느 쪽이든) 요청을 열지 않는다(03 B "그만둔 사람에게는 새 확인 요청을 만들지 않는다", 불변식 18). 다시 공유하면
+     *       그때 요청이 생긴다(03 1-4 "다시 공유한 뒤 새 확인 요청")
+     *   <li>연결됨: 요청을 열고 {@code first_shown_at}을 행동 시각으로 채운다(05 2-10, decisions 2026-11-23과 같은 기준)
+     *   <li>연결 전({@code INVITED}): 요청을 연다(03 1-4 "연결 전 상대" ① "링크로 알리고 기다린다", 06 ROOM-4c). 점검이 아직
+     *       상대에게 보이지 않아 {@code first_shown_at}은 비워 두고 연결할 때 채운다. 기다림은 요청을 만든 시각이 아니라 첫 통지가 전달된 시각부터
+     *       센다(05 {@code first_notified_at}, D 담당)
+     *   <li>상대 없음({@code EMPTY}·{@code NUMBER_ONLY})·거절·탈퇴: 받을 사람이 없어 요청을 열지 않는다. 혼자 잠금은 잠금 작업에서
+     *       {@code canGoSoloDirectly}로 판단한다
+     * </ul>
+     *
+     * <p><b>현재 구현 범위의 한계</b>: 상대 측이 "지금까지 쓴 것으로" 보냈을 때 기준 측에 가는 서비스 안 알림(06 4-7)은 아직 보내지 않는다. 지금
+     * {@code InAppNotifier}는 메모리에만 쌓는 가짜라 사용자가 볼 수 없어서, 실제 저장이 들어오는 U3-2 뒤에 주제를 정해 연결한다(#116 D 제안
+     * (가), #234 리뷰). 그때도 공유 중단 제한이 살아 있으면 보내지 않는다(불변식 18).
+     *
+     * <p>이 행동은 판을 보지 않아 내용 지문이 없다(안내서 3-3).
+     */
+    @Override
+    public SavedState save(ActionCommand command, InspectionState next) {
+      Inspection row = row(command);
+      row.changeStatus(next.status());
+      PartySide author = row.getAuthorSide();
+      RoomParties room = parties.read(command.roomRecordId(), author);
+      Instant at = requestContext.at();
+      RequestTarget target = RequestTarget.of(TargetKind.INSPECTION, row.getId());
+      boolean stopped = InspectionSight.sharingStopped(room);
+      if (!stopped && room.counterpart().presence() == PartyPresence.CONNECTED) {
+        row.markShown(at);
+      }
+      if (InspectionSight.reachable(room)) {
+        waits.open(
+            new OpenRequestCommand(
+                command.roomRecordId(), RequestKind.INSPECTION_CONFIRM, target, author));
+      }
+      return SavedState.unchanged();
     }
   }
 }

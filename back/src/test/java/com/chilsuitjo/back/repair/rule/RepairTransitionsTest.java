@@ -777,6 +777,172 @@ class RepairTransitionsTest {
     }
   }
 
+  // ---- REP-6d [상황이 바뀌었어요] ----
+
+  @Test
+  void 하자를_둘_다_확인한_건에서_상황이_바뀌었어요를_켜면_켠_시각이_남고_하자_인정은_그대로다() {
+    RepairState next =
+        rules.apply(
+            situation(AckState.ACK, null, SituationOpening.OPEN),
+            asksCheck(PartySide.LANDLORD, NOW));
+
+    assertThat(next.situationCheck().lastAskedAt()).isEqualTo(NOW);
+    assertThat(next.defectAck()).isEqualTo(AckState.ACK);
+    assertThat(next.status()).isEqualTo(RepairStatus.IN_PROGRESS);
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = AckState.class,
+      names = {"PENDING", "NEED_MORE", "DISPUTE", "UNCONFIRMED"})
+  void 하자를_둘_다_확인하지_않았으면_상황이_바뀌었어요는_INVALID_STATE(AckState ack) {
+    assertError(
+        ErrorCode.INVALID_STATE,
+        () ->
+            rules.apply(
+                situation(ack, null, SituationOpening.OPEN), asksCheck(PartySide.TENANT, NOW)));
+  }
+
+  @Test
+  void 켜지_않은_진행_상황은_하자_인정과_상관없이_남는다() {
+    RepairState now = situation(AckState.PENDING, NOW, SituationOpening.BLOCKED);
+
+    assertThat(rules.apply(now, entry(ActionType.NOTE_PROGRESS, PartySide.TENANT))).isEqualTo(now);
+  }
+
+  @Test
+  void 요청을_열_수_없으면_INVALID_STATE이고_공유를_그만둔_사람은_하자_인정보다_먼저_SHARING_STOPPED() {
+    assertError(
+        ErrorCode.INVALID_STATE,
+        () ->
+            rules.apply(
+                situation(AckState.ACK, null, SituationOpening.BLOCKED),
+                asksCheck(PartySide.TENANT, NOW)));
+    assertError(
+        ErrorCode.SHARING_STOPPED,
+        () ->
+            rules.apply(
+                situation(AckState.PENDING, null, SituationOpening.SHARING_STOPPED),
+                asksCheck(PartySide.TENANT, NOW)));
+  }
+
+  @Test
+  void 누가_켰든_한_건에_7일에_한_번이고_딱_7일이_지나면_된다() {
+    RepairState asked = situation(AckState.ACK, NOW, SituationOpening.OPEN);
+
+    assertError(
+        ErrorCode.ASKED_RECENTLY,
+        () -> rules.apply(asked, asksCheck(PartySide.TENANT, NOW.plus(Duration.ofDays(6)))));
+    Instant later = NOW.plus(INTERVAL);
+    assertThat(
+            rules.apply(asked, asksCheck(PartySide.LANDLORD, later)).situationCheck().lastAskedAt())
+        .isEqualTo(later);
+  }
+
+  @Test
+  void 보충과_상황이_바뀌었어요는_다시_요청끼리_함께_7일을_센다() {
+    // 03 G "다시 확인 요청의 한도", 06 0-1 rerequest.interval(#259 리뷰): 보충하고 7일 안에 맞아요가 와도 그 7일이 지나야 켠다
+    RepairState supplemented =
+        situation(AckState.ACK, null, SituationOpening.OPEN).withLastRerequestAt(NOW);
+
+    assertError(
+        ErrorCode.ASKED_RECENTLY,
+        () -> rules.apply(supplemented, asksCheck(PartySide.TENANT, NOW.plus(Duration.ofDays(6)))));
+    Instant later = NOW.plus(INTERVAL);
+    assertThat(
+            rules
+                .apply(supplemented, asksCheck(PartySide.TENANT, later))
+                .situationCheck()
+                .lastAskedAt())
+        .isEqualTo(later);
+  }
+
+  @Test
+  void 재계산이라_열_수_있는지_모르면_그때_서버가_확인했다고_본다() {
+    RepairState replayed = situation(AckState.ACK, null, null);
+
+    assertThat(
+            rules.apply(replayed, asksCheck(PartySide.TENANT, NOW)).situationCheck().lastAskedAt())
+        .isEqualTo(NOW);
+  }
+
+  @Test
+  void 재계산은_지금_설정으로_과거의_보충과_진행_상황_묻기를_다시_거절하지_않는다() {
+    // 7일 설정에서 8일 간격으로 기록된 행동을 14일 설정으로 다시 계산해도 실패하지 않는다(#259 리뷰)
+    RepairTransitions longer = new RepairTransitions(Duration.ofDays(14), Duration.ofDays(14));
+    Instant later = NOW.plus(Duration.ofDays(8));
+    List<ActionEntry> history =
+        List.of(
+            entry(ActionType.REGISTER, PartySide.TENANT),
+            respond(PartySide.LANDLORD, Answer.NEED_MORE, "사진이 흐려요", 1),
+            supplement(PartySide.TENANT, NOW),
+            respond(PartySide.LANDLORD, Answer.NEED_MORE, "아직 흐려요", 1),
+            supplement(PartySide.TENANT, later),
+            entry(ActionType.ASK_PROGRESS, PartySide.LANDLORD, null, null, Map.of(), NOW),
+            entry(ActionType.ASK_PROGRESS, PartySide.TENANT, null, null, Map.of(), later));
+
+    RepairState folded = Replay.fold(longer, history);
+
+    assertThat(folded.lastRerequestAt()).isEqualTo(later);
+    assertThat(folded.lastProgressAskAt()).isEqualTo(later);
+    assertThat(folded.atRequest()).isFalse();
+    // 요청할 때(load가 canOpen…을 채운 상태)는 지금 설정(14일)으로 막는다
+    assertError(
+        ErrorCode.ASKED_RECENTLY,
+        () ->
+            longer.apply(
+                inProgress().withLastProgressAskAt(later),
+                entry(
+                    ActionType.ASK_PROGRESS,
+                    PartySide.TENANT,
+                    null,
+                    null,
+                    Map.of(),
+                    later.plus(Duration.ofDays(10)))));
+  }
+
+  @Test
+  void 재계산은_지금_설정으로_과거에_켠_상황이_바뀌었어요를_다시_거절하지_않는다() {
+    // 7일 설정에서 8일 간격으로 기록된 행동을 14일 설정으로 다시 계산해도 실패하지 않는다(#234와 같은 방식, #259 리뷰)
+    RepairTransitions longer = new RepairTransitions(Duration.ofDays(14), INTERVAL);
+    List<ActionEntry> history =
+        List.of(
+            entry(ActionType.REGISTER, PartySide.TENANT),
+            respond(PartySide.LANDLORD, Answer.ACK, null, 1),
+            asksCheck(PartySide.TENANT, NOW),
+            asksCheck(PartySide.LANDLORD, NOW.plus(Duration.ofDays(8))));
+
+    RepairState folded = Replay.fold(longer, history);
+
+    assertThat(folded.situationCheck().lastAskedAt()).isEqualTo(NOW.plus(Duration.ofDays(8)));
+    // 요청할 때는 지금 설정(14일)으로 막는다
+    assertError(
+        ErrorCode.ASKED_RECENTLY,
+        () ->
+            longer.apply(
+                folded.withSituationCheck(
+                    folded.situationCheck().withOpening(SituationOpening.OPEN)),
+                asksCheck(PartySide.TENANT, NOW.plus(Duration.ofDays(20)))));
+  }
+
+  /** 세입자가 등록하고 처리 중인 수리 건. [상황이 바뀌었어요]를 마지막으로 켠 시각과 지금 열 수 있는지를 정한다. */
+  private static RepairState situation(
+      AckState ack, Instant lastAskedAt, SituationOpening opening) {
+    return registered(ack)
+        .withProgress(RepairStatus.IN_PROGRESS, null, null)
+        .withSituationCheck(new SituationCheck(lastAskedAt, opening));
+  }
+
+  private static ActionEntry asksCheck(PartySide side, Instant at) {
+    return entry(
+        ActionType.NOTE_PROGRESS,
+        side,
+        null,
+        null,
+        Map.of(RepairTransitions.ProgressPayload.ASKS_CHECK, true),
+        at);
+  }
+
   // ---- 아직 없는 행동 ----
 
   /** 아직 만들지 않은 수리 행동. 새 행동을 붙이면 여기서 빼고 따로 테스트한다. */

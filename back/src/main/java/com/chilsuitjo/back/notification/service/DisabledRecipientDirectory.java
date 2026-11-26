@@ -10,7 +10,8 @@ import org.springframework.stereotype.Service;
  * 문자 발송이 꺼진 상태({@code app.sms.mode=disabled})의 번호 조회. 언제나 빈 값이다(지어낸 번호를 돌려주지 않음). 아웃박스 작업자는 번호가 없으면
  * 문자를 보내지 않고 그 문자 작업을 끝내므로(다시 보내지 않음), 꺼진 동안의 통지가 나중에 한꺼번에 나가지 않는다.
  *
- * <p>실제 번호 조회(room·member, A)가 들어오면 그 구현이 이 자리를 대신한다.
+ * <p>실제 번호 조회(room의 {@code JpaRecipientDirectory})는 disabled가 아닐 때만 켜진다. disabled에서는 이 구현이 그대로 남아
+ * 번호를 주지 않는다(decisions 2026-11-25 운영 문자 모드, #163).
  */
 @Service
 @ConditionalOnProperty(name = "app.sms.mode", havingValue = "disabled")

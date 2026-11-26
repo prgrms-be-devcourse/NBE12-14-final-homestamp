@@ -9,6 +9,7 @@ import com.chilsuitjo.back.action.rule.Replay;
 import com.chilsuitjo.back.global.common.AckState;
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.error.ErrorCode;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -20,8 +21,10 @@ class InspectionTransitionsTest {
 
   private static final Instant NOW = Instant.parse("2026-11-25T00:00:00Z");
 
-  private final InspectionTransitions rules = new InspectionTransitions();
-  private final InspectionItemTransitions itemRules = new InspectionItemTransitions();
+  private static final Duration STALE = Duration.ofDays(7);
+
+  private final InspectionTransitions rules = new InspectionTransitions(STALE);
+  private final InspectionItemTransitions itemRules = new InspectionItemTransitions(STALE);
 
   // ---- 점검 시작 ----
 
@@ -38,12 +41,98 @@ class InspectionTransitionsTest {
 
   @Test
   void 이미_같은_종류_점검이_있으면_INSPECTION_EXISTS() {
-    InspectionState existing =
-        new InspectionState(
-            InspectionKind.MOVE_IN, InspectionStatus.DRAFT, PartySide.TENANT, null, null);
+    InspectionState existing = draft(PartySide.TENANT, NOW, null);
 
     assertThatThrownBy(() -> rules.apply(existing, start(PartySide.LANDLORD, "MOVE_IN", null)))
         .hasMessage(ErrorCode.INSPECTION_EXISTS.name());
+  }
+
+  // ---- 확인 요청(INSP-1f) ----
+
+  @Test
+  void 기준_측은_작성_중이면_바로_확인_요청을_보낸다() {
+    InspectionState next =
+        rules.apply(draft(PartySide.TENANT, NOW, true), request(PartySide.TENANT, NOW));
+
+    assertThat(next.status()).isEqualTo(InspectionStatus.REQUESTED);
+    assertThat(next.authorSide()).isEqualTo(PartySide.TENANT);
+  }
+
+  @Test
+  void INSP_1f_상대는_작성_중_7일이_지나기_전에는_INVALID_STATE() {
+    InspectionState now = draft(PartySide.LANDLORD, NOW, true);
+    Instant justBefore = NOW.plus(STALE).minusSeconds(1);
+
+    assertThatThrownBy(() -> rules.apply(now, request(PartySide.TENANT, justBefore)))
+        .hasMessage(ErrorCode.INVALID_STATE.name());
+    assertThat(rules.canRequestConfirm(now, PartySide.TENANT, justBefore)).isFalse();
+  }
+
+  @Test
+  void INSP_1f_상대는_작성_중_7일이_지나면_지금까지_쓴_것으로_보낸다() {
+    InspectionState now = draft(PartySide.LANDLORD, NOW, true);
+    Instant stale = NOW.plus(STALE);
+
+    InspectionState next = rules.apply(now, request(PartySide.TENANT, stale));
+
+    assertThat(next.status()).isEqualTo(InspectionStatus.REQUESTED);
+    // 누가 눌렀든 기준 측은 그대로다(요청한 측 = 기준 측, #218)
+    assertThat(next.authorSide()).isEqualTo(PartySide.LANDLORD);
+    assertThat(rules.canRequestConfirm(now, PartySide.TENANT, stale)).isTrue();
+    assertThat(rules.counterpartCanRequestAt(now)).isEqualTo(stale);
+  }
+
+  @Test
+  void 작성_중이_아니면_확인_요청을_다시_보낼_수_없다() {
+    InspectionState requested =
+        draft(PartySide.TENANT, NOW, true).withStatus(InspectionStatus.REQUESTED);
+
+    assertThatThrownBy(() -> rules.apply(requested, request(PartySide.TENANT, NOW)))
+        .hasMessage(ErrorCode.INVALID_STATE.name());
+    assertThatThrownBy(() -> rules.apply(InspectionState.NONE, request(PartySide.TENANT, NOW)))
+        .hasMessage(ErrorCode.INVALID_STATE.name());
+  }
+
+  @Test
+  void 지금_호실_단계에서_점검_확인을_열_수_없으면_INVALID_STATE() {
+    InspectionState blocked = draft(PartySide.TENANT, NOW, false);
+
+    assertThatThrownBy(() -> rules.apply(blocked, request(PartySide.TENANT, NOW)))
+        .hasMessage(ErrorCode.INVALID_STATE.name());
+    assertThat(rules.canRequestConfirm(blocked, PartySide.TENANT, NOW)).isFalse();
+  }
+
+  @Test
+  void 재계산은_시작_시각부터_작성_중_기간을_센다() {
+    Instant stale = NOW.plus(STALE);
+    InspectionState folded =
+        Replay.fold(
+            rules,
+            List.of(start(PartySide.LANDLORD, "MOVE_IN", null), request(PartySide.TENANT, stale)));
+
+    assertThat(folded.status()).isEqualTo(InspectionStatus.REQUESTED);
+    assertThat(folded.startedAt()).isEqualTo(NOW);
+  }
+
+  @Test
+  void 재계산은_지금_설정으로_과거_확인_요청을_다시_거절하지_않는다() {
+    // 7일일 때 8일째 받은 상대 측 확인 요청은 설정을 10일로 바꾼 뒤 다시 계산해도 확인 요청이다(#234 혜승님 리뷰 P2)
+    Instant eighthDay = NOW.plus(Duration.ofDays(8));
+    List<ActionEntry> history =
+        List.of(start(PartySide.LANDLORD, "MOVE_IN", null), request(PartySide.TENANT, eighthDay));
+    InspectionTransitions longer = new InspectionTransitions(Duration.ofDays(10));
+
+    assertThat(Replay.fold(rules, history).status()).isEqualTo(InspectionStatus.REQUESTED);
+    assertThat(Replay.fold(longer, history).status()).isEqualTo(InspectionStatus.REQUESTED);
+    // 새 요청과 버튼은 지금 설정으로 본다(같은 판단 함수)
+    InspectionState live = draft(PartySide.LANDLORD, NOW, true);
+    assertThatThrownBy(() -> longer.apply(live, request(PartySide.TENANT, eighthDay)))
+        .hasMessage(ErrorCode.INVALID_STATE.name());
+    assertThat(longer.canRequestConfirm(live, PartySide.TENANT, eighthDay)).isFalse();
+    Instant tenthDay = NOW.plus(Duration.ofDays(10));
+    assertThat(longer.canRequestConfirm(live, PartySide.TENANT, tenthDay)).isTrue();
+    assertThat(longer.apply(live, request(PartySide.TENANT, tenthDay)).status())
+        .isEqualTo(InspectionStatus.REQUESTED);
   }
 
   @Test
@@ -153,11 +242,27 @@ class InspectionTransitionsTest {
   void 이미_있는_항목에는_다시_더할_수_없다() {
     InspectionItemState existing =
         new InspectionItemState(
-            InspectionStatus.DRAFT, PartySide.TENANT, AckState.PENDING, PartySide.TENANT, 1);
+            InspectionStatus.DRAFT,
+            PartySide.TENANT,
+            AckState.PENDING,
+            PartySide.TENANT,
+            1,
+            null,
+            null,
+            null);
 
     assertThatThrownBy(
             () -> itemRules.apply(existing, entry(ActionType.ADD_ITEM, PartySide.TENANT, Map.of())))
         .hasMessage(ErrorCode.INVALID_STATE.name());
+  }
+
+  private static InspectionState draft(PartySide author, Instant startedAt, Boolean canOpen) {
+    return new InspectionState(
+        InspectionKind.MOVE_IN, InspectionStatus.DRAFT, author, startedAt, null, null, canOpen);
+  }
+
+  private static ActionEntry request(PartySide side, Instant at) {
+    return entry(ActionType.REQUEST_INSPECTION_CONFIRM, side, Map.of(), at);
   }
 
   private static ActionEntry start(PartySide side, String kind, String moveInDate) {
@@ -168,6 +273,11 @@ class InspectionTransitionsTest {
   }
 
   private static ActionEntry entry(ActionType type, PartySide side, Map<String, Object> payload) {
+    return entry(type, side, payload, NOW);
+  }
+
+  private static ActionEntry entry(
+      ActionType type, PartySide side, Map<String, Object> payload, Instant at) {
     return new ActionEntry(
         null,
         UUID.randomUUID(),
@@ -182,6 +292,6 @@ class InspectionTransitionsTest {
         null,
         null,
         payload,
-        NOW);
+        at);
   }
 }

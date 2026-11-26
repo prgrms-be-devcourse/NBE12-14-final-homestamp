@@ -34,6 +34,7 @@ import { SharePage, type SharedKind } from "@/pages/share-page"
 import { hasAction, type RoomAction } from "@/api/actions"
 import { ApiProvider } from "@/api"
 import { useApi } from "@/api/hooks"
+import { repairStub } from "@/api/http-repair-view"
 import { errorMessage } from "@/api/errors"
 import { createApi } from "@/api/create-api"
 import {
@@ -286,12 +287,24 @@ function HomeStampApp({
   // 없는 호실 주소면 첫 호실 화면 대신 '찾을 수 없는 기록'을 보여 줘요(남의 호실도 같은 응답, 명세 4-3).
   const routeRoom = db.rooms.find((r) => r.id === roomId)
   const room = routeRoom ?? NO_ROOM
+  const repairListed = db.repairs.some(
+    (r) => r.id === repairId && r.roomId === roomId,
+  )
+  // http 모드는 수리 건 목록을 아직 받지 않아(#264) 기록에 없는 건도 상세 주소로 열고, 상세 화면이 서버에서 받아요(#179).
+  // 남의 수리 건·없는 건이면 상세 화면이 서버의 404를 받아 '찾을 수 없음'을 보여요
+  const serverOnlyRepair =
+    api.mode === "http" &&
+    page === "detail" &&
+    Boolean(routeRoom) &&
+    repairId !== "" &&
+    !repairListed
   const routeMissing =
     Boolean(route.notFound) ||
     (route.roomId !== "" && !routeRoom) ||
-    (page === "detail" &&
-      !db.repairs.some((r) => r.id === repairId && r.roomId === roomId))
-  const repair = db.repairs.find((r) => r.id === repairId)
+    (page === "detail" && !repairListed && !serverOnlyRepair)
+  const repair =
+    db.repairs.find((r) => r.id === repairId) ??
+    (serverOnlyRepair ? repairStub(repairId, roomId) : undefined)
   const sharedInspection = db.inspections.find(
     (i) => i.id === sharedInspectionId,
   )
@@ -896,6 +909,7 @@ function HomeStampApp({
       itemMasks={itemMasks}
       moneyPrefill={moneyPrefill}
       onPrefillUsed={() => setMoneyPrefill(undefined)}
+      serverOnly={!isGuest && serverOnlyRepair}
     />
   )
   const roomNames = accessibleRooms.map((r) => r.name)
