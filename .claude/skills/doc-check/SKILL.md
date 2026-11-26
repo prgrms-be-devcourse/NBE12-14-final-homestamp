@@ -1,7 +1,6 @@
 ---
 name: doc-check
-description: docs/ 문서끼리 어긋난 곳을 표로 찾는다. 사람이 부를 때만 쓴다
-disable-model-invocation: true
+description: docs/ 문서끼리 어긋난 곳을 표로 찾는다. 사람이 문서 점검을 부탁하거나, 규칙 문서 여러 곳을 고친 뒤 서로 맞는지 볼 때 쓴다
 ---
 
 # doc-check

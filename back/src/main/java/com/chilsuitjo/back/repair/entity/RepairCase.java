@@ -13,6 +13,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 import java.time.Instant;
+import java.util.Objects;
 import java.util.UUID;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -109,5 +110,44 @@ public class RepairCase {
     this.status = RepairStatus.NOT_STARTED;
     this.defectAck = AckState.PENDING;
     this.moneyStatus = MoneyStatus.UNDECIDED;
+  }
+
+  /**
+   * 상대에게 실제로 보이게 된 시각을 남긴다(decisions 2026-11-18). 이미 있으면 그대로 둔다: 다시 공유해도 한 번 보인 기록은 다시 숨겨지지 않아서 처음
+   * 시각만 뜻이 있다. 시각은 그 행동의 시각({@code ActionRequestContext.at()})이다.
+   */
+  public void markShown(Instant at) {
+    if (firstShownAt == null) {
+      firstShownAt = at;
+    }
+  }
+
+  /**
+   * 하자 인정을 바꾼다(응답·보충, 06 REP-2). 값은 {@code RepairTransitions.apply}가 정한 다음 상태 그대로다. 동시에 바뀌면
+   * {@code @Version}이 막는다(409 {@code VERSION_CONFLICT}).
+   */
+  public void changeDefectAck(AckState next) {
+    this.defectAck = Objects.requireNonNull(next, "next");
+  }
+
+  /**
+   * 상대가 응답한 판에 도장을 찍는다(03 1-3 "[맞아요]·보류·이견 모두 도장"). 응답은 지금 판에만 할 수 있어서(본 판 번호가 같아야 함) 지금 판이 도장 찍힌
+   * 판이 된다. 보충해 확인 기다림으로 돌아가도 도장은 그대로 둔다(그 모습을 봤다는 사실은 남음).
+   */
+  public void stampCurrent() {
+    this.confirmedContentId = currentContentId;
+  }
+
+  /**
+   * 수리 진행을 바꾼다(06 REP-4·5). 값은 {@code RepairTransitions.apply}가 정한 다음 상태 그대로다. V1 CHECK {@code
+   * (status = 'DONE') = (closed_by IS NOT NULL)}을 지키려고 처리 완료일 때만 끝낸 측을 받는다.
+   */
+  public void changeProgress(RepairStatus next, ClosedBy closed) {
+    Objects.requireNonNull(next, "next");
+    if ((next == RepairStatus.DONE) != (closed != null)) {
+      throw new IllegalArgumentException("처리 완료일 때만 끝낸 측이 있어요: " + next + ", " + closed);
+    }
+    this.status = next;
+    this.closedBy = closed;
   }
 }

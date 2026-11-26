@@ -12,7 +12,6 @@ import com.chilsuitjo.back.action.dto.PipelineResult;
 import com.chilsuitjo.back.action.dto.RoomGate;
 import com.chilsuitjo.back.action.dto.SavedState;
 import com.chilsuitjo.back.action.rule.ActionType;
-import com.chilsuitjo.back.action.rule.ActionType.Allow;
 import com.chilsuitjo.back.action.rule.RoomGateReader;
 import com.chilsuitjo.back.action.rule.Transitions;
 import com.chilsuitjo.back.global.common.TargetKind;
@@ -38,7 +37,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * Transitions}만 채운다. 기준은 docs/rules/09-프로젝트-구조.md 3-1.
  *
  * <pre>
- * 1 잠금 + RoomGate 읽기(newRoom이면 건너뜀) → 2 멱등(같은 키면 처음 결과를 돌려주고 끝)
+ * 1 잠금 + RoomGate 읽기(newRoom이면 건너뜀) → 현재 접근 검증(설정된 경우) → 2 멱등(같은 키면 처음 결과를 돌려주고 끝)
  * 단계마다: 3 호실 단위 거절 → 4 대상 정하기 → 5 load → (when이 거짓이면 건너뜀) → 6 apply → 7 save → 8 기록 → 9 딸린 행동 기록
  * </pre>
  *
@@ -46,7 +45,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 트랜잭션에서 처음 결과를 찾아 {@code replayed}로 돌려준다(06 4-0).
  *
  * <p>여기에 특정 행동·도메인을 위한 분기를 넣지 않는다. 조건은 부르는 쪽이 {@code ActionStep.when}으로 넘기고, 도중에 생기는 일은 {@link
- * ActionFollowUps}로 남긴다.
+ * ActionFollowUps}로 남긴다. {@code save}가 이 요청의 행동 시각을 읽을 때는 {@link ActionRequestContext}를 쓴다.
  */
 @Service
 public class ActionPipeline {
@@ -54,6 +53,7 @@ public class ActionPipeline {
   private final RoomGateReader roomGateReader;
   private final ActionWriter actionWriter;
   private final ActionFollowUps followUps;
+  private final ActionRequestContext requestContext;
   private final TransactionTemplate transaction;
   private final Clock clock;
 
@@ -61,11 +61,13 @@ public class ActionPipeline {
       RoomGateReader roomGateReader,
       ActionWriter actionWriter,
       ActionFollowUps followUps,
+      ActionRequestContext requestContext,
       PlatformTransactionManager transactionManager,
       Clock clock) {
     this.roomGateReader = roomGateReader;
     this.actionWriter = actionWriter;
     this.followUps = followUps;
+    this.requestContext = requestContext;
     this.transaction = new TransactionTemplate(transactionManager);
     this.clock = clock;
   }
@@ -111,7 +113,16 @@ public class ActionPipeline {
     }
   }
 
+  /**
+   * 충돌 뒤 새 트랜잭션에서 처음 결과를 찾는다. 처음 실행과 같이 호실을 먼저 잠근다: 다시 읽는 {@code load}가 잠금 없이 돌면 그사이 바뀐 상태와 섞이고, 잠금
+   * 순서(호실 먼저)도 어긋난다(#94 리뷰, 링크 열람 경합). 호실을 만드는 요청은 아직 잠글 호실을 모른다.
+   */
   private Outcome replayIfDone(ActionBatch batch) {
+    RoomGate gate =
+        batch.isNewRoom()
+            ? null
+            : roomGateReader.lockAndRead(batch.roomRecordId(), batch.actor()); // 1
+    checkAccess(batch, gate);
     List<ActionEntry> done = actionWriter.findRequest(batch.actor().key(), batch.idempotencyKey());
     return done.isEmpty() ? null : replay(batch, done);
   }
@@ -121,6 +132,7 @@ public class ActionPipeline {
     RoomGate gate =
         batch.isNewRoom() ? null : roomGateReader.lockAndRead(roomRecordId, batch.actor()); // 1
 
+    checkAccess(batch, gate); // 1 뒤(접근 검증이 붙은 요청만)
     List<ActionEntry> done =
         actionWriter.findRequest(batch.actor().key(), batch.idempotencyKey()); // 2
     if (!done.isEmpty()) {
@@ -198,7 +210,7 @@ public class ActionPipeline {
     followUps.begin();
     try {
       S next = step.rules().apply(now, preview(command, at)); // 6
-      SavedState saved = step.store().save(command, next); // 7
+      SavedState saved = save(step.store(), command, next, requestId, at); // 7
       checkCreated(step, command, saved);
 
       ActionCommand toWrite = command;
@@ -217,6 +229,7 @@ public class ActionPipeline {
       if (saved.content() != null) {
         toWrite = toWrite.withContent(saved.content());
       }
+      toWrite = toWrite.withExtraPayload(saved.payload()); // 붙인 사진 목록 등(#141)
       ActionCommand recorded = requireRoom(toWrite.withTarget(withoutRoomTarget(toWrite.target())));
 
       List<ActionResult> results = new ArrayList<>();
@@ -247,25 +260,47 @@ public class ActionPipeline {
   }
 
   /**
-   * 3. 호실 단위 거절. 서버·운영 행동과 호실을 만드는 요청은 건너뛴다. 여럿이 겹치면 정산 완료 → 거주 종료 → 합류 전 기록 → 공유 중단 순서로 앞의 것을
-   * 돌려준다(정산 완료면 거주 종료도 참이라 {@code SETTLED}가 먼저).
+   * 7. 요청 시각 창구({@link ActionRequestContext})는 {@code save}(와 그 안에서 동기로 도는 리스너)에서만 연다. {@code
+   * load}·{@code when}은 다시 온 요청(창구를 열지 않음)에서도 불리고, 시각에 따른 판단은 행동 기록에 남도록 {@code apply}가 {@code
+   * createdAt}으로 한다(REP-10). 그래서 그 자리에서 읽으면 처음 요청부터 바로 실패한다(#94 리뷰).
+   */
+  private <S> SavedState save(
+      StateStore<S> store, ActionCommand command, S next, UUID requestId, Instant at) {
+    requestContext.begin(requestId, at);
+    try {
+      return store.save(command, next);
+    } finally {
+      requestContext.end();
+    }
+  }
+
+  /**
+   * 1 뒤. 접근 검증이 붙은 요청은 멱등 조회(2)보다 먼저 모든 단계에 호실 단위 거절(3)을 하고 접근 검증을 부른다. 재생도 지금 호실 상태를 통과해야 하고(링크
+   * 열람의 최근 열람 생략 포함, #89 리뷰), 06 4-10 오류 순서가 접근 검증의 업무 오류보다 앞선다. 잠근 호실은 커밋까지 바뀌지 않아 3단계에서 다시 봐도 결과가
+   * 같다. 접근 검증이 없는 요청은 지금처럼 2 → 3이다.
+   */
+  private static void checkAccess(ActionBatch batch, RoomGate gate) {
+    if (!batch.hasAccessCheck()) {
+      return;
+    }
+    for (ActionStep<?> step : batch.steps()) {
+      checkRoom(gate, batch.actor(), step.type());
+    }
+    batch.runAccessCheck();
+  }
+
+  /**
+   * 3. 호실 단위 거절({@link RoomGate#rejection}). 서버·운영 행동과 호실을 만드는 요청은 건너뛴다. 상세 조회의 {@code
+   * availableActions}도 같은 판단을 쓴다.
    */
   private static void checkRoom(RoomGate gate, Actor actor, ActionType type) {
     if (gate == null || actor.isSystem()) {
       return;
     }
-    if (gate.settled() && !type.allows(Allow.AFTER_SETTLED)) {
-      throw new BusinessException(ErrorCode.SETTLED);
-    }
-    if (gate.ended() && type.blockedAfterEnded()) {
-      throw new BusinessException(ErrorCode.ROOM_ENDED);
-    }
-    if (gate.joinedAway() && !type.allows(Allow.ON_JOINED)) {
-      throw new BusinessException(ErrorCode.JOINED_RECORD);
-    }
-    if (gate.mySharingStopped() && !type.allows(Allow.WHILE_SHARING_STOPPED)) {
-      throw new BusinessException(ErrorCode.SHARING_STOPPED);
-    }
+    gate.rejection(type)
+        .ifPresent(code -> {
+          throw new BusinessException(code);
+        });
   }
 
   /**

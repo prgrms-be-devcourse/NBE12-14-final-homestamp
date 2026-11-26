@@ -11,4 +11,12 @@ public interface RoomQueryService {
    * 권한 검사를 통과한 호실 ID를 넘기면, 요청 본문에 남의 부위 ID가 와도 막힌다. 숨긴 부위도 지난 기록이 가리키므로 돌려준다.
    */
   RoomPartSummary findPart(UUID roomRecordId, UUID roomPartId);
+
+  /**
+   * 이 회원에게 보이는 부위 상태(새 기록을 받을지 판단할 때). 공유를 그만둔 뒤(어느 쪽이든, 상대가 탈퇴하지 않았을 때)에는 부위 목록({@code GET
+   * /api/rooms/{id}/parts}, #180)과 같게 그 시각까지의 부위 행동과 이 회원 측의 행동으로 다시 계산한 상태다(03 6-6 9번, 불변식 18,
+   * #183). 그래서 그 뒤 상대가 더한 부위는 {@code NOT_FOUND}이고, 상대가 바꾼 숨김은 드러나지 않는다. 없는 부위·다른 호실의 부위·당사자가 아닌 회원도
+   * {@code NOT_FOUND}다. 공유 중단이 없으면 {@link #findPart}와 같다.
+   */
+  RoomPartSummary findPartAsSeenBy(UUID roomRecordId, UUID roomPartId, UUID memberId);
 }

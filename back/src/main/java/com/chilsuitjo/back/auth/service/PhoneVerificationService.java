@@ -14,6 +14,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -27,9 +28,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 휴대폰 인증(06 ACC-1e~l, 05 {@code phone_verification}). 인증번호를 만들고, 확인해 인증 표를 주고, 가입·재설정·번호 변경이 표를 한
  * 번만 쓰게 한다.
  *
- * <p><b>문자 보내기는 아직 없다.</b> 04 4-2대로 {@link #issue}가 인증 행을 커밋한 뒤 notification의 인증 문자 바로 보내기(D 계약, 가칭
- * {@code VerificationSmsSender})를 불러야 한다. 그 계약이 오면 발송 흐름에서 {@link #issue} → 보내기 → 실패면 {@link
- * #forgetFailedSend}를 잇는다.
+ * <p>문자 보내기는 {@link PhoneVerificationSendService}가 맡는다(04 4-2): {@link #issue}가 인증 행을 커밋한 뒤
+ * notification의 {@code VerificationSmsSender}를 부르고, 업체가 실패로 답하면 {@link #forgetFailedSend}를 부른다.
  */
 @Service
 @RequiredArgsConstructor
@@ -216,6 +216,22 @@ public class PhoneVerificationService {
   }
 
   /**
+   * 바꾸는 일의 인증 표를 쓰기 전에 미리 확인한다(서명·목적·인증 여부·쓴 적 없음·유효 시간). 쓴 것으로 바꾸지 않고 행을 잠그지도 않는다. 표가 없는 요청이 이메일
+   * 확인·비밀번호 해시까지 가지 않게 하려는 것이고, 실제로 쓰는 일은 그 작업의 트랜잭션에서 {@link #useTicket}이 맡는다(통과한 뒤 다른 요청이 먼저 쓰면
+   * 거기서 {@code CODE_EXPIRED}).
+   *
+   * @throws BusinessException 쓸 수 없는 표면 {@code CODE_EXPIRED}
+   * @throws IllegalArgumentException 아이디 찾기({@link #readTicket}을 쓴다)
+   */
+  @Transactional(readOnly = true)
+  public void checkTicket(String ticket, VerificationPurpose purpose) {
+    if (!purpose.usedOnce()) {
+      throw new IllegalArgumentException(purpose + " 인증 표는 readTicket으로 확인한다");
+    }
+    usableRow(ticket, purpose).orElseThrow(() -> expired());
+  }
+
+  /**
    * 아이디 찾기의 인증 표를 확인하고 인증한 번호를 돌려준다. 보기만 해서 쓴 것으로 바꾸지 않고, 유효 시간 안에는 다시 쓸 수 있다(06 ACC-1f, 4-1).
    *
    * @throws BusinessException 쓸 수 없는 표면 {@code CODE_EXPIRED}
@@ -226,14 +242,17 @@ public class PhoneVerificationService {
     if (purpose.usedOnce()) {
       throw new IllegalArgumentException(purpose + " 인증 표는 한 번만 쓴다. useTicket을 쓴다");
     }
+    return usableRow(ticket, purpose).map(PhoneVerification::getPhone).orElseThrow(() -> expired());
+  }
+
+  /** 잠그지 않고 읽은, 지금 쓸 수 있는 표의 행. */
+  private Optional<PhoneVerification> usableRow(String ticket, VerificationPurpose purpose) {
     Instant now = clock.instant();
     return keys.readTicket(ticket)
         .flatMap(verifications::findById)
         .filter(v -> v.getPurpose() == purpose)
         .filter(v -> v.getVerifiedAt() != null && v.getConsumedAt() == null)
-        .filter(v -> now.isBefore(v.getExpiresAt()))
-        .map(PhoneVerification::getPhone)
-        .orElseThrow(() -> expired());
+        .filter(v -> now.isBefore(v.getExpiresAt()));
   }
 
   private static BusinessException expired() {

@@ -6,21 +6,32 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.chilsuitjo.back.global.common.ClosedReason;
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.common.TargetKind;
+import com.chilsuitjo.back.global.error.BusinessException;
+import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.notification.dto.OpenRequestCommand;
+import com.chilsuitjo.back.notification.dto.PartyFacts;
 import com.chilsuitjo.back.notification.dto.RequestHandle;
 import com.chilsuitjo.back.notification.dto.RequestTarget;
+import com.chilsuitjo.back.notification.dto.RoomParties;
 import com.chilsuitjo.back.notification.dto.SoloCheck;
 import com.chilsuitjo.back.notification.dto.SoloQuery;
+import com.chilsuitjo.back.notification.rule.PartyPresence;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.rule.RequestStatus;
+import com.chilsuitjo.back.notification.rule.RoomPhase;
 import com.chilsuitjo.back.notification.rule.SoloReason;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class FakeWaitServiceTest {
 
-  private final FakeWaitService waits = new FakeWaitService();
+  /** 바로 혼자 진행이 읽는 자리 사실. 테스트마다 바꾼다(기본: 상대가 연결됨, 공유 중). */
+  private RoomParties parties = parties(connected());
+
+  private final FakeWaitService waits = new FakeWaitService((room, side) -> parties);
   private final UUID roomRecordId = UUID.randomUUID();
   private final RequestTarget repairCase =
       RequestTarget.of(TargetKind.REPAIR_CASE, UUID.randomUUID());
@@ -359,6 +370,115 @@ class FakeWaitServiceTest {
     waits.markUnconfirmed(repairCase, RequestKind.DEFECT_CONFIRM);
 
     assertThat(waits.canGoSolo(query)).isEqualTo(SoloCheck.allowedBecause(SoloReason.UNCONFIRMED));
+  }
+
+  @Test
+  void 트랜잭션이_롤백되면_그_안에서_바꾼_요청을_처음_값으로_되돌린다() {
+    waits.open(defectConfirm());
+    RequestTarget other = RequestTarget.of(TargetKind.REPAIR_CASE, UUID.randomUUID());
+
+    inTransaction(
+        TransactionSynchronization.STATUS_ROLLED_BACK,
+        () -> {
+          waits.answered(repairCase, RequestKind.DEFECT_CONFIRM, PartySide.LANDLORD);
+          waits.close(repairCase, RequestKind.DEFECT_CONFIRM, ClosedReason.ROOM_ENDED);
+          waits.open(
+              new OpenRequestCommand(
+                  roomRecordId, RequestKind.DEFECT_CONFIRM, other, PartySide.TENANT));
+        });
+
+    assertThat(waits.statusOf(repairCase, RequestKind.DEFECT_CONFIRM))
+        .contains(RequestStatus.WAITING);
+    assertThat(waits.statusOf(other, RequestKind.DEFECT_CONFIRM)).isEmpty();
+  }
+
+  @Test
+  void 트랜잭션이_커밋되면_바꾼_요청이_그대로_남는다() {
+    waits.open(defectConfirm());
+
+    inTransaction(
+        TransactionSynchronization.STATUS_COMMITTED,
+        () -> waits.answered(repairCase, RequestKind.DEFECT_CONFIRM, PartySide.LANDLORD));
+
+    assertThat(waits.statusOf(repairCase, RequestKind.DEFECT_CONFIRM))
+        .contains(RequestStatus.ANSWERED);
+  }
+
+  /** 트랜잭션 동기화를 켠 채 일을 하고, 주어진 결과로 끝낸다(트랜잭션 관리자가 하는 일만 흉내). */
+  private static void inTransaction(int status, Runnable work) {
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      work.run();
+      for (TransactionSynchronization synchronization :
+          TransactionSynchronizationManager.getSynchronizations()) {
+        synchronization.afterCompletion(status);
+      }
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+  }
+
+  @Test
+  void 바로_혼자_진행은_자리_사실로_판단한다() {
+    parties = parties(PartyFacts.empty());
+
+    assertThat(waits.canGoSoloDirectly(closeDirectly()))
+        .isEqualTo(SoloCheck.allowedBecause(SoloReason.NO_COUNTERPART));
+  }
+
+  @Test
+  void 바로_혼자_진행은_정해_둔_결과와_메모리_미확인을_보지_않는다() {
+    // 가짜는 운영에서도 쓰이는 동안 테스트 도구로 만든 근거로 혼자 진행을 열지 않는다
+    waits.seedSolo(
+        repairCase, RequestKind.CLOSE_CONFIRM, SoloCheck.allowedBecause(SoloReason.OPTED_OUT));
+    waits.open(defectConfirm());
+    waits.markUnconfirmed(repairCase, RequestKind.DEFECT_CONFIRM);
+
+    assertThat(waits.canGoSoloDirectly(closeDirectly())).isEqualTo(SoloCheck.notYet(null));
+    assertThat(
+            waits.canGoSolo(
+                new SoloQuery(
+                    roomRecordId, RequestKind.CLOSE_CONFIRM, repairCase, PartySide.TENANT)))
+        .isEqualTo(SoloCheck.allowedBecause(SoloReason.OPTED_OUT));
+  }
+
+  @Test
+  void 바로_혼자_진행은_행동하는_측으로_자리를_읽는다() {
+    PartySide[] asked = new PartySide[1];
+    FakeWaitService reading =
+        new FakeWaitService((room, side) -> {
+          asked[0] = side;
+          return parties;
+        });
+
+    reading.canGoSoloDirectly(
+        new SoloQuery(roomRecordId, RequestKind.CLOSE_CONFIRM, repairCase, PartySide.LANDLORD));
+
+    assertThat(asked[0]).isEqualTo(PartySide.LANDLORD);
+  }
+
+  @Test
+  void 자리를_읽지_못하면_불가로_바꾸지_않고_예외를_그대로_던진다() {
+    FakeWaitService missing =
+        new FakeWaitService((room, side) -> {
+          throw new BusinessException(ErrorCode.NOT_FOUND);
+        });
+
+    assertThatThrownBy(() -> missing.canGoSoloDirectly(closeDirectly()))
+        .isInstanceOf(BusinessException.class);
+  }
+
+  private SoloQuery closeDirectly() {
+    return new SoloQuery(roomRecordId, RequestKind.CLOSE_CONFIRM, repairCase, PartySide.TENANT);
+  }
+
+  private static PartyFacts connected() {
+    return new PartyFacts(
+        UUID.randomUUID(), UUID.randomUUID(), PartyPresence.CONNECTED, null, true, false, null);
+  }
+
+  private static RoomParties parties(PartyFacts counterpart) {
+    return new RoomParties(RoomPhase.LIVING, connected(), counterpart);
   }
 
   private OpenRequestCommand defectConfirm() {

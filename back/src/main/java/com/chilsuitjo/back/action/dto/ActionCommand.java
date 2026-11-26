@@ -1,6 +1,7 @@
 package com.chilsuitjo.back.action.dto;
 
 import com.chilsuitjo.back.action.rule.ActionType;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 
@@ -70,6 +71,24 @@ public record ActionCommand(
         content,
         reason,
         payload);
+  }
+
+  /**
+   * {@code save}가 돌려준 payload를 더한다({@link SavedState#payload}). 요청 payload와 같은 키가 있으면 어느 값이 기록인지
+   * 모호해서 거절한다.
+   */
+  public ActionCommand withExtraPayload(Map<String, Object> extra) {
+    if (extra.isEmpty()) {
+      return this;
+    }
+    Map<String, Object> merged = new LinkedHashMap<>(payload);
+    for (Map.Entry<String, Object> e : extra.entrySet()) {
+      if (merged.putIfAbsent(e.getKey(), e.getValue()) != null) {
+        throw new IllegalStateException("save가 요청 payload와 같은 키를 돌려줬어요: " + e.getKey());
+      }
+    }
+    return new ActionCommand(
+        roomRecordId, actor, type, idempotencyKey, target, seenVersionNo, content, reason, merged);
   }
 
   public ActionCommand withContent(DigestInput newContent) {

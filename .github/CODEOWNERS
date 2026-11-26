@@ -4,7 +4,7 @@
 # 대상: 07 0장에 주인이 적힌 경로만 — 백엔드 도메인 패키지(main·test), global/security·global/scheduler,
 #       프론트 도메인 폴더(front/src/features/<도메인>/, 09 5장), CI·배포, 하네스.
 # 07 0장에 주인이 없는 공통 코드(global/의 나머지: error·config 등, 07 "다 같이")와
-# 프론트 공통 부품(components/common·ui, pages, api, lib)은 넣지 않는다(pr-body 스킬이 "리뷰어 확인 필요"로 제안).
+# 프론트 공통 부품(components/common·ui, pages, api, lib)은 넣지 않는다(pr-body 스킬이 작성자를 뺀 팀원 모두로 제안).
 #
 # A 황희리 @cheeerry0 · B 유시헌 @yoo-sihun · C 이세진 @jinni1 · D·운영 백혜승 @dewyflowers
 

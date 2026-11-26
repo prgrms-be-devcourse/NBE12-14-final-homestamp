@@ -90,6 +90,27 @@ public record ActionStep<S>(
     return new ActionStep<>(type, null, null, null, null, payload, null, null, null, false);
   }
 
+  /**
+   * 상태 칸이 없지만 대상이 있는 행동(링크 열람 {@code LINK_VIEW}는 링크, 모두 확인 {@code CONFIRM_ALL}은 점검 등). 대상은 앞 단계 결과로
+   * 정한다.
+   */
+  public static ActionStep<Void> record(
+      ActionType type,
+      Function<List<ActionResult>, ActionTarget> target,
+      Map<String, Object> payload) {
+    return new ActionStep<>(
+        type,
+        Objects.requireNonNull(target, "target"),
+        null,
+        null,
+        null,
+        payload,
+        null,
+        null,
+        null,
+        false);
+  }
+
   public boolean recordOnly() {
     return store == null;
   }

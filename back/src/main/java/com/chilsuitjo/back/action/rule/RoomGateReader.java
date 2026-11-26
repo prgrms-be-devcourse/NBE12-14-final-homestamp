@@ -11,7 +11,8 @@ import java.util.UUID;
  * <p>pipeline 1단계가 부른다. 호실 단위 거절은 이 값으로만 판단한다(09 3-1 "계약": 잠금 전에 읽은 값을 쓰면 기다리는 동안 정산 완료·공유 중단이 끼어들
  * 수 있음).
  *
- * <p>실제 구현은 A(ROOM-2). 그전까지는 {@code FakeRoomGateReader}.
+ * <p>실제 구현은 A(ROOM-2)의 {@code JpaRoomGateReader}. DB 없는 테스트만 테스트 코드의 {@code FakeRoomGateReader}를
+ * 쓴다.
  */
 public interface RoomGateReader {
 
@@ -24,4 +25,11 @@ public interface RoomGateReader {
    * </ul>
    */
   RoomGate lockAndRead(UUID roomRecordId, Actor actor);
+
+  /**
+   * 잠그지 않고 읽는다. 값과 거절({@code NOT_FOUND})은 {@link #lockAndRead}와 같다. 상세 조회가 {@code
+   * availableActions}(06 4-0)를 계산할 때 쓴다. 상태를 바꾸는 요청은 이 값으로 판단하지 않는다(09 3-1 "계약": pipeline이 잠근 뒤 다시
+   * 본다).
+   */
+  RoomGate read(UUID roomRecordId, Actor actor);
 }

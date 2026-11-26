@@ -7,28 +7,43 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 
 class ActionTypeTest {
 
+  /**
+   * DB의 행동 종류 목록은 {@code ck_action_type}을 마지막으로 다시 만든 V 파일의 것이다(V1에서 처음 만들고, 종류를 더할 때마다 새 V 파일이 지우고
+   * 다시 만든다. 예: V5 {@code SHOW_PART}). 그 목록과 enum이 같아야 한다.
+   */
   @Test
-  void 행동_목록은_V1의_ck_action_type과_같다() throws IOException {
-    String sql;
-    try (InputStream in = getClass().getResourceAsStream("/db/migration/V1__init_schema.sql")) {
-      sql = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+  void 행동_목록은_가장_최근_V_파일의_ck_action_type과_같다() throws IOException {
+    Pattern checkPattern =
+        Pattern.compile("ck_action_type\\s+CHECK\\s*\\(type IN \\((.*?)\\)\\)", Pattern.DOTALL);
+    String latest = null;
+    String latestFile = null;
+    for (Resource file : migrationsInOrder()) {
+      String sql;
+      try (InputStream in = file.getInputStream()) {
+        sql = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+      }
+      Matcher check = checkPattern.matcher(sql);
+      while (check.find()) {
+        latest = check.group(1);
+        latestFile = file.getFilename();
+      }
     }
-    Matcher check =
-        Pattern.compile("ck_action_type\\s+CHECK\\s*\\(type IN \\((.*?)\\)\\)", Pattern.DOTALL)
-            .matcher(sql);
-    assertThat(check.find()).as("V1에 ck_action_type이 있다").isTrue();
-    Set<String> inV1 =
+    assertThat(latest).as("V 파일에 ck_action_type이 있다").isNotNull();
+    Set<String> inDb =
         Pattern.compile("'([A-Z_]+)'")
-            .matcher(check.group(1))
+            .matcher(latest)
             .results()
             .map(m -> m.group(1))
             .collect(Collectors.toSet());
@@ -36,7 +51,18 @@ class ActionTypeTest {
     Set<String> inEnum =
         Arrays.stream(ActionType.values()).map(Enum::name).collect(Collectors.toSet());
 
-    assertThat(inEnum).isEqualTo(inV1);
+    assertThat(inEnum).as(latestFile).isEqualTo(inDb);
+  }
+
+  /** {@code V<번호>__…sql}을 번호 순으로. 글자 순이면 V10이 V2보다 앞서서 번호로 정렬한다. */
+  private static List<Resource> migrationsInOrder() throws IOException {
+    Resource[] files =
+        new PathMatchingResourcePatternResolver().getResources("classpath:db/migration/V*.sql");
+    return Arrays.stream(files)
+        .sorted(
+            Comparator.comparingInt(
+                f -> Integer.parseInt(f.getFilename().substring(1, f.getFilename().indexOf("__")))))
+        .toList();
   }
 
   @Test
@@ -74,9 +100,9 @@ class ActionTypeTest {
   }
 
   @Test
-  void 거주가_끝난_호실에서_막히는_행동은_하자_등록뿐이다() {
+  void 거주가_끝난_호실에서_막히는_행동은_하자_등록과_수리_시작뿐이다() {
     assertThat(Arrays.stream(ActionType.values()).filter(ActionType::blockedAfterEnded))
-        .containsExactly(ActionType.REGISTER);
+        .containsExactly(ActionType.REGISTER, ActionType.START_REPAIR);
   }
 
   private static List<ActionType> allowed(Allow allow) {
