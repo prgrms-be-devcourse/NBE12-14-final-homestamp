@@ -1,0 +1,225 @@
+package com.chilsuitjo.back.repair.controller;
+
+import static com.chilsuitjo.back.global.security.SecurityTestSupport.loginAs;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import com.chilsuitjo.back.TestcontainersConfiguration;
+import com.chilsuitjo.back.global.common.PartySide;
+import com.chilsuitjo.back.global.common.TargetKind;
+import com.chilsuitjo.back.notification.dto.RequestTarget;
+import com.chilsuitjo.back.notification.dto.RequestView;
+import com.chilsuitjo.back.notification.rule.RequestKind;
+import com.chilsuitjo.back.notification.rule.RequestStatus;
+import com.chilsuitjo.back.notification.service.JpaWaitService;
+import com.chilsuitjo.back.notification.service.WaitQuery;
+import com.chilsuitjo.back.notification.service.WaitService;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.context.annotation.Import;
+import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+
+/**
+ * 운영처럼 실제 DB 응답 요청({@link JpaWaitService})으로 수리 흐름을 띄운다(테스트 전용 가짜를 뺌). 원인 행동과 같은 트랜잭션에서 요청 행이 생기고
+ * 답으로 바뀌는지, 새로 만든 진행 상황을 가리키는 요청도 외래 키에 걸리지 않고 저장되는지, 다른 도메인이 읽는 {@link WaitQuery}가 같은 행을 보는지 본다.
+ */
+@Import(TestcontainersConfiguration.class)
+@SpringBootTest(properties = "test.notification.wait-service=jpa")
+@AutoConfigureMockMvc
+@ActiveProfiles("test")
+class RepairWaitJpaFlowTest {
+
+  @Autowired private MockMvc mvc;
+  @Autowired private JdbcTemplate jdbc;
+  @Autowired private WaitService waitService;
+  @Autowired private WaitQuery waitQuery;
+
+  private UUID room;
+  private UUID tenant;
+  private UUID landlord;
+  private UUID part;
+
+  @BeforeEach
+  void setUp() {
+    jdbc.update(
+        "INSERT INTO state.region (code, sido, dong) VALUES ('9999999999', '테스트', '테스트동')"
+            + " ON CONFLICT DO NOTHING");
+    room = insertRoom();
+    tenant = member();
+    landlord = member();
+    part = part();
+    seat(PartySide.TENANT, tenant);
+    seat(PartySide.LANDLORD, landlord);
+  }
+
+  @Test
+  void 운영_빈은_실제_DB_구현이다() {
+    assertThat(waitService).isInstanceOf(JpaWaitService.class);
+    assertThat(waitQuery).isInstanceOf(JpaWaitService.class);
+  }
+
+  @Test
+  void 종료_요청은_DB에_요청을_열고_상대가_확인하면_답함으로_닫힌다() throws Exception {
+    UUID caseId = register();
+    act(caseId, tenant, "start", null).andExpect(status().isOk());
+
+    act(caseId, tenant, "request-close", null).andExpect(status().isOk());
+
+    List<Map<String, Object>> rows = requests(caseId, "CLOSE_CONFIRM");
+    assertThat(rows)
+        .singleElement()
+        .satisfies(row -> {
+          assertThat(row)
+              .containsEntry("status", "WAITING")
+              .containsEntry("requested_by_side", "TENANT");
+          assertThat(row.get("first_notified_at")).isNull();
+        });
+    // 같은 행동의 시각으로 만든다(decisions 2026-11-19)
+    assertThat(rows.getFirst().get("created_at")).isEqualTo(actionAt(caseId, "REQUEST_CLOSE"));
+    assertThat(waitQuery.awaiting(room, PartySide.LANDLORD))
+        .extracting(RequestView::kind)
+        .containsExactly(RequestKind.CLOSE_CONFIRM);
+
+    act(caseId, landlord, "confirm-close", null).andExpect(status().isOk());
+
+    assertThat(requests(caseId, "CLOSE_CONFIRM"))
+        .singleElement()
+        .satisfies(row -> assertThat(row).containsEntry("status", "ANSWERED"));
+    assertThat(
+            waitQuery.latest(
+                RequestKind.CLOSE_CONFIRM, RequestTarget.of(TargetKind.REPAIR_CASE, caseId)))
+        .map(RequestView::status)
+        .contains(RequestStatus.ANSWERED);
+    assertThat(waitQuery.awaiting(room, PartySide.LANDLORD)).isEmpty();
+  }
+
+  @Test
+  void 상황이_바뀌었어요는_새_진행_상황을_가리키는_요청을_DB에_연다() throws Exception {
+    UUID caseId = register();
+    // 하자를 둘 다 확인한 건에만 켤 수 있다(REP-6d)
+    act(caseId, landlord, "respond", "{\"answer\":\"ACK\",\"seenVersionNo\":1}")
+        .andExpect(status().isOk());
+
+    act(caseId, tenant, "progress-notes", "{\"text\":\"구멍이 더 커졌어요\",\"asksCheck\":true}")
+        .andExpect(status().isCreated());
+
+    Map<String, Object> row =
+        jdbc.queryForMap(
+            "SELECT r.status, r.requested_by_side FROM state.response_request r"
+                + " JOIN record.progress_note n ON n.id = r.progress_note_id"
+                + " WHERE r.kind = 'SITUATION_CHECK' AND n.repair_case_id = ?",
+            caseId);
+    assertThat(row).containsEntry("status", "WAITING").containsEntry("requested_by_side", "TENANT");
+  }
+
+  // ---- 도우미 ----
+
+  private List<Map<String, Object>> requests(UUID caseId, String kind) {
+    return jdbc.queryForList(
+        "SELECT status, requested_by_side, first_notified_at, created_at"
+            + " FROM state.response_request WHERE repair_case_id = ? AND kind = ?",
+        caseId,
+        kind);
+  }
+
+  private Object actionAt(UUID caseId, String type) {
+    return jdbc.queryForObject(
+        "SELECT created_at FROM record.action WHERE repair_case_id = ? AND type = ?",
+        Object.class,
+        caseId,
+        type);
+  }
+
+  private UUID register() throws Exception {
+    String body =
+        mvc.perform(
+                post("/api/rooms/{id}/repair-cases", room)
+                    .with(loginAs(tenant))
+                    .header("Idempotency-Key", "reg-" + UUID.randomUUID())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(
+                        "{\"roomPartId\":\""
+                            + part
+                            + "\",\"title\":\"천장 누수\",\"description\":\"비 오면 물이 떨어져요\","
+                            + "\"uploadTickets\":[\""
+                            + UUID.randomUUID()
+                            + "\"]}"))
+            .andExpect(status().isCreated())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    return UUID.fromString(body.replaceAll(".*\"id\":\"([^\"]+)\".*", "$1"));
+  }
+
+  private ResultActions act(UUID caseId, UUID memberId, String action, String json)
+      throws Exception {
+    MockHttpServletRequestBuilder request =
+        post("/api/repair-cases/{id}/" + action, caseId)
+            .with(loginAs(memberId))
+            .header("Idempotency-Key", action + "-" + UUID.randomUUID());
+    if (json != null) {
+      request = request.contentType(MediaType.APPLICATION_JSON).content(json);
+    }
+    return mvc.perform(request);
+  }
+
+  private UUID insertRoom() {
+    UUID id = UUID.randomUUID();
+    jdbc.update(
+        """
+        INSERT INTO state.room_record
+          (id, region_code, alias, status, created_by_side, created_at, version)
+        VALUES (?, '9999999999', '테스트 호실', 'LIVING', 'TENANT', CURRENT_TIMESTAMP, 0)
+        """,
+        id);
+    return id;
+  }
+
+  private UUID member() {
+    UUID id = UUID.randomUUID();
+    jdbc.update(
+        "INSERT INTO state.member (id, status, created_at, version)"
+            + " VALUES (?, 'ACTIVE', CURRENT_TIMESTAMP, 0)",
+        id);
+    return id;
+  }
+
+  private void seat(PartySide side, UUID memberId) {
+    jdbc.update(
+        """
+        INSERT INTO state.party
+          (id, room_record_id, side, member_id, status, connected_at, created_at, version)
+        VALUES (?, ?, ?, ?, 'CONNECTED', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0)
+        """,
+        UUID.randomUUID(),
+        room,
+        side.name(),
+        memberId);
+  }
+
+  private UUID part() {
+    UUID id = UUID.randomUUID();
+    jdbc.update(
+        """
+        INSERT INTO state.room_part
+          (id, room_record_id, template_id, zone, name, sort_order, created_at, version)
+        SELECT ?, ?, t.id, t.zone, t.name, t.sort_order, CURRENT_TIMESTAMP, 0
+        FROM state.part_template t WHERE t.zone = '방' AND t.name = '천장'
+        """,
+        id,
+        room);
+    return id;
+  }
+}
