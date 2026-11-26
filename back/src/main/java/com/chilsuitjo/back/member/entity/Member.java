@@ -1,5 +1,6 @@
 package com.chilsuitjo.back.member.entity;
 
+import com.chilsuitjo.back.member.dto.LoginCheck;
 import com.chilsuitjo.back.member.rule.MemberStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -11,6 +12,7 @@ import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 import java.time.Instant;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -114,6 +116,16 @@ public class Member {
   /** 문자 설정을 켜거나 끈다(06 ACC-6, 03 K "회원의 문자 설정"). 번호는 그대로 둔다. */
   public void changeSmsEnabled(boolean smsEnabled) {
     this.smsEnabled = smsEnabled;
+  }
+
+  /**
+   * {@link #canLogInWith}가 맞으면, 토큰을 주기 전에 비밀번호가 그대로인지 다시 볼 수 있게 확인한 해시를 담아 돌려준다(06 ACC-2, #262).
+   * 해시는 {@link LoginCheck} 안에서 비교에만 쓴다.
+   */
+  public Optional<LoginCheck> checkLogin(String rawPassword, PasswordEncoder encoder) {
+    return canLogInWith(rawPassword, encoder)
+        ? Optional.of(new LoginCheck(id, passwordHash))
+        : Optional.empty();
   }
 
   /**
