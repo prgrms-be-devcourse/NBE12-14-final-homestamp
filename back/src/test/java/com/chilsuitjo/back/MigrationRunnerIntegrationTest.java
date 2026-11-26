@@ -586,7 +586,9 @@ class MigrationRunnerIntegrationTest {
 
   @Test
   void 운영_프로필의_앱은_Flyway를_끄고_DB를_바꾸지_않는다() throws Exception {
-    // prod와 local·test를 함께 켠 조합은 #216 ProfileGuard가 시작부터 막아 실제로 생기지 않는다(ProfileGuard 테스트 몫)
+    // prod와 local·test를 함께 켠 조합은 #216 ProfileGuard가 시작부터 막아 실제로 생기지 않는다(ProfileGuard 테스트 몫).
+    // 실제 가드는 spring.flyway.enabled=false 단언이다. 테스트 DB에 TLS가 없어 Flyway가 켜지면 시작이 실패하므로,
+    // 아래 "이력 테이블 없음"은 보조 확인이다
     for (String profiles : List.of("prod")) {
       String db = "hs_app_" + profiles.replace(",", "_");
       admin(POSTGRES.getDatabaseName(), "CREATE DATABASE " + db);
