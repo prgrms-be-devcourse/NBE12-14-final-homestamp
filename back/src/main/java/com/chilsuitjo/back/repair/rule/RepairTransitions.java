@@ -26,9 +26,9 @@ import org.springframework.stereotype.Component;
  * blockedAfterEnded}로 막힌다(06 REP-1c, 03 A "상태별로 할 수 있는 일").
  *
  * <p>지금은 하자 등록(REP-1), 하자 응답·보충(REP-2), 수리 시작(REP-4)·종료 요청·종료 확인·아직 안 됐어요(REP-5a·5b), 물을 상대가 없을 때의
- * 혼자 종료와 혼자 끝낸 건의 늦은 종료 확인·이견(REP-5e·5f), 진행 상황 묻기·남기기(REP-6b·6c)가 있다. 다시 열기({@code REOPEN})는
- * 없앴다(#113 ③', decisions 2026-11-25). [상황이 바뀌었어요](REP-6d) 등은 그 기능을 만들 때 더한다(#219). 그 전까지 다른 행동은
- * {@code INVALID_STATE}다.
+ * 혼자 종료와 혼자 끝낸 건의 늦은 종료 확인·이견(REP-5e·5f), 진행 상황 묻기·남기기와 [상황이 바뀌었어요](REP-6b·6c·6d)가 있다. 다시 열기({@code
+ * REOPEN})는 없앴다(#113 ③', decisions 2026-11-25). 상황 변화 응답({@code RESPOND_SITUATION})은 대상이 진행 상황이라
+ * {@code SituationTransitions}가 맡는다. 그 밖의 행동은 {@code INVALID_STATE}다.
  */
 @Component
 public class RepairTransitions implements Transitions<RepairState> {
@@ -329,11 +329,40 @@ public class RepairTransitions implements Transitions<RepairState> {
   /**
    * 진행 상황 남기기(06 REP-6, 03 D): 당사자 누구든, 언제든(처리 완료 뒤에도 덧붙이기, REP-5). 글·사진 하나 이상은 서비스가 pipeline 전에
    * 본다. 덧붙이기라 상태는 그대로다(03 G "덧붙이기"). 거주 종료 뒤에도 정산 완료 전까지 된다(03 D "언제든", #113 3번 답 전까지).
+   *
+   * <p>[상황이 바뀌었어요]를 켜면(payload {@code asksCheck}, REP-6d) 상대에게 확인을 요청한다. 검사 순서: 행동하는 사람이 공유를 그만뒀으면
+   * {@code SHARING_STOPPED}(진행 상황만은 남길 수 있지만 요청은 열지 않음, 03 B) → 하자를 둘 다 확인한 건(맞아요)이 아니거나 지금 요청을 열 수
+   * 없으면(거주 종료 뒤, 상대가 공유를 그만둬 이 기록이 보이지 않음) {@code INVALID_STATE} → 한 건에 [상황이 바뀌었어요]끼리 {@code
+   * rerequest.interval}에 한 번(누가 켰든, 보충과 따로, decisions 2026-11-26) {@code ASKED_RECENTLY}. 하자 인정은
+   * 그대로다(REP-6d "하자 [맞아요]는 그대로"). 재계산이라 열 수 있는지 모르면 그때 서버가 확인했다고 본다.
    */
-  private static RepairState noteProgress(RepairState now, ActionEntry action) {
+  private RepairState noteProgress(RepairState now, ActionEntry action) {
     requireVisible(now, action);
     requireSide(action);
-    return now;
+    if (!Boolean.TRUE.equals(action.payloadAs(ProgressPayload.class).asksCheck())) {
+      return now;
+    }
+    SituationCheck check = now.situationCheck();
+    if (check.opening() == SituationOpening.SHARING_STOPPED) {
+      throw new BusinessException(ErrorCode.SHARING_STOPPED);
+    }
+    if (now.defectAck() != AckState.ACK || check.opening() == SituationOpening.BLOCKED) {
+      throw new BusinessException(ErrorCode.INVALID_STATE);
+    }
+    AnswerSupport.checkInterval(check.lastAskedAt(), action.createdAt(), rerequestInterval);
+    return now.withSituationCheck(new SituationCheck(action.createdAt(), check.opening()));
+  }
+
+  /**
+   * 진행 상황 남기기 행동의 payload. 글은 진행 상황 행에만 두고(05 2-3 "payload는 작은 부가 값만") [상황이 바뀌었어요]를 켰는지만 담는다. 켜지
+   * 않았으면 키를 두지 않는다(그 전에 남긴 행동과 같은 모양).
+   *
+   * @param asksCheck [상황이 바뀌었어요]를 켰으면 true. 아니면 null(키 없음)
+   */
+  public record ProgressPayload(Boolean asksCheck) {
+
+    /** payload의 키. record 칸 이름과 같다({@code ActionEntry.payloadAs}). */
+    public static final String ASKS_CHECK = "asksCheck";
   }
 
   /**

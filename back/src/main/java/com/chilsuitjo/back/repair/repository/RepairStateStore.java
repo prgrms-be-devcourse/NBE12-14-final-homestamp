@@ -32,6 +32,8 @@ import com.chilsuitjo.back.repair.entity.RepairContent;
 import com.chilsuitjo.back.repair.rule.RepairState;
 import com.chilsuitjo.back.repair.rule.RepairStatus;
 import com.chilsuitjo.back.repair.rule.RepairTransitions;
+import com.chilsuitjo.back.repair.rule.SituationCheck;
+import com.chilsuitjo.back.repair.rule.SituationOpening;
 import com.chilsuitjo.back.room.service.RoomQueryService;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -122,13 +124,16 @@ public class RepairStateStore {
   }
 
   /**
-   * 진행 상황 남기기(06 REP-6)의 저장 방법. 진행 상황 한 줄을 남기고 사진을 그 줄에 붙인다.
+   * 진행 상황 남기기(06 REP-6)의 저장 방법. 진행 상황 한 줄을 남기고 사진을 그 줄에 붙인다. [상황이 바뀌었어요]를 켜면 그 진행 상황을 대상으로 상대에게 상황
+   * 변화 확인 요청({@code SITUATION_CHECK})을 연다(REP-6d).
    *
    * @param text 남긴 글. 사진만 남겼으면 빈 글자({@code progress_note.text}가 NOT NULL)
    * @param uploadTickets 붙일 사진의 업로드 표. 글만 남겼으면 빈 목록
+   * @param asksCheck [상황이 바뀌었어요]를 켰는지
    */
-  public NotingProgress notingProgress(String text, List<String> uploadTickets) {
-    return new NotingProgress(Objects.requireNonNull(text, "text"), List.copyOf(uploadTickets));
+  public NotingProgress notingProgress(String text, List<String> uploadTickets, boolean asksCheck) {
+    return new NotingProgress(
+        Objects.requireNonNull(text, "text"), List.copyOf(uploadTickets), asksCheck);
   }
 
   /**
@@ -186,7 +191,38 @@ public class RepairStateStore {
         canOpen(room, row.getRoomRecordId(), RequestKind.CLOSE_CONFIRM),
         canOpen(room, row.getRoomRecordId(), RequestKind.PROGRESS_CHECK),
         hiddenFromCounterpart(room, row),
-        null);
+        null,
+        new SituationCheck(lastSituationCheckAt(history), null));
+  }
+
+  /**
+   * 마지막으로 [상황이 바뀌었어요]를 켜서 진행 상황을 남긴 시각(행동 기록이 원본: {@code NOTE_PROGRESS}의 payload {@code
+   * asksCheck}). 누가 켰든 한 건에 센다(06 REP-6d). 없으면 null.
+   */
+  private static Instant lastSituationCheckAt(List<ActionEntry> history) {
+    return history.stream()
+        .filter(entry ->
+            entry.type() == ActionType.NOTE_PROGRESS
+                && Boolean.TRUE.equals(
+                    entry.payloadAs(RepairTransitions.ProgressPayload.class).asksCheck()))
+        .map(ActionEntry::createdAt)
+        .max(Instant::compareTo)
+        .orElse(null);
+  }
+
+  /**
+   * 이 측이 지금 상황 변화 확인 요청을 열 수 있나(06 REP-6d). 내가 공유를 그만뒀으면 요청을 열지 않고(03 B), 거주 종료 뒤처럼 호실 단계에서 열 수
+   * 없거나(03 K) 공유 중단 제한이 살아 있어 지금 남기는 진행 상황이 상대에게 보이지 않으면(불변식 18) 열 수 없다.
+   */
+  private SituationOpening situationOpening(UUID roomRecordId, PartySide side) {
+    RoomParties room = parties.read(roomRecordId, side);
+    if (room.mySharingStoppedApplies()) {
+      return SituationOpening.SHARING_STOPPED;
+    }
+    if (sharingCutoff(room) != null || !canOpen(room, roomRecordId, RequestKind.SITUATION_CHECK)) {
+      return SituationOpening.BLOCKED;
+    }
+    return SituationOpening.OPEN;
   }
 
   /**
@@ -585,11 +621,13 @@ public class RepairStateStore {
 
     private final String text;
     private final List<String> uploadTickets;
+    private final boolean asksCheck;
     private UUID createdId;
 
-    private NotingProgress(String text, List<String> uploadTickets) {
+    private NotingProgress(String text, List<String> uploadTickets, boolean asksCheck) {
       this.text = text;
       this.uploadTickets = uploadTickets;
+      this.asksCheck = asksCheck;
     }
 
     /** 이번 요청이 만든 진행 상황. 저장하지 않았으면(다시 온 요청) 빈 값. */
@@ -597,31 +635,51 @@ public class RepairStateStore {
       return Optional.ofNullable(createdId);
     }
 
+    /**
+     * [상황이 바뀌었어요]를 켰으면 행동하는 측이 지금 요청을 열 수 있는지를 함께 담는다(측마다 달라 이때만 채움). 같은 키로 다시 온 요청은 측을 모르는 채 지나므로
+     * 채우지 않는다.
+     */
     @Override
     public RepairState load(ActionCommand command) {
-      return RepairStateStore.this.load(command);
+      RepairState state = RepairStateStore.this.load(command);
+      PartySide side = command.actor().side();
+      if (!asksCheck || side == null) {
+        return state;
+      }
+      SituationOpening opening = situationOpening(command.roomRecordId(), side);
+      return state.withSituationCheck(state.situationCheck().withOpening(opening));
     }
 
     /**
      * 진행 상황 한 줄을 남기고(그 줄이 이 행동의 내용 지문, 안내서 3-3) 사진을 그 줄에 붙인다(사진 지문은 행동 payload {@code photos}, 05
      * 2-3). 사진 행이 진행 상황을 가리켜서 줄을 먼저 DB에 내보낸다. 시각은 행동 기록과 같은 {@code at()}이다. 상대가 물어 둔 진행 상황 묻기는 이것으로
-     * 닫힌다(REP-6c). 상대에게 가는 서비스 안 알림은 알리기 PR에서 붙인다.
+     * 닫힌다(REP-6c). [상황이 바뀌었어요]를 켰으면 그 진행 상황을 대상으로 상대에게 상황 변화 확인 요청을 연다(REP-6d). 상대에게 가는 서비스 안
+     * 알림·문자는 알리기 PR에서 붙인다.
      */
     @Override
     public SavedState save(ActionCommand command, RepairState next) {
       UUID repairCaseId = command.target().id();
+      PartySide side = command.actor().side();
       ProgressNote note =
           notes.saveAndFlush(
               new ProgressNote(
                   command.roomRecordId(),
                   repairCaseId,
-                  command.actor().side(),
+                  side,
                   text,
                   null,
-                  false,
+                  asksCheck,
                   requestContext.at()));
       createdId = note.getId();
       answerProgressCheck(command);
+      if (asksCheck) {
+        waits.open(
+            new OpenRequestCommand(
+                command.roomRecordId(),
+                RequestKind.SITUATION_CHECK,
+                RequestTarget.of(TargetKind.PROGRESS_NOTE, note.getId()),
+                side));
+      }
       return new SavedState(null, progressDigest(note))
           .withPhotos(photos.attachToNote(command, repairCaseId, note.getId(), uploadTickets));
     }
@@ -631,7 +689,7 @@ public class RepairStateStore {
    * 진행 상황의 내용 지문 재료. 진행 상황은 판이 하나라 판 번호는 늘 1이다. 칸 순서도 형식의 일부라 바꾸면 옛 지문과 달라진다(05 2-3). {@code
    * asks_check}는 [상황이 바뀌었어요]로 상대에게 확인을 요청한 줄인지라 내용에 넣는다.
    */
-  private static DigestInput progressDigest(ProgressNote note) {
+  static DigestInput progressDigest(ProgressNote note) {
     return new DigestInput(
         PROGRESS_KIND,
         note.getId(),
