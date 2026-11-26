@@ -29,6 +29,7 @@ DECLARE
         'record.repair_content',
         'record.settlement_transfer_version',
         'record.supplement',
+        'state.action_chain_head',
         'state.correction_request',
         'state.in_app_notification',
         'state.inspection',
@@ -81,6 +82,7 @@ DECLARE
         'record.repair_content',
         'record.settlement_transfer_version',
         'record.supplement',
+        'state.action_chain_head',
         'state.correction_request',
         'state.in_app_notification',
         'state.inspection',
@@ -125,8 +127,11 @@ DECLARE
     human_no_access_tables text[] := ARRAY[]::text[];
     -- Columns Human may read even though their names look sensitive. Reviewed reasons:
     -- keyed HMAC pseudonyms (phone_hmac; linkable to each other, not reversible without the server key),
-    -- record hash-chain values, timestamps/flags, region and part lookup codes/labels (room_part.name is user input),
+    -- record hash-chain values (including the chain head's last_hash in state), timestamps/flags, region and part lookup codes/labels (room_part.name is user input),
     -- small action payload values (today: answer, consentVersion, photo digests; open map, review new keys).
+    -- internal delivery-poll generation tag (notice.delivery_poll_token): a server-made random uuid set only while one
+    -- delivery poll is in flight and cleared when it ends; compared only inside the app under a row lock; never accepted
+    -- from or returned by an API; not a credential, and Human has no write grant on notice (#124).
     human_approved_sensitive_columns text[] := ARRAY[
         'log.deletion_log.action_hash',
         'log.deletion_log.phone_hmac',
@@ -136,7 +141,9 @@ DECLARE
         'record.action.payload',
         'record.action.prev_hash',
         'record.photo.device_taken_at',
+        'state.action_chain_head.last_hash',
         'state.member.phone_verified_at',
+        'state.notice.delivery_poll_token',
         'state.part_template.name',
         'state.region.code',
         'state.room_part.name',
@@ -379,6 +386,9 @@ BEGIN
         app_role);
     EXECUTE format('GRANT DELETE ON TABLE state.sms_opt_out TO %I', app_role);
     EXECUTE format('GRANT UPDATE ON TABLE state.room_record TO %I', app_role);
+    -- Chain head (05 2-3, V9): the app advances last_seq/last_hash but never deletes it, so a deleted last action
+    -- cannot make the next action reuse its room_seq. It goes away only with the whole room (CASCADE from purge).
+    EXECUTE format('GRANT UPDATE ON TABLE state.action_chain_head TO %I', app_role);
     EXECUTE format('REVOKE INSERT, UPDATE, DELETE ON TABLE state.part_template, state.region FROM %I', app_role);
     EXECUTE format('REVOKE UPDATE ON TABLE state.sms_opt_out FROM %I', app_role);
     EXECUTE format('REVOKE DELETE ON TABLE state.room_record FROM %I', app_role);

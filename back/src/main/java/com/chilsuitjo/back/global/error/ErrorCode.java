@@ -23,6 +23,7 @@ public enum ErrorCode {
   DUPLICATE_PAYMENT(HttpStatus.CONFLICT, "같은 돈이 이미 기록돼 있어요. 그 기록을 확인해 주세요"),
   UPLOAD_TICKET_EXPIRED(HttpStatus.UNPROCESSABLE_CONTENT, "이 사진을 다시 올려 주세요"),
   PHOTO_CHECK_FAILED(HttpStatus.UNPROCESSABLE_CONTENT, "이 사진을 다시 올려 주세요"),
+  PHOTO_LIMIT(HttpStatus.UNPROCESSABLE_CONTENT, "이 기록에는 사진을 더 붙일 수 없어요"),
   ASKED_RECENTLY(HttpStatus.CONFLICT, "○월 ○일부터 다시 요청할 수 있어요"),
   RESEND_USED(HttpStatus.CONFLICT, "다시 보내기는 한 번만 할 수 있어요"),
   UPLOAD_LIMIT(HttpStatus.TOO_MANY_REQUESTS, "잠시 뒤에 다시 해 주세요"),
@@ -31,7 +32,7 @@ public enum ErrorCode {
   ACK_FINAL(HttpStatus.CONFLICT, "맞아요는 바꿀 수 없어요. 덧붙일 말은 진행 상황이나 원인 설명으로 남겨 주세요"),
   EVIDENCE_REQUIRED(HttpStatus.UNPROCESSABLE_CONTENT, "사진이나 설명을 하나 이상 더해 주세요"),
   IDEMPOTENCY_KEY_REUSED(HttpStatus.UNPROCESSABLE_CONTENT, "다시 시도해 주세요"),
-  ROOM_ENDED(HttpStatus.CONFLICT, "거주가 끝난 호실이라 새 수리 건을 만들 수 없어요"),
+  ROOM_ENDED(HttpStatus.CONFLICT, "거주가 끝난 호실이라 새 수리 건을 만들거나 수리를 시작하거나 혼자 끝낼 수 없어요"),
   CODE_INVALID(HttpStatus.BAD_REQUEST, "인증번호가 맞지 않거나 시간이 지났어요. [다시 받기]"),
   CODE_EXPIRED(HttpStatus.BAD_REQUEST, "인증번호가 맞지 않거나 시간이 지났어요. [다시 받기]"),
   CODE_REPLACED(
