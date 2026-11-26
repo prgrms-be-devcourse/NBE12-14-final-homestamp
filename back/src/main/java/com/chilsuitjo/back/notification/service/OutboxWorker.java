@@ -7,6 +7,7 @@ import com.chilsuitjo.back.notification.entity.Outbox;
 import com.chilsuitjo.back.notification.repository.NoticeRepository;
 import com.chilsuitjo.back.notification.repository.OutboxRepository;
 import com.chilsuitjo.back.notification.repository.SmsGateway;
+import com.chilsuitjo.back.notification.rule.DeliveryPollSchedule;
 import com.chilsuitjo.back.notification.rule.NoticeText;
 import com.chilsuitjo.back.notification.rule.OutboxStatus;
 import java.time.Clock;
@@ -53,6 +54,7 @@ public class OutboxWorker {
   private final int batchSize;
   private final List<Duration> retryDelays;
   private final Duration giveUpAfter;
+  private final DeliveryPollSchedule deliveryPollSchedule;
 
   public OutboxWorker(
       OutboxRepository outbox,
@@ -64,9 +66,17 @@ public class OutboxWorker {
       PlatformTransactionManager transactionManager,
       @Value("${app.outbox.worker.batch-size:50}") int batchSize,
       @Value("${app.notice.send.retry:1m,5m,15m}") List<Duration> retryDelays,
-      @Value("${app.delivery.unknown-after:3d}") Duration giveUpAfter) {
+      @Value("${app.delivery.unknown-after:3d}") Duration giveUpAfter,
+      DeliveryPollSchedule deliveryPollSchedule) {
     if (retryDelays.isEmpty()) {
       throw new IllegalArgumentException("app.notice.send.retry가 비어 있어요");
+    }
+    // 기한은 문자를 보낸 뒤 결과를 적을 때 계산한다. 그때 틀린 설정이 드러나면 이미 보낸 문자 줄이 SENDING에 남으므로 만들 때 막는다.
+    // DB(timestamptz)는 마이크로초까지라, 그보다 작은 단위가 있으면 보낸 시각과 기한이 같은 값으로 저장될 수 있다
+    if (giveUpAfter == null
+        || giveUpAfter.compareTo(Duration.ofNanos(1_000)) < 0
+        || giveUpAfter.getNano() % 1_000 != 0) {
+      throw new IllegalArgumentException("app.delivery.unknown-after는 1마이크로초 이상이고 마이크로초 단위여야 해요");
     }
     this.outbox = outbox;
     this.notices = notices;
@@ -78,6 +88,7 @@ public class OutboxWorker {
     this.batchSize = batchSize;
     this.retryDelays = List.copyOf(retryDelays);
     this.giveUpAfter = giveUpAfter;
+    this.deliveryPollSchedule = deliveryPollSchedule;
   }
 
   /** 한 번 돌고 처리한 줄 수를 돌려준다. 한 줄에서 예외가 나도 나머지 줄은 처리한다. */
@@ -211,7 +222,13 @@ public class OutboxWorker {
         case SENT, UNKNOWN -> {
           row.markDone();
           if (notice != null) {
-            notice.markSent(result.providerMessageId(), now);
+            // 전달 확인 기한은 보낸 이 순간의 설정으로 한 번만 정해 저장한다(06 0-1). 뒤에 설정을 바꿔도 이 통지의 기한은 그대로다
+            Instant deliveryCheckDueAt = DeliveryPollSchedule.deadline(now, giveUpAfter);
+            notice.markSent(
+                result.providerMessageId(),
+                now,
+                deliveryPollSchedule.first(now, deliveryCheckDueAt),
+                deliveryCheckDueAt);
           }
         }
         case REJECTED -> {

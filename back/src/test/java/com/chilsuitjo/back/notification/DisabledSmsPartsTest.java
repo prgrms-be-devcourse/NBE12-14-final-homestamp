@@ -3,12 +3,16 @@ package com.chilsuitjo.back.notification;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.chilsuitjo.back.notification.dto.DeliveryQuery;
 import com.chilsuitjo.back.notification.dto.SmsMessage;
 import com.chilsuitjo.back.notification.dto.SmsSendResult;
 import com.chilsuitjo.back.notification.repository.DisabledSmsGateway;
+import com.chilsuitjo.back.notification.rule.DeliveryOutcome;
 import com.chilsuitjo.back.notification.rule.VerificationSendResult;
 import com.chilsuitjo.back.notification.service.DisabledRecipientDirectory;
 import com.chilsuitjo.back.notification.service.DisabledVerificationSmsSender;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -29,6 +33,14 @@ class DisabledSmsPartsTest {
     assertThat(result.outcome()).isEqualTo(SmsSendResult.Outcome.REJECTED);
     assertThat(result.providerMessageId()).isNull();
     assertThat(output).doesNotContain(PHONE).doesNotContain("본문-비밀");
+  }
+
+  @Test
+  void 전달_결과_조회는_업체를_부르지_않고_모두_결과_없음이다() {
+    UUID batch = UUID.randomUUID();
+
+    assertThat(new DisabledSmsGateway().queryResults(List.of(new DeliveryQuery(batch, "msg-1"))))
+        .containsExactly(Map.entry(batch, DeliveryOutcome.NONE));
   }
 
   @Test

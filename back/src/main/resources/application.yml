@@ -54,6 +54,17 @@ app:
       retry: 1m,5m,15m
   delivery:
     unknown-after: 3d
+    # 전달 결과 조회 일정: 보내고 첫 조회, 보내고 두 번째 조회, 그 뒤 조회 간격(06 0-1)
+    poll: 1m,5m,15m
+    # 전달 결과 조회 작업자(04 4-2). 기본은 꺼 둔다(실제 문자 업체 연동 전 가짜 발송기로 뜻하지 않게 돌지 않게).
+    # 서비스를 열 때는 꼭 켠다(예: 환경 변수 APP_DELIVERY_POLLER_ENABLED=true). 꺼져 있으면 보낸 문자가 전달됨으로 바뀌지 않고 켜질 때 경고가 남는다
+    poller:
+      # 초기 제안값(#124 리뷰). 실제 업체 연동 때 업체 호출부터 DB 결과 저장까지 포함해 다시 검증한다. 실제 SMS 조회 클라이언트의 타임아웃은 이 값보다 짧아야 한다(04 4-2).
+      protect-for: 2m
+      enabled: false
+      initial-delay-ms: 5000
+      interval-ms: 30000
+      batch-size: 500
   # 비밀 키(docs/rules/04 비밀값). 여기에는 값을 두지 않는다. 운영은 Parameter Store에서 받고, 값이 없으면 앱이 시작하지 않는다.
   # local·test는 아래 고정 값을 쓴다. verify-code: 인증번호 해시, verify-ticket: 인증 표 서명, phone-hmac: 번호 HMAC(번호 잠금 키)
   keys:
@@ -101,6 +112,10 @@ photo:
   s3:
     bucket: ${PHOTO_S3_BUCKET:}
     region: ${PHOTO_S3_REGION:ap-northeast-2}
+
+# 고아 파일 확인(04 5-1, 06 0-1 orphan.check-after): 복사 전에 남긴 확인 줄이 이 시간 뒤 돈다
+orphan:
+  check-after: 1h
 
 # 사진 업로드 정책 (06 0-1)
 upload:

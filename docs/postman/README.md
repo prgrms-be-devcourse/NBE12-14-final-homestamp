@@ -84,6 +84,7 @@
 - **로그아웃**은 `refreshToken`을 비운다. 그 뒤 재발급은 `LOGIN_REQUIRED`다(지운 쿠키를 다시 보내면 `REFRESH_REUSED`)
 - 공개 API(인증·가입·로그인·재발급)는 요청의 Authorization을 **No Auth**로 둔다
 - **내 정보**는 `bearer_token_15h5`의 회원을 돌려준다. 개발용 토큰 회원(DB에 바로 넣은 행)은 `email`·`displayName`·`phone`이 `null`이고, 가입한 회원으로 로그인한 뒤 보내면 값이 찬다. 토큰은 맞아도 그 회원 행이 DB에 없으면 401 `LOGIN_REQUIRED`다(위 "처음 한 번" 2번)
+- **내 정보 수정**은 보낸 칸(`displayName`·`smsEnabled`)만 바꾸고 바뀐 내 정보를 돌려준다. 문자 설정만 바꿀 때는 `{"smsEnabled": false}`만 보낸다. 개발용 토큰 회원도 이름을 넣으면 그 뒤 **내 정보**에 보인다
 
 ## 호실·부위 (02 room)
 
