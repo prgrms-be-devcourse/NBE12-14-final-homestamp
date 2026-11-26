@@ -12,7 +12,7 @@ class SchemaRevisionTest extends SchemaTestSupport {
   @Test
   void tablesAndHistoryAreInTheirAssignedSchemas() {
     assertEquals(12L, tableCount("record")); // V8 record.supplement
-    assertEquals(25L, tableCount("state"));
+    assertEquals(26L, tableCount("state")); // V9 state.action_chain_head
     assertEquals(1L, tableCount("log"));
     assertEquals(1L, tableCount("public"));
     assertEquals(

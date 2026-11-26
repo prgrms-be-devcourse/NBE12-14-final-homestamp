@@ -300,6 +300,133 @@ class JpaActionWriterTest {
         .hasMessageContaining("마이크로초");
   }
 
+  @Test
+  void 첫_행동이_체인_머리를_만든다() {
+    ActionEntry first =
+        writer.write(command(tenant, ActionType.CREATE_ROOM, "h1", null), UUID.randomUUID(), at);
+
+    assertThat(first.roomSeq()).isEqualTo(1);
+    assertThat(prevHashOf(first)).isEqualTo(ActionHash.start());
+    assertThat(headSeq()).isEqualTo(1);
+    assertThat(headHash()).isEqualTo(hashOf(first));
+  }
+
+  @Test
+  void 마지막_행동이_탈퇴로_지워져도_번호를_다시_쓰지_않고_지운_행동의_해시를_잇는다() {
+    // #128: 41까지 남고 42가 지워지면 새 행동은 43, prev_hash는 42의 해시(deletion_log.action_hash)
+    writer.write(command(tenant, ActionType.MOVE_OUT, "d1", null), UUID.randomUUID(), at);
+    ActionEntry second =
+        writer.write(command(tenant, ActionType.MOVE_OUT, "d2", null), UUID.randomUUID(), at);
+    byte[] deletedHash = hashOf(second);
+
+    eraseAsDraft(second);
+
+    assertThat(headSeq()).isEqualTo(2);
+    ActionEntry next =
+        writer.write(command(tenant, ActionType.MOVE_OUT, "d3", null), UUID.randomUUID(), at);
+    assertThat(next.roomSeq()).isEqualTo(3);
+    assertThat(prevHashOf(next)).isEqualTo(deletedHash).isEqualTo(auditHash(2));
+    assertThat(headSeq()).isEqualTo(3);
+    assertThat(headHash()).isEqualTo(hashOf(next));
+  }
+
+  @Test
+  void 끝_행동_두_개를_연달아_지워도_가장_큰_번호_다음으로_쓴다() {
+    writer.write(command(tenant, ActionType.MOVE_OUT, "c1", null), UUID.randomUUID(), at);
+    ActionEntry second =
+        writer.write(command(tenant, ActionType.MOVE_OUT, "c2", null), UUID.randomUUID(), at);
+    ActionEntry third =
+        writer.write(command(tenant, ActionType.MOVE_OUT, "c3", null), UUID.randomUUID(), at);
+    byte[] thirdHash = hashOf(third);
+
+    eraseAsDraft(third);
+    eraseAsDraft(second);
+
+    ActionEntry next =
+        writer.write(command(tenant, ActionType.MOVE_OUT, "c4", null), UUID.randomUUID(), at);
+    assertThat(next.roomSeq()).isEqualTo(4);
+    assertThat(prevHashOf(next)).isEqualTo(thirdHash);
+  }
+
+  @Test
+  void 행동이_있는데_체인_머리가_없으면_번호를_정하지_않고_실패한다() {
+    writer.write(command(tenant, ActionType.MOVE_OUT, "m1", null), UUID.randomUUID(), at);
+    entityManager.clear();
+    jdbc.update("DELETE FROM action_chain_head WHERE room_record_id = ?", room);
+
+    assertThatThrownBy(() ->
+            writer.write(command(tenant, ActionType.MOVE_OUT, "m2", null), UUID.randomUUID(), at))
+        .isInstanceOf(InvalidDataAccessApiUsageException.class)
+        .hasMessageContaining("체인 머리");
+    assertThat(reader.findByRoom(room)).hasSize(1);
+  }
+
+  @Test
+  void 체인_머리가_남은_행동보다_뒤처졌으면_번호를_정하지_않고_실패한다() {
+    // 머리 1, 남은 행동 2: 그대로 쓰면 2번을 다시 쓰게 된다(#247 리뷰)
+    writer.write(command(tenant, ActionType.MOVE_OUT, "l1", null), UUID.randomUUID(), at);
+    writer.write(command(tenant, ActionType.MOVE_OUT, "l2", null), UUID.randomUUID(), at);
+    entityManager.flush();
+    entityManager.clear();
+    jdbc.update("UPDATE action_chain_head SET last_seq = 1 WHERE room_record_id = ?", room);
+
+    assertThatThrownBy(() ->
+            writer.write(command(tenant, ActionType.MOVE_OUT, "l3", null), UUID.randomUUID(), at))
+        .isInstanceOf(InvalidDataAccessApiUsageException.class)
+        .hasMessageContaining("뒤처졌어요");
+    assertThat(reader.findByRoom(room)).hasSize(2);
+  }
+
+  /**
+   * 탈퇴 때 초안 지우기(05 2-10)를 흉내 낸다. 부분 삭제 함수는 KEEP-4에서 만들어서, 테스트는 소유자 권한으로 삭제 기록을 먼저 남기고 지운다. 체인 머리는
+   * 건드리지 않는다.
+   */
+  private void eraseAsDraft(ActionEntry action) {
+    entityManager.flush();
+    entityManager.clear();
+    jdbc.update(
+        """
+        INSERT INTO deletion_log (id, target_kind, target_id, reason, chain_room_id,
+          room_seq, prev_hash, action_hash, created_at)
+        SELECT ?, 'ACTION', id, 'WITHDRAWAL', room_record_id, room_seq, prev_hash, hash, CURRENT_TIMESTAMP
+        FROM action WHERE id = ?
+        """,
+        UUID.randomUUID(),
+        action.id());
+    jdbc.execute("SET LOCAL app.purge = 'on'");
+    jdbc.update("DELETE FROM action WHERE id = ?", action.id());
+    jdbc.execute("SET LOCAL app.purge = 'off'");
+  }
+
+  private byte[] hashOf(ActionEntry action) {
+    return jdbc.queryForObject("SELECT hash FROM action WHERE id = ?", byte[].class, action.id());
+  }
+
+  private byte[] prevHashOf(ActionEntry action) {
+    return jdbc.queryForObject(
+        "SELECT prev_hash FROM action WHERE id = ?", byte[].class, action.id());
+  }
+
+  private byte[] auditHash(long roomSeq) {
+    return jdbc.queryForObject(
+        "SELECT action_hash FROM deletion_log WHERE chain_room_id = ? AND room_seq = ?",
+        byte[].class,
+        room,
+        roomSeq);
+  }
+
+  private long headSeq() {
+    entityManager.flush();
+    return jdbc.queryForObject(
+        "SELECT last_seq FROM action_chain_head WHERE room_record_id = ?", Long.class, room);
+  }
+
+  private byte[] headHash() {
+    entityManager.flush();
+    return jdbc.queryForObject(
+        "SELECT last_hash FROM action_chain_head WHERE room_record_id = ?", byte[].class, room);
+  }
+
   private ActionCommand command(Actor actor, ActionType type, String key, ActionTarget target) {
     return new ActionCommand(room, actor, type, key, target, null, null, null, null);
   }

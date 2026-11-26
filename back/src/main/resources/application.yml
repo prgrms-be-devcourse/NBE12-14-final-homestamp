@@ -153,3 +153,14 @@ spring:
 app:
   sms:
     mode: disabled
+
+---
+# local 전용: 가짜 인증 문자의 인증번호를 로그에 남겨 화면에서 가입을 이어 간다(#248). test·prod가 함께 켜지면 남기지 않는다.
+# 식은 FakeVerificationSmsSender.CODE_LOG_PROFILES와 같다(발송기가 실제 프로필을 한 번 더 본다)
+spring:
+  config:
+    activate:
+      on-profile: local & !test & !prod
+app:
+  sms:
+    log-code: true
