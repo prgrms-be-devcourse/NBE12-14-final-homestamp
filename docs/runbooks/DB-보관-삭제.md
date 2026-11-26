@@ -68,7 +68,7 @@ psql -X -v ON_ERROR_STOP=1 \
 |---|---|---|---|
 | 1. Role Bootstrap | 신뢰된 DB 관리자(Migration 계정 아님) | `psql`로 `bootstrap_roles.sql` | 최초 한 번, 역할이 바뀔 때 |
 | 2. Migration | Migration 로그인 → `SET ROLE` Owner | 앱 이미지 `--migrate`(Flyway) | #173 Draft |
-| 3. GRANT | Migration 로그인 → `SET LOCAL ROLE` Owner | 앱 이미지 안의 JDBC 리소스 `db/grants/grants.sql`(아래 "실행 방식") | 실행 진입점 `--apply-grants`는 #173 후속, 미구현. 지금 계약은 테스트 실행기(`DatabaseGrantsIntegrationTest.GrantsJdbcExecutor`)로만 검증 |
+| 3. GRANT | Migration 로그인 → `SET LOCAL ROLE` Owner | 앱 이미지 `--apply-grants`(JDBC 리소스 `db/grants/grants.sql`, 아래 "실행 방식") | 구현(#173, 로컬 PostgreSQL 18.6·UID 10002 CLI 검증). 운영 실행 전 |
 | 4. Green 시작 | 배포 스크립트 | 2·3이 모두 종료 코드 0일 때만 | 배포 스크립트 미구현 |
 
 Bootstrap의 `psql` 실행과 GRANT의 JDBC 실행은 다른 절차다. GRANT를 `psql`로 실행하지 않는다(`psql` 변수와 메타 명령을 쓰지 않는 SQL이고, 잠금·`set_config`를 실행기가 같은 트랜잭션에서 준비해야 한다).
@@ -113,7 +113,19 @@ Migration이나 GRANT가 실패하면 Green을 시작하지 않고 Blue를 유�
 - 기본 함수 EXECUTE 권한도 소유자 역할에서 `ALTER DEFAULT PRIVILEGES ... REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC`으로 회수한다. V1의 두 삭제 함수는 생성 직후 명시적으로 회수한다.
 - SQL에는 스키마를 붙이며 `search_path`를 권한 경계로 믿지 않는다. 엔티티도 `@Table(schema = ...)`를 사용한다.
 
-GRANT SQL은 `back/src/main/resources/db/grants/grants.sql` 하나다(앱 이미지에 함께 들어가고 Flyway 위치 `db/migration` 밖이라 Flyway가 실행하지 않는다). psql 메타 명령 없이 JDBC로 실행한다. 실행기는 Migration 로그인(NOINHERIT, Owner 멤버십 `SET TRUE`·`INHERIT FALSE`·`ADMIN FALSE`)으로 접속해 자동 커밋을 끄고 `SET LOCAL ROLE "<Owner>"`, `set_config('homestamp.grants.{app,purge,human}_role', ?, true)`, `pg_advisory_xact_lock(1752392040, 156)`을 같은 트랜잭션에서 실행한 뒤 DO 블록 하나를 실행하고 COMMIT한다. 어느 단계든 실패하면 ROLLBACK하므로 권한은 실행 전 상태로 남는다. DO 블록은 Owner로 전환하지 않았거나, 잠금이 없거나, Migration 로그인이 Owner를 상속·관리하면 아무것도 바꾸지 않고 실패한다. 테이블·함수 목록이 이 이미지의 Migration 결과와 다르면 실패하므로, 테이블이나 함수를 추가하는 V 파일은 같은 PR에서 이 파일의 목록과 권한도 고친다. 운영 실행 진입점(`--apply-grants`)과 역할 이름 공급은 Migration Runner(#173) 후속 작업에서 연결한다.
+GRANT SQL은 `back/src/main/resources/db/grants/grants.sql` 하나다(앱 이미지에 함께 들어가고 Flyway 위치 `db/migration` 밖이라 Flyway가 실행하지 않는다). psql 메타 명령 없이 JDBC로 실행한다. 실행기는 Migration 로그인(NOINHERIT, Owner 멤버십 `SET TRUE`·`INHERIT FALSE`·`ADMIN FALSE`)으로 접속해 자동 커밋을 끄고 `SET LOCAL ROLE "<Owner>"`, `set_config('homestamp.grants.{app,purge,human}_role', ?, true)`, `pg_advisory_xact_lock(1752392040, 156)`을 같은 트랜잭션에서 실행한 뒤 DO 블록 하나를 실행하고 COMMIT한다. 어느 단계든 실패하면 ROLLBACK하므로 권한은 실행 전 상태로 남는다. DO 블록은 Owner로 전환하지 않았거나, 잠금이 없거나, Migration 로그인이 Owner를 상속·관리하면 아무것도 바꾸지 않고 실패한다. 테이블·함수 목록이 이 이미지의 Migration 결과와 다르면 실패하므로, 테이블이나 함수를 추가하는 V 파일은 같은 PR에서 이 파일의 목록과 권한도 고친다. 운영 진입점은 앱 이미지의 `--apply-grants`(실행기 `DatabaseGrants`)다. `--migrate`와 같은 4개 비밀 파일·Hikari·Flyway 구성으로 접속하지만 `migrate()`는 하지 않는다.
+
+- 먼저 `flyway.validate()`로 DB 이력이 이 이미지의 Migration과 정확히 같은지 확인한다. 대기 중인 Migration(아직 `--migrate` 안 함), 미래 버전, 체크섬 차이, 이미지에 없는 적용 버전, 실패한 버전, 이력이 없는 DB는 모두 실패(종료 코드 1)이고 GRANT SQL을 실행하지 않는다.
+- GRANT 트랜잭션 안에서 잠금을 잡은 뒤 Flyway 이력 지문을 다시 읽어 검증 때와 다르면 실패한다(검증과 GRANT 사이에 다른 Migration이 끼어든 경우).
+- 대상 역할: Owner는 비밀 파일 `app.migration.owner-role`, App·Purge·Human은 이미지 안의 `db/grants/roles.properties`(`app-role`, `purge-role`, `human-role`)에서만 읽는다. 환경변수·Spring 설정으로 바꿀 수 없다. 모르는 키·중복 키·빠진 키·형식 밖 이름·겹치는 이름·Migration 로그인 이름은 DB에 닿기 전에 실패한다. **지금 값은 테스트 이름(`homestamp_*`)이고 운영 이름이 확정되면 이 파일을 바꾼다.**
+- Human은 NOLOGIN 읽기 그룹 하나(`human-role`, decisions 2026-11-25 "Human 그룹")이고 GRANT는 그 그룹에만 준다. LOGIN 역할을 넣으면 `grants.sql` 사전 검사가 실패하고 아무것도 바꾸지 않는다. 사람별 LOGIN 역할은 이 실행이 만들거나 바꾸지 않는다(아래 "사람별 Human 계정"의 발급·회수 절차). 그래서 사람이 바뀌어도 이 파일과 이미지는 바뀌지 않는다.
+- 실패 로그에는 SQLState와 grants.sql 사전 검사의 고정 메시지(테이블·컬럼 이름 목록 포함, 앞 600자)만 남기고 비밀번호·SQL 본문은 남기지 않는다. Flyway가 INFO로 남기는 접속 주소 줄(`Database: <JDBC 주소>`)은 `--migrate`·`--apply-grants` 모두 끈다(호스트·DB 이름·인증서 경로를 로그에 남기지 않음).
+
+배포 순서의 남은 위험(배포 스크립트 미구현):
+
+- **잠금의 실제 범위**: `pg_advisory_xact_lock(1752392040, 156)`은 GRANT 트랜잭션 안에서만 잡는 트랜잭션 잠금이라 GRANT 실행끼리만 직렬화한다. 이 키를 잡는 코드는 GRANT 실행뿐이고 `--migrate`(Flyway)는 자기 잠금을 따로 쓰므로, DB 잠금으로는 Migration과 GRANT가 서로 막히지 않는다고 본다. 대신 GRANT는 잠금을 잡은 뒤 Flyway 이력 지문을 검증 때와 비교해, 검증과 잠금 사이에 커밋된 Migration이 있으면 실패한다. 잠금 뒤(GRANT 트랜잭션 중)에 커밋되는 Migration은 잡지 못하지만, 그 Migration이 만든 새 테이블에는 권한이 없어 다음 GRANT가 분류 검사로 실패하고, 기존 테이블에 더한 새 컬럼은 Human 컬럼 허용 목록 밖이라 보이지 않는다(검토해 목록에 넣을 때까지). **Migration과 GRANT를 묶은 배포 전체의 상호 배제는 #205의 서버 단위 배포 잠금**(단일 EC2에서 배포 한 번에 하나, decisions 2026-11-25)이 맡는다. 분산 잠금은 두지 않는다.
+- `--migrate`가 앞 버전 몇 개를 적용한 뒤 실패하면 `--apply-grants`도 실행하지 않는다(대기 중인 버전이 남아 검증 실패). 이때 Blue가 쓰는 권한은 그대로지만, 이미 적용된 스키마 변경과의 호환성은 보장되지 않는다.
+- GRANT 성공 뒤 Green이 실패해도 권한은 되돌리지 않는다. 새 권한 계약이 기존 Blue에 필요한 권한을 회수하는 변경이면(예: 테이블 권한 축소), GRANT 시점부터 Blue가 실패할 수 있다. 그런 변경은 Migration의 Expand–Contract처럼 Blue가 더 쓰지 않는 것을 확인한 다음 배포에서 회수한다.
 
 ## 호실 밖 삭제
 
