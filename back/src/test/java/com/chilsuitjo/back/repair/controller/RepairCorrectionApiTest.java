@@ -164,6 +164,20 @@ class RepairCorrectionApiTest {
         .isEqualTo(wall);
   }
 
+  @Test
+  void 숨긴_부위나_꺼_둔_설비로는_고칠_수_없다() throws Exception {
+    UUID hidden = part("바닥");
+    UUID off = part("창문·창틀");
+    jdbc.update("UPDATE state.room_part SET hidden_at = CURRENT_TIMESTAMP WHERE id = ?", hidden);
+    jdbc.update("UPDATE state.room_part SET enabled = false WHERE id = ?", off);
+
+    correct(tenant, "c1", "{\"field\":\"roomPartId\",\"newValue\":\"" + hidden + "\"}", null)
+        .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    correct(tenant, "c2", "{\"field\":\"roomPartId\",\"newValue\":\"" + off + "\"}", null)
+        .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    assertThat(contentCount()).isEqualTo(1);
+  }
+
   // ---- 도장 뒤 ----
 
   @Test

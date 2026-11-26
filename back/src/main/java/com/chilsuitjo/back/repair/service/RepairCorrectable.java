@@ -18,6 +18,7 @@ import com.chilsuitjo.back.repair.repository.RepairContentRepository;
 import com.chilsuitjo.back.repair.repository.RepairStateStore;
 import com.chilsuitjo.back.repair.rule.ClosedBy;
 import com.chilsuitjo.back.repair.rule.RepairStatus;
+import com.chilsuitjo.back.room.dto.RoomPartSummary;
 import com.chilsuitjo.back.room.service.RoomQueryService;
 import java.util.HashMap;
 import java.util.List;
@@ -80,8 +81,8 @@ public class RepairCorrectable implements Correctable {
 
   /**
    * 칸 값 확인. 없는 칸·글자가 아닌 값·빈 제목·길이 초과·틀린 부위 ID는 {@code VALIDATION_FAILED}, 남의 부위·없는 부위는 {@code
-   * NOT_FOUND}, 숨긴 부위는 새 기록을 받지 않아 {@code VALIDATION_FAILED}(하자 등록과 같음, 06 ROOM-3a). 빈 설명은 null로
-   * 둔다.
+   * NOT_FOUND}, 숨긴 부위·꺼 둔 설비·가전은 새 기록을 받지 않아 {@code VALIDATION_FAILED}(하자 등록과 같음, 06 ROOM-3a·3d,
+   * #182). 빈 설명은 null로 둔다.
    */
   @Override
   public Map<String, Object> normalize(UUID targetId, Map<String, Object> changes, UUID memberId) {
@@ -189,7 +190,9 @@ public class RepairCorrectable implements Correctable {
     } catch (IllegalArgumentException | NullPointerException e) {
       throw new BusinessException(ErrorCode.VALIDATION_FAILED);
     }
-    if (rooms.findPartAsSeenBy(row.getRoomRecordId(), partId, memberId).hidden()) {
+    // 숨긴 부위·꺼 둔 설비·가전은 새 기록을 받지 않는다(하자 등록과 같음, 06 ROOM-3a·3d, #182)
+    RoomPartSummary seen = rooms.findPartAsSeenBy(row.getRoomRecordId(), partId, memberId);
+    if (seen.hidden() || !seen.enabled()) {
       throw new BusinessException(ErrorCode.VALIDATION_FAILED);
     }
     return partId;

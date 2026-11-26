@@ -32,7 +32,7 @@ public class JpaRoomQueryService implements RoomQueryService {
   @Override
   public RoomPartSummary findPartAsSeenBy(UUID roomRecordId, UUID roomPartId, UUID memberId) {
     RoomPartView seen = partViews.one(roomRecordId, memberId, roomPartId);
-    return new RoomPartSummary(seen.name(), seen.hidden());
+    return new RoomPartSummary(seen.name(), seen.hidden(), seen.enabled());
   }
 
   @Override
@@ -41,7 +41,7 @@ public class JpaRoomQueryService implements RoomQueryService {
     List<Object[]> rows =
         entityManager
             .createNativeQuery(
-                "SELECT name, hidden_at IS NOT NULL FROM state.room_part"
+                "SELECT name, hidden_at IS NOT NULL, enabled FROM state.room_part"
                     + " WHERE id = :part AND room_record_id = :room")
             .setParameter("part", roomPartId)
             .setParameter("room", roomRecordId)
@@ -51,6 +51,6 @@ public class JpaRoomQueryService implements RoomQueryService {
       throw new BusinessException(ErrorCode.NOT_FOUND);
     }
     Object[] row = rows.getFirst();
-    return new RoomPartSummary((String) row[0], (Boolean) row[1]);
+    return new RoomPartSummary((String) row[0], (Boolean) row[1], (Boolean) row[2]);
   }
 }

@@ -27,9 +27,9 @@ class JpaRoomQueryServiceTest extends RoomReadersTestSupport {
     UUID ceiling = part(room, "천장", false);
     UUID veranda = part(room, "베란다", true);
 
-    assertThat(service.findPart(room, ceiling)).isEqualTo(new RoomPartSummary("천장", false));
+    assertThat(service.findPart(room, ceiling)).isEqualTo(new RoomPartSummary("천장", false, true));
     // 숨긴 부위도 지난 기록이 가리키므로 돌려준다
-    assertThat(service.findPart(room, veranda)).isEqualTo(new RoomPartSummary("베란다", true));
+    assertThat(service.findPart(room, veranda)).isEqualTo(new RoomPartSummary("베란다", true, true));
   }
 
   @Test
