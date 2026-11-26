@@ -27,13 +27,13 @@ public class ProposalController {
     return reply(result);
   }
 
-  /** 상대 측의 이견. 사유는 필수다({@code REASON_REQUIRED}, decisions 2026-11-19). */
+  /** 상대 측의 이견. 사유는 필수다({@code REASON_REQUIRED}, decisions 2026-11-19). 본문이 없어도 사유 없음으로 본다. */
   @PostMapping("/{id}/dispute")
   public ResponseEntity<ProposalResult> dispute(
       @PathVariable UUID id,
       @LoginMember UUID memberId,
       @RequestHeader("Idempotency-Key") String idempotencyKey,
-      @RequestBody ReasonRequest request) {
+      @RequestBody(required = false) ReasonRequest request) {
     ProposalResult result =
         proposalService.dispute(
             id, memberId, idempotencyKey, request == null ? null : request.reason());

@@ -229,6 +229,13 @@ class ProposalApiTest {
     dispute(proposal, tenant, "d2", "   ")
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.code").value("REASON_REQUIRED"));
+    // 본문 자체가 없어도 본문 읽기 오류(VALIDATION_FAILED)가 아니라 사유 없음이다(RepairController.notYet과 같음)
+    mvc.perform(
+            post("/api/proposals/{id}/dispute", proposal)
+                .with(loginAs(tenant))
+                .header("Idempotency-Key", "d3"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("REASON_REQUIRED"));
 
     assertThat(caseRow()).containsEntry("money_status", "PENDING");
     assertThat(countActions(proposal, "DISPUTE_PROPOSAL")).isZero();
