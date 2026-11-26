@@ -137,13 +137,20 @@ class ResponseRequestLookupImpl implements ResponseRequestLookup {
     if (kind == RequestKind.INSPECTION_CONFIRM) {
       throw new IllegalArgumentException("점검 확인은 방향이 둘이라 가장 최근 하나가 정해지지 않아요");
     }
-    List<ResponseRequest> all =
-        byTarget(kind, target, EnumSet.allOf(RequestStatus.class)).getResultList();
-    return all.isEmpty() ? Optional.empty() : Optional.of(all.get(all.size() - 1));
+    return byTarget(kind, target, EnumSet.allOf(RequestStatus.class), "desc")
+        .setMaxResults(1)
+        .getResultStream()
+        .findFirst();
   }
 
   private TypedQuery<ResponseRequest> byTarget(
       RequestKind kind, RequestTarget target, Set<RequestStatus> statuses) {
+    return byTarget(kind, target, statuses, "asc");
+  }
+
+  /** {@code direction}은 만든 순서({@code createdAt}, 같으면 ID)의 방향: {@code asc} 또는 {@code desc}. */
+  private TypedQuery<ResponseRequest> byTarget(
+      RequestKind kind, RequestTarget target, Set<RequestStatus> statuses, String direction) {
     RequestTargetColumns columns = RequestTargetColumns.of(target);
     String where = columns.roomRecordTarget() ? ROOM_TARGET : CHILD_TARGET;
     TypedQuery<ResponseRequest> query =
@@ -151,7 +158,10 @@ class ResponseRequestLookupImpl implements ResponseRequestLookup {
             .createQuery(
                 "select r from ResponseRequest r where r.kind = :kind and r.status in :statuses and "
                     + where
-                    + " order by r.createdAt, r.id",
+                    + " order by r.createdAt "
+                    + direction
+                    + ", r.id "
+                    + direction,
                 ResponseRequest.class)
             .setParameter("kind", kind)
             .setParameter("statuses", statuses);
