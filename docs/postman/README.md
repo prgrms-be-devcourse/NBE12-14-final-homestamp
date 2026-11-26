@@ -38,6 +38,8 @@
 
 순서 예: 하자 등록(나) → 하자 응답 `NEED_MORE`(상대) → 보충하고 다시 확인 요청(나). 사이사이 **수리 건 상세**를 보내면 지금 누를 수 있는 버튼(`availableActions`)이 바뀌는 것을 볼 수 있다(상대 측으로 보려면 인증을 `counterpart_token`으로 바꾼다). 같은 수리 건에 보충은 7일에 한 번이라, 다시 시험하려면 하자를 새로 등록한다.
 
+수리 진행 순서 예: 하자 등록(나) → 수리 시작(누구든) → 종료 요청(나) → 종료 확인 또는 아직 안 됐어요(상대). 종료 확인 본문의 `alsoAckDefect`는 하자가 아직 확인 기다림일 때 하자 맞아요까지 함께 남긴다(`seenVersionNo`는 상세의 `content.no`).
+
 하자 등록·보충의 `uploadTickets`는 실제 업로드(#112) 전이라 가짜 사진 창구가 아무 글자나 받는다. 본문의 `{{$guid}}`가 보낼 때마다 새 값을 만든다. 하자 등록은 사진이 한 장 이상 있어야 한다(없으면 `PHOTO_REQUIRED`).
 
 ## 가입·로그인 (01 auth · member)
@@ -81,6 +83,28 @@
 - 리프레시 쿠키는 `Secure`라서 `http://localhost`에서는 Postman이 다시 보내지 않을 수 있다. 그래서 **로그인**·**토큰 재발급**이 쿠키 값을 `refreshToken`에 저장하고, **토큰 재발급**은 `Cookie` 머리로 직접 보낸다. `Origin: http://localhost:5173`(local `app.origin`)도 머리에 있다. 빠지면 `LOGIN_REQUIRED`다
 - **로그아웃**은 `refreshToken`을 비운다. 그 뒤 재발급은 `LOGIN_REQUIRED`다(지운 쿠키를 다시 보내면 `REFRESH_REUSED`)
 - 공개 API(인증·가입·로그인·재발급)는 요청의 Authorization을 **No Auth**로 둔다
+- **내 정보**는 `bearer_token_15h5`의 회원을 돌려준다. 개발용 토큰 회원(DB에 바로 넣은 행)은 `email`·`displayName`·`phone`이 `null`이고, 가입한 회원으로 로그인한 뒤 보내면 값이 찬다. 토큰은 맞아도 그 회원 행이 DB에 없으면 401 `LOGIN_REQUIRED`다(위 "처음 한 번" 2번)
+
+## 호실·부위 (02 room)
+
+순서대로 보내면 다음 요청이 쓸 ID가 변수로 넘어간다: **법정동 찾기** 또는 **법정동 단계 선택** → **호실 만들기** → **내 호실 목록** · **호실 상세** → **부위 목록** → **부위 추가** → **부위 숨기기** → **부위 다시 보이기** → **설비·가전 켜고 끄기**
+
+| 요청 | 쓰는 변수 | 채우는 변수 |
+|---|---|---|
+| 법정동 찾기 | 주소의 `q`(동 이름 앞부분) | 200이면 `regionCode`(첫 줄) |
+| 법정동 단계 선택 | `regionParent`(주소의 `parent`, 처음엔 꺼 둠) | 200이면 첫 줄 코드가 2·5자리면 `regionParent`, 10자리면 `regionCode` |
+| 호실 만들기 | `regionCode`(비어 있으면 `1111010100` 청운동으로 채움) | 201이면 `roomId` |
+| 내 호실 목록 | `roomCursor`(주소의 `cursor`, 처음엔 꺼 둠) | 200이면 `roomCursor`(마지막 쪽이면 비움), `roomId`가 비어 있으면 첫 줄 |
+| 부위 목록 | `roomId` | 200이면 `partId`(지금 값이 목록에 없거나 숨겼으면 보이는 첫 부위), `togglePartId`(첫 설비·가전) |
+| 부위 추가 | `roomId` | 201이면 `partId` |
+| 부위 숨기기·다시 보이기 | `roomId`, `partId` | - |
+| 설비·가전 켜고 끄기 | `roomId`, `togglePartId` | - |
+
+- **법정동 단계 선택**: 처음엔 `parent` 없이 보내 시·도를 받는다. 그 뒤 Params에서 `parent`를 켜고 다시 보내면 `regionParent`에 저장된 첫 코드의 아래 단계를 받는다(서울 → 종로구 → 청운동). 다른 곳을 고르려면 `regionParent`를 직접 바꾼다. 세종(`36`)은 이름이 `null`인 시·군·구 `36110` 하나만 온다
+- **내 호실 목록**의 다음 쪽은 Params에서 `cursor`를 켜고 보낸다. `cursor`를 켠 채 `roomCursor`가 비어 있으면 `VALIDATION_FAILED`다
+- 부위 행동은 같은 상태로 두 번 보내면 409 `INVALID_STATE`다(이미 숨김, 숨기지 않음, 이미 그 값). 켜고 끄기는 뒤집기가 아니라 원하는 값을 보내므로, 다시 시험하려면 본문의 `enabled`를 바꾼다. 설비·가전이 아닌 부위(`toggleable: false`)를 켜고 끄면 400 `VALIDATION_FAILED`다
+- 상대 측 토큰(`counterpart_token`)으로 연결 전의 호실을 부르면 호실 상세·부위 모두 404 `NOT_FOUND`다(남의 호실과 같다)
+- 하자 등록(03 repair)의 `roomPartId`도 `partId`를 쓴다. **부위 목록**을 한 번 보내 두면 따로 넣지 않아도 된다
 
 ## 변수
 
@@ -94,8 +118,12 @@
 | `verificationCode` | 인증번호 6자리 | 직접(위 "인증번호 알아내기") |
 | `verificationTicket` | 인증 표 | **인증번호 확인**을 보내면 자동 |
 | `refreshToken` | 리프레시 토큰 | **로그인**·**토큰 재발급**을 보내면 자동, **로그아웃**하면 비움 |
-| `roomId` | 호실 ID | **호실 만들기**를 보내면 자동 |
-| `partId` | 부위 ID | 부위 조회 API가 아직 없어서 DB에서 찾아 직접 넣는다: `SELECT id, zone, name FROM state.room_part WHERE room_record_id = '<roomId>';` |
+| `regionCode` | 법정동 코드 10자리 | **법정동 찾기**·**법정동 단계 선택**을 보내면 자동, 비어 있으면 **호실 만들기**가 `1111010100`으로 채움 |
+| `regionParent` | 단계 선택의 윗 단계 코드(2·5자리) | **법정동 단계 선택**을 보내면 자동 |
+| `roomId` | 호실 ID | **호실 만들기**를 보내면 자동(비어 있으면 **내 호실 목록**도 채움) |
+| `roomCursor` | 호실 목록 다음 쪽 커서 | **내 호실 목록**을 보내면 자동 |
+| `partId` | 부위 ID | **부위 목록**·**부위 추가**를 보내면 자동 |
+| `togglePartId` | 켜고 끌 수 있는 부위(설비·가전) ID | **부위 목록**을 보내면 자동 |
 | `repairCaseId` | 수리 건 ID | **하자 등록**을 보내면 자동 |
 | `counterpart_token` | 상대 측 회원의 개발용 토큰 | 직접(위 "상대 측으로 시험할 때") |
 

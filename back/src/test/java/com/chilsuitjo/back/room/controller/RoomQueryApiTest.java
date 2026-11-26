@@ -357,14 +357,18 @@ class RoomQueryApiTest {
     return mvc.perform(get("/api/rooms/{id}", roomId).with(loginAs(memberId)));
   }
 
-  /** 하자 등록(실제 요청). 부위를 하나 만들어 쓴다. */
+  /**
+   * 하자 등록(실제 요청). 부위를 하나 만들어 쓴다. 호실을 만들 때 기본 목록에서 복사된 부위처럼 템플릿을 가리킨다: 공유를 그만둔 뒤 하자 등록은 등록하는 사람에게
+   * 보이는 부위 상태로 판단하는데(#183), 템플릿도 {@code ADD_PART}도 없는 부위는 실제 호실에 없는 모양이라 보이지 않는다.
+   */
   private ResultActions register(UUID roomId, UUID memberId) throws Exception {
     UUID part = UUID.randomUUID();
     jdbc.update(
         """
         INSERT INTO state.room_part
-          (id, room_record_id, zone, name, sort_order, created_at, version)
-        VALUES (?, ?, '안방', '천장', 0, CURRENT_TIMESTAMP, 0)
+          (id, room_record_id, template_id, zone, name, sort_order, created_at, version)
+        SELECT ?, ?, t.id, t.zone, t.name, t.sort_order, CURRENT_TIMESTAMP, 0
+        FROM state.part_template t WHERE t.zone <> '설비·가전' ORDER BY t.sort_order LIMIT 1
         """,
         part,
         roomId);

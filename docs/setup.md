@@ -130,6 +130,7 @@ npm run dev                # http://localhost:5173, /api는 백엔드(8080)로 �
 | `gh: command not found` | IDE를 완전히 껐다 켠다. 급하면 전체 경로로 실행 (Windows: `"/c/Program Files/GitHub CLI/gh.exe"`) |
 | 훅이 안 막는다 | `node -v` 확인 → Claude는 `/hooks`, Codex는 훅 신뢰 상태 확인 → AI 세션을 새로 시작 |
 | 막으면 안 되는 명령이 막힌다 | 직접 터미널에서 실행하고, 훅 오탐으로 이슈를 올린다 |
+| `npm run format:check`가 거의 모든 파일에서 떨어지거나, `git status`에 줄 끝만 바뀐 파일이 생긴다 (Windows) | 루트 `.gitattributes`(#238)가 들어오기 전에 받은 파일이 CRLF로 남아 있다. 바꾼 것을 모두 커밋하거나 `git stash`로 치운 뒤, Git Bash에서 저장소 루트로 가서 `git ls-files -z \| xargs -0 rm -f && git checkout -- .`로 한 번 다시 꺼낸다(git이 관리하는 파일만 지우고 다시 받는다). `git ls-files --eol`에서 `back/gradlew.bat`만 `w/crlf`면 맞다. worktree마다 따로 한다 |
 | IDE에서 맞췄는데 `spotlessCheck`가 떨어진다 | google-java-format 플러그인 버전이 2.0.0.x인지 확인. 그래도 다르면 `./gradlew spotlessApply`로 맞추고, `docs/rules/04` 17장 "서식 기준"의 cleanup 시험 결과를 확인 |
 | google-java-format 플러그인이 시작할 때 오류를 낸다 | 플러그인 안내에 있는 `--add-exports` 줄을 Help → Edit Custom VM Options에 넣고 IntelliJ를 다시 켠다 |
 | 실행하면 `No Docker Compose file found in directory`로 떨어진다 | 작업 폴더가 저장소 루트다. `bootRun`으로 띄우거나, IntelliJ 실행 설정의 Working directory를 `back/`으로 |
