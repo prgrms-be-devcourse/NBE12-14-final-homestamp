@@ -27,7 +27,6 @@ class RecipientDirectoryFakesTest {
       RecipientDirectory directory,
       BiConsumer<UUID, Recipient> seedRecipient,
       Consumer<UUID> seedUnresolvable,
-      BiConsumer<UUID, String> seedParty,
       BiConsumer<UUID, String> seedMember) {
 
     @Override
@@ -41,12 +40,7 @@ class RecipientDirectoryFakesTest {
     return Stream.of(
         Arguments.of(
             new Subject(
-                "test",
-                test,
-                test::seedRecipient,
-                test::seedUnresolvable,
-                test::seedParty,
-                test::seedMember)));
+                "test", test, test::seedRecipient, test::seedUnresolvable, test::seedMember)));
   }
 
   @ParameterizedTest
@@ -72,7 +66,7 @@ class RecipientDirectoryFakesTest {
   @MethodSource("fakes")
   void 정해_두지_않은_자리는_Unavailable이_아니라_예외다(Subject s) {
     UUID party = UUID.randomUUID();
-    s.seedParty().accept(party, PHONE);
+    s.seedMember().accept(party, PHONE);
 
     assertThatThrownBy(() -> s.directory().resolve(party))
         .isInstanceOf(IllegalStateException.class)
@@ -95,30 +89,12 @@ class RecipientDirectoryFakesTest {
 
   @ParameterizedTest
   @MethodSource("fakes")
-  void 기존_번호_메서드는_그대로다(Subject s) {
-    UUID party = UUID.randomUUID();
+  void 회원_번호는_정해_둔_것만_준다(Subject s) {
     UUID member = UUID.randomUUID();
-    UUID unknown = UUID.randomUUID();
-    s.seedParty().accept(party, PHONE);
     s.seedMember().accept(member, "01099998888");
 
-    assertThat(s.directory().phoneOfParty(party)).contains(PHONE);
-    assertThat(s.directory().phoneOfRecipient(party)).contains(PHONE);
     assertThat(s.directory().phoneOfMember(member)).contains("01099998888");
-    assertThat(s.directory().phoneOfParty(unknown)).isEmpty();
-    assertThat(s.directory().phoneOfRecipient(unknown)).isEmpty();
-    assertThat(s.directory().phoneOfMember(unknown)).isEmpty();
-  }
-
-  @ParameterizedTest
-  @MethodSource("fakes")
-  void 번호_메서드로_정한_자리는_resolve_결과가_되지_않는다(Subject s) {
-    UUID party = UUID.randomUUID();
-    s.seedParty().accept(party, PHONE);
-
-    assertThat(s.directory().phoneOfRecipient(party)).contains(PHONE);
-    assertThatThrownBy(() -> s.directory().resolve(party))
-        .isInstanceOf(IllegalStateException.class);
+    assertThat(s.directory().phoneOfMember(UUID.randomUUID())).isEmpty();
   }
 
   @Test
@@ -127,14 +103,12 @@ class RecipientDirectoryFakesTest {
     UUID party = UUID.randomUUID();
     UUID member = UUID.randomUUID();
     UUID broken = UUID.randomUUID();
-    test.seedParty(party, PHONE);
     test.seedMember(member, PHONE);
     test.seedRecipient(party, new Recipient.Invitee(PHONE));
     test.seedUnresolvable(broken);
 
     test.reset();
 
-    assertThat(test.phoneOfParty(party)).isEmpty();
     assertThat(test.phoneOfMember(member)).isEmpty();
     assertThatThrownBy(() -> test.resolve(party)).hasMessageContaining("정해 두지 않은");
     assertThatThrownBy(() -> test.resolve(broken)).hasMessageContaining("정해 두지 않은");

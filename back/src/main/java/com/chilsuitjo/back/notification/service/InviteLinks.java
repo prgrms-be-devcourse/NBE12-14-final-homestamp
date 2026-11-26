@@ -14,7 +14,7 @@ import java.util.UUID;
  * 순서). 초대 저장이 실패하면 링크 행도 함께 되돌아간다.
  *
  * <p>검증 나누기: 누가 언제 초대할 수 있는지(만든 측, 자리 상태, 거주 중, 자기 번호, 공유 동의, 수신 거부)는 부르는 쪽(room)이 본다. 이 포트는 링크의
- * 모양만 본다(기록은 하나, 대상 종류, 자리·기록이 그 호실의 것인지).
+ * 모양만 본다(기록은 하나, 대상 종류, 자리·기록이 그 호실의 것인지). 그 기록을 공유해도 되는지는 보지 않는다(부르는 쪽 규칙).
  *
  * <p>토큰과 주소는 돌려주지 않는다. 부르는 쪽·행동 기록·로그 어디에도 남지 않게 링크 ID만 오간다(03 C, 06 LINK-2b). 문자에 넣을 주소는 보낼 때 작업자가
  * 따로 받는다(#163 ③, 아직 없음).
@@ -41,11 +41,17 @@ public interface InviteLinks {
    *
    * <p>누가 언제 초대할 수 있는지는 부르는 쪽이 이미 확인했다고 보고 다시 보지 않는다. 링크를 돌려줬다고 초대가 허락됐다는 뜻은 아니다.
    *
+   * <p><b>기록이 그 호실에 없을 때</b>: {@code record}가 가리키는 수리 건·점검이 없거나 다른 호실의 것이면 {@link
+   * com.chilsuitjo.back.global.error.BusinessException}({@code NOT_FOUND})이다(#163). 없는 기록과 다른 호실의
+   * 기록은 구분하지 않는다. 이 예외가 나면 그 트랜잭션은 되돌리기만 할 수 있으니 잡고 계속하지 말고 그대로 올린다. 그러면 같은 트랜잭션의 행동·자리·링크·통지가 함께
+   * 되돌아간다. 자리와 기록이 둘 다 틀리면 어느 예외가 나올지는 정하지 않는다.
+   *
    * @param roomRecordId 링크가 속한 호실(잠금에 씀)
-   * @param recipientPartyId 받는 자리({@code party}). 번호는 넘기지 않고 보낼 때 자리로 읽는다. 그 호실의 자리가 아니면 저장이
-   *     실패한다(DB 외래 키)
-   * @param record 공유할 기록. {@code REPAIR_CASE}·{@code INSPECTION}만 받고, {@code null}이면 호실 초대 화면 링크다.
-   *     그 호실의 기록이 아니면 저장이 실패한다(DB 외래 키)
+   * @param recipientPartyId 받는 자리({@code party}). 번호는 넘기지 않고 보낼 때 자리로 읽는다. 부르는 쪽이 호실을 잠근 뒤 정하는 값이라,
+   *     그 호실의 자리가 아니면 개발 오류로 저장이 실패한다({@code DataIntegrityViolationException}, DB 외래 키)
+   * @param record 공유할 기록. {@code REPAIR_CASE}·{@code INSPECTION}만 받고(그 밖의 종류는 {@code
+   *     IllegalArgumentException}이라 부르는 쪽이 입력 검증으로 먼저 막는다), {@code null}이면 호실 초대 화면 링크다. 없거나 그 호실의
+   *     기록이 아니면 {@code NOT_FOUND}
    * @param issuedByMemberId 초대한 회원(pipeline {@code Actor}의 회원). 새로 만들 때만 저장하고 "발급한 사람 탈퇴"({@code
    *     ISSUER_WITHDRAWN}) 무효에 쓴다. 탈퇴 때 링크를 무효로 하는 일은 탈퇴(KEEP-4)에서 한다(아직 없음)
    */

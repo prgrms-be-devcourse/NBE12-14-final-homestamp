@@ -3,11 +3,15 @@ package com.chilsuitjo.back;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.AdditionalAnswers.delegatesTo;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.chilsuitjo.back.notification.dto.DeliveryQuery;
+import com.chilsuitjo.back.notification.dto.Recipient;
 import com.chilsuitjo.back.notification.dto.SmsMessage;
 import com.chilsuitjo.back.notification.dto.SmsNoticeCommand;
 import com.chilsuitjo.back.notification.dto.SmsSendResult;
@@ -39,6 +43,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -110,7 +115,7 @@ class OutboxWorkerTest {
         """,
         room);
     party = party("LANDLORD");
-    recipients.seedParty(party, "01012345678");
+    recipients.seedRecipient(party, new Recipient.Invitee("01012345678"));
   }
 
   /** 받는 자리. 통지는 같은 호실의 자리만 가리킬 수 있다(V1 {@code fk_notice_recipient_party_id_room}). */
@@ -243,7 +248,8 @@ class OutboxWorkerTest {
             50,
             List.of(Duration.ofMinutes(1)),
             Duration.ofDays(3),
-            configured);
+            configured,
+            "fake");
 
     sender.runOnce();
 
@@ -334,7 +340,7 @@ class OutboxWorkerTest {
         "UPDATE outbox SET created_at = CURRENT_TIMESTAMP - INTERVAL '3 days' WHERE dedupe_key = ?",
         "sms:" + noticeId);
     RecipientDirectory failingRecipients = mock(RecipientDirectory.class);
-    when(failingRecipients.phoneOfRecipient(party)).thenThrow(new IllegalStateException("조회 실패"));
+    when(failingRecipients.resolve(party)).thenThrow(new IllegalStateException("조회 실패"));
     OutboxWorker failingWorker = workerWith(failingRecipients, noticeRepository);
 
     failingWorker.runOnce();
@@ -348,7 +354,7 @@ class OutboxWorkerTest {
   void 수신자_조회_예외는_기한_전이면_다시_시도한다() {
     UUID noticeId = enqueue();
     RecipientDirectory failingRecipients = mock(RecipientDirectory.class);
-    when(failingRecipients.phoneOfRecipient(party)).thenThrow(new IllegalStateException("조회 실패"));
+    when(failingRecipients.resolve(party)).thenThrow(new IllegalStateException("조회 실패"));
 
     workerWith(failingRecipients, noticeRepository).runOnce();
 
@@ -379,7 +385,7 @@ class OutboxWorkerTest {
         "UPDATE outbox SET created_at = CURRENT_TIMESTAMP - INTERVAL '3 days' WHERE dedupe_key = ?",
         "sms:" + noticeId);
     RecipientDirectory failingRecipients = mock(RecipientDirectory.class);
-    when(failingRecipients.phoneOfRecipient(party)).thenThrow(new IllegalStateException("조회 실패"));
+    when(failingRecipients.resolve(party)).thenThrow(new IllegalStateException("조회 실패"));
     NoticeRepository failingLock = mock(NoticeRepository.class, delegatesTo(noticeRepository));
     doThrow(new IllegalStateException("DB 오류")).when(failingLock).findForUpdate(noticeId);
 
@@ -397,7 +403,7 @@ class OutboxWorkerTest {
         "UPDATE outbox SET created_at = CURRENT_TIMESTAMP - INTERVAL '3 days' WHERE dedupe_key = ?",
         "sms:" + noticeId);
     RecipientDirectory failingRecipients = mock(RecipientDirectory.class);
-    when(failingRecipients.phoneOfRecipient(party)).thenThrow(new IllegalStateException("조회 실패"));
+    when(failingRecipients.resolve(party)).thenThrow(new IllegalStateException("조회 실패"));
     jdbc.execute(
         "ALTER TABLE state.notice ADD CONSTRAINT test_reject_failed CHECK (status <> 'FAILED') NOT VALID");
     try {
@@ -465,6 +471,22 @@ class OutboxWorkerTest {
     assertThat(gateway.sentBatchIds()).isEmpty();
   }
 
+  private OutboxWorker workerWith(RecipientDirectory directory, SmsGateway sender, String smsMode) {
+    return new OutboxWorker(
+        outboxRepository,
+        noticeRepository,
+        inviteLinks,
+        directory,
+        sender,
+        clock,
+        transactionManager,
+        50,
+        List.of(Duration.ofMinutes(1)),
+        Duration.ofDays(3),
+        deliveryPollSchedule,
+        smsMode);
+  }
+
   private OutboxWorker workerWith(RecipientDirectory directory, NoticeRepository repository) {
     return new OutboxWorker(
         outboxRepository,
@@ -477,21 +499,77 @@ class OutboxWorkerTest {
         50,
         List.of(Duration.ofMinutes(1)),
         Duration.ofDays(3),
-        deliveryPollSchedule);
+        deliveryPollSchedule,
+        "fake");
+  }
+
+  /** 번호가 없는 세 결과는 phoneOfRecipient가 빈 값을 주던 때와 같다: 보내지 않고 줄만 끝내며, 업체 실패가 아니라 통지는 최종 실패가 아니다. */
+  @Test
+  void 보낼_번호가_없으면_보내지_않고_통지를_최종_실패로_두지_않는다() {
+    List<Recipient> withoutPhone =
+        List.of(
+            new Recipient.UnverifiedMember(UUID.randomUUID()),
+            new Recipient.InviteeWithoutPhone(),
+            new Recipient.Unavailable());
+    for (Recipient recipient : withoutPhone) {
+      recipients.seedRecipient(party, recipient);
+      UUID noticeId = enqueue();
+
+      worker.runOnce();
+
+      assertThat(notice(noticeId).get("status")).as(recipient.toString()).isEqualTo("REQUESTED");
+      assertThat(outboxStatus(noticeId)).as(recipient.toString()).isEqualTo("FAILED");
+      assertThat(gateway.sentBatchIds()).doesNotContain(noticeId);
+    }
+  }
+
+  /** 번호가 있는 두 결과만 보내고, 업체에는 resolve가 준 번호가 그대로 간다. */
+  @Test
+  void 인증된_회원과_초대_번호가_있는_자리에는_그_번호로_보낸다() {
+    SmsGateway capturing = mock(SmsGateway.class);
+    when(capturing.send(any())).thenReturn(SmsSendResult.sent("captured"));
+    RecipientDirectory directory = mock(RecipientDirectory.class);
+    when(directory.resolve(party))
+        .thenReturn(new Recipient.VerifiedMember(UUID.randomUUID(), "01033334444"));
+    UUID noticeId = enqueue();
+
+    workerWith(directory, capturing, "fake").runOnce();
+
+    ArgumentCaptor<SmsMessage> sent = ArgumentCaptor.forClass(SmsMessage.class);
+    verify(capturing).send(sent.capture());
+    assertThat(sent.getValue().phone()).isEqualTo("01033334444");
+    assertThat(sent.getValue().batchLeadId()).isEqualTo(noticeId);
+    assertThat(notice(noticeId).get("status")).isEqualTo("SENT");
+    assertThat(notice(noticeId).get("delivery_check_due_at")).isNotNull();
+    assertThat(outboxStatus(noticeId)).isEqualTo("DONE");
+  }
+
+  /**
+   * disabled는 받는 사람을 읽지 않고(resolve의 지어내지 않는 예외에 닿지 않음) 업체도 부르지 않은 채 줄을 끝낸다. 다시 시도하지 않아 켤 때 한꺼번에 나가지
+   * 않고, 통지는 최종 실패가 아니다(decisions 2026-11-25 운영 문자 모드).
+   */
+  @Test
+  void disabled에서는_받는_사람을_읽지_않고_보내지_않은_채_끝낸다() {
+    SmsGateway never = mock(SmsGateway.class);
+    RecipientDirectory directory = mock(RecipientDirectory.class);
+    UUID noticeId = enqueue();
+
+    workerWith(directory, never, "disabled").runOnce();
+
+    verifyNoInteractions(directory, never);
+    assertThat(outboxStatus(noticeId)).isEqualTo("FAILED");
+    assertThat(notice(noticeId).get("status")).isEqualTo("REQUESTED");
+    assertThat(notice(noticeId).get("sent_at")).isNull();
   }
 
   @Test
-  void 보낼_번호가_없으면_보내지_않고_통지를_최종_실패로_두지_않는다() {
-    UUID noticeId =
-        transaction.execute(status ->
-            noticeOutbox.enqueueSms(
-                new SmsNoticeCommand(room, party("TENANT"), NoticeKind.REQUEST, null, null)));
-
-    worker.runOnce();
-
-    assertThat(notice(noticeId).get("status")).isEqualTo("REQUESTED");
-    assertThat(outboxStatus(noticeId)).isEqualTo("FAILED");
-    assertThat(gateway.sentBatchIds()).doesNotContain(noticeId);
+  void 문자_방식을_읽을_수_없으면_작업자를_만들지_않는다() {
+    for (String bad : List.of("", "DISABLED", "unknown")) {
+      assertThatThrownBy(() -> workerWith(recipients, gateway, bad))
+          .as(bad)
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("app.sms.mode");
+    }
   }
 
   @Test
@@ -525,7 +603,8 @@ class OutboxWorkerTest {
             50,
             List.of(Duration.ofMinutes(1)),
             Duration.ofDays(3),
-            deliveryPollSchedule);
+            deliveryPollSchedule,
+            "fake");
     CompletableFuture<Integer> result = CompletableFuture.supplyAsync(blockedWorker::runOnce);
     try {
       assertThat(sending.await(10, TimeUnit.SECONDS)).isTrue();
@@ -581,7 +660,8 @@ class OutboxWorkerTest {
         50,
         List.of(Duration.ofMinutes(1)),
         giveUpAfter,
-        deliveryPollSchedule);
+        deliveryPollSchedule,
+        "fake");
   }
 
   private static Instant time(Map<String, Object> row, String column) {

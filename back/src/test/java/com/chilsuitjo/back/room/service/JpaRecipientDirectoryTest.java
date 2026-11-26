@@ -62,7 +62,6 @@ class JpaRecipientDirectoryTest {
     UUID party = seat("TENANT", member, status, null);
 
     assertThat(recipients.resolve(party)).isEqualTo(new Recipient.VerifiedMember(member, phone));
-    assertThat(recipients.phoneOfRecipient(party)).contains(phone);
     assertThat(recipients.phoneOfMember(member)).contains(phone);
   }
 
@@ -72,7 +71,6 @@ class JpaRecipientDirectoryTest {
     UUID party = seat("TENANT", member, "CONNECTED", null);
 
     assertThat(recipients.resolve(party)).isEqualTo(new Recipient.UnverifiedMember(member));
-    assertThat(recipients.phoneOfRecipient(party)).isEmpty();
     assertThat(recipients.phoneOfMember(member)).isEmpty();
   }
 
@@ -82,8 +80,6 @@ class JpaRecipientDirectoryTest {
     UUID party = seat("LANDLORD", null, "INVITED", phone);
 
     assertThat(recipients.resolve(party)).isEqualTo(new Recipient.Invitee(phone));
-    assertThat(recipients.phoneOfRecipient(party)).contains(phone);
-    assertThat(recipients.phoneOfParty(party)).contains(phone);
   }
 
   @Test
@@ -91,8 +87,6 @@ class JpaRecipientDirectoryTest {
     UUID party = seat("LANDLORD", null, "INVITED", null);
 
     assertThat(recipients.resolve(party)).isEqualTo(new Recipient.InviteeWithoutPhone());
-    assertThat(recipients.phoneOfRecipient(party)).isEmpty();
-    assertThat(recipients.phoneOfParty(party)).isEmpty();
   }
 
   @ParameterizedTest
@@ -102,10 +96,6 @@ class JpaRecipientDirectoryTest {
     UUID party = seat("LANDLORD", null, status, phone);
 
     assertThat(recipients.resolve(party)).isEqualTo(new Recipient.Unavailable());
-    // 보낼 번호는 resolve와 같은 판단이라 없다
-    assertThat(recipients.phoneOfRecipient(party)).isEmpty();
-    // 옛 계약: 자리의 초대 번호 칸 값은 그대로 읽는다(작업자를 resolve로 바꿀 때 지울 메서드)
-    assertThat(recipients.phoneOfParty(party)).contains(phone);
   }
 
   @Test
@@ -115,7 +105,6 @@ class JpaRecipientDirectoryTest {
     assertThatThrownBy(() -> recipients.resolve(missing))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining(missing.toString());
-    assertThat(recipients.phoneOfParty(missing)).isEmpty();
   }
 
   @Test
@@ -140,7 +129,6 @@ class JpaRecipientDirectoryTest {
     UUID party = seat("TENANT", gone, "CONNECTED", null);
 
     assertThat(recipients.resolve(party)).isEqualTo(new Recipient.UnverifiedMember(gone));
-    assertThat(recipients.phoneOfRecipient(party)).isEmpty();
   }
 
   @Test
