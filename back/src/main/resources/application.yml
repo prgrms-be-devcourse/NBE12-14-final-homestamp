@@ -109,9 +109,17 @@ sms:
 photo:
   max:
     repair: 30
+  # 사진 주소(06 0-1 photo.url.*): 회원 썸네일은 정각부터 member, 원본은 short. 둘 다 자격 증명 만료 − 10분을 넘지 않는다
+  url:
+    member: 2h
+    short: 5m
   s3:
     bucket: ${PHOTO_S3_BUCKET:}
     region: ${PHOTO_S3_REGION:ap-northeast-2}
+
+# 고아 파일 확인(04 5-1, 06 0-1 orphan.check-after): 복사 전에 남긴 확인 줄이 이 시간 뒤 돈다
+orphan:
+  check-after: 1h
 
 # 사진 업로드 정책 (06 0-1)
 upload:
@@ -124,6 +132,14 @@ upload:
   daily:
     member: 100
     inspection: 40
+
+---
+# prod 전용 조기 설정 공급. local·test는 이 import를 실행하지 않는다.
+spring:
+  config:
+    activate:
+      on-profile: prod
+    import: "homestamp-ssm:"
 
 ---
 spring:

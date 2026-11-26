@@ -182,31 +182,134 @@ class InviteLinkServiceTest {
   }
 
   @Test
-  void 다른_호실의_자리나_기록이면_저장이_실패하고_링크가_남지_않는다() {
+  void 다른_호실의_자리면_개발_오류로_저장이_실패하고_링크가_남지_않는다() {
     Room one = room();
     Room two = room();
-    UUID otherInspection = inspection(two.id());
 
     assertThatThrownBy(() ->
             inTx(() -> inviteLinks.issueInvite(one.id(), two.counterpart(), null, one.issuer())))
         .isInstanceOf(DataIntegrityViolationException.class);
+    // 기록이 맞아도 자리가 틀리면 NOT_FOUND가 아니라 개발 오류다
+    RequestTarget mine = RequestTarget.of(TargetKind.INSPECTION, inspection(one.id()));
     assertThatThrownBy(() ->
-            inTx(() ->
-                inviteLinks.issueInvite(
-                    one.id(),
-                    one.counterpart(),
-                    RequestTarget.of(TargetKind.INSPECTION, otherInspection),
-                    one.issuer())))
-        .isInstanceOf(DataIntegrityViolationException.class);
-    assertThatThrownBy(() ->
-            inTx(() ->
-                inviteLinks.issueInvite(
-                    one.id(),
-                    one.counterpart(),
-                    RequestTarget.of(TargetKind.REPAIR_CASE, UUID.randomUUID()),
-                    one.issuer())))
+            inTx(() -> inviteLinks.issueInvite(one.id(), two.counterpart(), mine, one.issuer())))
         .isInstanceOf(DataIntegrityViolationException.class);
     assertThat(linkCount(one.id())).isZero();
+  }
+
+  @Test
+  void 수리_건_점검_기록으로_초대_링크를_만든다() {
+    Room room = room();
+    UUID repair = repairCase(room.id());
+    UUID inspection = inspection(room.id());
+
+    UUID repairLink =
+        inTx(() ->
+            inviteLinks.issueInvite(
+                room.id(),
+                room.counterpart(),
+                RequestTarget.of(TargetKind.REPAIR_CASE, repair),
+                room.issuer()));
+    UUID inspectionLink =
+        inTx(() ->
+            inviteLinks.issueInvite(
+                room.id(),
+                room.counterpart(),
+                RequestTarget.of(TargetKind.INSPECTION, inspection),
+                room.issuer()));
+
+    assertThat(jdbc.queryForMap("SELECT * FROM state.link WHERE id = ?", repairLink))
+        .containsEntry("repair_case_id", repair)
+        .containsEntry("inspection_id", null);
+    assertThat(jdbc.queryForMap("SELECT * FROM state.link WHERE id = ?", inspectionLink))
+        .containsEntry("repair_case_id", null)
+        .containsEntry("inspection_id", inspection);
+  }
+
+  /** 기록 ID는 요청에서 온 값이라 없거나 다른 호실의 기록이면 같은 {@code NOT_FOUND}다(#163). */
+  @Test
+  void 없거나_다른_호실의_기록이면_NOT_FOUND이고_링크가_남지_않는다() {
+    Room one = room();
+    Room two = room();
+    List<RequestTarget> wrong =
+        List.of(
+            RequestTarget.of(TargetKind.INSPECTION, inspection(two.id())),
+            RequestTarget.of(TargetKind.INSPECTION, UUID.randomUUID()),
+            RequestTarget.of(TargetKind.REPAIR_CASE, repairCase(two.id())),
+            RequestTarget.of(TargetKind.REPAIR_CASE, UUID.randomUUID()));
+
+    for (RequestTarget record : wrong) {
+      assertThatThrownBy(() ->
+              inTx(
+                  () -> inviteLinks.issueInvite(one.id(), one.counterpart(), record, one.issuer())))
+          .as(record.toString())
+          .isInstanceOfSatisfying(
+              BusinessException.class,
+              e -> assertThat(e.errorCode()).isEqualTo(ErrorCode.NOT_FOUND));
+    }
+    assertThat(linkCount(one.id())).isZero();
+  }
+
+  /**
+   * pipeline {@code save} 안에서 나면 {@code NOT_FOUND}가 그대로 올라오고 같은 트랜잭션의 행동 기록·링크가 모두 되돌아간다. 무결성 위반이
+   * 아니라서 같은 키 재요청 찾기({@code replayIfDone})로도 가지 않는다. 호실 전체 롤백(자리·통지)은 초대 API(A) 통합 테스트가 본다.
+   */
+  @Test
+  void pipeline_save에서_기록이_없으면_NOT_FOUND가_올라오고_행동과_링크가_남지_않는다() {
+    Room room = room();
+    StateStore<String> store =
+        new StateStore<>() {
+          @Override
+          public String load(ActionCommand command) {
+            return "";
+          }
+
+          @Override
+          public SavedState save(ActionCommand command, String next) {
+            inviteLinks.issueInvite(
+                room.id(),
+                room.counterpart(),
+                RequestTarget.of(TargetKind.INSPECTION, UUID.randomUUID()),
+                room.issuer());
+            return SavedState.unchanged();
+          }
+        };
+    Transitions<String> rules =
+        new Transitions<>() {
+          @Override
+          public String initial() {
+            return "";
+          }
+
+          @Override
+          public String apply(String now, ActionEntry action) {
+            return now;
+          }
+        };
+
+    assertThatThrownBy(() ->
+            pipeline.execute(
+                new ActionCommand(
+                    room.id(),
+                    Actor.member(room.issuer()),
+                    ActionType.CHANGE_INVITE_PHONE,
+                    "invite-not-found-" + UUID.randomUUID(),
+                    ActionTarget.party(room.counterpart()),
+                    null,
+                    null,
+                    null,
+                    null),
+                store,
+                rules))
+        .isInstanceOfSatisfying(
+            BusinessException.class, e -> assertThat(e.errorCode()).isEqualTo(ErrorCode.NOT_FOUND));
+    assertThat(linkCount(room.id())).isZero();
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM record.action WHERE room_record_id = ?",
+                Integer.class,
+                room.id()))
+        .isZero();
   }
 
   @Test
@@ -715,6 +818,37 @@ class InviteLinkServiceTest {
             + " VALUES (?, ?, 'MOVE_IN', 'TENANT', 'DRAFT', CURRENT_TIMESTAMP, 0)",
         id,
         room);
+    return id;
+  }
+
+  /** 수리 건 하나(첫 판 포함). 머리와 첫 판은 서로를 가리켜(지연 외래 키) 한 트랜잭션에 넣는다. */
+  private UUID repairCase(UUID room) {
+    UUID part = UUID.randomUUID();
+    UUID id = UUID.randomUUID();
+    UUID content = UUID.randomUUID();
+    new TransactionTemplate(txManager)
+        .executeWithoutResult(tx -> {
+          jdbc.update(
+              "INSERT INTO state.room_part (id, room_record_id, zone, name, sort_order, created_at, version)"
+                  + " VALUES (?, ?, '방', '천장', 0, CURRENT_TIMESTAMP, 0)",
+              part,
+              room);
+          jdbc.update(
+              "INSERT INTO state.repair_case (id, room_record_id, current_content_id, status, defect_ack,"
+                  + " money_status, created_by_side, created_at, version)"
+                  + " VALUES (?, ?, ?, 'NOT_STARTED', 'PENDING', 'UNDECIDED', 'TENANT', CURRENT_TIMESTAMP, 0)",
+              id,
+              room,
+              content);
+          jdbc.update(
+              "INSERT INTO record.repair_content (id, room_record_id, repair_case_id, no, room_part_id,"
+                  + " title, created_by_side, created_at)"
+                  + " VALUES (?, ?, ?, 1, ?, '천장 누수', 'TENANT', CURRENT_TIMESTAMP)",
+              content,
+              room,
+              id,
+              part);
+        });
     return id;
   }
 
