@@ -334,6 +334,34 @@ class RoomCreateApiTest {
   }
 
   @Test
+  void 초대_자리로_잠그면_그_자리의_측으로_읽고_다른_호실의_자리는_NOT_FOUND다() throws Exception {
+    UUID owner = member();
+    UUID invitee = member();
+    UUID room = createdRoom(owner, "LANDLORD");
+    UUID otherRoom = createdRoom(member(), "LANDLORD");
+    UUID tenantSeat = seatOf(room, "TENANT");
+
+    // 아직 당사자가 아닌 회원도 이 호실의 자리로는 잠글 수 있다(자리 상태·번호는 Party 규칙 몫, #249)
+    RoomGate gate =
+        inTransaction(() -> gates.lockAndReadAsInvitee(room, Actor.member(invitee), tenantSeat));
+    assertThat(gate).isEqualTo(RoomGate.open(room, null).asInvitee(PartySide.TENANT));
+
+    expectNotFound(() ->
+        inTransaction(
+            () -> gates.lockAndReadAsInvitee(otherRoom, Actor.member(invitee), tenantSeat)));
+    expectNotFound(() ->
+        inTransaction(
+            () -> gates.lockAndReadAsInvitee(room, Actor.member(invitee), UUID.randomUUID())));
+    assertThatThrownBy(() -> gates.lockAndReadAsInvitee(room, Actor.member(invitee), tenantSeat))
+        .isInstanceOf(IllegalTransactionStateException.class);
+  }
+
+  private UUID seatOf(UUID room, String side) {
+    return jdbc.queryForObject(
+        "SELECT id FROM state.party WHERE room_record_id = ? AND side = ?", UUID.class, room, side);
+  }
+
+  @Test
   void 만든_호실에_이어지는_행동은_실제_잠금을_지나고_남의_행동은_막힌다() throws Exception {
     UUID owner = member();
     UUID stranger = member();
