@@ -38,6 +38,10 @@ app:
   progress:
     ask:
       interval: 7d
+  # 점검이 작성 중인 채로 이만큼 지나면 상대도 확인 요청을 보낼 수 있다(06 0-1 inspection.draft.stale-after)
+  inspection:
+    draft:
+      stale-after: 7d
   # 아웃박스 문자 작업자(04 4-2). 테스트처럼 작업자를 직접 부를 때만 끈다
   outbox:
     worker:
