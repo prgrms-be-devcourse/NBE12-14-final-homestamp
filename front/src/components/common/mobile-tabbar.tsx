@@ -16,7 +16,8 @@ export function MobileTabbar({
 }) {
   const activeTab = page === "notifications" ? null : activeTabOf(page)
   return (
-    <nav aria-label="모바일 주 메뉴" className="mobile-tabbar md:hidden">
+    // 좁은 화면(760px 이하)에서만 보임. readability.css의 .mobile-tabbar가 정한다
+    <nav aria-label="모바일 주 메뉴" className="mobile-tabbar">
       {nav.map((item) => {
         const active = activeTab === item.id
         const badge =

@@ -84,11 +84,11 @@ export function AppTopbar({
           <Bell size={20} />
           {unread > 0 && <span>{unread}</span>}
         </Button>
-        {/* 모바일에서만 Topbar에 내 계정 버튼 표시(PC는 사이드바 하단으로 일원화) */}
+        {/* 모바일에서만 Topbar에 내 계정 버튼 표시(PC는 사이드바 하단으로 일원화). 숨기는 것은 readability.css */}
         <Button
           variant="ghost"
           size="icon"
-          className="avatar small md:hidden"
+          className="avatar small"
           aria-label="내 계정"
           onClick={onAccount}
         >

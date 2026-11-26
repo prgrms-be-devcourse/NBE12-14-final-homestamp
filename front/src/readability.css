@@ -155,12 +155,13 @@
   gap: 8px;
   flex-shrink: 0;
 }
-/* 모바일 하단 고정 4탭 바 */
+/* 모바일 하단 고정 4탭 바. 보이고 숨기는 것은 아래 760px 미디어 쿼리가 정한다
+   (이 파일의 규칙은 Tailwind 층 밖이라 md:hidden 같은 유틸리티보다 우선해서, 클래스로 숨기면 PC에서도 보인다) */
 .mobile-tabbar {
   position: fixed;
   inset: auto 0 0 0;
   z-index: 40;
-  display: grid;
+  display: none;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   background: rgba(255, 255, 255, 0.96);
   backdrop-filter: blur(12px);
@@ -605,7 +606,17 @@
     padding: 10px 20px;
   }
 }
+/* PC는 내 계정을 옆 메뉴 아래에만 둔다(.avatar의 display: grid가 md:hidden보다 우선해서 여기서 숨김) */
+.topbar .avatar.small {
+  display: none;
+}
 @media (max-width: 760px) {
+  .mobile-tabbar {
+    display: grid;
+  }
+  .topbar .avatar.small {
+    display: grid;
+  }
   .sidebar {
     display: none;
   }
