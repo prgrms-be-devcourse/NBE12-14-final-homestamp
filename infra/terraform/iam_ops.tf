@@ -14,6 +14,7 @@
 #                     AWS-StartPortForwardingSessionToRemoteHost는 넣지 않는다: 목적지를 아무 주소나 줄 수 있어
 #                     서버 메타데이터(169.254.169.254)로 가면 셸 없이도 자격 증명을 꺼낼 수 있다.
 #   관리(ops-admin) : 셸 + 포트 포워딩. 장애 대응, 운영 명령(OPS-3·4), 첫 설정. RDS 마스터 Secret 하나 읽기(Bootstrap)
+#                     RDS로 가는 포워딩은 목적지를 박은 전용 문서(ssm_rds.tf)로만
 
 locals {
   team_iam_user = "devcos-team07"
@@ -163,7 +164,7 @@ data "aws_iam_policy_document" "ops_admin" {
   statement {
     sid       = "ShellAndPortForwardDocuments"
     actions   = ["ssm:StartSession"]
-    resources = [local.ops_shell_doc, local.ops_port_forward]
+    resources = [local.ops_shell_doc, local.ops_port_forward, aws_ssm_document.rds_forward.arn] # RDS 5432 전용(ssm_rds.tf)
   }
 
   # RDS 마스터 Secret 하나만 값 읽기(Role Bootstrap·Human 계정 관리용, decisions 2026-11-25).
