@@ -17,7 +17,12 @@ import java.nio.charset.StandardCharsets;
  */
 @Documented
 @Constraint(validatedBy = MaxUtf8Bytes.Validator.class)
-@Target({ElementType.FIELD, ElementType.PARAMETER, ElementType.RECORD_COMPONENT})
+@Target({
+  ElementType.FIELD,
+  ElementType.PARAMETER,
+  ElementType.RECORD_COMPONENT,
+  ElementType.ANNOTATION_TYPE
+})
 @Retention(RetentionPolicy.RUNTIME)
 public @interface MaxUtf8Bytes {
 
