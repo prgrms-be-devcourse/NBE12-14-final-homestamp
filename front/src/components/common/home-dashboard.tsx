@@ -26,6 +26,7 @@ import { cn } from "cn"
 import { plainText } from "@/lib/plain-words"
 import { daysSince, lastActivity, moneyLabel } from "@/lib/activity"
 import { sideName } from "@/lib/words"
+import { connectionText } from "@/lib/workflows"
 
 // 홈 카드 한 장(제목 · 설명 · 오른쪽 버튼 + 내용). warm: 내가 답할 것처럼 맨 위에서 눈에 띄어야 하는 카드
 function Section({
@@ -469,7 +470,7 @@ export function HomeDashboard(p: HomeDashboardProps) {
                   <small>{room.address}</small>
                   <span className="badges mt-1">
                     <Status>{room.status}</Status>
-                    <Status>{room.connection}</Status>
+                    <Status>{connectionText(room)}</Status>
                   </span>
                   <span className="mt-1 flex items-center gap-1.5 text-sm font-semibold text-brand">
                     <ArrowRight size={14} aria-hidden />

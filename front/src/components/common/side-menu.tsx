@@ -4,6 +4,7 @@ import { Choice, Logo, Status } from "@/components/common/blocks"
 import type { Room } from "@/data/demo"
 import type { Page } from "@/lib/router"
 import { activeTabOf, nav, type NavTabId } from "@/components/common/app-nav"
+import { connectionText } from "@/lib/workflows"
 
 // PC 전용 좌측 슬림 사이드바: 로고 → 호실 전환 → 4개 핵심 메뉴 → 내 계정
 export function SideMenu({
@@ -55,7 +56,7 @@ export function SideMenu({
           )}
           <div className="badges mt-2">
             <Status>{room.status}</Status>
-            <Status>{room.connection}</Status>
+            <Status>{connectionText(room)}</Status>
           </div>
         </div>
       )}
