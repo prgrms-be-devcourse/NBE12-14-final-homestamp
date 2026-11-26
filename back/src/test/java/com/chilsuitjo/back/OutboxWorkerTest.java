@@ -59,8 +59,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 class OutboxWorkerTest {
 
   /**
-   * 번호 조회는 test 코드의 가짜로 둔다. main의 {@code FakeRecipientDirectory}나 나중의 room 실제 구현이 있어도
-   * {@code @Primary}라 작업자는 이것을 받는다.
+   * 번호 조회는 test 코드의 가짜로 둔다. room 실제 구현({@code JpaRecipientDirectory})이 있어도 {@code @Primary}라 작업자는
+   * 이것을 받는다.
    */
   @TestConfiguration
   static class RecipientsConfig {
