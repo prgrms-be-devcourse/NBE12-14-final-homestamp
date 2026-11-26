@@ -866,6 +866,30 @@ class RepairTransitionsTest {
         .isEqualTo(NOW);
   }
 
+  @Test
+  void 재계산은_지금_설정으로_과거에_켠_상황이_바뀌었어요를_다시_거절하지_않는다() {
+    // 7일 설정에서 8일 간격으로 기록된 행동을 14일 설정으로 다시 계산해도 실패하지 않는다(#234와 같은 방식, #259 리뷰)
+    RepairTransitions longer = new RepairTransitions(Duration.ofDays(14), INTERVAL);
+    List<ActionEntry> history =
+        List.of(
+            entry(ActionType.REGISTER, PartySide.TENANT),
+            respond(PartySide.LANDLORD, Answer.ACK, null, 1),
+            asksCheck(PartySide.TENANT, NOW),
+            asksCheck(PartySide.LANDLORD, NOW.plus(Duration.ofDays(8))));
+
+    RepairState folded = Replay.fold(longer, history);
+
+    assertThat(folded.situationCheck().lastAskedAt()).isEqualTo(NOW.plus(Duration.ofDays(8)));
+    // 요청할 때는 지금 설정(14일)으로 막는다
+    assertError(
+        ErrorCode.ASKED_RECENTLY,
+        () ->
+            longer.apply(
+                folded.withSituationCheck(
+                    folded.situationCheck().withOpening(SituationOpening.OPEN)),
+                asksCheck(PartySide.TENANT, NOW.plus(Duration.ofDays(20)))));
+  }
+
   /** 세입자가 등록하고 처리 중인 수리 건. [상황이 바뀌었어요]를 마지막으로 켠 시각과 지금 열 수 있는지를 정한다. */
   private static RepairState situation(
       AckState ack, Instant lastAskedAt, SituationOpening opening) {

@@ -336,7 +336,11 @@ public class RepairTransitions implements Transitions<RepairState> {
    * rerequest.interval}에 한 번(누가 켰든) {@code ASKED_RECENTLY}. 다시 요청끼리는 [보충하고 다시 확인 요청]과 [상황이 바뀌었어요]를
    * 함께 센다(03 G "다시 확인 요청의 한도", 06 0-1 {@code rerequest.interval}, #259 리뷰): 보충하고 7일 안에 상대가 맞아요로 답해도
    * 그 7일이 지나야 켠다. 반대 방향(켠 뒤 보충)은 맞아요가 끝이라 생기지 않아 보충 쪽({@code AnswerSupport.rerequest})은 그대로다. 하자
-   * 인정은 그대로다(REP-6d "하자 [맞아요]는 그대로"). 재계산이라 열 수 있는지 모르면 그때 서버가 확인했다고 본다.
+   * 인정은 그대로다(REP-6d "하자 [맞아요]는 그대로").
+   *
+   * <p>재계산({@code Replay.fold})이면 열 수 있는지({@code opening})를 모르고, 그때 서버가 확인했다고 본다. 7일 검사도 요청할 때만 지금
+   * 설정으로 한다: 설정을 7일에서 14일로 바꾼 뒤 8일 간격으로 기록된 행동을 다시 거절하면 재계산(공유를 그만둔 뒤 상세 조회 등)이 실패한다(#234와 같은 방식,
+   * #259 리뷰).
    */
   private RepairState noteProgress(RepairState now, ActionEntry action) {
     requireVisible(now, action);
@@ -351,8 +355,13 @@ public class RepairTransitions implements Transitions<RepairState> {
     if (now.defectAck() != AckState.ACK || check.opening() == SituationOpening.BLOCKED) {
       throw new BusinessException(ErrorCode.INVALID_STATE);
     }
-    AnswerSupport.checkInterval(
-        latest(check.lastAskedAt(), now.lastRerequestAt()), action.createdAt(), rerequestInterval);
+    // opening은 켜는 요청일 때만 load가 채운다(재계산이면 null)
+    if (check.opening() != null) {
+      AnswerSupport.checkInterval(
+          latest(check.lastAskedAt(), now.lastRerequestAt()),
+          action.createdAt(),
+          rerequestInterval);
+    }
     return now.withSituationCheck(new SituationCheck(action.createdAt(), check.opening()));
   }
 
