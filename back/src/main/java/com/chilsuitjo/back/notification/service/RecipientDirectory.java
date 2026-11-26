@@ -19,8 +19,9 @@ public interface RecipientDirectory {
   Optional<String> phoneOfMember(UUID memberId);
 
   /**
-   * 통지를 보낼 자리의 지금 번호. 연결된 회원 자리면 그 회원의 인증된 번호, 아직 비회원 자리면 초대 번호다. 보낼 수 없으면(탈퇴·인증 풀림·번호 지움) 빈 값이고,
-   * 아웃박스 작업자는 문자를 보내지 않는다(통지를 최종 실패로 두지 않음, 04 4-2).
+   * 통지를 보낼 자리의 지금 번호. {@link #resolve}와 같은 판단이다: 연결된 회원 자리면 그 회원의 인증된 번호, 초대 자리({@code INVITED})면
+   * 초대 번호다. 그 밖(번호만·거절·탈퇴 자리는 번호 칸에 값이 있어도)과 인증 풀림·번호 지움이면 빈 값이고, 아웃박스 작업자는 문자를 보내지 않는다(통지를 최종 실패로
+   * 두지 않음, 04 4-2. 03 B "상대 초대하기": 처음 문자는 초대할 때).
    */
   Optional<String> phoneOfRecipient(UUID partyId);
 
@@ -40,8 +41,9 @@ public interface RecipientDirectory {
    * 통지는 외래 키로 있는 자리만 가리키므로({@code fk_notice_recipient_party_id_room}) 자리가 없는 것도 모순이다. 번호는 로그·예외 문구에
    * 남기지 않는다.
    *
-   * <p>지금 부르는 곳은 없다. 아웃박스 작업자는 room 실제 구현이 들어온 뒤 이것으로 바꾸고, 그때 {@link #phoneOfParty}·{@link
-   * #phoneOfRecipient}를 지운다({@link #phoneOfMember}는 남김).
+   * <p>room 실제 구현({@code JpaRecipientDirectory})이 들어왔다. 아웃박스 작업자는 아직 {@link #phoneOfRecipient}를
+   * 부르고, 이것으로 바꿀 때 {@link #phoneOfParty}·{@link #phoneOfRecipient}를 지운다({@link #phoneOfMember}는 남김,
+   * D).
    */
   Recipient resolve(UUID partyId);
 }

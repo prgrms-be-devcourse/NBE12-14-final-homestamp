@@ -12,6 +12,7 @@ import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 import java.time.Instant;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -101,6 +102,15 @@ public class Party {
    */
   public boolean isInvitedPhone(String phone) {
     return invitePhone != null && invitePhone.equals(phone);
+  }
+
+  /**
+   * 문자를 보낼 때만 읽는 초대 번호(notification의 {@code RecipientDirectory}, 05 {@code party.invite_phone}).
+   * 지워졌으면(연결·수신 거부·탈퇴) 빈 값이다. 화면 응답·로그에 넣지 않는다(04 "개인정보 로그"). 그 밖의 곳은 {@link #isInvitedPhone}으로 비교만
+   * 한다.
+   */
+  public Optional<String> invitePhoneForSending() {
+    return Optional.ofNullable(invitePhone).filter(phone -> !phone.isBlank());
   }
 
   /**

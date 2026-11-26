@@ -10,7 +10,7 @@ import com.chilsuitjo.back.notification.rule.DeliveryPollSchedule;
 import com.chilsuitjo.back.notification.rule.NoticeKind;
 import com.chilsuitjo.back.notification.service.DeliveryPollClaimer;
 import com.chilsuitjo.back.notification.service.DeliveryResultPoller;
-import com.chilsuitjo.back.notification.service.FakeRecipientDirectory;
+import com.chilsuitjo.back.notification.service.InMemoryRecipientDirectory;
 import com.chilsuitjo.back.notification.service.InviteLinks;
 import com.chilsuitjo.back.notification.service.NoticeOutbox;
 import com.chilsuitjo.back.notification.service.OutboxWorker;
@@ -38,8 +38,11 @@ import org.springframework.transaction.support.TransactionTemplate;
  *
  * <p>작업자를 여러 번 커밋하므로 테스트 트랜잭션으로 감싸지 않는다. 다른 테스트의 줄과 섞이지 않게 2019년 고정 시계와 전용 지역 코드를 쓴다(아웃박스·조회 작업자는 그
  * 시각까지 된 줄만 가져감).
+ *
+ * <p>번호 조회는 {@link OutboxWorkerTest}와 같은 test 가짜({@link InMemoryRecipientDirectory})를 받는다(main 가짜는
+ * 지움, #268).
  */
-@Import(TestcontainersConfiguration.class)
+@Import({TestcontainersConfiguration.class, OutboxWorkerTest.RecipientsConfig.class})
 @SpringBootTest(
     properties = {
       "spring.datasource.hikari.connection-init-sql=SET search_path TO state, record, log, public",
@@ -59,7 +62,7 @@ class DeliveryCheckDueSettingChangeTest {
   @Autowired private NoticeRepository notices;
   @Autowired private OutboxRepository outbox;
   @Autowired private FakeSmsGateway gateway;
-  @Autowired private FakeRecipientDirectory recipients;
+  @Autowired private InMemoryRecipientDirectory recipients;
   @Autowired private InviteLinks inviteLinks;
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private TransactionTemplate transaction;
@@ -71,6 +74,7 @@ class DeliveryCheckDueSettingChangeTest {
   @BeforeEach
   void setUp() {
     gateway.reset();
+    recipients.reset();
     jdbc.update(
         "INSERT INTO region (code, sido, dong) VALUES (?, '테스트', '기한동') ON CONFLICT DO NOTHING",
         REGION);

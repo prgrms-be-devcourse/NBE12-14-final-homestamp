@@ -14,8 +14,8 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 /**
- * main 가짜({@link FakeRecipientDirectory})와 test 가짜({@link InMemoryRecipientDirectory})가 같은 계약을 지키는지
- * 본다.
+ * test 가짜({@link InMemoryRecipientDirectory})가 포트 계약을 지키는지 본다. main 가짜는 room 실제 구현({@code
+ * JpaRecipientDirectory})이 들어오며 지웠다(#163). 실제 구현의 계약은 {@code JpaRecipientDirectoryTest}가 본다.
  */
 class RecipientDirectoryFakesTest {
 
@@ -37,17 +37,8 @@ class RecipientDirectoryFakesTest {
   }
 
   static Stream<Arguments> fakes() {
-    FakeRecipientDirectory main = new FakeRecipientDirectory();
     InMemoryRecipientDirectory test = new InMemoryRecipientDirectory();
     return Stream.of(
-        Arguments.of(
-            new Subject(
-                "main",
-                main,
-                main::seedRecipient,
-                main::seedUnresolvable,
-                main::seedParty,
-                main::seedMember)),
         Arguments.of(
             new Subject(
                 "test",

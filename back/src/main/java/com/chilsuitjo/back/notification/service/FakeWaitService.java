@@ -87,6 +87,17 @@ public class FakeWaitService implements WaitService {
   }
 
   @Override
+  public void withdrawn(RequestTarget target, RequestKind kind, PartySide requestedBySide) {
+    Key key = Key.of(target, kind, requestedBySide);
+    Request request = requests.get(key);
+    if (request != null
+        && request.status().isOpen()
+        && request.requestedBySide() == requestedBySide) {
+      write(key, request.with(RequestStatus.WITHDRAWN, null));
+    }
+  }
+
+  @Override
   public RequestHandle restart(OpenRequestCommand command) {
     Key key = Key.of(command.target(), command.kind(), command.requestedBySide());
     if (!canOpen(command.roomRecordId(), command.kind())) {

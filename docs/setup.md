@@ -98,7 +98,7 @@ npm run dev                # http://localhost:5173, /api는 백엔드(8080)로 �
 ### 지금 알아 둘 것
 
 - **프로필은 기본 `local`이다.** 다른 프로필로 띄우려면 환경 변수 `SPRING_PROFILES_ACTIVE`를 주거나(`SPRING_PROFILES_ACTIVE=test ./gradlew bootRun`) `--args='--spring.profiles.active=test'`를 붙인다. **프로필 없이 띄운 앱은 시작하지 않는다**(local·test·prod 중 하나가 있어야 하고, prod는 local·test와 함께 켤 수 없다).
-- **문자는 로컬에서 보내지 않는다.** local·test는 가짜 발송기(`app.sms.mode=fake`)라 실제 문자가 가지 않는다. 운영(prod)은 솔라피 연동 전까지 `disabled`다(`docs/rules/04` 4-2).
+- **문자는 로컬에서 보내지 않는다.** local·test는 가짜 발송기(`app.sms.mode=fake`)라 실제 문자가 가지 않는다. 운영(prod)은 솔라피 연동 전까지 `disabled`다(`docs/rules/04` 4-2). 받는 번호는 로컬 DB에 저장된 값을 그대로 읽는다(번호를 지어내지 않음).
 - **API 문서(Swagger UI)는 로컬에서만 켜진다.** `bootRun`이 local 프로필로 떠서 http://localhost:8080/swagger-ui/index.html 에 열린다(운영에서는 꺼짐, `docs/rules/04` API 문서). 문서 주소는 local·test 프로필에서만 로그인 없이 열리고, `prod`가 켜지면 열리지 않는다.
 - **화면에서 가입할 때 인증번호는 백엔드 로그에 나온다.** 로컬은 문자를 실제로 보내지 않는다. 프론트를 `VITE_API_MODE=http npm run dev`로 띄워 가입하면, `bootRun` 터미널에 `[로컬 전용] 인증번호 123456 (받는 번호 010-****-5678)` 한 줄이 찍힌다. local 프로필로 띄웠을 때만 찍히고(`app.sms.log-code`, #248), test나 prod 프로필이 함께 켜져 있으면 설정을 켜도 찍히지 않는다. 받는 번호는 가린 형태로만 나온다. 프론트는 5173 포트여야 한다(아래 재발급의 `Origin` 검사. 5173이 이미 쓰이면 Vite가 5174로 띄우니 먼저 끈다).
 - **로그인 API로 토큰을 받는다.** 가입한 회원의 이메일·비밀번호로 `POST /api/auth/login`을 부르면 본문에 액세스 토큰, `Set-Cookie`에 리프레시 쿠키(`refresh_token`, `Path=/api/auth/refresh`, 14일)가 온다. 액세스 토큰은 15분이다. 이메일·비밀번호가 맞지 않으면 어느 쪽이 틀렸든 `401 LOGIN_FAILED`다.

@@ -12,12 +12,12 @@ import com.chilsuitjo.back.notification.repository.SmsGateway;
 import com.chilsuitjo.back.notification.rule.NoticeKind;
 import com.chilsuitjo.back.notification.service.DisabledRecipientDirectory;
 import com.chilsuitjo.back.notification.service.DisabledVerificationSmsSender;
-import com.chilsuitjo.back.notification.service.FakeRecipientDirectory;
 import com.chilsuitjo.back.notification.service.FakeVerificationSmsSender;
 import com.chilsuitjo.back.notification.service.NoticeOutbox;
 import com.chilsuitjo.back.notification.service.OutboxWorker;
 import com.chilsuitjo.back.notification.service.RecipientDirectory;
 import com.chilsuitjo.back.notification.service.VerificationSmsSender;
+import com.chilsuitjo.back.room.service.JpaRecipientDirectory;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -82,7 +82,8 @@ class ProdDisabledContextTest {
         .isInstanceOf(DisabledRecipientDirectory.class);
     assertThat(context.getBeanNamesForType(FakeSmsGateway.class)).isEmpty();
     assertThat(context.getBeanNamesForType(FakeVerificationSmsSender.class)).isEmpty();
-    assertThat(context.getBeanNamesForType(FakeRecipientDirectory.class)).isEmpty();
+    // 꺼진 문자 방식에서는 실제 번호 조회도 켜지 않는다(decisions 2026-11-25 운영 문자 모드)
+    assertThat(context.getBeanNamesForType(JpaRecipientDirectory.class)).isEmpty();
   }
 
   @Test
