@@ -13,7 +13,7 @@
 #                     RDS(사람별 읽기 전용 DB 계정)·Grafana로 가는 포워딩은 목적지를 고정한 전용 세션 문서를 만들 때 더한다(#41, 모니터링).
 #                     AWS-StartPortForwardingSessionToRemoteHost는 넣지 않는다: 목적지를 아무 주소나 줄 수 있어
 #                     서버 메타데이터(169.254.169.254)로 가면 셸 없이도 자격 증명을 꺼낼 수 있다.
-#   관리(ops-admin) : 셸 + 포트 포워딩. 장애 대응, 운영 명령(OPS-3·4), 첫 설정.
+#   관리(ops-admin) : 셸 + 포트 포워딩. 장애 대응, 운영 명령(OPS-3·4), 첫 설정. RDS 마스터 Secret 하나 읽기(Bootstrap)
 
 locals {
   team_iam_user = "devcos-team07"
@@ -164,6 +164,18 @@ data "aws_iam_policy_document" "ops_admin" {
     sid       = "ShellAndPortForwardDocuments"
     actions   = ["ssm:StartSession"]
     resources = [local.ops_shell_doc, local.ops_port_forward]
+  }
+
+  # RDS 마스터 Secret 하나만 값 읽기(Role Bootstrap·Human 계정 관리용, decisions 2026-11-25).
+  # ARN은 RDS가 만든 Secret을 참조하므로 RDS가 생긴 뒤에 정해진다(ListSecrets·와일드카드 없음).
+  # Secret은 AWS 관리형 키(aws/secretsmanager)로 암호화되어 kms:Decrypt를 따로 주지 않는다
+  # (rds.tf에 master_user_secret_kms_key_id를 넣어 고객 관리형 키로 바꾸면 이 문장을 다시 검토한다).
+  # 한계: 과정의 공용 팀 사용자는 AdministratorAccess라 이 역할을 거치지 않고도 값을 읽을 수 있다.
+  # 이 문장은 "정해 둔 경로"이고 IAM이 다른 팀원을 막지는 못한다(셸 약속과 같은 한계, 04 8장)
+  statement {
+    sid       = "ReadRdsMasterSecretOnly"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [aws_db_instance.main.master_user_secret[0].secret_arn]
   }
 }
 
