@@ -33,16 +33,18 @@ export function createHttpRecords(request: HttpRequest): RecordsApi {
   const freshAt = new Map<string, number>()
   // 상세를 받아 화면 모델로 바꿔요. 남의 호실·없는 호실(404)은 목록에서 빼요(ROOM-2a).
   // 다른 오류(500·연결 끊김)면 목록 값은 두고 오류를 함께 돌려줘요. 부른 쪽이 화면에 알려요(버튼이 조용히 사라지지 않게).
+  // 목록에 아직 없는 호실(before 없음)은 상세만으로 만들어요.
   const detailOf = async (
     s: Session,
-    room: Room,
+    roomId: string,
+    before?: Room,
   ): Promise<{ room: Room | null; error?: unknown }> => {
     try {
-      const b = await getRoomDetail(request, room.id)
-      return { room: roomFromDetail(b, s.accountId, room) }
+      const b = await getRoomDetail(request, roomId)
+      return { room: roomFromDetail(b, s.accountId, before) }
     } catch (e) {
       if (isNotFound(e)) return { room: null }
-      return { room, error: e }
+      return { room: before ?? null, error: e }
     }
   }
   const load = async (s: Session) => {
@@ -60,7 +62,7 @@ export function createHttpRecords(request: HttpRequest): RecordsApi {
     const listed = summaries.map((b) =>
       roomFromSummary(b, s.accountId, before.get(b.id)),
     )
-    const results = await Promise.all(listed.map((r) => detailOf(s, r)))
+    const results = await Promise.all(listed.map((r) => detailOf(s, r.id, r)))
     const now = new Map(state.rooms.map((r) => [r.id, r]))
     const rooms = results
       .map(({ room }) =>
@@ -83,17 +85,20 @@ export function createHttpRecords(request: HttpRequest): RecordsApi {
     },
     getSnapshot: () => state,
     load,
+    // 목록에 없는 호실도 상세를 받아 넣어요. 만든 뒤 목록 다시 받기가 실패해도 새 호실 화면이 열려요(#241 리뷰).
+    // 남의 호실·없는 호실(404)이면 넣지 않아 '찾을 수 없는 기록'이 그대로 보여요.
     loadRoom: async (s, roomId) => {
       const room = state.rooms.find((r) => r.id === roomId)
-      if (!room) return
-      const { room: next, error } = await detailOf(s, room)
+      const { room: next, error } = await detailOf(s, roomId, room)
       if (error) throw error
       freshAt.set(roomId, ++tick)
       state = {
         ...state,
-        rooms: next
-          ? state.rooms.map((r) => (r.id === roomId ? next : r))
-          : state.rooms.filter((r) => r.id !== roomId),
+        rooms: !next
+          ? state.rooms.filter((r) => r.id !== roomId)
+          : room
+            ? state.rooms.map((r) => (r.id === roomId ? next : r))
+            : [next, ...state.rooms],
       }
       emit()
     },
@@ -106,8 +111,8 @@ export function createHttpRecords(request: HttpRequest): RecordsApi {
         made = await request<{ id?: string } | undefined>("POST", r.path, {
           body: r.body,
         })
-      // 보내기는 이미 성공했어요. 다시 받기에서 상세 하나가 실패해도 실패로 돌려주지 않아요
-      // (같은 기록을 다시 보내 두 번 만들지 않게). 상세는 호실에 들어갈 때 다시 받고(loadRoom), 그때 실패하면 알려요.
+      // 보내기는 이미 성공했어요. 다시 받기(목록·상세)가 실패해도 실패로 돌려주지 않아요
+      // (같은 기록을 다시 보내 두 번 만들지 않게). 새 호실은 그 화면에 들어갈 때 상세로 받고(loadRoom), 그때 실패하면 알려요.
       await load(s).catch(() => {})
       return { id: made?.id }
     },

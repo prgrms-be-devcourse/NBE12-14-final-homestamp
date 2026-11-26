@@ -276,6 +276,53 @@ describe("HTTP 기록 API의 호실 받기", () => {
     ).resolves.toEqual({ id: "r1" })
   })
 
+  test("만든 뒤 목록 다시 받기가 실패해도, 새 호실에 들어가면 상세로 받아 화면이 열린다(#241 리뷰)", async () => {
+    let listFails = true
+    const request = (async (method: string, path: string) => {
+      if (method === "POST") return { id: "new" }
+      if (path.startsWith(`${endpoints.rooms}?`)) {
+        if (listFails) throw new ApiError({ status: 500 })
+        return { items: [summary({ id: "new" })], nextCursor: null }
+      }
+      if (path === endpoints.room("new"))
+        return detail({ id: "new", moveInDate: "2026-03-01" })
+      return []
+    }) as HttpRequest
+    const records = createHttpRecords(request)
+    const made = await records.send(
+      { accountId: "me" },
+      {
+        request: post(endpoints.rooms, { side: "LANDLORD" }),
+        role: "임대인",
+        text: "새 호실 기록 만들기",
+        update: () => {},
+        options: { roomId: "x" },
+      },
+    )
+    // 만들기는 성공으로 돌려줘 다시 보내지 않아요(호실이 두 개 생기지 않게)
+    expect(made).toEqual({ id: "new" })
+    expect(records.getSnapshot().rooms).toEqual([])
+    // room-form이 새 ID로 이동하면 App이 loadRoom을 불러요
+    await records.loadRoom({ accountId: "me" }, "new")
+    expect(records.getSnapshot().rooms).toMatchObject([
+      { id: "new", name: "302호", since: "2026-03-01", creator: "임대인" },
+    ])
+    // 다음 목록 받기에서 같은 호실이 하나로 이어져요
+    listFails = false
+    await records.load({ accountId: "me" })
+    expect(records.getSnapshot().rooms.map((r) => r.id)).toEqual(["new"])
+  })
+
+  test("목록에 없는 호실이 404면 넣지 않는다(찾을 수 없는 기록 그대로)", async () => {
+    const records = createHttpRecords(
+      server(() => {
+        throw new ApiError({ status: 404, code: "NOT_FOUND" })
+      }),
+    )
+    await records.loadRoom({ accountId: "me" }, "someone-else")
+    expect(records.getSnapshot().rooms).toEqual([])
+  })
+
   test("같은 커서가 다시 오면 끝없이 받지 않고 멈춘다", async () => {
     const request = (async () => ({
       items: [],
