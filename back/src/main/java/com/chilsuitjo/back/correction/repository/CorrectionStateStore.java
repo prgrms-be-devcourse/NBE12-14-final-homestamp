@@ -5,6 +5,7 @@ import com.chilsuitjo.back.action.dto.ActionEntry;
 import com.chilsuitjo.back.action.dto.ActionTarget;
 import com.chilsuitjo.back.action.dto.DigestField;
 import com.chilsuitjo.back.action.dto.DigestInput;
+import com.chilsuitjo.back.action.dto.PhotoDigest;
 import com.chilsuitjo.back.action.dto.SavedState;
 import com.chilsuitjo.back.action.rule.ActionType;
 import com.chilsuitjo.back.action.rule.AnswerPayload;
@@ -28,6 +29,7 @@ import com.chilsuitjo.back.notification.dto.OpenRequestCommand;
 import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.service.WaitService;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -113,6 +115,62 @@ public class CorrectionStateStore {
   /** 고친 내용 거두기의 저장 방법. */
   public StateStore<CorrectionState> withdrawing() {
     return new Withdrawing();
+  }
+
+  /**
+   * [사진 더해서 다시 요청]의 저장 방법(06 4-6 {@code resubmit}). 새 기록을 만드는 행동이라 대상은 {@code save}가 만든 새 고친 내용이다.
+   *
+   * @param retryOfId 거절된 고친 내용
+   * @param description 더한 설명. 없으면 null(그때 새 고친 내용의 사유는 이전 사유를 그대로 쓴다)
+   * @param uploadTickets 더한 사진의 업로드 표
+   */
+  public StateStore<CorrectionState> resubmitting(
+      Correctable target, UUID retryOfId, String description, List<String> uploadTickets) {
+    return new Resubmitting(target, retryOfId, description, uploadTickets);
+  }
+
+  /**
+   * 그 기록에서 고친 내용을 마지막으로 다시 보낸 시각(다시 보낸 고친 내용은 {@code retry_of_id}가 있고 만든 시각이 다시 요청 시각이다). 없으면 null.
+   * 대상 도메인이 자기 다시 요청과 함께 7일을 셀 때 쓴다(#278).
+   */
+  public Instant lastResubmitAt(String targetKey) {
+    return corrections.findByTargetKeyOrderByCreatedAtAscIdAsc(targetKey).stream()
+        .filter(row -> row.getRetryOfId() != null)
+        .map(CorrectionRequest::getCreatedAt)
+        .max(Instant::compareTo)
+        .orElse(null);
+  }
+
+  /**
+   * 화면의 [사진 더해서 다시 요청] 버튼에 쓰는 지금 상태(다시 요청의 {@code load}와 같은 값).
+   *
+   * @param lastRerequestAt 그 기록의 마지막 다시 요청 시각({@code Correctable.lastRerequestAt})
+   */
+  public CorrectionState resubmitState(UUID correctionId, Instant lastRerequestAt) {
+    return resubmitState(find(correctionId), lastRerequestAt);
+  }
+
+  private CorrectionState resubmitState(CorrectionRequest row, Instant lastRerequestAt) {
+    return CorrectionState.forResubmitting(
+        row.getRequestedBySide(),
+        row.getStatus(),
+        row.getClosedReason() == ClosedReason.CLOSED_BY_BOTH,
+        answerOf(row),
+        latestOfField(row),
+        waits.canOpen(row.getRoomRecordId(), RequestKind.CORRECTION_CONFIRM),
+        lastRerequestAt);
+  }
+
+  /** 그 칸의 마지막 고친 내용인가(그 뒤 같은 칸을 다시 고쳤거나 다시 보낸 것이 없음). */
+  private boolean latestOfField(CorrectionRequest row) {
+    CorrectionRequest last = null;
+    for (CorrectionRequest each :
+        corrections.findByTargetKeyOrderByCreatedAtAscIdAsc(row.getTargetKey())) {
+      if (each.getField().equals(row.getField())) {
+        last = each;
+      }
+    }
+    return last != null && last.getId().equals(row.getId());
   }
 
   /** 고친 내용. 없으면 {@code NOT_FOUND}. 잠그기 전에 호실·대상을 알아낼 때 쓴다. */
@@ -422,6 +480,72 @@ public class CorrectionStateStore {
             command.actor().side());
       }
       return SavedState.unchanged();
+    }
+  }
+
+  private final class Resubmitting implements StateStore<CorrectionState> {
+
+    private final Correctable target;
+    private final UUID retryOfId;
+    private final String description;
+    private final List<String> uploadTickets;
+    private CorrectableSnapshot snapshot;
+
+    private Resubmitting(
+        Correctable target, UUID retryOfId, String description, List<String> uploadTickets) {
+      this.target = target;
+      this.retryOfId = retryOfId;
+      this.description = description;
+      this.uploadTickets = uploadTickets;
+    }
+
+    private CorrectionRequest earlier(ActionCommand command) {
+      return corrections
+          .findByIdAndRoomRecordId(retryOfId, command.roomRecordId())
+          .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
+    }
+
+    @Override
+    public CorrectionState load(ActionCommand command) {
+      CorrectionRequest row = earlier(command);
+      snapshot = snapshot(target, row.targetId(), command);
+      return resubmitState(row, target.lastRerequestAt(row.targetId()));
+    }
+
+    /**
+     * 같은 칸·같은 값으로 새 고친 내용을 만든다({@code retry_of_id} = 거절된 것, 05 2-5). 거절된 것은 그대로 이력에 남는다. 기준 판은 지금
+     * 도장 판이고, 사유는 더한 설명(없으면 이전 사유)이다. 더한 사진은 새 고친 내용에 붙는다(대상 도메인이 붙임). 고친 내용 확인 요청은 기록당 하나로 다시 묶는다.
+     * 행동의 대상은 새 고친 내용이고 지문은 그 행과 사진이다.
+     */
+    @Override
+    public SavedState save(ActionCommand command, CorrectionState next) {
+      CorrectionRequest row = earlier(command);
+      CorrectionRequest retry =
+          corrections.saveAndFlush(
+              new CorrectionRequest(
+                  command.roomRecordId(),
+                  row.getField(),
+                  row.getNewValue(),
+                  snapshot.confirmedVersionId(),
+                  row.getRepairCaseId(),
+                  row.getPaymentId(),
+                  row.getInspectionItemId(),
+                  row.getSettlementTransferId(),
+                  row.getTargetKey(),
+                  row.getId(),
+                  command.actor().side(),
+                  description == null ? row.getReason() : description,
+                  requestContext.at()));
+      waits.restart(
+          new OpenRequestCommand(
+              command.roomRecordId(),
+              RequestKind.CORRECTION_CONFIRM,
+              recordRequest(row.targetKind(), row.targetId()),
+              command.actor().side()));
+      List<PhotoDigest> photos =
+          target.attachEvidence(command, row.targetId(), retry.getId(), uploadTickets);
+      return new SavedState(ActionTarget.correctionRequest(retry.getId()), digest(retry))
+          .withPhotos(photos);
     }
   }
 

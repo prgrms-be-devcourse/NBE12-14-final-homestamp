@@ -426,6 +426,90 @@ class RepairCorrectionApiTest {
     assertThat(contentCount()).isEqualTo(1);
   }
 
+  // ---- 사진 더해서 다시 요청 ----
+
+  @Test
+  void 거절된_고친_내용에_근거를_더해_다시_보내면_새_고친_내용으로_확인을_요청한다() throws Exception {
+    stamp();
+    UUID first =
+        firstId(correct(tenant, "c1", "{\"field\":\"title\",\"newValue\":\"천장 물샘\"}", "오타"));
+    respond(first, landlord, "r1", "NEED_MORE", "사진이 더 필요해요", 1).andExpect(status().isOk());
+
+    UUID retry =
+        resubmitId(
+            resubmit(first, tenant, "s1", "물 자국 사진이에요", List.of(UUID.randomUUID().toString()))
+                .andExpect(status().isOk()));
+
+    assertThat(retry).isNotEqualTo(first);
+    assertThat(correction(first)).containsEntry("status", "REJECTED");
+    assertThat(correction(retry))
+        .containsEntry("status", "WAITING")
+        .containsEntry("retry_of_id", first)
+        .containsEntry("field", "title")
+        .containsEntry("reason", "물 자국 사진이에요")
+        .containsEntry("requested_by_side", "TENANT");
+    assertThat(correctionAction(retry, "RESUBMIT_CORRECTION"))
+        .containsEntry("actor_side", "TENANT");
+    assertThat(waits.statusOf(caseRequest(), RequestKind.CORRECTION_CONFIRM))
+        .contains(RequestStatus.WAITING);
+
+    // 상대는 새 고친 내용에 답하고, 맞아요면 앞모습이 된다
+    respond(retry, landlord, "r2", "ACK", null, 1).andExpect(status().isOk());
+    assertThat(content((UUID) head().get("confirmed_content_id")))
+        .containsEntry("no", 2)
+        .containsEntry("title", "천장 물샘");
+    // 같은 키로 다시 오면 처음 결과
+    assertThat(
+            resubmitId(
+                resubmit(first, tenant, "s1", "물 자국 사진이에요", List.of())
+                    .andExpect(header().string(RepairController.REPLAYED, "true"))))
+        .isEqualTo(retry);
+  }
+
+  @Test
+  void 다시_요청은_고친_측만_거절된_마지막_고친_내용에만_근거와_함께_7일에_한_번_된다() throws Exception {
+    stamp();
+    UUID first =
+        firstId(correct(tenant, "c1", "{\"field\":\"title\",\"newValue\":\"천장 물샘\"}", "오타"));
+
+    // 아직 기다리는 중
+    resubmit(first, tenant, "s0", "근거", List.of())
+        .andExpect(jsonPath("$.code").value("INVALID_STATE"));
+    respond(first, landlord, "r1", "DISPUTE", "사실과 달라요", 1).andExpect(status().isOk());
+    resubmit(first, landlord, "s1", "근거", List.of())
+        .andExpect(jsonPath("$.code").value("NOT_COUNTERPART_SIDE"));
+    resubmit(first, tenant, "s2", null, List.of())
+        .andExpect(jsonPath("$.code").value("EVIDENCE_REQUIRED"));
+
+    UUID retry = resubmitId(resubmit(first, tenant, "s3", "근거", List.of()));
+    // 이미 다시 보낸 것은 다시 보낼 수 없다(그 칸의 마지막이 아님)
+    resubmit(first, tenant, "s4", "근거", List.of())
+        .andExpect(jsonPath("$.code").value("INVALID_STATE"));
+    respond(retry, landlord, "r2", "NEED_MORE", "아직 부족해요", 1).andExpect(status().isOk());
+    // 같은 수리 건의 다시 요청은 7일에 한 번
+    resubmit(retry, tenant, "s5", "근거 더", List.of())
+        .andExpect(jsonPath("$.code").value("ASKED_RECENTLY"));
+  }
+
+  @Test
+  void 상세에_다시_요청_버튼은_고친_측의_거절된_마지막_고친_내용에만_있다() throws Exception {
+    stamp();
+    UUID first =
+        firstId(correct(tenant, "c1", "{\"field\":\"title\",\"newValue\":\"천장 물샘\"}", "오타"));
+    respond(first, landlord, "r1", "NEED_MORE", "사진이 더 필요해요", 1).andExpect(status().isOk());
+
+    detail(tenant)
+        .andExpect(jsonPath("$.corrections[0].availableActions").value(contains("resubmit")));
+    detail(landlord)
+        .andExpect(jsonPath("$.corrections[0].availableActions", not(hasItem("resubmit"))));
+
+    resubmit(first, tenant, "s1", "근거", List.of()).andExpect(status().isOk());
+    detail(tenant)
+        .andExpect(jsonPath("$.corrections", hasSize(2)))
+        .andExpect(jsonPath("$.corrections[0].availableActions", hasSize(0)))
+        .andExpect(jsonPath("$.corrections[1].availableActions").value(contains("withdraw")));
+  }
+
   // ---- 상세 ----
 
   @Test
@@ -466,7 +550,8 @@ class RepairCorrectionApiTest {
         .andExpect(jsonPath("$.availableActions", hasItem("accept-all")));
     detail(tenant)
         .andExpect(jsonPath("$.corrections[0].availableActions").value(contains("withdraw")))
-        .andExpect(jsonPath("$.corrections[1].availableActions", hasSize(0)))
+        // 보류된 고친 내용은 고친 측이 근거를 더해 다시 보낼 수 있다
+        .andExpect(jsonPath("$.corrections[1].availableActions").value(contains("resubmit")))
         .andExpect(jsonPath("$.availableActions", not(hasItem("accept-all"))));
   }
 
@@ -676,6 +761,29 @@ class RepairCorrectionApiTest {
             .header("Idempotency-Key", key + "-" + caseId)
             .contentType(MediaType.APPLICATION_JSON)
             .content(json));
+  }
+
+  private ResultActions resubmit(
+      UUID correctionId, UUID memberId, String key, String description, List<String> tickets)
+      throws Exception {
+    String list = String.join(",", tickets.stream().map(t -> "\"" + t + "\"").toList());
+    String json =
+        "{"
+            + (description == null ? "" : "\"description\":\"" + description + "\",")
+            + "\"uploadTickets\":["
+            + list
+            + "]}";
+    return mvc.perform(
+        post("/api/corrections/{id}/resubmit", correctionId)
+            .with(loginAs(memberId))
+            .header("Idempotency-Key", key + "-" + caseId)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(json));
+  }
+
+  private static UUID resubmitId(ResultActions result) throws Exception {
+    String body = result.andReturn().getResponse().getContentAsString();
+    return UUID.fromString(body.replaceAll(".*\"correctionId\":\"([^\"]+)\".*", "$1"));
   }
 
   private ResultActions withdraw(UUID correctionId, UUID memberId, String key) throws Exception {

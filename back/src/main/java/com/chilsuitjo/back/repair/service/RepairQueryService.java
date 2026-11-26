@@ -83,6 +83,7 @@ public class RepairQueryService {
   static final String RESPOND = "respond";
 
   static final String WITHDRAW = "withdraw";
+  static final String RESUBMIT = "resubmit";
   static final String ACCEPT_ALL = "accept-all";
 
   private final RepairCaseRepository cases;
@@ -201,6 +202,9 @@ public class RepairQueryService {
     PartySide viewer = gate.side();
     boolean respondable = gate.rejection(ActionType.RESPOND_CORRECTION).isEmpty();
     boolean withdrawable = gate.rejection(ActionType.WITHDRAW_CORRECTION).isEmpty();
+    boolean resubmittable = gate.rejection(ActionType.RESUBMIT_CORRECTION).isEmpty();
+    Instant lastRerequestAt = store.lastRerequestAt(row);
+    Instant now = clock.instant();
     List<RepairCaseDetail.Correction> result = new ArrayList<>();
     for (CorrectionView view :
         correctionReader.findByRecord(CorrectionTargetKind.REPAIR_CASE, row.getId())) {
@@ -221,6 +225,12 @@ public class RepairQueryService {
       if (withdrawable
           && CorrectionTransitions.canWithdraw(status, view.requestedBySide(), viewer)) {
         buttons.add(WITHDRAW);
+      }
+      // 가린 응답이면 화면에는 확인 전이라 다시 보낼 것이 없다
+      if (resubmittable
+          && status == view.status()
+          && correctionReader.canResubmit(view.id(), viewer, lastRerequestAt, now)) {
+        buttons.add(RESUBMIT);
       }
       String newPartName =
           RepairCorrectable.ROOM_PART_ID.equals(view.field()) && view.newValue() != null

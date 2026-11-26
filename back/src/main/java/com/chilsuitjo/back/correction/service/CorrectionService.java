@@ -10,6 +10,7 @@ import com.chilsuitjo.back.action.dto.BatchResult;
 import com.chilsuitjo.back.action.dto.DigestInput;
 import com.chilsuitjo.back.action.dto.PipelineResult;
 import com.chilsuitjo.back.action.rule.ActionType;
+import com.chilsuitjo.back.action.rule.AnswerSupport;
 import com.chilsuitjo.back.action.service.ActionPipeline;
 import com.chilsuitjo.back.correction.dto.AcceptAllRequest;
 import com.chilsuitjo.back.correction.dto.AcceptAllResponse;
@@ -27,6 +28,7 @@ import com.chilsuitjo.back.global.common.Answer;
 import com.chilsuitjo.back.global.common.ResidentIdGuard;
 import com.chilsuitjo.back.global.common.dto.AnswerResult;
 import com.chilsuitjo.back.global.common.dto.RespondRequest;
+import com.chilsuitjo.back.global.common.dto.SupplementRequest;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import java.util.ArrayList;
@@ -50,6 +52,9 @@ public class CorrectionService {
 
   /** 고친 이유 길이(하자 설명과 같음). */
   static final int MAX_REASON = 2000;
+
+  /** 다시 요청에 더하는 사진 장수(수리 건 보충과 같음, 06 4-0 업로드). */
+  static final int MAX_PHOTOS = 10;
 
   private final ActionPipeline pipeline;
   private final CorrectionStateStore store;
@@ -240,6 +245,47 @@ public class CorrectionService {
             rules);
     return result.action().replayed();
   }
+
+  /**
+   * [사진 더해서 다시 요청](06 4-6 {@code resubmit}, 03 G "보충하고 다시 요청"): 보류·이견이 달린 고친 내용을 같은 값에 근거만 더해 다시
+   * 보낸다. 새 고친 내용을 만들고({@code retry_of_id}) 그 ID를 돌려준다.
+   *
+   * <p>pipeline 전에 입력을 본다: 사진이 10장을 넘거나 빈 표가 있거나 설명이 2,000자를 넘으면 {@code VALIDATION_FAILED}, 주민등록번호
+   * 형태면 {@code RESIDENT_ID_BLOCKED}, 사진도 설명도 없으면 {@code EVIDENCE_REQUIRED}. 잠근 뒤는 {@code
+   * CorrectionTransitions} 순서다(고친 측 → 처리 완료로 닫힘 → 그 칸의 마지막·보류·이견 → 같은 기록의 다시 요청끼리 7일).
+   */
+  public Resubmitted resubmit(
+      UUID correctionId, UUID memberId, String idempotencyKey, SupplementRequest request) {
+    if (request == null
+        || request.uploadTickets().size() > MAX_PHOTOS
+        || request.uploadTickets().stream().anyMatch(t -> t == null || t.isBlank())) {
+      throw new BusinessException(ErrorCode.VALIDATION_FAILED);
+    }
+    String description = blankToNull(request.description());
+    if (description != null && description.length() > MAX_REASON) {
+      throw new BusinessException(ErrorCode.VALIDATION_FAILED);
+    }
+    ResidentIdGuard.check(description);
+    AnswerSupport.requireEvidence(request.hasEvidence());
+    CorrectionRequest row = store.find(correctionId);
+    Correctable target = targetOf(row.targetKind());
+    ActionBatch batch =
+        ActionBatch.of(row.getRoomRecordId(), Actor.member(memberId), idempotencyKey)
+            .creating(
+                ActionType.RESUBMIT_CORRECTION,
+                store.resubmitting(target, correctionId, description, request.uploadTickets()),
+                rules);
+    BatchResult result = pipeline.executeAll(batch);
+    return new Resubmitted(result.actions().getFirst().target().id(), result.replayed());
+  }
+
+  /**
+   * [사진 더해서 다시 요청] 결과.
+   *
+   * @param correctionId 새로 만든 고친 내용
+   * @param replayed 같은 키로 다시 온 요청
+   */
+  public record Resubmitted(UUID correctionId, boolean replayed) {}
 
   private Correctable targetOf(CorrectionTargetKind kind) {
     Correctable target = targets.get(kind);
