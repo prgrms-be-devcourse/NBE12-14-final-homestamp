@@ -957,7 +957,6 @@ function HomeStampApp({
           <aside className="sidebar">{sideMenu}</aside>
           <div className="main-shell">
             <AppTopbar
-              title={pageTitleOf(page)}
               roomName={hasRoomAccess ? room.name : undefined}
               roomNames={roomNames}
               invitations={receivedInvitations.length}

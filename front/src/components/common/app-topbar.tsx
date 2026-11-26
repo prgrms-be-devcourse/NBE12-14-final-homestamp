@@ -2,9 +2,8 @@ import { Bell, Building2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Choice } from "@/components/common/blocks"
 
-// PC: 현재 화면 제목 + 초대/알림 | 모바일: 브랜드/호실 빠른 전환 + 알림 + 내 계정(1줄 슬림 바)
+// PC: 초대/알림(화면 제목은 본문 머리말 하나만, #229 리뷰) | 모바일: 브랜드/호실 빠른 전환 + 알림 + 내 계정(1줄 슬림 바)
 export function AppTopbar({
-  title,
   roomName,
   roomNames,
   invitations,
@@ -15,7 +14,6 @@ export function AppTopbar({
   onNotifications,
   onAccount,
 }: {
-  title?: string
   roomName?: string
   roomNames: string[]
   invitations: number
@@ -29,10 +27,6 @@ export function AppTopbar({
   return (
     <header className="topbar">
       <div className="top-left">
-        {/* PC: 간결한 현재 메뉴 제목 */}
-        <strong className="hidden text-[15px] font-bold text-ink md:inline">
-          {title}
-        </strong>
         {/* 모바일: 호실 전환기(또는 브랜드)로 첫 화면 공간 절약 */}
         <div className="flex min-w-0 items-center gap-2 md:hidden">
           <span className="mobile-brand-mark" aria-hidden>
