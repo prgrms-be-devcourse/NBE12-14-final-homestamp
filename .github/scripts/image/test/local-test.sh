@@ -178,7 +178,11 @@ expect "취소 뒤 재실행 → 0" "$(inr "$login && LOCAL_IMAGE=$T-big:local R
 echo "== 검사(scan, 실제 Trivy)"
 sc() { inr "TRIVY_DB_REPOSITORY=${2:-} REQUIRE_JAVA=0 '$HERE/scan.sh' $T-$1:local '$W/scan-$1' >'$W/scan-$1.out' 2>&1; echo \$?"; }
 expect "Trivy DB를 받지 못함 → 통과로 보지 않음(3)" "$(sc good 127.0.0.1:1/none/trivy-db)" 3
-expect "깨끗한 시험 이미지 → 0" "$(sc good)" 0
+# 깨끗한 이미지: 고정한 alpine은 나중에 고친 판이 나온 취약점으로 막힐 수 있어(2026-11-26 OpenSSL CVE-2026-124709),
+# 시험 때 OS 패키지를 최신으로 올린 이미지로 본다. 막는 정책은 위·아래 시험과 evaluate 시험이 따로 확인한다
+mkdir -p "$W/clean" && printf 'FROM %s\nRUN apk upgrade --no-cache >/dev/null\n' "$ALPINE" >"$W/clean/Dockerfile"
+docker build -q -t "$T-clean:local" "$W/clean" >/dev/null
+expect "깨끗한 시험 이미지(OS 패키지 최신) → 0" "$(sc clean)" 0
 expect "가짜 AWS 키가 든 이미지 → 11" "$(sc leak)" 11
 grep -q 'aws-access-key-id' "$W/scan-leak.out" && ok "규칙 이름이 보고에 남음" || bad "비밀값 보고"
 grep -qF "$key" "$W/scan-leak.out" && bad "보고 출력에 키 원문이 나옴" || ok "보고 출력에 키 원문 없음"
