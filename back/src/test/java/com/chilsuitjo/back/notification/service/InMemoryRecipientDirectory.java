@@ -17,25 +17,13 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class InMemoryRecipientDirectory implements RecipientDirectory {
 
-  private final Map<UUID, String> partyPhones = new ConcurrentHashMap<>();
   private final Map<UUID, String> memberPhones = new ConcurrentHashMap<>();
   private final Map<UUID, Recipient> recipients = new ConcurrentHashMap<>();
   private final Set<UUID> unresolvable = ConcurrentHashMap.newKeySet();
 
   @Override
-  public Optional<String> phoneOfParty(UUID partyId) {
-    return Optional.ofNullable(partyPhones.get(partyId));
-  }
-
-  @Override
   public Optional<String> phoneOfMember(UUID memberId) {
     return Optional.ofNullable(memberPhones.get(memberId));
-  }
-
-  /** 자리에 정해 둔 번호를 그대로 쓴다(지금 아웃박스 작업자가 부르는 메서드). */
-  @Override
-  public Optional<String> phoneOfRecipient(UUID partyId) {
-    return phoneOfParty(partyId);
   }
 
   @Override
@@ -49,10 +37,6 @@ public class InMemoryRecipientDirectory implements RecipientDirectory {
       throw new IllegalStateException("테스트에서 정해 두지 않은 자리예요");
     }
     return recipient;
-  }
-
-  public void seedParty(UUID partyId, String phone) {
-    partyPhones.put(partyId, phone);
   }
 
   public void seedMember(UUID memberId, String phone) {
@@ -76,7 +60,6 @@ public class InMemoryRecipientDirectory implements RecipientDirectory {
 
   /** 정해 둔 것을 모두 지운다. Spring 테스트에서 빈 하나를 여러 테스트가 같이 쓸 때 각 테스트 앞에서 부른다. */
   public void reset() {
-    partyPhones.clear();
     memberPhones.clear();
     recipients.clear();
     unresolvable.clear();
