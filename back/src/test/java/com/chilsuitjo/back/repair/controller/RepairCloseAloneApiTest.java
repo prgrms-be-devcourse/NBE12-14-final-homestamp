@@ -8,6 +8,7 @@ import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -94,6 +95,41 @@ class RepairCloseAloneApiTest {
     UUID caseId = started();
 
     act(caseId, tenant, "close-alone", null).andExpect(status().isOk());
+    assertThat(soloReason(caseId)).isEqualTo("NO_COUNTERPART");
+  }
+
+  @Test
+  void 같은_키로_다시_보내면_첫_결과를_돌려주고_행동을_더_남기지_않는다() throws Exception {
+    // 재생은 측을 모르는 채 load를 지나므로(ClosingAlone.load의 side == null) 혼자 진행 판단을 부르지 않는다
+    emptySeat(PartySide.LANDLORD);
+    UUID caseId = started();
+    String key = "close-alone-" + UUID.randomUUID();
+
+    closeAlone(caseId, key).andExpect(status().isOk());
+    closeAlone(caseId, key)
+        .andExpect(status().isOk())
+        .andExpect(header().string("Idempotent-Replayed", "true"))
+        .andExpect(jsonPath("$.status").value("DONE"))
+        .andExpect(jsonPath("$.closedBy").value("TENANT"));
+
+    assertThat(countActions(caseId, "CLOSE_ALONE")).isEqualTo(1);
+  }
+
+  @Test
+  void 보류가_열린_채_혼자_종료하면_강행_표시를_남긴다() throws Exception {
+    // 03 G "강행 표시", 05 2-3 payload while_open_objection. 상대가 보류를 남긴 뒤 자리가 빈 모양(KEEP-4 뒤와 같음)
+    connected(PartySide.LANDLORD, landlord);
+    UUID caseId = register();
+    respond(caseId, landlord, "NEED_MORE", "사진이 흐려요");
+    act(caseId, tenant, "start", null).andExpect(status().isOk());
+    jdbc.update(
+        "UPDATE state.party SET status = 'EMPTY', member_id = NULL, connected_at = NULL"
+            + " WHERE room_record_id = ? AND side = 'LANDLORD'",
+        room);
+
+    act(caseId, tenant, "close-alone", null).andExpect(status().isOk());
+
+    assertThat(objectionMark(caseId, "CLOSE_ALONE")).isEqualTo("NEED_MORE");
     assertThat(soloReason(caseId)).isEqualTo("NO_COUNTERPART");
   }
 
@@ -249,6 +285,46 @@ class RepairCloseAloneApiTest {
       request = request.contentType(MediaType.APPLICATION_JSON).content(json);
     }
     return mvc.perform(request);
+  }
+
+  private ResultActions closeAlone(UUID caseId, String key) throws Exception {
+    return mvc.perform(
+        post("/api/repair-cases/{id}/close-alone", caseId)
+            .with(loginAs(tenant))
+            .header("Idempotency-Key", key));
+  }
+
+  private void respond(UUID caseId, UUID memberId, String answer, String reason) throws Exception {
+    mvc.perform(
+            post("/api/repair-cases/{id}/respond", caseId)
+                .with(loginAs(memberId))
+                .header("Idempotency-Key", "res-" + UUID.randomUUID())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"answer\":\""
+                        + answer
+                        + "\",\"reason\":\""
+                        + reason
+                        + "\",\"seenVersionNo\":1}"))
+        .andExpect(status().isOk());
+  }
+
+  /** 그 행동의 강행 표시(payload {@code while_open_objection}). 없으면 null. */
+  private String objectionMark(UUID caseId, String type) {
+    return jdbc.queryForObject(
+        "SELECT payload ->> 'while_open_objection' FROM record.action"
+            + " WHERE repair_case_id = ? AND type = ?",
+        String.class,
+        caseId,
+        type);
+  }
+
+  private long countActions(UUID caseId, String type) {
+    return jdbc.queryForObject(
+        "SELECT count(*) FROM record.action WHERE repair_case_id = ? AND type = ?",
+        Long.class,
+        caseId,
+        type);
   }
 
   private ResultActions detail(UUID caseId, UUID memberId) throws Exception {
