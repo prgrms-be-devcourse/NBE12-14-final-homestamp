@@ -48,6 +48,8 @@ export interface RecordsApi {
   getSnapshot(): DemoState
   // 서버에서 기록을 다시 받아요(목업은 할 일이 없어요)
   load(s: Session): Promise<void>
+  // 호실 하나를 다시 받아요(호실에 들어갈 때 상세의 입주일·availableActions를 새로 받아요. 목업은 할 일이 없어요)
+  loadRoom(s: Session, roomId: string): Promise<void>
   // 기록을 바꿔요. 목업은 바로 바꾸고, HTTP는 요청을 보낸 뒤 다시 받아요.
   // 만들기 요청이면 서버가 만든 ID를 돌려줘요(06 4-0: 201 + 만든 ID). 목업은 화면이 정한 ID를 그대로 써요.
   send(s: Session, change: RecordChange): Promise<{ id?: string }>
@@ -60,6 +62,9 @@ export const post = (path: string, body?: unknown): ApiRequest => ({
 })
 export const notInSpec = (what: string): MissingApi => ({ missing: what })
 export const noRequest = (why: string): NoRequest => ({ none: why })
+// 요청 본문의 호실 쪽 값(06 4-3 side, 05 party.side). 화면의 임차인·임대인을 서버 값으로 바꿔요
+export const roomSide = (r: Role): "TENANT" | "LANDLORD" =>
+  r === "임차인" ? "TENANT" : "LANDLORD"
 // 지금 화면 모델에는 점검·정산의 서버 ID가 없어, 서버가 ID를 주기 전까지 호실 ID로 대신해요.
 export const inspectionIdOf = (roomId: string, kind: "in" | "out") =>
   `${roomId}:${kind}`
