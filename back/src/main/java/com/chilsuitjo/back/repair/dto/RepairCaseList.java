@@ -26,7 +26,7 @@ public record RepairCaseList(Instant asOf, PartySide mySide, List<Item> items, S
    * 수리 건 한 줄. {@code availableActions}·사진·진행 상황·원인 설명은 상세에서 준다(06 4-6).
    *
    * @param lastActionAt 보는 사람이 볼 수 있는 이 건의 마지막 당사자 행동 시각(화면의 "N일째"·홈의 오래 멈춘 건, 03 G "멈춘 기간", 6-6
-   *     9번). 이 건의 행동은 수리 건·그 건의 진행 상황·원인 설명이 대상인 행동이다. 등록도 행동이라 비지 않는다
+   *     9번). 이 건의 행동은 수리 건·그 건의 진행 상황·원인 설명·고친 내용이 대상인 행동이다. 등록도 행동이라 비지 않는다
    * @param waiting 이 건에 열린 응답 요청(06 4-6). <b>지금은 늘 빈 목록</b>이다: 응답 요청 조회 포트({@code WaitQuery},
    *     #266)가 들어오면 채운다(#283)
    */

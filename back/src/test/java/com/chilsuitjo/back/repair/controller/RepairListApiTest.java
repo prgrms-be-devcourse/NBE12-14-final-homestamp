@@ -125,6 +125,43 @@ class RepairListApiTest {
   }
 
   @Test
+  void 고친_내용에_답해도_이_건의_행동으로_센다() throws Exception {
+    // 같이 확인한 뒤 고치면 확인 요청이 가고, 응답 행동의 대상은 고친 내용이다(REP-7c·7e)
+    UUID caseId = register(tenant, "천장 누수");
+    respond(caseId, landlord, "ACK").andExpect(status().isOk());
+    String body =
+        mvc.perform(
+                withKey(post("/api/corrections"), tenant)
+                    .content(
+                        "{\"targetKind\":\"REPAIR_CASE\",\"targetId\":\""
+                            + caseId
+                            + "\",\"changes\":[{\"field\":\"title\",\"newValue\":\"천장 물샘\"}],"
+                            + "\"reason\":\"오타\"}"))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    UUID correctionId =
+        UUID.fromString(body.replaceAll(".*\"correctionIds\":\\[\"([^\"]+)\".*", "$1"));
+    mvc.perform(
+            withKey(post("/api/corrections/{id}/respond", correctionId), landlord)
+                .content("{\"answer\":\"ACK\",\"seenVersionNo\":1}"))
+        .andExpect(status().isOk());
+
+    String answeredAt =
+        jdbc.queryForObject(
+                "SELECT created_at FROM record.action WHERE correction_request_id = ?"
+                    + " AND type = 'RESPOND_CORRECTION'",
+                Timestamp.class,
+                correctionId)
+            .toInstant()
+            .toString();
+    list(tenant)
+        .andExpect(jsonPath("$.items[0].lastActionAt").value(answeredAt))
+        .andExpect(jsonPath("$.items[0].content.title").value("천장 물샘"));
+  }
+
+  @Test
   void 커서로_다음_쪽을_읽고_마지막_쪽에는_다음_커서가_없다() throws Exception {
     UUID first = register(tenant, "하나");
     UUID second = register(tenant, "둘");

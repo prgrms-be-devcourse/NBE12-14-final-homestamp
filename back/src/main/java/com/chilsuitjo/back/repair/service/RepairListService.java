@@ -7,6 +7,7 @@ import com.chilsuitjo.back.action.dto.RoomGate;
 import com.chilsuitjo.back.action.rule.Replay;
 import com.chilsuitjo.back.action.rule.RoomGateReader;
 import com.chilsuitjo.back.action.service.ActionReader;
+import com.chilsuitjo.back.correction.service.CorrectionQueryService;
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.global.error.BusinessException;
@@ -61,6 +62,7 @@ public class RepairListService {
   private final RoomGateReader gates;
   private final RoomQueryService rooms;
   private final ActionReader actionReader;
+  private final CorrectionQueryService corrections;
 
   /**
    * 이 호실의 수리 건, 새것부터 {@code size}개. 남의 호실은 {@code NOT_FOUND}(ROOM-2a), 틀린 커서·크기는 {@code
@@ -158,11 +160,12 @@ public class RepairListService {
   }
 
   /**
-   * 호실 행동을 수리 건마다 나눈다({@code room_seq} 순 그대로). 이 건의 행동은 수리 건이 대상인 행동과, 그 건의 진행 상황·원인 설명이 대상인
-   * 행동이다({@code lastActionAt}, 03 G "멈춘 기간"). 수리비(제안·지불)는 돈 쪽 행동이라 넣지 않는다.
+   * 호실 행동을 수리 건마다 나눈다({@code room_seq} 순 그대로). 이 건의 행동은 수리 건이 대상인 행동과, 그 건의 진행 상황·원인 설명·고친 내용이 대상인
+   * 행동이다({@code lastActionAt}, 03 G "멈춘 기간", decisions 2026-11-26). 수리비(제안·지불)는 돈 쪽 행동이라 넣지 않는다.
    */
   private Map<UUID, List<ActionEntry>> historyByCase(UUID roomRecordId) {
-    Map<UUID, UUID> caseOfNote = new HashMap<>();
+    // 고친 내용 응답·거두기는 대상이 고친 내용이다(고치기 자체는 대상이 수리 건)
+    Map<UUID, UUID> caseOfNote = new HashMap<>(corrections.repairCaseIdsByCorrection(roomRecordId));
     for (CauseNote note : causeNotes.findByRoomRecordId(roomRecordId)) {
       caseOfNote.put(note.getId(), note.getRepairCaseId());
     }
@@ -178,7 +181,7 @@ public class RepairListService {
       UUID caseId =
           switch (target.kind()) {
             case REPAIR_CASE -> target.id();
-            case CAUSE_NOTE, PROGRESS_NOTE -> caseOfNote.get(target.id());
+            case CAUSE_NOTE, PROGRESS_NOTE, CORRECTION_REQUEST -> caseOfNote.get(target.id());
             default -> null;
           };
       if (caseId != null) {
