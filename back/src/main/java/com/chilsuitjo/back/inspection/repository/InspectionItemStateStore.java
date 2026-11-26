@@ -335,7 +335,7 @@ public class InspectionItemStateStore {
           parent.getStatus() == InspectionStatus.DRAFT && next.addedBy() == parent.getAuthorSide();
       if (!authorDraft
           && InspectionSight.reachable(room)
-          && waits.canOpen(roomRecordId, RequestKind.INSPECTION_CONFIRM)) {
+          && sight.canOpenConfirm(roomRecordId, next.addedBy())) {
         waits.open(
             new OpenRequestCommand(
                 roomRecordId,
