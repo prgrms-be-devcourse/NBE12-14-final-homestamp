@@ -5,3 +5,9 @@ app:
     verify-code: test-only-verify-code-key
     verify-ticket: test-only-verify-ticket-key
     phone-hmac: test-only-phone-hmac-key
+    upload-ticket: test-only-photo-upload-ticket-signing-key
+    link-token: test-only-link-token-hmac-key-32bytes
+  # 전달 결과 작업자는 테스트에서 끈다. 다른 테스트의 통지(고정 시계의 지난 시각)를 실제 시각으로 가져가 바꾸지 않게. 작업자는 테스트가 직접 부른다
+  delivery:
+    poller:
+      enabled: false

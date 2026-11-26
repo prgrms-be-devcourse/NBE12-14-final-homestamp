@@ -18,7 +18,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import org.springframework.stereotype.Service;
 
 /**
  * 돈 안건 장치 가짜(#111). DB·pipeline 없이 메모리에 안건만 적는다. repair·settlement가 {@link ProposalService}를 부르는
@@ -27,9 +26,9 @@ import org.springframework.stereotype.Service;
  * <p>진짜와 다른 것: 회원의 측은 pipeline 대신 {@link #seedParty}로 적은 값을 쓴다. 동의는 행동이 아니라 {@link #agree}로 정한다.
  * 기다리는 안이 있을 때의 새 제안(바꾸기·역제안)은 2주차 "돈 안건 장치 완성"에서 만들고, 가짜는 {@code INVALID_STATE}로 거절한다.
  *
- * <p>실제 구현이 들어오면 이 클래스를 지운다. 다른 도메인은 {@link ProposalService}만 쓰므로 바뀌지 않는다.
+ * <p>빈이 아니다: {@link ProposalService} 빈은 {@link JpaProposalService}다. 테스트가 {@code new}로 만들어 쓴다. 실제
+ * 구현이 다 들어오면 이 클래스를 지운다. 다른 도메인은 {@link ProposalService}만 쓰므로 바뀌지 않는다.
  */
-@Service
 public class FakeProposalService implements ProposalService {
 
   private final Clock clock;
@@ -134,6 +133,19 @@ public class FakeProposalService implements ProposalService {
   /** 수리비 부담 안건의 같이 확인된 지불 합. 적어 두면 줄 금액의 합이 다른 제안을 {@code SUM_MISMATCH}로 거절한다. */
   public void seedRequiredTotal(UUID roomRecordId, AgendaRef agenda, long total) {
     requiredTotals.put(new Agenda(roomRecordId, agenda), total);
+  }
+
+  /** 가짜는 제안 ID로 답하지 않는다. 테스트는 {@link #agree(UUID, AgendaRef)}로 동의를 정한다. */
+  @Override
+  public ProposalResult agree(UUID proposalId, UUID memberId, String idempotencyKey) {
+    throw new UnsupportedOperationException("가짜에는 제안 ID로 동의하는 길이 없어요");
+  }
+
+  /** 가짜에는 이견이 없다. */
+  @Override
+  public ProposalResult dispute(
+      UUID proposalId, UUID memberId, String idempotencyKey, String reason) {
+    throw new UnsupportedOperationException("가짜에는 이견이 없어요");
   }
 
   /** 기다리는 안에 상대가 동의한 것으로 정한다. 기다리는 안이 없으면 {@code INVALID_STATE}. */

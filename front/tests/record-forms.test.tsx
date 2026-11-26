@@ -13,9 +13,12 @@ import { RoomForm } from "../src/features/room/room-form"
 import { SettlementItemForm } from "../src/features/settlement/settlement-item-form"
 import { InspectionItemForm } from "../src/features/inspection/inspection-item-form"
 import { ZONE_PART_ERROR } from "../src/lib/record-commands"
+import { MOBILE_PHONE_MESSAGE } from "../src/lib/phone"
 import { ApiProvider } from "../src/api"
 import { createMockApi } from "../src/api/mock/mock-api"
 import { createMockStore } from "../src/api/mock/store"
+import { createHttpApi } from "../src/api/http-api"
+import type { HttpRequest } from "../src/api/http-client"
 
 // 입력 창 부품(App.tsx에서 기능별로 옮긴 것): 창마다 확인과 보내는 요청이 그대로인지 봐요.
 const inDialog = (ui: ReactNode) =>
@@ -78,7 +81,7 @@ describe("상대 번호 수정(초대 전)", () => {
     )
     const input = "새 상대 휴대폰 번호"
     for (const [value, msg] of [
-      ["0101234", "010으로 시작하는 11자리 번호를 입력해 주세요."],
+      ["0101234", MOBILE_PHONE_MESSAGE],
       ["01011112222", "내 계정 번호는 상대로 넣을 수 없어요."],
       ["01033334444", "기존 번호와 같아요."],
     ]) {
@@ -151,20 +154,48 @@ describe("호실 만들기", () => {
     type(/세입자 휴대폰 번호/, "0101")
     submit(/만들기/)
     expect(screen.getByRole("alert").textContent).toBe(
-      "선택 전화번호를 010으로 시작하는 11자리로 입력해 주세요.",
+      `선택 전화번호: ${MOBILE_PHONE_MESSAGE}`,
     )
     type(/세입자 휴대폰 번호/, "01055556666")
     submit(/만들기/)
     const [request, by] = send.mock.calls[0] as [ApiRequest, string]
     expect(request.path).toBe(endpoints.rooms)
-    expect(request.body).toMatchObject({
-      side: "임대인",
+    // 서버 모양(06 4-3): 쪽은 TENANT·LANDLORD, 상대 번호는 받지 않아요(초대 ROOM-4에서, #163)
+    expect(request.body).toEqual({
+      side: "LANDLORD",
       regionCode: "1144012400",
       alias: "302호",
-      counterpartPhone: "01055556666",
+      moveInDate: undefined,
     })
     expect(by).toBe("임대인")
+    // 목업은 넣은 번호를 호실의 기준 연락처로 저장해요
+    const update = send.mock.calls[0][3] as (d: { rooms: Room[] }) => void
+    const d = { rooms: [] as Room[] }
+    update(d)
+    expect(d.rooms[0]).toMatchObject({
+      phone: "01055556666",
+      creator: "임대인",
+    })
     await vi.waitFor(() => expect(onCreated).toHaveBeenCalledWith("new-room"))
+  })
+
+  test("HTTP에서는 상대 번호 칸을 숨기고 초대할 때 넣는다고 안내한다", () => {
+    const http = createHttpApi((async () => []) as unknown as HttpRequest)
+    inDialog(
+      <ApiProvider api={http}>
+        <RoomForm
+          account={account}
+          initialSide="임차인"
+          send={vi.fn()}
+          onCreated={() => {}}
+          onCancel={() => {}}
+        />
+      </ApiProvider>,
+    )
+    expect(screen.queryByLabelText(/휴대폰 번호/)).toBeNull()
+    expect(
+      screen.getByText("집주인 휴대폰 번호는 상대를 초대할 때 넣을 수 있어요."),
+    ).toBeTruthy()
   })
 })
 

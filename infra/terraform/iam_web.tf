@@ -106,7 +106,9 @@ data "aws_iam_policy_document" "web" {
   }
 
   # 앱 경로 밖의 파라미터 값은 어떤 API로도 읽지 않는다.
-  # migration·purge·다른 경로, 상위 경로(/, /homestamp, /homestamp/prod)의 재귀 조회가 모두 여기에 걸린다
+  # IAM 시뮬레이터(#189)에서 이 Deny(explicitDeny)로 확인한 것: migration·purge·다른 경로,
+  # /homestamp·/homestamp/prod 재귀 조회. 루트 / 재귀 조회는 거부됐지만 implicitDeny였고 원인은 미확인이다
+  # (허용 문장이 app 경로뿐이라 허용될 길은 없음. 실제 AWS에서 다시 확인한다)
   statement {
     sid    = "DenyNonAppParameterReads"
     effect = "Deny"

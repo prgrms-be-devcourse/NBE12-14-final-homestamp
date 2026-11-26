@@ -100,8 +100,10 @@ resource "aws_db_instance" "main" {
   performance_insights_enabled    = false
   monitoring_interval             = 0
 
-  # 실수로 지우지 않게 두 겹. 지울 때는 먼저 최종 스냅숏을 남긴다
-  # (최종·수동 스냅숏은 저절로 지워지지 않으므로 7장 "백업·이관"대로 따로 목록·기한을 둔다)
+  # 실수로 지우지 않게 두 겹. deletion_protection은 AWS가(콘솔·CLI·Terraform 모두) 지우기를 거절하고,
+  # 아래 prevent_destroy는 Terraform이 지우거나 교체하는 plan 자체를 거절한다(콘솔·CLI는 막지 못함).
+  # 계정을 정리할 때는 ① db_deletion_protection = false로 apply ② prevent_destroy를 빼는 PR ③ destroy 순서로 한다.
+  # 지울 때 최종 스냅숏을 남긴다(최종·수동 스냅숏은 저절로 지워지지 않으므로 7장 "백업·이관"대로 따로 목록·기한을 둔다)
   deletion_protection       = var.db_deletion_protection
   skip_final_snapshot       = false
   final_snapshot_identifier = "${local.db_identifier}-final"
@@ -115,5 +117,28 @@ resource "aws_db_instance" "main" {
 
   lifecycle {
     prevent_destroy = true
+  }
+}
+
+# ---------- 앱 DB 주소 (04 13-1 "DB 주소", 6장 SSM 표) ----------
+# RDS 엔드포인트로 #165의 운영 주소 계약을 만들어 앱 경로에 String으로 둔다. 사람이 옮겨 적지 않고,
+# RDS를 다시 만들어 주소가 바뀌면 같은 apply에서 따라 바뀐다(떠 있는 앱은 다음 시작부터 새 값을 읽는다).
+# 주소는 비밀이 아니다. 사용자·비밀번호는 넣지 않는다(#165가 URL 안 사용자 정보를 거절). 인증서 경로는 이미지 안
+# 고정 경로이고, 파일은 G2/G4가 이미지에 넣는다(ca_cert_identifier와 같은 RDS CA 묶음)
+locals {
+  db_root_cert_path    = "/app/certs/rds-ca.crt"
+  db_url_parameter     = "${local.param_prefix}/app/spring.datasource.url"
+  db_url_parameter_arn = "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter${local.db_url_parameter}"
+}
+
+resource "aws_ssm_parameter" "app_datasource_url" {
+  name        = local.db_url_parameter
+  description = "App JDBC URL (verify-full). Managed by Terraform from the RDS endpoint"
+  type        = "String"
+  tier        = "Standard"
+  value       = "jdbc:postgresql://${aws_db_instance.main.address}:${aws_db_instance.main.port}/${var.db_name}?sslmode=verify-full&sslrootcert=${local.db_root_cert_path}"
+
+  tags = {
+    Name = "${var.prefix}-app-datasource-url"
   }
 }
