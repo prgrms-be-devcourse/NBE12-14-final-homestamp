@@ -116,11 +116,6 @@ public class InspectionStateStore {
     return InspectionKind.valueOf(kind.toString());
   }
 
-  /** 공유 중단 제한이 살아 있나(불변식 18). 어느 쪽이 그만뒀든 같고, 상대가 탈퇴해 풀린 공유 중단은 보지 않는다({@code RoomParties}의 판단). */
-  private static boolean sharingStopped(RoomParties room) {
-    return room.mySharingStoppedApplies() || room.counterpartSharingStoppedApplies();
-  }
-
   private final class Starting implements StateStore<InspectionState> {
 
     @Override
@@ -182,12 +177,11 @@ public class InspectionStateStore {
       RoomParties room = parties.read(command.roomRecordId(), author);
       Instant at = requestContext.at();
       RequestTarget target = RequestTarget.of(TargetKind.INSPECTION, row.getId());
-      boolean stopped = sharingStopped(room);
-      PartyPresence presence = room.counterpart().presence();
-      if (!stopped && presence == PartyPresence.CONNECTED) {
+      boolean stopped = InspectionSight.sharingStopped(room);
+      if (!stopped && room.counterpart().presence() == PartyPresence.CONNECTED) {
         row.markShown(at);
       }
-      if (!stopped && (presence == PartyPresence.CONNECTED || presence == PartyPresence.INVITED)) {
+      if (InspectionSight.reachable(room)) {
         waits.open(
             new OpenRequestCommand(
                 command.roomRecordId(), RequestKind.INSPECTION_CONFIRM, target, author));

@@ -95,10 +95,11 @@ data "aws_iam_policy_document" "tf_plan" {
     resources = ["*"]
   }
 
-  # 우리 Parameter Store 경로(/homestamp/…)는 읽지 못하게.
-  # Amazon Linux 최신 이미지 번호(/aws/service/…, AWS 공개 파라미터)는 우리 경로가 아니라 plan이 읽을 수 있다
+  # 파라미터 값은 두 가지만 읽는다. 나머지(우리 /homestamp/… 비밀 경로 전부, 다른 팀 파라미터)는 막는다
+  # - Amazon Linux 최신 이미지 번호(/aws/service/…, AWS 공개 파라미터. ARN에 계정 번호가 없다)
+  # - Terraform이 관리하는 앱 DB 주소 하나(String, 비밀 아님). plan이 이 자원을 새로 읽어야 해서 연다(rds.tf)
   statement {
-    sid    = "DenyOwnParameters"
+    sid    = "DenyParametersExceptPublicAndDbUrl"
     effect = "Deny"
     actions = [
       "ssm:GetParameter",
@@ -106,7 +107,10 @@ data "aws_iam_policy_document" "tf_plan" {
       "ssm:GetParametersByPath",
       "ssm:GetParameterHistory",
     ]
-    resources = ["arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter/${var.prefix}/*"]
+    not_resources = [
+      "arn:aws:ssm:${var.region}::parameter/aws/service/*",
+      local.db_url_parameter_arn,
+    ]
   }
 }
 
