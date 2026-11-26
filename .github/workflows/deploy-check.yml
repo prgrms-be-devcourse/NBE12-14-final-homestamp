@@ -23,6 +23,8 @@ jobs:
           persist-credentials: false
       - name: actionlint
         run: docker run --rm -v "$PWD:/repo:ro" -w /repo rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 -color .github/workflows/deploy.yml .github/workflows/deploy-check.yml
+      - name: 이미지 출처 확인(가짜 docker·gh)
+        run: bash .github/scripts/test/check-image-test.sh
       - name: SSM 호출 스크립트(가짜 aws)
         run: bash .github/scripts/test/ssm-deploy-test.sh
       - name: SSM 문서 명령(가짜 deploy.sh, 주입·변조·권한)

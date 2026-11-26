@@ -68,19 +68,15 @@ jobs:
           [[ "$IMAGE_REPOSITORY" =~ ^ghcr\.io/[a-z0-9._/-]+$ ]] || { echo "::error::Environment 변수 IMAGE_REPOSITORY가 없거나 형식이 아닙니다"; exit 1; }
           [[ "$INSTANCE_ID" =~ ^i-[0-9a-f]{8,17}$ ]] || { echo "::error::Environment 변수 EC2_INSTANCE_ID가 없거나 형식이 아닙니다"; exit 1; }
 
-      # 공개 GHCR 패키지라 자격 증명 없이 읽는다(04 9-3). digest가 있고 linux/amd64(t3)인지
-      - name: 이미지 확인
+      # 공개 GHCR 패키지라 자격 증명 없이 읽는다(04 9-3). digest 형식만이 아니라 발행 절차의 이미지인지:
+      # linux/amd64, 커밋 라벨, 발행 태그 sha-<커밋>이 이 digest, 그 커밋이 main에 있음(서명 검증은 아님)
+      - name: 이미지 확인(출처)
         env:
-          IMAGE: ${{ vars.IMAGE_REPOSITORY }}@${{ inputs.digest }}
-        run: |
-          platforms="$(docker buildx imagetools inspect "$IMAGE" --format '{{json .Manifest}}' \
-            | jq -r 'if .manifests then [.manifests[].platform | "\(.os)/\(.architecture)"] | join(" ") else "single" end')" \
-            || { echo "::error::이미지를 찾지 못했습니다"; exit 1; }
-          if [[ "$platforms" == single ]]; then
-            platforms="$(docker buildx imagetools inspect "$IMAGE" --format '{{json .Image}}' | jq -r '"\(.os)/\(.architecture)"')"
-          fi
-          echo "platforms: $platforms"
-          [[ " $platforms " == *" linux/amd64 "* ]] || { echo "::error::linux/amd64 이미지가 아닙니다"; exit 1; }
+          IMAGE_REPOSITORY: ${{ vars.IMAGE_REPOSITORY }}
+          DIGEST: ${{ inputs.digest }}
+          OWNER: ${{ github.repository_owner }}
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/check-image.sh
 
       - name: AWS 임시 자격 증명(OIDC)
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
