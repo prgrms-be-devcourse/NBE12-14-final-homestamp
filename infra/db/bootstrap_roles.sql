@@ -195,14 +195,18 @@ BEGIN
     END IF;
 
     -- The ACL check below skips the schema owner's implicit privileges, so an application or
-    -- Human role must never own public. Ownership is not transferred automatically.
+    -- Human role must never own public. Ownership is not transferred automatically. A person is a
+    -- member of the Human group; the executor's ADMIN-only membership (the same exception as the
+    -- membership check above) is not a person.
     IF EXISTS (
         SELECT 1 FROM pg_namespace n JOIN pg_roles r ON r.oid = n.nspowner
         WHERE n.oid = public_schema_id
           AND (r.rolname IN (migration_role, app_role, purge_role, human_role)
                OR EXISTS (
                    SELECT 1 FROM pg_auth_members m JOIN pg_roles g ON g.oid = m.roleid
-                   WHERE m.member = r.oid AND g.rolname = human_role))
+                   WHERE m.member = r.oid AND g.rolname = human_role
+                     AND NOT (r.rolname = current_user
+                              AND NOT m.inherit_option AND NOT m.set_option AND m.admin_option)))
     ) THEN
         RAISE EXCEPTION 'public schema is owned by a migration, app, purge, or human role; ownership migration is not performed';
     END IF;

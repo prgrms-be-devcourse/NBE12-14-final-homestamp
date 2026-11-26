@@ -514,7 +514,25 @@ class DatabaseRoleBootstrapIntegrationTest {
         postgres,
         "GRANT " + HUMAN + " TO " + adminOnly + " WITH INHERIT FALSE, SET FALSE, ADMIN TRUE");
     assertAuditFails(postgres, "person role " + adminOnly + " membership must be");
+    executeAsAdmin(postgres, "REVOKE " + HUMAN + " FROM " + adminOnly);
+
+    // 사람 역할 자체의 ADMIN 전용 부여도 CREATEROLE·superuser만 받는다(#185 리뷰). 일반 LOGIN 역할이면 실패
+    executeAsAdmin(
+        postgres,
+        "GRANT " + PERSON + " TO " + adminOnly + " WITH INHERIT FALSE, SET FALSE, ADMIN TRUE");
+    assertAuditFails(postgres, "another role can use or administer person role " + PERSON);
+    executeAsAdmin(postgres, "REVOKE " + PERSON + " FROM " + adminOnly);
     executeAsAdmin(postgres, "DROP ROLE " + adminOnly);
+
+    String roleAdmin = "homestamp_role_admin_test";
+    executeAsAdmin(postgres, "CREATE ROLE " + roleAdmin + " LOGIN NOINHERIT CREATEROLE");
+    executeAsAdmin(
+        postgres,
+        "GRANT " + PERSON + " TO " + roleAdmin + " WITH INHERIT FALSE, SET FALSE, ADMIN TRUE");
+    var trustedAdmin = runHumanAudit(postgres);
+    assertEquals(0, trustedAdmin.getExitCode(), trustedAdmin.getStderr());
+    executeAsAdmin(postgres, "REVOKE " + PERSON + " FROM " + roleAdmin);
+    executeAsAdmin(postgres, "DROP ROLE " + roleAdmin);
 
     var restored = runHumanAudit(postgres);
     assertEquals(0, restored.getExitCode(), restored.getStderr());
@@ -561,6 +579,12 @@ class DatabaseRoleBootstrapIntegrationTest {
     executeAsAdmin(postgres, "ALTER SCHEMA public OWNER TO " + PERSON);
     assertNotEquals(0, runBootstrap(postgres).getExitCode());
     assertEquals(PERSON, schemaOwner(postgres, "public"));
+
+    // 실행 관리자는 Human 그룹을 만들 때 ADMIN 전용 멤버십을 받는다. 사람 계정이 아니므로 public을 소유해도 통과한다(#185 리뷰)
+    executeAsAdmin(postgres, "ALTER SCHEMA public OWNER TO " + BOOTSTRAP);
+    var adminOwned = runBootstrap(postgres);
+    assertEquals(0, adminOwned.getExitCode(), adminOwned.getStderr());
+    assertEquals(BOOTSTRAP, schemaOwner(postgres, "public"));
     executeAsAdmin(postgres, "ALTER SCHEMA public OWNER TO " + originalOwner);
   }
 

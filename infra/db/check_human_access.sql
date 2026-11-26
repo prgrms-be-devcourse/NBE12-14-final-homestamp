@@ -68,12 +68,15 @@ BEGIN
             RAISE EXCEPTION 'person role % has a membership other than the human read group',
                 person.rolname;
         END IF;
-        -- Nobody may use the person role, except the ADMIN-only grant a CREATEROLE creator receives.
+        -- Nobody may use the person role. The only allowed grant is ADMIN-only (no INHERIT, no SET)
+        -- to a CREATEROLE or superuser administrator, like the one a CREATEROLE creator receives.
         IF EXISTS (
-            SELECT 1 FROM pg_auth_members
-            WHERE roleid = person.oid AND (inherit_option OR set_option OR NOT admin_option)
+            SELECT 1 FROM pg_auth_members m JOIN pg_roles grantee ON grantee.oid = m.member
+            WHERE m.roleid = person.oid
+              AND (m.inherit_option OR m.set_option OR NOT m.admin_option
+                   OR NOT (grantee.rolsuper OR grantee.rolcreaterole))
         ) THEN
-            RAISE EXCEPTION 'another role can use person role %', person.rolname;
+            RAISE EXCEPTION 'another role can use or administer person role %', person.rolname;
         END IF;
         IF EXISTS (SELECT 1 FROM pg_class WHERE relowner = person.oid)
            OR EXISTS (SELECT 1 FROM pg_proc WHERE proowner = person.oid)
