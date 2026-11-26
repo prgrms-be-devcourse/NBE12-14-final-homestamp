@@ -181,4 +181,14 @@ public class CorrectionRequest {
   public void supersede() {
     this.status = CorrectionStatus.SUPERSEDED;
   }
+
+  /**
+   * 다른 행동 때문에 답 없이 닫혔다(처리 완료(양측)·공유 중단·정산 완료·상대 탈퇴, 05 2-5). 이유와 시각을 함께 채운다(V1 CHECK). 부르는 곳은
+   * {@code CorrectionCloser}다.
+   */
+  public void close(ClosedReason reason, Instant at) {
+    this.status = CorrectionStatus.CLOSED;
+    this.closedReason = reason;
+    this.closedAt = at;
+  }
 }

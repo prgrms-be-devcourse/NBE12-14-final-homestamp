@@ -14,7 +14,7 @@ import com.chilsuitjo.back.global.common.PartySide;
  * @param stamped 고치기: 지금 기록에 도장이 있나
  * @param stampChanged 고치기: 서비스가 잠그기 전에 본 도장 여부와 지금이 다름(그사이 상대가 확인함). 요청 모양이 달라져 다시 불러야 한다
  * @param sameValue 고치기: 새 값 중 앞모습과 같은 칸이 있음
- * @param closedByBoth 고치기: 처리 완료(양측)된 수리 건. 응답: 그 이유로 닫힌 고친 내용
+ * @param closedByBoth 고치기: 처리 완료(양측)된 수리 건. 응답: 그 이유로 닫힌 고친 내용이거나 기록이 처리 완료(양측)
  * @param status 응답·거두기: 고친 내용의 지금 상태
  * @param answer 응답: 지금 응답 값(기다림·미확인이면 {@code PENDING}, 거절됐으면 마지막 보류·이견)
  * @param versionNo 응답: 지금 앞모습(도장) 판 번호. 본 번호와 다르면 {@code VERSION_CONFLICT}(REP-7d·7j)

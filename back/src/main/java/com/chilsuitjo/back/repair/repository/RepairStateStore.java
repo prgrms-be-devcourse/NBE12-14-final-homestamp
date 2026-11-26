@@ -11,6 +11,9 @@ import com.chilsuitjo.back.action.service.ActionReader;
 import com.chilsuitjo.back.action.service.ActionRequestContext;
 import com.chilsuitjo.back.action.service.StateStore;
 import com.chilsuitjo.back.action.service.SupplementWriter;
+import com.chilsuitjo.back.correction.rule.CorrectionTargetKind;
+import com.chilsuitjo.back.correction.service.CorrectionCloser;
+import com.chilsuitjo.back.global.common.ClosedReason;
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.global.common.Uuids;
@@ -76,6 +79,7 @@ public class RepairStateStore {
   private final WaitService waits;
   private final SupplementWriter supplementWriter;
   private final RepairPhotos photos;
+  private final CorrectionCloser corrections;
 
   /**
    * 하자 등록(06 REP-1)의 저장 방법. 같은 키로 다시 온 요청이면 pipeline이 만든 수리 건을 {@code load}로 다시 읽는다.
@@ -543,8 +547,13 @@ public class RepairStateStore {
                     RequestKind.CLOSE_CONFIRM,
                     closeRequest(command),
                     side));
-        case CONFIRM_CLOSE, NOT_YET ->
-            waits.answered(closeRequest(command), RequestKind.CLOSE_CONFIRM, side);
+        case CONFIRM_CLOSE -> {
+          waits.answered(closeRequest(command), RequestKind.CLOSE_CONFIRM, side);
+          // 처리 완료(양측 확인)가 되면 내용의 확인 전 고친 내용과 그 확인 요청을 닫는다(06 REP-7l). 지불 고친 내용은 그대로다
+          corrections.closeWaiting(
+              CorrectionTargetKind.REPAIR_CASE, command.target().id(), ClosedReason.CLOSED_BY_BOTH);
+        }
+        case NOT_YET -> waits.answered(closeRequest(command), RequestKind.CLOSE_CONFIRM, side);
         default -> {}
       }
       answerProgressCheck(command);

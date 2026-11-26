@@ -11,6 +11,8 @@ import com.chilsuitjo.back.action.dto.DigestInput;
 import com.chilsuitjo.back.action.dto.PipelineResult;
 import com.chilsuitjo.back.action.rule.ActionType;
 import com.chilsuitjo.back.action.service.ActionPipeline;
+import com.chilsuitjo.back.correction.dto.AcceptAllRequest;
+import com.chilsuitjo.back.correction.dto.AcceptAllResponse;
 import com.chilsuitjo.back.correction.dto.CorrectRequest;
 import com.chilsuitjo.back.correction.dto.CorrectRequest.FieldChange;
 import com.chilsuitjo.back.correction.dto.CorrectResponse;
@@ -21,6 +23,7 @@ import com.chilsuitjo.back.correction.rule.CorrectionResult;
 import com.chilsuitjo.back.correction.rule.CorrectionState;
 import com.chilsuitjo.back.correction.rule.CorrectionTargetKind;
 import com.chilsuitjo.back.correction.rule.CorrectionTransitions;
+import com.chilsuitjo.back.global.common.Answer;
 import com.chilsuitjo.back.global.common.ResidentIdGuard;
 import com.chilsuitjo.back.global.common.dto.AnswerResult;
 import com.chilsuitjo.back.global.common.dto.RespondRequest;
@@ -171,6 +174,53 @@ public class CorrectionService {
         correctionId, null, result.state().answer(), result.action().replayed());
   }
 
+  /**
+   * [모두 확인](06 4-6 {@code accept-all}, 03 G "상대가 확인"): 한 기록의 확인 전 고친 내용을 한 번에 맞아요로 답한다. 고친 내용마다 응답
+   * 행동 {@code RESPOND_CORRECTION} 하나를 한 묶음(트랜잭션 하나)으로 남기므로 하나라도 거절되면 아무것도 바뀌지 않는다. 본 번호와 내용 지문은 화면이
+   * 본 앞모습이다(REP-7d). 마지막 고친 내용까지 답하면 확인 요청은 답함으로 닫힌다.
+   *
+   * <p>pipeline 전에 입력을 본다: 기록·본 번호·고친 내용이 비었거나 같은 고친 내용이 두 번이면 {@code VALIDATION_FAILED}, 없는 기록은
+   * {@code NOT_FOUND}. 잠근 뒤에는 화면이 본 목록이 지금 기다리는 목록과 다르면 {@code VERSION_CONFLICT}, 그 뒤는 하나씩 응답과 같다.
+   */
+  public BatchAnswered acceptAll(UUID memberId, String idempotencyKey, AcceptAllRequest request) {
+    if (request == null
+        || request.targetKind() == null
+        || request.targetId() == null
+        || request.seenVersionNo() == null
+        || request.correctionIds() == null
+        || request.correctionIds().isEmpty()
+        || request.correctionIds().contains(null)
+        || new HashSet<>(request.correctionIds()).size() != request.correctionIds().size()) {
+      throw new BusinessException(ErrorCode.VALIDATION_FAILED);
+    }
+    Correctable target = targetOf(request.targetKind());
+    CorrectableSnapshot snapshot = target.load(request.targetId());
+    DigestInput seen =
+        snapshot.confirmedVersionId() == null
+            ? null
+            : target.digestOf(snapshot.confirmedVersionId());
+    var store =
+        this.store.acceptingAll(
+            target,
+            request.targetKind().targetKey(request.targetId()),
+            Set.copyOf(request.correctionIds()));
+    ActionBatch batch =
+        ActionBatch.of(snapshot.roomRecordId(), Actor.member(memberId), idempotencyKey);
+    for (UUID correctionId : request.correctionIds()) {
+      batch.step(
+          ActionStep.of(
+                  ActionType.RESPOND_CORRECTION,
+                  done -> ActionTarget.correctionRequest(correctionId),
+                  store,
+                  rules)
+              .withSeenVersionNo(request.seenVersionNo())
+              .withContent(seen)
+              .withPayload(Map.of("answer", Answer.ACK.name(), "acceptAll", true)));
+    }
+    BatchResult result = pipeline.executeAll(batch);
+    return new BatchAnswered(new AcceptAllResponse(request.correctionIds()), result.replayed());
+  }
+
   /** 고친 내용 거두기. 고친 측만, 기다리는 고친 내용만 된다. 다시 온 요청이면 참. */
   public boolean withdraw(UUID correctionId, UUID memberId, String idempotencyKey) {
     CorrectionRequest row = store.find(correctionId);
@@ -224,6 +274,13 @@ public class CorrectionService {
   private static String blankToNull(String text) {
     return text == null || text.isBlank() ? null : text;
   }
+
+  /**
+   * [모두 확인] 결과.
+   *
+   * @param replayed 같은 키로 다시 온 요청
+   */
+  public record BatchAnswered(AcceptAllResponse response, boolean replayed) {}
 
   /**
    * 고치기 결과.
