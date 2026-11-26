@@ -6,7 +6,8 @@ import type { Payment, Room } from "@/data/demo"
 describe("HTTP availableActions", () => {
   const room = {
     id: "r1",
-    availableActions: ["invite", "move-out"],
+    // 호실 상세의 availableActions는 room.server에 그대로 둬요(http-rooms)
+    server: { availableActions: ["invite", "move-out"] },
   } as unknown as Room
 
   it("서버가 준 목록을 그대로 돌려준다", () => {

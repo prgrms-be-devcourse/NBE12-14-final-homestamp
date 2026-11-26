@@ -1,0 +1,5 @@
+# 확인된 오탐만 지문(커밋:파일:규칙:줄) 하나씩 적는다. 규칙·폴더 전체를 빼지 않는다.
+# #165 ProdStartupIntegrationTest: PEM 머리글·꼬리글 사이는 테스트 실행 때 keytool로 만든 키를 인코딩하는 Java 식이고, 키는 저장소에 없다.
+0e2debcf68dc805cb519adfd6363695a6ad187e7:back/src/test/java/com/chilsuitjo/back/global/config/ssm/ProdStartupIntegrationTest.java:private-key:206
+# #173 MigrationRunnerIntegrationTest: 위와 같다. PEM 머리글 문자열 뒤에 테스트 실행 때 keytool로 만든 키스토어의 키를 인코딩해 붙이는 Java 식이고, 키는 저장소에 없다.
+461c6fe5c3f33af7574083665cd69379c3eaf6a9:back/src/test/java/com/chilsuitjo/back/MigrationRunnerIntegrationTest.java:private-key:1172

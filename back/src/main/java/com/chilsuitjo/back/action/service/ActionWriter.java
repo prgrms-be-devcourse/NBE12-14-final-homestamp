@@ -10,7 +10,8 @@ import java.util.UUID;
  * 행동 기록 한 줄 쓰기. {@link ActionPipeline} 안쪽 부품이라 package-private이다. 다른 도메인은 import할 수 없고 pipeline만
  * 부른다 (09 3-1 "가짜").
  *
- * <p>구현은 {@link JpaActionWriter}: {@code room_seq} = 마지막 + 1, {@code prev_hash} = 마지막 hash, {@code
+ * <p>구현은 {@link JpaActionWriter}: 호실의 체인 머리에서 {@code room_seq} = {@code last_seq} + 1, {@code
+ * prev_hash} = {@code last_hash}(탈퇴로 끝 행동이 지워져도 번호를 다시 쓰지 않음, 05 2-10), {@code
  * content_digest}·{@code hash}를 계산해 {@code record.action}에 쓴다(입력 형식은 05 2-3 「해시 입력 형식」, 04 4-0). 같은
  * (주체, 키)가 이미 있으면 {@code UNIQUE(actor_key, idempotency_key)}에 걸려 {@code
  * DataIntegrityViolationException}이 난다. DB 없는 테스트는 테스트 코드의 {@code FakeActionWriter}를 쓴다.

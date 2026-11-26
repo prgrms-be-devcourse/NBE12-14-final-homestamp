@@ -1,6 +1,7 @@
 package com.chilsuitjo.back.correction.entity;
 
 import com.chilsuitjo.back.correction.rule.CorrectionStatus;
+import com.chilsuitjo.back.correction.rule.CorrectionTargetKind;
 import com.chilsuitjo.back.global.common.ClosedReason;
 import com.chilsuitjo.back.global.common.PartySide;
 import jakarta.persistence.Column;
@@ -128,5 +129,66 @@ public class CorrectionRequest {
     this.reason = reason;
     this.createdAt = createdAt;
     this.status = CorrectionStatus.WAITING;
+  }
+
+  /** 대상 기록의 종류. 대상 칸이 모두 비면 호실 기록의 입주일이다. */
+  public CorrectionTargetKind targetKind() {
+    if (repairCaseId != null) {
+      return CorrectionTargetKind.REPAIR_CASE;
+    }
+    if (paymentId != null) {
+      return CorrectionTargetKind.PAYMENT;
+    }
+    if (inspectionItemId != null) {
+      return CorrectionTargetKind.INSPECTION_ITEM;
+    }
+    if (settlementTransferId != null) {
+      return CorrectionTargetKind.SETTLEMENT_TRANSFER;
+    }
+    return CorrectionTargetKind.MOVE_IN_DATE;
+  }
+
+  /** 대상 기록의 ID. 입주일이면 호실 기록 ID. */
+  public UUID targetId() {
+    return switch (targetKind()) {
+      case REPAIR_CASE -> repairCaseId;
+      case PAYMENT -> paymentId;
+      case INSPECTION_ITEM -> inspectionItemId;
+      case SETTLEMENT_TRANSFER -> settlementTransferId;
+      case MOVE_IN_DATE -> roomRecordId;
+    };
+  }
+
+  /**
+   * 상대가 [맞아요]로 확인했다. 다음 상태는 {@code CorrectionTransitions}가 정한 값이다. 동시에 바뀌면 {@code @Version}이
+   * 막는다(409 {@code VERSION_CONFLICT}). 아래 메서드들도 같다.
+   */
+  public void accept() {
+    this.status = CorrectionStatus.ACCEPTED;
+  }
+
+  /** 상대가 보류·이견으로 답했다. 구분과 사유는 응답 행동에 남는다(decisions 2026-11-16). */
+  public void reject() {
+    this.status = CorrectionStatus.REJECTED;
+  }
+
+  /** 고친 측이 답을 받기 전에 거뒀다. */
+  public void withdraw() {
+    this.status = CorrectionStatus.WITHDRAWN;
+  }
+
+  /** 같은 칸을 다시 고쳐 새 고친 내용이 이것을 대신한다(05 2-5 "다시 고치면 이전 것은 SUPERSEDED"). */
+  public void supersede() {
+    this.status = CorrectionStatus.SUPERSEDED;
+  }
+
+  /**
+   * 다른 행동 때문에 답 없이 닫혔다(처리 완료(양측)·공유 중단·정산 완료·상대 탈퇴, 05 2-5). 이유와 시각을 함께 채운다(V1 CHECK). 부르는 곳은
+   * {@code CorrectionCloser}다.
+   */
+  public void close(ClosedReason reason, Instant at) {
+    this.status = CorrectionStatus.CLOSED;
+    this.closedReason = reason;
+    this.closedAt = at;
   }
 }

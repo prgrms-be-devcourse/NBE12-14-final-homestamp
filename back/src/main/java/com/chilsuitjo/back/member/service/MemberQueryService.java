@@ -19,4 +19,13 @@ public interface MemberQueryService {
    * 있고, 하나라도 없는 회원이 있으면 {@code NOT_FOUND}를 던진다. 같은 ID가 여러 번 와도 한 번만 담고, 빈 목록이면 빈 맵을 돌려준다.
    */
   Map<UUID, Optional<String>> maskedNames(Collection<UUID> memberIds);
+
+  /**
+   * 회원이 지금 인증해 둔 번호(숫자만, 05 0장 정규화). 초대할 때 내 번호인지({@code SELF_INVITE}), 받은 초대와 연결할 때 초대 번호와 같은지 보는
+   * 데 쓴다(06 ROOM-4a·5a·5b, #100·#163). 다른 계정이 같은 번호를 인증해 인증이 풀렸거나(06 ACC-3a) 탈퇴했으면 비어 있다. 없는 회원이면
+   * {@code NOT_FOUND}를 던진다.
+   *
+   * <p>번호는 로그·예외 문구·응답에 남기지 않는다(04 "개인정보 로그"). 비교나 조회 조건에만 쓴다.
+   */
+  Optional<String> verifiedPhone(UUID memberId);
 }
