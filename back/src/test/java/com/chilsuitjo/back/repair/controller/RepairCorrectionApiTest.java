@@ -554,6 +554,46 @@ class RepairCorrectionApiTest {
   }
 
   @Test
+  void 양측_종료_뒤에는_보류였던_고친_내용도_맞아요로_바꾸지_못한다() throws Exception {
+    stamp();
+    UUID id = firstId(correct(tenant, "c1", "{\"field\":\"title\",\"newValue\":\"천장 물샘\"}", "오타"));
+    respond(id, landlord, "r1", "NEED_MORE", "사진이 더 필요해요", 1).andExpect(status().isOk());
+    progress(tenant, "start", null).andExpect(status().isOk());
+    progress(tenant, "request-close", null).andExpect(status().isOk());
+    progress(landlord, "confirm-close", null).andExpect(status().isOk());
+
+    respond(id, landlord, "r2", "ACK", null, 1)
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("CLOSED_BY_BOTH"));
+    assertThat(correction(id)).containsEntry("status", "REJECTED");
+    assertThat(content((UUID) head().get("confirmed_content_id"))).containsEntry("no", 1);
+    detail(landlord).andExpect(jsonPath("$.corrections[0].availableActions", hasSize(0)));
+  }
+
+  @Test
+  void 공유를_그만두기_전의_보류는_그_뒤_맞아요로_바꿔도_그만둔_쪽에는_보류로_보인다() throws Exception {
+    stamp();
+    UUID id = firstId(correct(tenant, "c1", "{\"field\":\"title\",\"newValue\":\"천장 물샘\"}", "오타"));
+    respond(id, landlord, "r1", "NEED_MORE", "사진이 더 필요해요", 1).andExpect(status().isOk());
+    jdbc.update(
+        "UPDATE state.party SET status = 'SHARING_STOPPED', sharing_stopped_at = ?"
+            + " WHERE room_record_id = ? AND side = 'TENANT'",
+        java.sql.Timestamp.from(java.time.Instant.now()),
+        room);
+    respond(id, landlord, "r2", "ACK", null, 1).andExpect(status().isOk());
+
+    detail(tenant)
+        .andExpect(jsonPath("$.content.no").value(1))
+        .andExpect(jsonPath("$.corrections[0].status").value("REJECTED"))
+        .andExpect(jsonPath("$.corrections[0].answer").value("NEED_MORE"))
+        .andExpect(jsonPath("$.corrections[0].answerReason").value("사진이 더 필요해요"));
+    detail(landlord)
+        .andExpect(jsonPath("$.content.no").value(2))
+        .andExpect(jsonPath("$.corrections[0].status").value("ACCEPTED"))
+        .andExpect(jsonPath("$.corrections[0].answer").value("ACK"));
+  }
+
+  @Test
   void 아직_안_됐어요면_고친_내용은_그대로_기다린다() throws Exception {
     stamp();
     UUID id = firstId(correct(tenant, "c1", "{\"field\":\"title\",\"newValue\":\"천장 물샘\"}", "오타"));
