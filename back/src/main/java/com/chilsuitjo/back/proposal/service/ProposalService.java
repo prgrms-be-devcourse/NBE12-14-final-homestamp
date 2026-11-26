@@ -27,10 +27,15 @@ public interface ProposalService {
    * @param memberId 제안하는 회원 ID
    * @param idempotencyKey 요청의 {@code Idempotency-Key}
    * @param agenda 제안할 안건
+   *     <p>기다리는 안이 없을 때만 받는다(decisions 2026-11-26): 미정·이견이면 합의 대기, 합의됨·비용 없음이면 합의는 그대로이고 새 안은 바꾸자는
+   *     안이다(MONEY-3d). 기다리는 안이 있으면 내 안 바꾸기·역제안이라 아직 받지 않는다. 지금은 수리비 부담({@code REPAIR_BURDEN})만 받는다.
    * @param cmd 금액 줄·비용 없음·사유
-   * @return 만든 제안 ID와 처리 뒤 안건
-   * @throws com.chilsuitjo.back.global.error.BusinessException 줄 금액의 합이 전체 금액과 다르면 {@code
-   *     SUM_MISMATCH}, 다른 호실의 대상이면 {@code NOT_FOUND}, 호실 단위 거절은 pipeline의 오류({@code SETTLED} 등)
+   * @return 만든 제안 ID와 재요청 여부. {@link ProposalResult#agenda()}는 {@code null}이다(만드는 행동의 응답은 만든 ID만,
+   *     06 4-0)
+   * @throws com.chilsuitjo.back.global.error.BusinessException 줄 모양이 안건에 맞지 않으면 {@code
+   *     VALIDATION_FAILED}, 제3자 설명이 주민등록번호 형태면 {@code RESIDENT_ID_BLOCKED}, 기다리는 안이 있으면 {@code
+   *     INVALID_STATE}, 줄 금액의 합이 전체 금액과 다르면 {@code SUM_MISMATCH}, 다른 호실의 대상이면 {@code NOT_FOUND}, 호실
+   *     단위 거절은 pipeline의 오류({@code SETTLED} 등)
    */
   ProposalResult propose(
       UUID roomRecordId,
@@ -53,4 +58,39 @@ public interface ProposalService {
    * @return 처리 뒤 안건
    */
   AgendaResult rebase(UUID roomRecordId, AgendaRef agenda, long newRequiredTotal);
+
+  /**
+   * 기다리는 안에 상대 측이 동의한다({@code AGREE}, 06 MONEY-3). {@code POST /api/proposals/{id}/agree}를 {@code
+   * ProposalController}가 받아 부른다. 트랜잭션·측·재요청은 {@link #propose}와 같다.
+   *
+   * <p><b>아직 계약과 다르다</b>: 돌려주는 {@link ProposalResult#agenda()}는 {@code null}이다. 처리 뒤 안건(합의·이력)은 화면이
+   * 수리 건 상세를 다시 불러와 본다. 안건 조립은 상세 조회의 돈 칸을 만들 때 채운다.
+   *
+   * @param proposalId 동의할 제안 ID
+   * @param memberId 동의하는 회원 ID
+   * @param idempotencyKey 요청의 {@code Idempotency-Key}
+   * @return 동의한 제안 ID와 재요청 여부
+   * @throws com.chilsuitjo.back.global.error.BusinessException 지금 기다리는 안이 아니면 {@code
+   *     NOT_CURRENT_PROPOSAL}, 내 제안이면 {@code OWN_PROPOSAL}, 나눈 금액의 합이 전체 금액과 다르면 {@code
+   *     SUM_MISMATCH}, 없는 제안이면 {@code NOT_FOUND}, 호실 단위 거절은 pipeline의 오류
+   */
+  ProposalResult agree(UUID proposalId, UUID memberId, String idempotencyKey);
+
+  /**
+   * 기다리는 안에 상대 측이 이견을 남긴다({@code DISPUTE_PROPOSAL}, 03 E). {@code POST
+   * /api/proposals/{id}/dispute}를 {@code ProposalController}가 받아 부른다. 사유는 필수이고 행동 기록의 {@code
+   * reason}에 남는다(decisions 2026-11-19). 합의 뒤 바꾸자는 안에 남긴 이견이면 합의는 그대로다(03 1-2). 트랜잭션·측·재요청·돌려주는 값은
+   * {@link #agree}와 같다.
+   *
+   * @param proposalId 이견을 남길 제안 ID
+   * @param memberId 이견을 남기는 회원 ID
+   * @param idempotencyKey 요청의 {@code Idempotency-Key}
+   * @param reason 이견 사유
+   * @return 그 제안 ID와 재요청 여부
+   * @throws com.chilsuitjo.back.global.error.BusinessException 사유가 없거나 공백뿐이면 {@code
+   *     REASON_REQUIRED}, 주민등록번호 형태면 {@code RESIDENT_ID_BLOCKED}, 지금 기다리는 안이 아니면 {@code
+   *     NOT_CURRENT_PROPOSAL}, 내 제안이면 {@code OWN_PROPOSAL}, 없는 제안이면 {@code NOT_FOUND}, 호실 단위 거절은
+   *     pipeline의 오류
+   */
+  ProposalResult dispute(UUID proposalId, UUID memberId, String idempotencyKey, String reason);
 }

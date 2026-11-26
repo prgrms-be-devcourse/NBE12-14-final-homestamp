@@ -4,11 +4,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.chilsuitjo.back.global.common.PartySide;
+import com.chilsuitjo.back.proposal.dto.AgendaRef;
+import com.chilsuitjo.back.proposal.rule.AgendaKind;
 import java.time.Instant;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
-/** 제안 팩토리가 V1 CHECK(대상 칸 하나, {@code round >= 1})를 자바에서 먼저 지키는지 본다. */
+/**
+ * 제안 팩토리가 V1 CHECK(대상 칸 하나, {@code round >= 1})를 자바에서 먼저 지키는지, 채운 대상 칸으로 안건({@code agenda()})을 정하는지
+ * 본다.
+ */
 class ProposalTest {
 
   private static final Instant NOW = Instant.parse("2026-11-19T00:00:00Z");
@@ -88,5 +93,31 @@ class ProposalTest {
 
     assertThat(proposal.getRound()).isEqualTo(1);
     assertThat(proposal.isNoCost()).isTrue();
+  }
+
+  // ---- 붙은 안건(agenda) ----
+
+  @Test
+  void 수리_건_제안은_수리비_부담_안건이다() {
+    Proposal proposal =
+        Proposal.forRepairCase(ROOM, TARGET, PartySide.TENANT, null, null, 1, false, NOW);
+
+    assertThat(proposal.agenda()).isEqualTo(new AgendaRef(AgendaKind.REPAIR_BURDEN, TARGET));
+  }
+
+  @Test
+  void 정산_항목_제안은_정산_항목_안건이다() {
+    Proposal proposal =
+        Proposal.forSettlementItem(
+            ROOM, TARGET, PartySide.LANDLORD, null, null, 1, false, "도배", NOW);
+
+    assertThat(proposal.agenda()).isEqualTo(new AgendaRef(AgendaKind.SETTLEMENT_ITEM, TARGET));
+  }
+
+  @Test
+  void 보증금_제안은_보증금_안건이다() {
+    Proposal proposal = Proposal.forDeposit(ROOM, TARGET, PartySide.TENANT, null, null, 1, NOW);
+
+    assertThat(proposal.agenda()).isEqualTo(new AgendaRef(AgendaKind.DEPOSIT, TARGET));
   }
 }
