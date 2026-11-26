@@ -21,6 +21,14 @@ public interface NoticeRepository extends JpaRepository<Notice, UUID> {
   Optional<Notice> findForUpdate(@Param("id") UUID id);
 
   /**
+   * 전달 결과 조회를 시작할 통지 여러 건을 ID 순서로 잠근다. 여러 통지를 잠그는 다른 곳({@link #lockByLinks}, 문자 취소)과 같은 순서라 서로 상대가
+   * 잡은 행을 기다리며 멈추지 않는다. 순서는 DB의 {@code uuid} 정렬이라 Java에서 정렬하지 않는다({@link UUID#compareTo}와 다를 수 있음).
+   */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("SELECT n FROM Notice n WHERE n.id IN :ids ORDER BY n.id")
+  List<Notice> lockAllInIdOrder(@Param("ids") Collection<UUID> ids);
+
+  /**
    * 전달 결과를 물을 시각이 된 보낸 문자를 잠가 가져온다(V1 {@code ix_notice_poll}). {@code SKIP LOCKED}라서 작업자 둘이 같은 통지를
    * 가져가지 않는다({@link OutboxRepository#lockDueSms}와 같은 방식). 트랜잭션 안에서만 부른다.
    *

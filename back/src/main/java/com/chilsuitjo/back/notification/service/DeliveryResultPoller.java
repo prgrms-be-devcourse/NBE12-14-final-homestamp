@@ -12,6 +12,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -111,11 +112,15 @@ public class DeliveryResultPoller {
   private StartedBatch beginBatch(List<ClaimedDeliveryPoll> polls) {
     StartedBatch started =
         transaction.execute(status -> {
-          List<PollCandidate> candidates = new ArrayList<>(polls.size());
+          // 문자 취소(SmsCancellationService)와 같은 ID 순서로 한 번에 잠근다. 가져온 순서(조회 예정 시각)대로 하나씩 잠그면 서로 기다리다
+          // 멈출 수 있다
+          Map<UUID, ClaimedDeliveryPoll> byId = new HashMap<>();
           for (ClaimedDeliveryPoll poll : polls) {
-            notices
-                .findForUpdate(poll.noticeId())
-                .ifPresent(notice -> candidates.add(new PollCandidate(poll, notice)));
+            byId.put(poll.noticeId(), poll);
+          }
+          List<PollCandidate> candidates = new ArrayList<>(polls.size());
+          for (Notice notice : notices.lockAllInIdOrder(byId.keySet())) {
+            candidates.add(new PollCandidate(byId.get(notice.getId()), notice));
           }
 
           Instant batchStartedAt = clock.instant().truncatedTo(ChronoUnit.MICROS);

@@ -3,6 +3,7 @@ package com.chilsuitjo.back;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.chilsuitjo.back.notification.dto.ClaimedDeliveryPoll;
 import com.chilsuitjo.back.notification.dto.DeliveryQuery;
 import com.chilsuitjo.back.notification.dto.SmsMessage;
 import com.chilsuitjo.back.notification.dto.SmsSendResult;
@@ -38,6 +39,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 전달 결과 작업자(#120 3-B1): 가져가기(커밋) → 트랜잭션 밖 조회 → 통지마다 다시 잠가 적기. 커밋을 여러 번 하므로 테스트 트랜잭션으로 감싸지 않고, 시각은
@@ -349,6 +351,73 @@ class DeliveryResultPollerTest {
     assertThat(column(last, "status")).isEqualTo("DELIVERED");
     assertThat(time(first, "delivered_at")).isEqualTo(observedAt);
     assertThat(time(last, "delivered_at")).isEqualTo(observedAt);
+  }
+
+  /**
+   * 문자 취소({@code NoticeRepository.lockByLinks})는 통지를 ID 순서로 잠근다. 조회 시작도 같은 순서여야 둘이 같은 통지 여러 건을 반대
+   * 순서로 잡고 서로 기다리지 않는다. ID가 큰 통지가 먼저 조회 예정이어도, 작은 통지를 기다리는 동안 큰 통지는 잡고 있지 않아야 한다.
+   */
+  @Test
+  void 조회_시작은_조회_예정_순서가_아니라_ID_순서로_통지를_잠근다() throws Exception {
+    UUID a = notice(FIRST_POLL);
+    UUID b = notice(FIRST_POLL);
+    List<UUID> inIdOrder =
+        jdbc.queryForList("SELECT id FROM notice WHERE id IN (?, ?) ORDER BY id", UUID.class, a, b);
+    UUID lower = inIdOrder.get(0);
+    UUID higher = inIdOrder.get(1);
+    // 큰 ID를 먼저 가져가게 한다(가져가기는 조회 예정 시각 순)
+    jdbc.update(
+        "UPDATE notice SET next_poll_at = ? WHERE id = ?",
+        Timestamp.from(FIRST_POLL.minusSeconds(30)),
+        higher);
+    TransactionTemplate tx = new TransactionTemplate(transactionManager);
+    CountDownLatch claimed = new CountDownLatch(1);
+    CountDownLatch holding = new CountDownLatch(1);
+    CountDownLatch release = new CountDownLatch(1);
+    // 가져가기는 잠긴 줄을 건너뛰므로(SKIP LOCKED) 가져가기가 커밋된 뒤, 조회 시작 전에 작은 ID를 잡는다
+    CompletableFuture<Void> holder =
+        CompletableFuture.runAsync(() -> {
+          await(claimed);
+          tx.executeWithoutResult(status -> {
+            jdbc.queryForList("SELECT id FROM notice WHERE id = ? FOR UPDATE", lower);
+            holding.countDown();
+            await(release);
+          });
+        });
+    DeliveryPollClaimer thenHold =
+        new DeliveryPollClaimer(
+            notices, Clock.fixed(FIRST_POLL, ZoneOffset.UTC), transactionManager, SCHEDULE) {
+          @Override
+          public List<ClaimedDeliveryPoll> claim(int limit) {
+            List<ClaimedDeliveryPoll> polls = super.claim(limit);
+            claimed.countDown();
+            await(holding);
+            return polls;
+          }
+        };
+    DeliveryResultPoller poller =
+        new DeliveryResultPoller(
+            thenHold,
+            notices,
+            fake,
+            Clock.fixed(FIRST_POLL, ZoneOffset.UTC),
+            transactionManager,
+            Duration.ofMinutes(2));
+    CompletableFuture<Integer> polling = CompletableFuture.supplyAsync(() -> poller.runOnce(50));
+    try {
+      awaitLockWaiter();
+
+      // 작업자가 작은 ID를 기다리는 동안 큰 ID는 다른 쪽이 바로 잠글 수 있다
+      List<UUID> lockedNow =
+          tx.execute(status ->
+              jdbc.queryForList(
+                  "SELECT id FROM notice WHERE id = ? FOR UPDATE NOWAIT", UUID.class, higher));
+      assertThat(lockedNow).containsExactly(higher);
+    } finally {
+      release.countDown();
+      holder.get(10, TimeUnit.SECONDS);
+      assertThat(polling.get(10, TimeUnit.SECONDS)).isEqualTo(2);
+    }
   }
 
   @Test
@@ -702,6 +771,22 @@ class DeliveryResultPollerTest {
       Thread.currentThread().interrupt();
       throw new IllegalStateException(e);
     }
+  }
+
+  /** 다른 연결이 행 잠금을 기다리기 시작할 때까지 기다린다. */
+  private void awaitLockWaiter() throws InterruptedException {
+    long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+    while (System.nanoTime() < until) {
+      Integer waiting =
+          jdbc.queryForObject(
+              "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock'",
+              Integer.class);
+      if (waiting != null && waiting > 0) {
+        return;
+      }
+      Thread.sleep(20);
+    }
+    throw new IllegalStateException("잠금을 기다리는 연결이 없음");
   }
 
   private DeliveryPollClaimer claimer(Instant at) {
