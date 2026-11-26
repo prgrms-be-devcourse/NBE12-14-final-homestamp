@@ -7,6 +7,13 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 public class BackApplication {
 
   public static void main(String[] args) {
+    if (MigrationMode.isRequested(args)) {
+      int exitCode = MigrationMode.execute(args);
+      if (exitCode != 0) {
+        System.exit(exitCode);
+      }
+      return;
+    }
     SpringApplication.run(BackApplication.class, args);
   }
 }

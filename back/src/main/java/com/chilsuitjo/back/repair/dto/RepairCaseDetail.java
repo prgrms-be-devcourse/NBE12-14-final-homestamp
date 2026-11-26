@@ -1,6 +1,8 @@
 package com.chilsuitjo.back.repair.dto;
 
+import com.chilsuitjo.back.correction.rule.CorrectionStatus;
 import com.chilsuitjo.back.global.common.AckState;
+import com.chilsuitjo.back.global.common.ClosedReason;
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.photo.dto.PhotoCard;
 import com.chilsuitjo.back.repair.rule.CauseBasis;
@@ -37,8 +39,12 @@ import java.util.UUID;
  *     erased})으로 남는다(03 3-1, 불변식 16). 주소는 {@code POST /api/photos/view-urls}로 따로 받는다
  * @param causeNotes 원인 설명(06 REP-8). 측마다 지금 설명 하나이고 고치기 전 설명은 {@code previous}에 접혀 있다. 공유를 그만둔 뒤에는
  *     {@code asOf}까지의 설명·응답과 보는 사람 자신의 것만 보인다(03 6-6 9번)
+ * @param corrections 내용(부위·제목·설명)의 고친 내용(06 REP-7, 만든 순서). 기다림·보류·이견은 앞모습 아래 상자에, 확인됨·거둠·대신됨·닫힘은
+ *     [고친 이력 ▸]에 그린다(03 G "화면 규칙 네 줄"). 공유를 그만둔 뒤에는 {@code asOf}까지 고친 것과 보는 사람 자신이 고친 것만 보이고, 그 뒤
+ *     상대의 응답은 드러나지 않는다(03 6-6 9번)
  * @param availableActions 지금 이 사람이 누를 수 있는 행동. 이름은 API 끝 단어와 같다(06 4-0 "할 수 있는 행동"). 원인 설명 응답은 설명마다
- *     {@code CauseNote.canRespond}로 준다
+ *     {@code CauseNote.canRespond}로, 고친 내용 응답·거두기는 고친 내용마다 {@code Correction.availableActions}로 준다.
+ *     [모두 확인]은 {@code accept-all}
  */
 public record RepairCaseDetail(
     UUID id,
@@ -57,7 +63,38 @@ public record RepairCaseDetail(
     Money money,
     List<PhotoCard> photos,
     List<CauseNote> causeNotes,
+    List<Correction> corrections,
     List<String> availableActions) {
+
+  /**
+   * 고친 내용 하나(03 G). 상대 화면은 앞모습({@code content})과 새 값을 비교해 바뀐 글자만 표시한다(REP-7f).
+   *
+   * @param field 칸({@code roomPartId}·{@code title}·{@code description})
+   * @param newValue 새 값. 부위면 부위 ID, 설명을 비우면 null
+   * @param newPartName 부위를 고쳤으면 새 부위 이름. 그 밖에는 null
+   * @param requestedBy 고친 측
+   * @param reason 고친 이유
+   * @param status 기다림 / 확인됨 / 거절(보류·이견) / 미확인 / 거둠 / 대신됨 / 닫힘
+   * @param answer 상대의 지금 응답(확인 전이면 {@code PENDING}, 거절이면 {@code NEED_MORE}·{@code DISPUTE})
+   * @param answerReason 보류·이견의 사유. 그 밖에는 null
+   * @param answeredAt 마지막 응답 시각. 없으면 null
+   * @param closedReason 닫혔으면 이유(예: {@code CLOSED_BY_BOTH} "처리 완료로 닫힘")
+   * @param availableActions 이 고친 내용에 지금 누를 수 있는 행동({@code respond}·{@code withdraw})
+   */
+  public record Correction(
+      UUID id,
+      String field,
+      Object newValue,
+      String newPartName,
+      PartySide requestedBy,
+      String reason,
+      CorrectionStatus status,
+      AckState answer,
+      String answerReason,
+      Instant answeredAt,
+      ClosedReason closedReason,
+      Instant createdAt,
+      List<String> availableActions) {}
 
   /**
    * 원인 설명 하나(03 D-2 "원인에 대한 설명"). 화면은 "세입자의 설명 · 근거: 내 추측"처럼 보이고 "원인 확인됨"·"책임 있음"은 쓰지 않는다.

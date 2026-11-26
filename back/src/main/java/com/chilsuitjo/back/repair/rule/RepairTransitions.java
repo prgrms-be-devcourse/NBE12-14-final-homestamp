@@ -6,6 +6,7 @@ import com.chilsuitjo.back.action.rule.AnswerPayload;
 import com.chilsuitjo.back.action.rule.AnswerSupport;
 import com.chilsuitjo.back.action.rule.Transitions;
 import com.chilsuitjo.back.global.common.AckState;
+import com.chilsuitjo.back.global.common.Answer;
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
@@ -170,8 +171,22 @@ public class RepairTransitions implements Transitions<RepairState> {
       case CLOSE_ALONE -> closeAlone(now, action);
       case ASK_PROGRESS -> askProgress(now, action);
       case NOTE_PROGRESS -> noteProgress(now, action);
+      case CORRECT, RESPOND_CORRECTION -> followCorrection(now, action);
       default -> throw new BusinessException(ErrorCode.INVALID_STATE);
     };
+  }
+
+  /**
+   * 재계산({@code Replay.fold}) 전용: 내용 고치기가 새 판을 앞모습으로 만든 행동을 따라 판 번호만 올린다. 도장 전 고치기({@code CORRECT},
+   * 대상이 수리 건)와 고친 내용의 맞아요({@code RESPOND_CORRECTION} ACK)가 판을 하나씩 만든다(05 2-5). 실제 요청은 correction이
+   * 자기 규칙으로 처리하므로 여기로 오지 않는다. 판을 만들지 않는 행동(도장 뒤 고치기·보류·이견)은 상태를 바꾸지 않는다.
+   */
+  private static RepairState followCorrection(RepairState now, ActionEntry action) {
+    boolean newVersion =
+        action.type() == ActionType.CORRECT
+            ? "APPLIED".equals(action.payload().get("result"))
+            : action.payloadAs(AnswerPayload.class).answer() == Answer.ACK;
+    return newVersion ? now.withNextContent() : now;
   }
 
   /**

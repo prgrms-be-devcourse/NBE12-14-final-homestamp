@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.chilsuitjo.back.BackApplication;
+import com.chilsuitjo.back.ProdTestSchema;
 import com.chilsuitjo.back.photo.repository.S3UploadPostSigner;
 import com.zaxxer.hikari.HikariDataSource;
 import java.nio.charset.StandardCharsets;
@@ -21,6 +22,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.boot.SpringApplication;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -36,7 +39,7 @@ import org.testcontainers.utility.DockerImageName;
  * never used, so no credentials are resolved. It does not use {@code TestcontainersConfiguration}:
  * its {@code @ServiceConnection} would replace the datasource settings and hide what prod reads.
  */
-@ExtendWith(ResetSsmTestParameterSource.class)
+@ExtendWith({ResetSsmTestParameterSource.class, OutputCaptureExtension.class})
 class ProdStartupIntegrationTest {
 
   private static final PostgreSQLContainer POSTGRES =
@@ -64,6 +67,8 @@ class ProdStartupIntegrationTest {
                     + " fsync=off -c ssl=on -c ssl_cert_file=/tmp/pgtls/server.crt"
                     + " -c ssl_key_file=/tmp/pgtls/server.key"));
     POSTGRES.start();
+    // prod 앱은 Flyway를 돌리지 않는다(#173). 배포 순서처럼 스키마를 먼저 적용해 둔다
+    ProdTestSchema.migrate(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
   }
 
   @AfterAll
@@ -100,7 +105,7 @@ class ProdStartupIntegrationTest {
   }
 
   @Test
-  void 신뢰하지_않는_CA의_인증서면_prod는_시작하지_않는다() {
+  void 신뢰하지_않는_CA의_인증서면_prod는_시작하지_않는다(CapturedOutput output) {
     SsmTestParameterSource.setParameters(ssmParameters(otherRoot));
 
     assertThatThrownBy(ProdStartupIntegrationTest::start)
@@ -111,6 +116,12 @@ class ProdStartupIntegrationTest {
                 cause instanceof javax.net.ssl.SSLException
                     || cause instanceof java.security.GeneralSecurityException;
           }
+          // prod 앱은 Flyway를 돌리지 않아(#173) Hibernate가 처음 연결한다. Hibernate는 JDBC 메타데이터 연결 실패를 WARN으로
+          // 남기고
+          // "Dialect를 정할 수 없음"으로 멈춰 원인 사슬에 TLS 예외가 남지 않는다. 그때는 같은 실행의 출력에서 인증서 검증 실패를 확인한다
+          certificateRejected |=
+              output.getAll().contains("SSLHandshakeException")
+                  && output.getAll().contains("PKIX path validation failed");
           assertThat(certificateRejected).as("TLS certificate check failed: %s", error).isTrue();
         });
   }

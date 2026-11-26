@@ -78,6 +78,11 @@ tasks.register('localAccessToken', JavaExec) {
 
 tasks.named('test') {
     useJUnitPlatform()
+    // MigrationRunnerIntegrationTest가 운영 bootJar를 UID 10002 컨테이너에서 --migrate로 실행한다
+    dependsOn tasks.named('bootJar')
+    doFirst {
+        systemProperty 'migration.test.production-boot-jar', tasks.named('bootJar').get().archiveFile.get().asFile.absolutePath
+    }
     finalizedBy 'jacocoTestReport'
 }
 
