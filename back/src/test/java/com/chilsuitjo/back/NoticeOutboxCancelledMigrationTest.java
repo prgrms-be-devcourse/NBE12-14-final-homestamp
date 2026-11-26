@@ -101,6 +101,9 @@ class NoticeOutboxCancelledMigrationTest extends SchemaTestSupport {
                 """,
                 String.class))
         .containsExactlyInAnyOrder(
+            // V11(#124) 전달 확인 기한·조회 보호 제약. 이름이 달라 상태 CHECK와 겹치지 않는다
+            "ck_notice_delivery_check_due",
+            "ck_notice_delivery_poll_lease",
             "notice_channel_check",
             "notice_kind_check",
             "notice_status_check",
