@@ -6,8 +6,11 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.chilsuitjo.back.TestcontainersConfiguration;
+import com.chilsuitjo.back.action.service.ActionRequestContext;
+import com.chilsuitjo.back.action.service.RequestContextTestSupport;
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.common.TargetKind;
+import com.chilsuitjo.back.notification.dto.OpenRequestCommand;
 import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.dto.RequestView;
 import com.chilsuitjo.back.notification.rule.RequestKind;
@@ -15,6 +18,9 @@ import com.chilsuitjo.back.notification.rule.RequestStatus;
 import com.chilsuitjo.back.notification.service.JpaWaitService;
 import com.chilsuitjo.back.notification.service.WaitQuery;
 import com.chilsuitjo.back.notification.service.WaitService;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -30,6 +36,8 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 운영처럼 실제 DB 응답 요청({@link JpaWaitService})으로 수리 흐름을 띄운다(테스트 전용 가짜를 뺌). 원인 행동과 같은 트랜잭션에서 요청 행이 생기고
@@ -45,6 +53,9 @@ class RepairWaitJpaFlowTest {
   @Autowired private JdbcTemplate jdbc;
   @Autowired private WaitService waitService;
   @Autowired private WaitQuery waitQuery;
+  @Autowired private ActionRequestContext requestContext;
+  @Autowired private PlatformTransactionManager transactionManager;
+  @PersistenceContext private EntityManager entityManager;
 
   private UUID room;
   private UUID tenant;
@@ -124,7 +135,38 @@ class RepairWaitJpaFlowTest {
     assertThat(row).containsEntry("status", "WAITING").containsEntry("requested_by_side", "TENANT");
   }
 
+  @Test
+  void 원인_행동의_트랜잭션이_되돌아가면_요청도_남지_않는다() {
+    TransactionTemplate tx = new TransactionTemplate(transactionManager);
+
+    // save 안에서 요청을 연 뒤 그 행동이 실패한 것과 같다(MANDATORY라 같은 트랜잭션에 합류)
+    tx.executeWithoutResult(status -> {
+      RequestContextTestSupport.within(
+          requestContext,
+          Instant.parse("2026-11-27T00:00:00Z"),
+          () ->
+              waitService.open(
+                  new OpenRequestCommand(
+                      room,
+                      RequestKind.CORRECTION_CONFIRM,
+                      RequestTarget.roomRecord(room),
+                      PartySide.TENANT)));
+      entityManager.flush();
+      assertThat(roomRequests()).isEqualTo(1);
+      status.setRollbackOnly();
+    });
+
+    assertThat(roomRequests()).isZero();
+  }
+
   // ---- 도우미 ----
+
+  private int roomRequests() {
+    return jdbc.queryForObject(
+        "SELECT count(*) FROM state.response_request WHERE room_record_id = ?",
+        Integer.class,
+        room);
+  }
 
   private List<Map<String, Object>> requests(UUID caseId, String kind) {
     return jdbc.queryForList(
