@@ -1,5 +1,6 @@
 package com.chilsuitjo.back.notification.service;
 
+import com.chilsuitjo.back.notification.dto.Recipient;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -28,5 +29,14 @@ public class DisabledRecipientDirectory implements RecipientDirectory {
   @Override
   public Optional<String> phoneOfRecipient(UUID partyId) {
     return Optional.empty();
+  }
+
+  /**
+   * 이 구현은 문자 발송만 비활성화하고 실제 자리·회원 상태는 읽지 않는다. 그 상태를 {@link Recipient.Unavailable}로 꾸며내지 않는다. 작업자가
+   * {@code resolve}로 전환되기 전까지 이 구현을 사용하지 않는다.
+   */
+  @Override
+  public Recipient resolve(UUID partyId) {
+    throw new UnsupportedOperationException("disabled 문자 모드에서는 수신자 상태를 조회하지 않는다");
   }
 }
