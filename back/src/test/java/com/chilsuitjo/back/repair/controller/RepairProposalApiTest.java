@@ -287,7 +287,10 @@ class RepairProposalApiTest {
             "{\"lines\":[{\"kind\":\"LANDLORD\",\"thirdPartyLabel\":\"윗집\",\"amount\":82000}]}",
             "{\"lines\":[{\"kind\":\"LANDLORD\",\"amount\":82000}],\"reason\":\"그냥\"}", // 수리비 사유
             "{\"lines\":[{\"kind\":\"LANDLORD\",\"amount\":9223372036854775807},"
-                + "{\"kind\":\"TENANT\",\"amount\":1}]}"); // 합이 넘침
+                + "{\"kind\":\"TENANT\",\"amount\":1}]}", // 합이 넘침
+            "{\"lines\":[{\"kind\":\"LANDLORD\",\"amount\":0}]}", // 합계 0원: 비용 없음으로
+            "{\"lines\":[{\"kind\":\"LANDLORD\",\"amount\":0},"
+                + "{\"kind\":\"TENANT\",\"amount\":0}]}"); // 줄이 여럿이어도 합계 0원
     int n = 0;
     for (String body : bodies) {
       propose(landlord, "v" + n++, body)
@@ -297,6 +300,45 @@ class RepairProposalApiTest {
 
     assertThat(countProposals()).isZero();
     assertThat(countActions("PROPOSE")).isZero();
+  }
+
+  @Test
+  void 확인된_지불이_없으면_합계_0원_안은_막고_비용_없음으로만_제안한다() throws Exception {
+    // 기준 금액 0: 0원 줄 안이 합계 검사를 지나 AGREED(0원 합의)가 되면 NO_COST와 같은 뜻이 둘로 남는다
+    propose(landlord, "p1", "{\"lines\":[{\"kind\":\"LANDLORD\",\"amount\":0}]}")
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+
+    UUID proposal =
+        idOf(
+            propose(landlord, "p2", "{\"noCost\":true}")
+                .andExpect(status().isCreated())
+                .andReturn());
+    agree(proposal, tenant, "a1").andExpect(status().isOk());
+
+    assertThat(caseRow()).containsEntry("money_status", "NO_COST");
+    assertThat(countProposals()).isEqualTo(1);
+  }
+
+  @Test
+  void 한쪽이_0원인_나눈_안은_받는다() throws Exception {
+    payments.seedConfirmedTotal(room, repair, 82_000);
+
+    // 프론트 [나눠서]는 세입자 0원 줄도 함께 보낸다(repair-discussions.tsx lines)
+    UUID proposal =
+        idOf(
+            propose(
+                    landlord,
+                    "p1",
+                    "{\"lines\":[{\"kind\":\"TENANT\",\"amount\":0},"
+                        + "{\"kind\":\"LANDLORD\",\"amount\":82000}]}")
+                .andExpect(status().isCreated())
+                .andReturn());
+
+    assertThat(lines(proposal))
+        .containsExactlyInAnyOrder(
+            Map.of("line_kind", "TENANT", "amount", 0L),
+            Map.of("line_kind", "LANDLORD", "amount", 82_000L));
   }
 
   @Test

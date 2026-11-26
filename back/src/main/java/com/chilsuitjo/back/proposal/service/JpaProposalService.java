@@ -144,7 +144,8 @@ public class JpaProposalService implements ProposalService {
    *
    * <ul>
    *   <li>비용 없음이면 줄이 없고, 아니면 줄이 하나 이상(03 E "부담 안의 모양")
-   *   <li>줄 종류는 집주인·세입자·제3자, 금액은 0 이상, 합이 {@code long}을 넘지 않음
+   *   <li>줄 종류는 집주인·세입자·제3자, 금액은 0 이상, 합이 {@code long}을 넘지 않음. 한 줄이 0원인 것은 받지만 합계가 0원이면 거절한다(비용
+   *       없음으로 제안)
    *   <li>제3자 줄에만 설명이 있고 꼭 있으며 30자 이하(03 E "제3자는 짧은 설명만", V1). 주민등록번호 형태는 막는다(03 6-1)
    *   <li>빼기·사유는 정산 항목에만 있다(05 {@code proposal.reason}). 빈 사유는 없는 것으로 본다
    * </ul>
@@ -185,6 +186,10 @@ public class JpaProposalService implements ProposalService {
       } catch (ArithmeticException overflow) {
         throw new BusinessException(ErrorCode.VALIDATION_FAILED);
       }
+    }
+    // 돈이 들지 않는 건은 비용 없음으로만 남긴다: 0원 줄 안이 합의되면 NO_COST와 같은 뜻의 AGREED가 생김(decisions 2026-11-26)
+    if (!cmd.noCost() && total == 0) {
+      throw new BusinessException(ErrorCode.VALIDATION_FAILED);
     }
     return new ProposalCommand(lines, cmd.noCost(), false, null);
   }
