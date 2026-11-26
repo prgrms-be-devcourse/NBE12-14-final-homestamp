@@ -4,6 +4,7 @@ import com.chilsuitjo.back.global.common.AckState;
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.photo.dto.PhotoCard;
 import com.chilsuitjo.back.repair.rule.CauseBasis;
+import com.chilsuitjo.back.repair.rule.ClosedBy;
 import com.chilsuitjo.back.repair.rule.MoneyStatus;
 import com.chilsuitjo.back.repair.rule.RepairStatus;
 import java.time.Instant;
@@ -22,6 +23,9 @@ import java.util.UUID;
  * @param registeredBy 등록한 측. 하자에 답하는 쪽은 그 반대 측이다
  * @param status 수리 진행(시작 전 → 처리 중 → 종료 확인 대기 → 처리 완료)
  * @param closeRequestedBy 종료 확인 대기면 종료를 요청한 측(화면의 "○○ 쪽이 종료를 요청했어요"). 종료 확인 대기가 아니면 null
+ * @param closedBy 처리 완료면 누가 확인해 끝났나(양측 / 한쪽: 화면의 "처리 완료(○○ 확인)"). 처리 완료가 아니면 null
+ * @param closeObjection 혼자 끝낸 처리 완료에 상대가 남긴 이견(06 REP-5f "○○ 님 이견(날짜, 사유)"). 상태는 바꾸지 않는다. 혼자 끝낸 처리
+ *     완료가 아니거나(양측 확인이 되면 이견은 이력) 이견이 없으면 null
  * @param solo 혼자 진행 가능으로 바뀐 수리 건인지(ROOM-7)
  * @param createdAt 등록한 시각
  * @param asOf 공유를 그만둬 보이는 범위를 고정한 시각(화면의 "○월 ○일 기준", 03 6-6 9번). 이때 {@code status}·{@code
@@ -43,6 +47,8 @@ public record RepairCaseDetail(
     PartySide registeredBy,
     RepairStatus status,
     PartySide closeRequestedBy,
+    ClosedBy closedBy,
+    CloseObjection closeObjection,
     boolean solo,
     Instant createdAt,
     Instant asOf,
@@ -85,6 +91,15 @@ public record RepairCaseDetail(
    * @param reason 보류·이견의 사유. 맞아요면 null
    */
   public record CauseResponse(AckState answer, String reason, Instant at) {}
+
+  /**
+   * 혼자 끝낸 건에 남은 이견(마지막 [아직 안 됐어요], 행동 기록 {@code NOT_YET}이 원본).
+   *
+   * @param side 이견을 남긴 측(혼자 끝낸 측의 상대)
+   * @param reason 사유
+   * @param at 남긴 시각
+   */
+  public record CloseObjection(PartySide side, String reason, Instant at) {}
 
   /**
    * 지금 판({@code repair_content}).

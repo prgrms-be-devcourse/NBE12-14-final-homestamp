@@ -25,9 +25,11 @@ describe("HTTP 모드는 연결을 마친 API만 서버로 보내요", () => {
     const fetch = vi.fn()
     vi.stubGlobal("fetch", fetch)
     const request = createHttpClient({ baseUrl: "" })
-    await expect(request("GET", "/api/rooms")).rejects.toMatchObject({
-      code: "NOT_CONNECTED",
-    })
+    await expect(request("GET", "/api/me/notifications")).rejects.toMatchObject(
+      {
+        code: "NOT_CONNECTED",
+      },
+    )
     expect(fetch).not.toHaveBeenCalled()
   })
   it("연결을 마친 API는 서버로 보내고, Retry-After를 오류에 담아요", async () => {

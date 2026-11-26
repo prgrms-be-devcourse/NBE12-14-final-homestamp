@@ -10,6 +10,7 @@ import com.chilsuitjo.back.action.rule.ActionType;
 import com.chilsuitjo.back.action.rule.AnswerSupport;
 import com.chilsuitjo.back.action.rule.RoomGateReader;
 import com.chilsuitjo.back.action.service.ActionPipeline;
+import com.chilsuitjo.back.action.service.StateStore;
 import com.chilsuitjo.back.global.common.AckState;
 import com.chilsuitjo.back.global.common.Answer;
 import com.chilsuitjo.back.global.common.PartySide;
@@ -188,9 +189,19 @@ public class RepairService {
   }
 
   /**
-   * 아직 안 됐어요(06 REP-5b). 사유에 주민등록번호 형태가 있으면 {@code RESIDENT_ID_BLOCKED}(pipeline 전, 03 6-1), 종료 확인
-   * 대기가 아니면 {@code INVALID_STATE}, 요청한 측이면 {@code NOT_COUNTERPART_SIDE}, 사유가 없으면 {@code
-   * REASON_REQUIRED}다. 사유는 행동 기록의 {@code reason}에 남는다.
+   * 혼자 종료(06 REP-5e). 물을 상대가 처음부터 없을 때만(상대 없음·KEEP-4 뒤 상대 탈퇴, {@code canGoSoloDirectly}) 종료 요청 없이
+   * 처리 완료(○○ 확인). 상대가 있으면(미확인·수신 거부·문자 안 감·공유 중단·연결 전 포함)이나 종료 확인 대기면 {@code SOLO_NOT_ALLOWED}, 시작
+   * 전·처리 완료면 {@code INVALID_STATE}, 거주 종료 뒤면 {@code ROOM_ENDED}.
+   */
+  public RepairProgressChanged closeAlone(UUID repairCaseId, UUID memberId, String idempotencyKey) {
+    return progress(
+        repairCaseId, memberId, idempotencyKey, ActionType.CLOSE_ALONE, null, store.closingAlone());
+  }
+
+  /**
+   * 아직 안 됐어요(06 REP-5b·5f). 사유에 주민등록번호 형태가 있으면 {@code RESIDENT_ID_BLOCKED}(pipeline 전, 03 6-1), 종료
+   * 확인 대기·혼자 끝낸 처리 완료가 아니면 {@code INVALID_STATE}, 요청했거나 혼자 끝낸 측이면 {@code NOT_COUNTERPART_SIDE}, 사유가
+   * 없으면 {@code REASON_REQUIRED}다. 사유는 행동 기록의 {@code reason}에 남는다. 혼자 끝낸 건이면 상태는 그대로이고 이견으로 남는다.
    */
   public RepairProgressChanged notYet(
       UUID repairCaseId, UUID memberId, String idempotencyKey, ReasonRequest request) {
@@ -200,12 +211,12 @@ public class RepairService {
   }
 
   /**
-   * 종료 확인(06 REP-5a). 종료 확인 대기가 아니면 {@code INVALID_STATE}, 요청한 측이면 {@code NOT_COUNTERPART_SIDE}.
-   * {@code alsoAckDefect}면 하자 인정이 확인 기다림이고 확인하는 사람이 하자를 등록한 측이 아닐 때만 같은 요청에 하자 "맞아요"를 남긴다({@code
-   * CONFIRM_CLOSE} → {@code RESPOND_DEFECT}, REP-3a, decisions 2026-11-17·11-24): 어느 단계든 거절되면 둘 다
-   * 남지 않는다. 하자 "맞아요"는 등록한 측의 상대만 하고(03 3장 "맞아요: 상대 측"), 종료 확인은 종료 요청의 상대가 하므로(같은 표 "종료 확인: 요청의 상대
-   * 측") 등록한 측의 상대가 종료를 요청했으면 확인하는 쪽이 등록한 측이다. 그때는 함께 남길 응답만 건너뛰고 종료 확인은 남긴다(하자 인정이 확인 기다림이 아닐 때와
-   * 같음). 하자 응답 단계의 내용 지문은 본 판이다(안내서 3-3).
+   * 종료 확인(06 REP-5a·5f). 종료 확인 대기·혼자 끝낸 처리 완료가 아니면 {@code INVALID_STATE}, 요청했거나 혼자 끝낸 측이면 {@code
+   * NOT_COUNTERPART_SIDE}. {@code alsoAckDefect}면 하자 인정이 확인 기다림이고 확인하는 사람이 하자를 등록한 측이 아닐 때만 같은 요청에
+   * 하자 "맞아요"를 남긴다({@code CONFIRM_CLOSE} → {@code RESPOND_DEFECT}, REP-3a, decisions
+   * 2026-11-17·11-24): 어느 단계든 거절되면 둘 다 남지 않는다. 하자 "맞아요"는 등록한 측의 상대만 하고(03 3장 "맞아요: 상대 측"), 종료 확인은
+   * 종료 요청의 상대가 하므로(같은 표 "종료 확인: 요청의 상대 측") 등록한 측의 상대가 종료를 요청했으면 확인하는 쪽이 등록한 측이다. 그때는 함께 남길 응답만 건너뛰고
+   * 종료 확인은 남긴다(하자 인정이 확인 기다림이 아닐 때와 같음). 하자 응답 단계의 내용 지문은 본 판이다(안내서 3-3).
    */
   public RepairProgressChanged confirmClose(
       UUID repairCaseId, UUID memberId, String idempotencyKey, ConfirmCloseRequest request) {
@@ -312,6 +323,16 @@ public class RepairService {
 
   private RepairProgressChanged progress(
       UUID repairCaseId, UUID memberId, String idempotencyKey, ActionType type, String reason) {
+    return progress(repairCaseId, memberId, idempotencyKey, type, reason, store.progressing());
+  }
+
+  private RepairProgressChanged progress(
+      UUID repairCaseId,
+      UUID memberId,
+      String idempotencyKey,
+      ActionType type,
+      String reason,
+      StateStore<RepairState> progressStore) {
     UUID roomRecordId = roomOf(repairCaseId);
     PipelineResult<RepairState> result =
         pipeline.execute(
@@ -325,7 +346,7 @@ public class RepairService {
                 null,
                 reason,
                 Map.of()),
-            store.progressing(),
+            progressStore,
             rules);
     RepairState state = result.state();
     return new RepairProgressChanged(

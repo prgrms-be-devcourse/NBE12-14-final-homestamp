@@ -59,6 +59,7 @@ class RepairTransitionsTest {
                 null,
                 null,
                 null,
+                null,
                 null));
     assertThat(next.exists()).isTrue();
   }
@@ -247,7 +248,8 @@ class RepairTransitionsTest {
             false,
             true,
             true,
-            false);
+            false,
+            null);
 
     assertError(
         ErrorCode.INVALID_STATE, () -> rules.apply(closed, supplement(PartySide.TENANT, NOW)));
@@ -317,7 +319,8 @@ class RepairTransitionsTest {
             false,
             false,
             true,
-            false);
+            false,
+            null);
     assertError(
         ErrorCode.INVALID_STATE,
         () -> rules.apply(ended, entry(ActionType.REQUEST_CLOSE, PartySide.TENANT)));
@@ -406,6 +409,136 @@ class RepairTransitionsTest {
     assertThat(folded.defectAck()).isEqualTo(AckState.PENDING);
   }
 
+  // ---- 혼자 종료와 혼자 끝낸 건의 늦은 답(REP-5e·5f) ----
+
+  @Test
+  void REP_5e_물을_상대가_없으면_처리_중에서_혼자_종료해_처리_완료_그_측_확인이_된다() {
+    RepairState next =
+        rules.apply(
+            inProgress().withCanCloseAlone(true),
+            entry(ActionType.CLOSE_ALONE, PartySide.LANDLORD));
+
+    assertThat(next.status()).isEqualTo(RepairStatus.DONE);
+    assertThat(next.closedBy()).isEqualTo(ClosedBy.LANDLORD);
+    assertThat(next.closedAlone()).isTrue();
+  }
+
+  @Test
+  void REP_5c_상대가_있으면_혼자_종료는_SOLO_NOT_ALLOWED() {
+    assertError(
+        ErrorCode.SOLO_NOT_ALLOWED,
+        () ->
+            rules.apply(
+                inProgress().withCanCloseAlone(false),
+                entry(ActionType.CLOSE_ALONE, PartySide.TENANT)));
+    // 종료 확인 대기는 상대의 답을 기다리는 중이라 같은 오류(decisions 2026-11-25, #228 리뷰)
+    assertError(
+        ErrorCode.SOLO_NOT_ALLOWED,
+        () ->
+            rules.apply(
+                closeRequestedBy(PartySide.TENANT).withCanCloseAlone(true),
+                entry(ActionType.CLOSE_ALONE, PartySide.TENANT)));
+  }
+
+  @Test
+  void 시작_전이나_처리_완료에서는_혼자_종료가_INVALID_STATE() {
+    assertError(
+        ErrorCode.INVALID_STATE,
+        () ->
+            rules.apply(
+                registered(AckState.ACK).withCanCloseAlone(true),
+                entry(ActionType.CLOSE_ALONE, PartySide.TENANT)));
+    assertError(
+        ErrorCode.INVALID_STATE,
+        () ->
+            rules.apply(
+                closedAloneBy(ClosedBy.TENANT).withCanCloseAlone(true),
+                entry(ActionType.CLOSE_ALONE, PartySide.TENANT)));
+  }
+
+  @Test
+  void REP_5f_혼자_끝낸_건에_상대가_늦게_종료를_확인하면_양측_확인이_된다() {
+    RepairState next =
+        rules.apply(
+            closedAloneBy(ClosedBy.LANDLORD), entry(ActionType.CONFIRM_CLOSE, PartySide.TENANT));
+
+    assertThat(next.status()).isEqualTo(RepairStatus.DONE);
+    assertThat(next.closedBy()).isEqualTo(ClosedBy.BOTH);
+  }
+
+  @Test
+  void REP_5f_혼자_끝낸_건에_상대의_아직_안_됐어요는_상태를_바꾸지_않고_사유가_필수다() {
+    RepairState done = closedAloneBy(ClosedBy.LANDLORD);
+    RepairState next =
+        rules.apply(
+            done, entry(ActionType.NOT_YET, PartySide.TENANT, null, "아직 물이 새요", Map.of(), NOW));
+
+    assertThat(next).isEqualTo(done);
+    assertError(
+        ErrorCode.REASON_REQUIRED,
+        () -> rules.apply(done, entry(ActionType.NOT_YET, PartySide.TENANT)));
+    // 이견 뒤에도 늦은 종료 확인은 된다
+    assertThat(rules.apply(next, entry(ActionType.CONFIRM_CLOSE, PartySide.TENANT)).closedBy())
+        .isEqualTo(ClosedBy.BOTH);
+  }
+
+  @Test
+  void 혼자_끝낸_측은_스스로_확인하거나_이견을_남길_수_없고_양측_확인_뒤에는_답할_수_없다() {
+    assertError(
+        ErrorCode.NOT_COUNTERPART_SIDE,
+        () ->
+            rules.apply(
+                closedAloneBy(ClosedBy.LANDLORD),
+                entry(ActionType.CONFIRM_CLOSE, PartySide.LANDLORD)));
+    assertError(
+        ErrorCode.NOT_COUNTERPART_SIDE,
+        () ->
+            rules.apply(
+                closedAloneBy(ClosedBy.LANDLORD),
+                entry(ActionType.NOT_YET, PartySide.LANDLORD, null, "사유", Map.of(), NOW)));
+    assertError(
+        ErrorCode.INVALID_STATE,
+        () ->
+            rules.apply(
+                closedAloneBy(ClosedBy.BOTH),
+                entry(ActionType.NOT_YET, PartySide.TENANT, null, "사유", Map.of(), NOW)));
+  }
+
+  @Test
+  void REP_10_혼자_종료와_이견과_늦은_확인도_처음부터_다시_계산할_수_있다() {
+    List<ActionEntry> history =
+        List.of(
+            entry(ActionType.REGISTER, PartySide.TENANT),
+            entry(ActionType.START_REPAIR, PartySide.TENANT),
+            entry(ActionType.CLOSE_ALONE, PartySide.TENANT),
+            entry(ActionType.NOT_YET, PartySide.LANDLORD, null, "아직 물이 새요", Map.of(), NOW),
+            entry(ActionType.CONFIRM_CLOSE, PartySide.LANDLORD));
+
+    RepairState folded = Replay.fold(rules, history);
+
+    assertThat(folded.status()).isEqualTo(RepairStatus.DONE);
+    assertThat(folded.closedBy()).isEqualTo(ClosedBy.BOTH);
+  }
+
+  @Test
+  void 혼자_종료_버튼은_혼자_종료할_수_있다고_확인됐을_때만_보인다() {
+    assertThat(rules.available(inProgress().withCanCloseAlone(true), PartySide.TENANT, NOW))
+        .contains(ActionType.CLOSE_ALONE);
+    assertThat(rules.available(inProgress().withCanCloseAlone(false), PartySide.TENANT, NOW))
+        .doesNotContain(ActionType.CLOSE_ALONE);
+    assertThat(rules.available(inProgress(), PartySide.TENANT, NOW))
+        .doesNotContain(ActionType.CLOSE_ALONE);
+    assertThat(rules.available(closedAloneBy(ClosedBy.LANDLORD), PartySide.TENANT, NOW))
+        .contains(ActionType.CONFIRM_CLOSE, ActionType.NOT_YET);
+    assertThat(rules.available(closedAloneBy(ClosedBy.LANDLORD), PartySide.LANDLORD, NOW))
+        .doesNotContain(ActionType.CONFIRM_CLOSE, ActionType.NOT_YET);
+  }
+
+  /** 처리 완료(끝낸 측). */
+  private static RepairState closedAloneBy(ClosedBy closedBy) {
+    return registered(AckState.ACK).withProgress(RepairStatus.DONE, null, closedBy);
+  }
+
   /** 세입자가 등록하고 시작한 수리 건(종료 확인 요청은 열 수 있음). */
   private static RepairState inProgress() {
     return registered(AckState.ACK).withProgress(RepairStatus.IN_PROGRESS, null, null);
@@ -482,7 +615,8 @@ class RepairTransitionsTest {
             false,
             false,
             false,
-            false);
+            false,
+            null);
 
     assertError(
         ErrorCode.INVALID_STATE,
@@ -565,7 +699,8 @@ class RepairTransitionsTest {
                               canOpen,
                               canOpenClose,
                               canAsk,
-                              hidden));
+                              hidden,
+                              null));
                     }
                   }
                 }
@@ -575,7 +710,20 @@ class RepairTransitionsTest {
         }
       }
     }
-    return cases;
+    // 혼자 종료할 수 있음(상세가 채우는 값) × 처리 완료면 끝낸 측(양측·세입자·집주인)
+    List<RepairState> withSolo = new ArrayList<>();
+    for (RepairState base : cases) {
+      List<RepairState> closings = new ArrayList<>(List.of(base));
+      if (base.status() == RepairStatus.DONE) {
+        closings.add(base.withProgress(RepairStatus.DONE, null, ClosedBy.TENANT));
+        closings.add(base.withProgress(RepairStatus.DONE, null, ClosedBy.LANDLORD));
+      }
+      for (RepairState closing : closings) {
+        withSolo.add(closing.withCanCloseAlone(true));
+        withSolo.add(closing.withCanCloseAlone(false));
+      }
+    }
+    return withSolo;
   }
 
   @Test
@@ -593,6 +741,7 @@ class RepairTransitionsTest {
                 ActionType.CONFIRM_CLOSE, entry(ActionType.CONFIRM_CLOSE, side),
                 ActionType.NOT_YET,
                     entry(ActionType.NOT_YET, side, null, "아직 물이 새요", Map.of(), NOW),
+                ActionType.CLOSE_ALONE, entry(ActionType.CLOSE_ALONE, side),
                 ActionType.ASK_PROGRESS,
                     entry(ActionType.ASK_PROGRESS, side, null, null, Map.of(), NOW),
                 ActionType.NOTE_PROGRESS, entry(ActionType.NOTE_PROGRESS, side));
@@ -641,6 +790,7 @@ class RepairTransitionsTest {
             ActionType.REQUEST_CLOSE,
             ActionType.CONFIRM_CLOSE,
             ActionType.NOT_YET,
+            ActionType.CLOSE_ALONE,
             ActionType.ASK_PROGRESS,
             ActionType.NOTE_PROGRESS);
     return Arrays.stream(ActionType.values())
@@ -681,7 +831,8 @@ class RepairTransitionsTest {
         true,
         true,
         true,
-        hiddenFromCounterpart);
+        hiddenFromCounterpart,
+        null);
   }
 
   private static void assertError(ErrorCode code, Runnable call) {

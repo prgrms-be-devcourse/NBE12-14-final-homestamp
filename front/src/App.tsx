@@ -73,6 +73,7 @@ import {
 } from "@/lib/inspection-rules"
 import {
   canAccessRoom,
+  isPreJoin,
   canSeeInspection,
   declineInvitation,
   canReceiveInvitation,
@@ -229,6 +230,13 @@ function HomeStampApp({
     if (accountId)
       api.records.load({ accountId }).catch((e) => toast(errorMessage(e)))
   }, [api, accountId])
+  // 호실에 들어가면 그 호실 상세(입주일·availableActions)를 새로 받아요(GET /api/rooms/{id}). 목업은 할 일이 없어요
+  useEffect(() => {
+    if (accountId && route.roomId)
+      api.records
+        .loadRoom({ accountId }, route.roomId)
+        .catch((e) => toast(errorMessage(e)))
+  }, [api, accountId, route.roomId])
   // 내 호실: 내가 만들었거나 연결을 수락한 호실. 호실마다 내 측(임차인/임대인)은 연결로 정해져요.
   const myRooms = db.rooms.filter((r) => {
     const s = sideOf(r, accountId)
@@ -378,7 +386,9 @@ function HomeStampApp({
     (r) => r.status === "처리 완료" && hasUnsettledMoney(r),
   )
   // 정산 완료 또는 상대 기록에 합류한 '합류 전 기록'은 읽기만
-  const readOnly = room.status === "정산 완료" || Boolean(room.preJoinOf)
+  const readOnly = room.status === "정산 완료" || isPreJoin(room)
+  // 합류한 상대 기록의 이름(서버는 어느 기록에 합류했는지 주지 않아 HTTP에서는 비어 있어요)
+  const joinedName = db.rooms.find((x) => x.id === room.preJoinOf)?.name
   // 호실 단위 버튼(초대·하자 등록·거주 종료)은 서버가 준 availableActions로만 그려요(GET /api/rooms/{id}).
   // 서버가 연결되면 응답 값을 그대로 쓰고, 그 전에는 Mock이 서버 대신 계산해요.
   const roomActions = api.actions.room(room, role, { guest, readOnly })
@@ -416,6 +426,16 @@ function HomeStampApp({
   const moveInDefectClosed = moveIn === "확인 요청"
   // 호실마다 다음에 할 일 한 줄(홈·호실 목록 공통)
   const nextStep = (r: Room) => {
+    // HTTP: 서버가 고른 코드에 문구만 붙여요(06 4-3 nextStep). 초대·입주 점검·수리 건수 코드는 서버가 그 기능에서 더해요(#190)
+    const code = r.server?.nextStep
+    if (code)
+      return code === "SETTLE"
+        ? "퇴거 정산을 마무리해 주세요"
+        : code === "READ_ONLY"
+          ? r.server?.joinedAway
+            ? "합류 전 기록이에요 · 읽기 전용"
+            : "정산이 끝난 기록이에요 · 읽기 전용"
+          : "새로 확인할 일이 없어요"
     const openRepairs = db.repairs.filter(
       (x) => x.roomId === r.id && x.status !== "처리 완료",
     ).length
@@ -1009,11 +1029,11 @@ function HomeStampApp({
                       1년이 지나면 삭제돼요.
                     </Notice>
                   )}
-                  {room.preJoinOf && (
+                  {isPreJoin(room) && (
                     <Notice className="mb-5">
-                      합류 전 기록이에요. 같은 집의 상대 기록(
-                      {db.rooms.find((x) => x.id === room.preJoinOf)?.name})에
-                      합류해서 이 기록은 읽기만 할 수 있어요.
+                      합류 전 기록이에요. 같은 집의 상대 기록
+                      {joinedName ? `(${joinedName})` : ""}에 합류해서 이 기록은
+                      읽기만 할 수 있어요.
                     </Notice>
                   )}
                   {page !== "rooms" &&

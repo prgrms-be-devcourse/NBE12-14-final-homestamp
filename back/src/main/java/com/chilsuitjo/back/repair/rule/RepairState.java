@@ -32,6 +32,9 @@ import java.time.Instant;
  *     묻기: 거주 중"). 재계산이면 null
  * @param hiddenFromCounterpart 상대 측이 이 기록을 볼 수 없는지. 어느 쪽이든 공유를 그만둔 뒤에 등록한 기록이면 참이다(03 불변식 18 "그만둔 뒤
  *     남긴 기록은 상대에게 보이지 않는다(양방향)"). 볼 수 없는 기록에는 상대가 행동할 수 없다(안내서 8-3). 재계산이면 null
+ * @param canCloseAlone 행동하는(보는) 측이 지금 종료 요청 없이 혼자 종료할 수 있는지(03 1-1 수리 종료 이유: 물을 상대가 처음부터 없음, 06
+ *     REP-5e). 판단은 {@code WaitService.canGoSoloDirectly(CLOSE_CONFIRM)} 그대로이고, 그 이유가 성립한 뒤 이 건에
+ *     행동하는 측에게 보이는 상대 행동이 있으면 거짓이다(03 1-4). 측마다 달라 혼자 종료할 때와 상세 조회만 채운다. 그 밖과 재계산이면 null
  */
 public record RepairState(
     RepairStatus status,
@@ -46,11 +49,42 @@ public record RepairState(
     Boolean canOpenDefectConfirm,
     Boolean canOpenCloseConfirm,
     Boolean canOpenProgressCheck,
-    Boolean hiddenFromCounterpart) {
+    Boolean hiddenFromCounterpart,
+    Boolean canCloseAlone) {
 
   /** 아직 없는 기록. 하자 등록의 지금 상태이고 재계산의 시작점이다(요청할 때만 아는 값은 모름). */
   public static final RepairState NONE =
-      new RepairState(null, null, null, null, null, null, null, null, null, null, null, null, null);
+      new RepairState(
+          null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+
+  /** 혼자 종료할 수 없다고 확인됐나. 모르면(재계산) 거짓이다. */
+  public boolean closeAloneBlocked() {
+    return Boolean.FALSE.equals(canCloseAlone);
+  }
+
+  /** 혼자 끝낸 처리 완료인가(처리 완료(○○ 확인), 03 D-2). 늦은 종료 확인·이견은 이때만 받는다(REP-5f). */
+  public boolean closedAlone() {
+    return status == RepairStatus.DONE && closedBy != null && closedBy != ClosedBy.BOTH;
+  }
+
+  /** 혼자 종료할 수 있는지를 채운다(혼자 종료할 때와 상세 조회). */
+  public RepairState withCanCloseAlone(Boolean value) {
+    return new RepairState(
+        status,
+        defectAck,
+        moneyStatus,
+        registeredBy,
+        contentNo,
+        lastRerequestAt,
+        closedBy,
+        closeRequestedBy,
+        lastProgressAskAt,
+        canOpenDefectConfirm,
+        canOpenCloseConfirm,
+        canOpenProgressCheck,
+        hiddenFromCounterpart,
+        value);
+  }
 
   /** 하자 확인 요청을 열 수 없다고 확인됐나. 모르면(재계산) 거짓이다. */
   public boolean defectConfirmBlocked() {
@@ -95,7 +129,8 @@ public record RepairState(
         canOpenDefectConfirm,
         canOpenCloseConfirm,
         canOpenProgressCheck,
-        hiddenFromCounterpart);
+        hiddenFromCounterpart,
+        canCloseAlone);
   }
 
   public RepairState withLastRerequestAt(Instant at) {
@@ -112,7 +147,8 @@ public record RepairState(
         canOpenDefectConfirm,
         canOpenCloseConfirm,
         canOpenProgressCheck,
-        hiddenFromCounterpart);
+        hiddenFromCounterpart,
+        canCloseAlone);
   }
 
   /** 진행 상황을 물었다(REP-6b). 수리 진행·하자 인정은 그대로다. */
@@ -130,7 +166,8 @@ public record RepairState(
         canOpenDefectConfirm,
         canOpenCloseConfirm,
         canOpenProgressCheck,
-        hiddenFromCounterpart);
+        hiddenFromCounterpart,
+        canCloseAlone);
   }
 
   /** 수리 진행을 바꾼다(REP-4·5). 종료 요청한 측·끝낸 측도 함께 정한다. */
@@ -148,6 +185,7 @@ public record RepairState(
         canOpenDefectConfirm,
         canOpenCloseConfirm,
         canOpenProgressCheck,
-        hiddenFromCounterpart);
+        hiddenFromCounterpart,
+        canCloseAlone);
   }
 }
