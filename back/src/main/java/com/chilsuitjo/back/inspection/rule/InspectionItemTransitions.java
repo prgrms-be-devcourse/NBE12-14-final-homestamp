@@ -62,9 +62,13 @@ public class InspectionItemTransitions implements Transitions<InspectionItemStat
         && AnswerSupport.canAnswer(state.answerable(), side);
   }
 
-  /** 이 측이 지금 이 항목을 보충할 수 있나(근거는 더한다고 봄, {@code AnswerSupport.canRerequest}). 호실 단위 거절은 보지 않는다. */
+  /**
+   * 이 측이 지금 이 항목을 보충할 수 있나(근거는 더한다고 봄, {@code AnswerSupport.canRerequest}). {@link #supplement}와 같은
+   * 판단이다. 호실 단위 거절은 보지 않는다.
+   */
   public boolean canSupplement(InspectionItemState state, PartySide side, Instant now) {
     return state.exists()
+        && supplementable(state.inspectionStatus())
         && AnswerSupport.canRerequest(
             state.answerable(),
             side,
@@ -83,6 +87,14 @@ public class InspectionItemTransitions implements Transitions<InspectionItemStat
     return status == null
         || status == InspectionStatus.REQUESTED
         || status == InspectionStatus.LOCKED;
+  }
+
+  /**
+   * 항목을 보충할 수 있는 점검 상태: 확인 요청 중. 잠긴 뒤에는 이미 있는 항목의 내용을 고치기로만 바꾸므로 보충으로 다시 확인을 받지 않는다(03 H "잠긴 뒤",
+   * #272 리뷰). 늦은 응답({@link #answerable})과 다르다. 모르면(재계산) 서버가 확인했다고 본다.
+   */
+  static boolean supplementable(InspectionStatus status) {
+    return status == null || status == InspectionStatus.REQUESTED;
   }
 
   /**
@@ -132,11 +144,12 @@ public class InspectionItemTransitions implements Transitions<InspectionItemStat
   }
 
   /**
-   * 보충하고 다시 확인 요청(06 4-7 {@code supplement}): 항목을 더한 측만, 보류·이견일 때만, 지금 점검 확인 요청을 열 수 있을 때만, 7일에 한
-   * 번({@code AnswerSupport.rerequest}). 근거(사진이나 설명)는 서비스가 pipeline 전에 본다. 항목은 확인 기다림으로 돌아간다.
+   * 보충하고 다시 확인 요청(06 4-7 {@code supplement}): 확인 요청 중인 점검에서만(잠긴 뒤면 {@code INVALID_STATE}, 03 H "잠긴
+   * 뒤"), 항목을 더한 측만, 보류·이견일 때만, 지금 점검 확인 요청을 열 수 있을 때만, 7일에 한 번({@code AnswerSupport.rerequest}).
+   * 근거(사진이나 설명)는 서비스가 pipeline 전에 본다. 항목은 확인 기다림으로 돌아간다.
    */
   private InspectionItemState supplement(InspectionItemState now, ActionEntry action) {
-    if (!now.exists()) {
+    if (!now.exists() || !supplementable(now.inspectionStatus())) {
       throw new BusinessException(ErrorCode.INVALID_STATE);
     }
     AnswerSupport.Rerequested result =

@@ -88,6 +88,20 @@ class InspectionAnswerTransitionsTest {
         .isEqualTo(AckState.ACK);
   }
 
+  @Test
+  void 잠긴_뒤에는_보충할_수_없고_늦은_응답만_된다() {
+    // 03 H "잠긴 뒤": 내용은 고치기로만 바꾸고, 미확인이었던 항목에는 늦게 답할 수 있다(#272 리뷰)
+    InspectionItemState locked = item(InspectionStatus.LOCKED, AckState.NEED_MORE, null, false);
+
+    assertThatThrownBy(() -> rules.apply(locked, supplement(PartySide.TENANT, NOW)))
+        .hasMessage(ErrorCode.INVALID_STATE.name());
+    assertThat(rules.canSupplement(locked, PartySide.TENANT, NOW)).isFalse();
+    assertThat(rules.apply(locked, respond(PartySide.LANDLORD, "ACK", null, 1)).status())
+        .isEqualTo(AckState.ACK);
+    // 같은 항목도 확인 요청 중이면 보충된다
+    assertThat(rules.canSupplement(item(AckState.NEED_MORE), PartySide.TENANT, NOW)).isTrue();
+  }
+
   // ---- 보충 ----
 
   @Test

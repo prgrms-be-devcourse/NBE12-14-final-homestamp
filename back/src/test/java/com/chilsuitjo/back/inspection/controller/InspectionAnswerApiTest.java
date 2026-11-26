@@ -355,6 +355,28 @@ class InspectionAnswerApiTest {
   }
 
   @Test
+  void 잠긴_뒤에는_보충이_INVALID_STATE이고_늦은_응답은_된다() throws Exception {
+    UUID inspection = requestedWith(2);
+    UUID[] items = items(inspection);
+    respond(landlord, items[0], "a1", "NEED_MORE", "사진이 흐려요", 1).andExpect(status().isOk());
+    // 잠금 기능(INSP-1b~e)은 아직 없어 행으로 잠근다(03 H "잠긴 뒤", #272 리뷰)
+    jdbc.update(
+        "UPDATE state.inspection SET status = 'LOCKED', locked_at = now(),"
+            + " lock_reason = 'ALL_RESOLVED' WHERE id = ?",
+        inspection);
+
+    detail(tenant, inspection)
+        .andExpect(jsonPath("$.items[0].availableActions", not(hasItem("supplement"))));
+    supplement(tenant, items[0], "late-s", "{\"description\":\"보충\"}")
+        .andExpect(jsonPath("$.code").value("INVALID_STATE"));
+    assertThat(itemRow(items[0])).containsEntry("status", "NEED_MORE");
+    assertThat(actions(items[0], "SUPPLEMENT_ITEM")).isZero();
+
+    respond(landlord, items[1], "late-a", "ACK", null, 1).andExpect(status().isOk());
+    assertThat(itemRow(items[1])).containsEntry("status", "ACK");
+  }
+
+  @Test
   void 응답_보충_입력은_pipeline_전에_막는다() throws Exception {
     UUID inspection = requestedWith(1);
     UUID item = items(inspection)[0];
