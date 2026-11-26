@@ -40,6 +40,7 @@ import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -56,6 +57,7 @@ import org.springframework.transaction.support.TransactionTemplate;
       "spring.datasource.hikari.connection-init-sql=SET search_path TO state, record, log, public",
       "app.outbox.worker.enabled=false"
     })
+@ActiveProfiles("test")
 @ExtendWith(OutputCaptureExtension.class)
 class SmsCancellationServiceTest {
 
