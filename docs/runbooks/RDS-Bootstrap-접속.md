@@ -22,8 +22,10 @@ psql: host=<RDS 주소>(인증서 이름 확인)  hostaddr=127.0.0.1(실제로 �
 
 - AWS CLI v2, Session Manager plugin, `psql`(PostgreSQL 18 클라이언트), `python3`
 - `~/.aws/config`의 관리 역할 프로필(`homestamp-ops-admin`, `role_session_name` = 자기 GitHub 아이디)
-- RDS 인증서 묶음: AWS 공식 `https://truststore.pki.rds.amazonaws.com/ap-northeast-2/ap-northeast-2-bundle.pem`. 받은 뒤 SHA-256을 계산해 04 6장 "공개 파일" 줄에 기록된 값과 비교한다(**아직 기록된 값이 없다**. 첫 실행 때 기록하고, 이후에는 다르면 멈춘다)
-- Terraform 출력 두 개(인프라 담당이 `terraform output`으로 확인. 비밀값은 아니지만 계정 번호가 들어 있어 채팅에 붙이지 않는다): `db_endpoint_address`, `db_master_secret_arn`, 그리고 `web_instance_id`
+- RDS 인증서 묶음: 원본은 04 6장 "공개 파일" 줄의 저장소 파일 `back/certs/rds-ca-ap-northeast-2.crt`다. 앱 이미지가 `/app/certs/rds-ca.crt`로 복사하는 것과 **같은 파일**을 쓴다. 이 파일은 AWS 공식 지역 묶음(`https://truststore.pki.rds.amazonaws.com/ap-northeast-2/ap-northeast-2-bundle.pem`)을 이름만 바꿔 저장소에 넣은 것이다
+  - 저장소에 있으면: 그 파일의 SHA-256이 04 6장에 기록된 값과 같은지 확인하고 쓴다. 다르면 멈춘다
+  - 아직 없으면(이미지 작업 G2/G4 전): AWS URL에서 받아 SHA-256을 계산하고, 그 파일과 값을 저장소(`back/certs/`)·04 6장에 넣는 작업과 함께 한다. 노트북 사본과 저장소 파일을 따로 두지 않는다
+- Terraform 출력 세 개(인프라 담당이 `terraform output`으로 확인. 비밀값은 아니지만 계정 번호가 들어 있어 채팅에 붙이지 않는다): `db_endpoint_address`, `db_master_secret_arn`, `web_instance_id`
 
 ## 절차
 
@@ -38,8 +40,8 @@ aws sts get-caller-identity --query 'Arn' --output text | sed -E 's/[0-9]{12}/<a
 
 ### 3~4. Secret 조회 → 임시 PGPASSFILE (값은 화면에 나오지 않는다)
 ```sh
-export PGHOST='<db_endpoint_address>' PGHOSTADDR=127.0.0.1 PGPORT=15432 PGDATABASE=homestamp
-export PGSSLMODE=verify-full PGSSLROOTCERT="$HOME/.homestamp/ap-northeast-2-bundle.pem"
+export PGHOST='<db_endpoint_address>' PGHOSTADDR=127.0.0.1 PGPORT=15432 PGDATABASE=homestamp   # DB 이름은 Terraform db_name 기본값
+export PGSSLMODE=verify-full PGSSLROOTCERT="$PWD/back/certs/rds-ca-ap-northeast-2.crt"   # 저장소 루트에서 실행
 SECRET_ARN='<db_master_secret_arn>'; INSTANCE_ID='<web_instance_id>'
 
 umask 077
@@ -57,7 +59,7 @@ print(":".join([os.environ["PGHOST"], os.environ["PGPORT"], os.environ["PGDATABA
 stat -f '%Lp' "$PGPASSFILE" 2>/dev/null || stat -c '%a' "$PGPASSFILE"   # 600 이어야 한다
 ```
 - libpq는 `.pgpass`의 호스트 칸을 `host`와 맞춘다(`hostaddr`가 아님). 그래서 첫 칸은 RDS 주소다
-- 마스터 사용자 이름은 Secret에 함께 들어 있다(Terraform `db_master_username`). 접속할 때 `PGUSER`로도 넣는다: `export PGUSER=homestamp_master`
+- 마스터 사용자 이름은 Secret에 함께 들어 있다(Terraform `db_master_username`). 접속할 때 `PGUSER`로도 넣는다: `export PGUSER=homestamp_master`(Terraform `db_master_username` 기본값. 바꿨으면 그 값)
 
 ### 5. SSM 포트 포워딩 시작
 ```sh
@@ -75,14 +77,20 @@ psql -X -At -c "SELECT current_user, ssl, version FROM pg_stat_ssl JOIN pg_stat_
 - `homestamp_master|t|TLSv1.3`(또는 1.2)처럼 나와야 한다. 인증서 이름 오류가 나면 `PGHOST`가 RDS 주소인지 확인한다. `localhost`로 바꾸거나 `sslmode`를 낮추지 않는다
 
 ### 7. Bootstrap
-#185 런북의 명령 그대로(역할 이름 변수만, 비밀번호 없음):
+#185 런북(`DB-보관-삭제.md` "운영 Role Bootstrap")의 명령 그대로다. 역할 이름은 테스트 이름(`homestamp_*`)을 쓰지 않고 실행할 때 확정한 운영 이름을 변수로 넣는다. 비밀번호는 없다:
 ```sh
-psql -X -v ON_ERROR_STOP=1 -v owner_role=... -v migration_role=... -v app_role=... -v purge_role=... -v human_role=... -f infra/db/bootstrap_roles.sql
+psql -X -v ON_ERROR_STOP=1 \
+  -v owner_role='<owner identifier>' \
+  -v migration_role='<migration login identifier>' \
+  -v app_role='<app login identifier>' \
+  -v purge_role='<purge login identifier>' \
+  -v human_role='<NOLOGIN human read group identifier>' \
+  -f infra/db/bootstrap_roles.sql
 ```
 
 ### 8. 점검
 ```sh
-psql -X -v ON_ERROR_STOP=1 -v human_role=homestamp_human_read -f infra/db/check_human_access.sql
+psql -X -v ON_ERROR_STOP=1 -v human_role='<NOLOGIN human read group identifier>' -f infra/db/check_human_access.sql   # 7단계와 같은 이름
 ```
 
 ### 9. 결과 판단
