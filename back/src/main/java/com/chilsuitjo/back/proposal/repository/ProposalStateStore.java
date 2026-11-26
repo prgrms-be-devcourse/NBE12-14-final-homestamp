@@ -1,20 +1,28 @@
 package com.chilsuitjo.back.proposal.repository;
 
 import com.chilsuitjo.back.action.dto.ActionCommand;
+import com.chilsuitjo.back.action.dto.ActionTarget;
 import com.chilsuitjo.back.action.dto.SavedState;
+import com.chilsuitjo.back.action.service.ActionRequestContext;
 import com.chilsuitjo.back.action.service.StateStore;
+import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
+import com.chilsuitjo.back.notification.dto.OpenRequestCommand;
 import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.service.WaitService;
 import com.chilsuitjo.back.proposal.dto.AgendaRef;
+import com.chilsuitjo.back.proposal.dto.MoneyLine;
+import com.chilsuitjo.back.proposal.dto.ProposalCommand;
 import com.chilsuitjo.back.proposal.entity.Proposal;
+import com.chilsuitjo.back.proposal.entity.ProposalLine;
 import com.chilsuitjo.back.proposal.rule.AgendaKind;
 import com.chilsuitjo.back.proposal.rule.AgendaState;
 import com.chilsuitjo.back.proposal.rule.ProposalState;
 import com.chilsuitjo.back.proposal.service.AgendaHeadStore;
+import java.time.Instant;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
@@ -28,8 +36,8 @@ import org.springframework.stereotype.Component;
  * <p><b>기다리는 안</b>은 head의 {@code currentProposalId}만으로 정한다. 그래서 기다림이 끝나는 행동(동의·이견·거둠, 금액이 바뀌어 풀림)은
  * 늘 그 칸을 비운다. 05 2-4의 "응답 요청이 WAITING·UNCONFIRMED"는 이 약속으로 함께 지켜진다.
  *
- * <p>지금은 동의({@code AGREE})·이견({@code DISPUTE_PROPOSAL})만 쓴다. 제안·다른 안처럼 금액 줄을 들고 가야 하는 행동은 그 행동만 만드는
- * 메서드로 뺀다.
+ * <p>이 빈은 동의({@code AGREE})·이견({@code DISPUTE_PROPOSAL})에 쓴다. 제안({@code PROPOSE})처럼 금액 줄을 들고 가야 하는
+ * 행동은 그 요청만 쓰는 저장 방법({@link #proposing})을 만든다({@code RepairStateStore.registering}과 같은 모양).
  */
 @Component
 public class ProposalStateStore implements StateStore<ProposalState> {
@@ -38,16 +46,30 @@ public class ProposalStateStore implements StateStore<ProposalState> {
   private final ProposalLineRepository lines;
   private final Map<AgendaKind, AgendaHeadStore> heads;
   private final WaitService waits;
+  private final ActionRequestContext requestContext;
 
   public ProposalStateStore(
       ProposalRepository proposals,
       ProposalLineRepository lines,
       List<AgendaHeadStore> heads,
-      WaitService waits) {
+      WaitService waits,
+      ActionRequestContext requestContext) {
     this.proposals = proposals;
     this.lines = lines;
     this.heads = byKind(heads);
     this.waits = waits;
+    this.requestContext = requestContext;
+  }
+
+  /**
+   * 제안({@code PROPOSE}, 06 MONEY-3)의 저장 방법. 이 요청의 안건과 금액 줄을 들고 있다. {@code ActionPipeline.create}로
+   * 연다(새 제안 행을 만드는 행동). 입력 모양은 서비스가 먼저 본다.
+   *
+   * @param agenda 제안할 안건
+   * @param cmd 금액 줄·비용 없음
+   */
+  public StateStore<ProposalState> proposing(AgendaRef agenda, ProposalCommand cmd) {
+    return new Proposing(agenda, cmd);
   }
 
   /**
@@ -81,6 +103,79 @@ public class ProposalStateStore implements StateStore<ProposalState> {
       default -> throw new IllegalStateException("아직 저장할 수 없는 행동이에요: " + command.type());
     }
     return SavedState.unchanged();
+  }
+
+  private final class Proposing implements StateStore<ProposalState> {
+
+    private final AgendaRef agenda;
+    private final List<MoneyLine> lineItems;
+    private final boolean noCost;
+
+    private Proposing(AgendaRef agenda, ProposalCommand cmd) {
+      this.agenda = agenda;
+      this.lineItems = cmd.lines() == null ? List.of() : List.copyOf(cmd.lines());
+      this.noCost = cmd.noCost();
+    }
+
+    /**
+     * 처음 요청은 대상이 없어(만드는 행동) 들고 있는 안건의 head와 제안 요약을 읽는다. 다른 호실의 대상이면 {@code NOT_FOUND}(head 저장소). 같은
+     * 키로 다시 온 요청은 pipeline이 만든 제안을 대상으로 다시 읽으므로 {@link ProposalStateStore#load}와 같고, 요약은 없다.
+     */
+    @Override
+    public ProposalState load(ActionCommand command) {
+      if (command.target() != null) {
+        return ProposalStateStore.this.load(command);
+      }
+      AgendaState head = headOf(agenda.kind()).load(command.roomRecordId(), agenda.targetId());
+      long total = noCost ? 0 : lineItems.stream().mapToLong(MoneyLine::amount).sum();
+      return new ProposalState(head, waiting(head), new ProposalState.Draft(total, noCost));
+    }
+
+    /**
+     * 제안 행과 줄을 쓰고, head가 새 안을 가리키게 하고, 상대에게 응답 요청을 연다(03 E "응답 필요"). 시각은 행동 기록과 같은 {@code at()}이다.
+     * 회차는 그 안건의 마지막 회차 + 1이다(호실을 잠근 뒤라 겹치지 않음).
+     *
+     * <p>{@code apply}는 새 안의 ID를 모르므로 head의 기다리는 안은 여기서 채운다. 상태·합의는 {@code apply}가 정한 그대로다.
+     */
+    @Override
+    public SavedState save(ActionCommand command, ProposalState next) {
+      UUID roomRecordId = command.roomRecordId();
+      PartySide side = command.actor().side();
+      Instant at = requestContext.at();
+      Proposal proposal = proposals.save(newProposal(roomRecordId, side, at));
+      UUID proposalId = proposal.getId();
+      for (MoneyLine line : lineItems) {
+        lines.save(
+            new ProposalLine(
+                roomRecordId, proposalId, line.kind(), line.thirdPartyLabel(), line.amount(), at));
+      }
+      AgendaState decided = next.head();
+      headOf(agenda.kind())
+          .save(
+              new AgendaState(
+                  roomRecordId,
+                  agenda,
+                  decided.status(),
+                  proposalId,
+                  decided.agreedProposalId(),
+                  decided.requiredTotal()));
+      waits.open(
+          new OpenRequestCommand(roomRecordId, RequestKind.PROPOSAL, requestTarget(agenda), side));
+      return SavedState.created(ActionTarget.of(TargetKind.PROPOSAL, proposalId));
+    }
+
+    /** 안건 종류마다 제안 행을 만든다. 정산 항목·보증금은 정산 작업(SET-1·2)에서 더한다. */
+    private Proposal newProposal(UUID roomRecordId, PartySide side, Instant at) {
+      return switch (agenda.kind()) {
+        case REPAIR_BURDEN -> {
+          int round = proposals.maxRoundOfRepairCase(roomRecordId, agenda.targetId()) + 1;
+          yield Proposal.forRepairCase(
+              roomRecordId, agenda.targetId(), side, null, null, round, noCost, at);
+        }
+        case SETTLEMENT_ITEM, DEPOSIT ->
+            throw new IllegalStateException("아직 이 안건의 제안은 만들 수 없어요: " + agenda.kind());
+      };
+    }
   }
 
   /** head가 가리키는 기다리는 안의 요약. 가리키는 안이 없으면 null. */

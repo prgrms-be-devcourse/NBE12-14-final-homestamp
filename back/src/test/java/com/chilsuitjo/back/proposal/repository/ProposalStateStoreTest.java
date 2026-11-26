@@ -20,12 +20,16 @@ import com.chilsuitjo.back.notification.rule.RequestStatus;
 import com.chilsuitjo.back.notification.service.FakeWaitService;
 import com.chilsuitjo.back.payment.service.FakePaymentService;
 import com.chilsuitjo.back.proposal.dto.AgendaRef;
+import com.chilsuitjo.back.proposal.dto.MoneyLine;
+import com.chilsuitjo.back.proposal.dto.ProposalCommand;
 import com.chilsuitjo.back.proposal.rule.AgendaKind;
 import com.chilsuitjo.back.proposal.rule.AgendaState;
 import com.chilsuitjo.back.proposal.rule.AgendaStatus;
+import com.chilsuitjo.back.proposal.rule.LineKind;
 import com.chilsuitjo.back.proposal.rule.ProposalState;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -226,6 +230,99 @@ class ProposalStateStoreTest {
             jdbc.queryForObject(
                 "SELECT money_status FROM repair_case WHERE id = ?", String.class, repair))
         .isEqualTo("PENDING");
+  }
+
+  @Test
+  void 제안하는_중이면_대상_없이_안건의_head와_제안_내용을_읽는다() {
+    UUID room = room();
+    UUID repair = repair(room);
+    UUID agreed = proposal(room, repair, PartySide.LANDLORD, false);
+    head(repair, "AGREED", null, agreed);
+    paymentService.seedConfirmedTotal(room, repair, 82_000);
+    AgendaRef agenda = new AgendaRef(AgendaKind.REPAIR_BURDEN, repair);
+    ProposalCommand cmd =
+        new ProposalCommand(
+            List.of(
+                new MoneyLine(LineKind.LANDLORD, null, 60_000),
+                new MoneyLine(LineKind.TENANT, null, 22_000)),
+            false,
+            false,
+            null);
+
+    ProposalState state = store.proposing(agenda, cmd).load(proposeCommand(room));
+
+    assertThat(state.head())
+        .isEqualTo(new AgendaState(room, agenda, AgendaStatus.AGREED, null, agreed, 82_000L));
+    assertThat(state.waiting()).isNull();
+    assertThat(state.draft()).isEqualTo(new ProposalState.Draft(82_000, false));
+  }
+
+  @Test
+  void 제안하는_중에_기다리는_안이_있으면_그_요약을_함께_읽는다() {
+    UUID room = room();
+    UUID repair = repair(room);
+    UUID current = proposal(room, repair, PartySide.TENANT, false);
+    line(room, current, "TENANT", 82_000);
+    head(repair, "PENDING", current, null);
+    AgendaRef agenda = new AgendaRef(AgendaKind.REPAIR_BURDEN, repair);
+
+    ProposalState state =
+        store
+            .proposing(agenda, new ProposalCommand(List.of(), true, false, null))
+            .load(proposeCommand(room));
+
+    assertThat(state.waiting())
+        .isEqualTo(new ProposalState.Waiting(current, PartySide.TENANT, 82_000, false));
+    assertThat(state.draft()).isEqualTo(new ProposalState.Draft(0, true));
+  }
+
+  @Test
+  void 같은_키로_다시_온_제안은_만든_제안으로_안건을_다시_읽는다() {
+    UUID room = room();
+    UUID repair = repair(room);
+    UUID made = proposal(room, repair, PartySide.LANDLORD, false);
+    head(repair, "PENDING", made, null);
+    AgendaRef agenda = new AgendaRef(AgendaKind.REPAIR_BURDEN, repair);
+
+    // pipeline의 reload는 처음 결과의 대상(만든 제안)으로 load를 부른다
+    ProposalState state =
+        store
+            .proposing(agenda, new ProposalCommand(List.of(), true, false, null))
+            .load(command(room, made, PartySide.LANDLORD, ActionType.PROPOSE));
+
+    assertThat(state.head().currentProposalId()).isEqualTo(made);
+    assertThat(state.draft()).isNull();
+  }
+
+  @Test
+  void 다른_호실의_수리_건에_제안하면_NOT_FOUND다() {
+    UUID room = room();
+    UUID other = room();
+    UUID repair = repair(other);
+
+    assertThatThrownBy(() ->
+            store
+                .proposing(
+                    new AgendaRef(AgendaKind.REPAIR_BURDEN, repair),
+                    new ProposalCommand(List.of(), true, false, null))
+                .load(proposeCommand(room)))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            ex -> assertThat(ex.errorCode()).isEqualTo(ErrorCode.NOT_FOUND));
+  }
+
+  /** 새 제안을 만드는 행동: 대상은 아직 없다({@code ActionPipeline.create}). */
+  private static ActionCommand proposeCommand(UUID room) {
+    return new ActionCommand(
+        room,
+        Actor.member(UUID.randomUUID()).withSide(PartySide.LANDLORD),
+        ActionType.PROPOSE,
+        "key",
+        null,
+        null,
+        null,
+        null,
+        Map.of());
   }
 
   private static ActionCommand agree(UUID room, UUID proposal, PartySide side) {
