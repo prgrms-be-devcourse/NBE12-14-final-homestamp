@@ -153,4 +153,17 @@ public class RepairCase {
     this.currentProposalId = currentProposalId;
     this.agreedProposalId = agreedProposalId;
   }
+
+  /**
+   * 수리 진행을 바꾼다(06 REP-4·5). 값은 {@code RepairTransitions.apply}가 정한 다음 상태 그대로다. V1 CHECK {@code
+   * (status = 'DONE') = (closed_by IS NOT NULL)}을 지키려고 처리 완료일 때만 끝낸 측을 받는다.
+   */
+  public void changeProgress(RepairStatus next, ClosedBy closed) {
+    Objects.requireNonNull(next, "next");
+    if ((next == RepairStatus.DONE) != (closed != null)) {
+      throw new IllegalArgumentException("처리 완료일 때만 끝낸 측이 있어요: " + next + ", " + closed);
+    }
+    this.status = next;
+    this.closedBy = closed;
+  }
 }

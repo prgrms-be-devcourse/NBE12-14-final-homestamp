@@ -8,11 +8,25 @@ export const CONNECTED_APIS: readonly {
   method: "GET" | "POST"
   path: RegExp
 }[] = [
+  // 호실 만들기·내 호실 목록·호실 상세(06 4-3, ROOM-1·2, #232)
+  { method: "POST", path: /^\/api\/rooms$/ },
+  { method: "GET", path: /^\/api\/rooms$/ },
+  { method: "GET", path: /^\/api\/rooms\/[^/]+$/ },
+  // 법정동 찾기·단계 선택(06 4-3, ROOM-1, #193)
+  { method: "GET", path: /^\/api\/regions\/search$/ },
+  { method: "GET", path: /^\/api\/regions$/ },
   // 로그인·재발급·로그아웃·내 정보(06 4-1, ACC-2·4)
   { method: "POST", path: /^\/api\/auth\/login$/ },
   { method: "POST", path: /^\/api\/auth\/refresh$/ },
   { method: "POST", path: /^\/api\/auth\/logout$/ },
   { method: "GET", path: /^\/api\/me$/ },
+  // 휴대폰 인증 문자·인증번호 확인·가입(06 4-1, ACC-1, #208)
+  { method: "POST", path: /^\/api\/auth\/phone-verifications$/ },
+  {
+    method: "POST",
+    path: /^\/api\/auth\/phone-verifications\/[^/]+\/verify$/,
+  },
+  { method: "POST", path: /^\/api\/auth\/signup$/ },
 ]
 
 export const NOT_CONNECTED_MESSAGE = "아직 서버에 연결되지 않은 기능이에요."

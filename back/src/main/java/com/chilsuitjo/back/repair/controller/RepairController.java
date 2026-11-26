@@ -1,17 +1,25 @@
 package com.chilsuitjo.back.repair.controller;
 
 import com.chilsuitjo.back.global.common.dto.AnswerResult;
+import com.chilsuitjo.back.global.common.dto.ReasonRequest;
 import com.chilsuitjo.back.global.common.dto.RespondRequest;
 import com.chilsuitjo.back.global.common.dto.SupplementRequest;
 import com.chilsuitjo.back.global.response.CreatedResponse;
 import com.chilsuitjo.back.global.security.LoginMember;
 import com.chilsuitjo.back.proposal.dto.ProposalRequest;
 import com.chilsuitjo.back.proposal.dto.ProposalResult;
+import com.chilsuitjo.back.repair.dto.ConfirmCloseRequest;
 import com.chilsuitjo.back.repair.dto.DefectAckChanged;
 import com.chilsuitjo.back.repair.dto.DefectAckResponse;
+import com.chilsuitjo.back.repair.dto.ProgressAskResponse;
+import com.chilsuitjo.back.repair.dto.ProgressAsked;
+import com.chilsuitjo.back.repair.dto.ProgressNoteCreated;
+import com.chilsuitjo.back.repair.dto.ProgressNoteRequest;
 import com.chilsuitjo.back.repair.dto.RegisterRepairRequest;
 import com.chilsuitjo.back.repair.dto.RepairCaseCreated;
 import com.chilsuitjo.back.repair.dto.RepairCaseDetail;
+import com.chilsuitjo.back.repair.dto.RepairProgressChanged;
+import com.chilsuitjo.back.repair.dto.RepairProgressResponse;
 import com.chilsuitjo.back.repair.service.RepairQueryService;
 import com.chilsuitjo.back.repair.service.RepairService;
 import jakarta.validation.Valid;
@@ -113,6 +121,98 @@ public class RepairController {
     ProposalResult result = repairs.propose(id, memberId, idempotencyKey, request);
     return withReplayed(ResponseEntity.status(HttpStatus.CREATED), result.replayed())
         .body(new CreatedResponse(result.proposalId()));
+  }
+
+  /** 수리 시작(REP-4a). 누구든, 시작 전에서만. 처음 성공과 다시 온 요청 모두 200이다. */
+  @PostMapping("/api/repair-cases/{id}/start")
+  public ResponseEntity<RepairProgressResponse> start(
+      @PathVariable UUID id,
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey) {
+    return progressed(repairs.start(id, memberId, idempotencyKey));
+  }
+
+  /** 종료 요청(REP-5). 누구든, 처리 중에서만. 상대에게 종료 확인 요청을 연다. */
+  @PostMapping("/api/repair-cases/{id}/request-close")
+  public ResponseEntity<RepairProgressResponse> requestClose(
+      @PathVariable UUID id,
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey) {
+    return progressed(repairs.requestClose(id, memberId, idempotencyKey));
+  }
+
+  /**
+   * 종료 확인(REP-5a·5f). 요청의 상대 측만(혼자 끝낸 건이면 혼자 끝낸 측의 상대가 늦게 확인). {@code alsoAckDefect}면 하자 인정이 확인
+   * 기다림일 때 하자 맞아요까지 한 요청에 남긴다(REP-3a). 본문은 없어도 된다.
+   */
+  @PostMapping("/api/repair-cases/{id}/confirm-close")
+  public ResponseEntity<RepairProgressResponse> confirmClose(
+      @PathVariable UUID id,
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey,
+      @RequestBody(required = false) ConfirmCloseRequest request) {
+    return progressed(repairs.confirmClose(id, memberId, idempotencyKey, request));
+  }
+
+  /**
+   * 혼자 종료(REP-5e). 누구든, 처리 중이고 물을 상대가 처음부터 없을 때만(상대 없음·KEEP-4 뒤 상대 탈퇴). 종료 요청 없이 처리 완료(○○ 확인)가 된다.
+   * 처음 성공과 다시 온 요청 모두 200이다.
+   */
+  @PostMapping("/api/repair-cases/{id}/close-alone")
+  public ResponseEntity<RepairProgressResponse> closeAlone(
+      @PathVariable UUID id,
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey) {
+    return progressed(repairs.closeAlone(id, memberId, idempotencyKey));
+  }
+
+  /**
+   * 아직 안 됐어요(REP-5b·5f). 종료 요청의 상대 측, 혼자 끝낸 건이면 혼자 끝낸 측의 상대만, 사유 필수. 종료 확인 대기면 처리 중으로 돌아가고, 혼자 끝낸
+   * 건이면 상태는 그대로 이견으로 남는다.
+   */
+  @PostMapping("/api/repair-cases/{id}/not-yet")
+  public ResponseEntity<RepairProgressResponse> notYet(
+      @PathVariable UUID id,
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey,
+      @RequestBody(required = false) ReasonRequest request) {
+    return progressed(repairs.notYet(id, memberId, idempotencyKey, request));
+  }
+
+  /**
+   * 진행 상황 묻기(REP-6b). 누구든, 시작 전·처리 중이고 거주 중일 때. 한 건에 7일에 한 번(누가 물었든). 처음 성공과 다시 온 요청 모두 200이다.
+   *
+   * <p><b>아직 06과 다르다</b>: 알리기(문자)는 만들지 않아 상대에게 알림이 가지 않는다(#134).
+   */
+  @PostMapping("/api/repair-cases/{id}/ask-progress")
+  public ResponseEntity<ProgressAskResponse> askProgress(
+      @PathVariable UUID id,
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey) {
+    ProgressAsked asked = repairs.askProgress(id, memberId, idempotencyKey);
+    return withReplayed(ResponseEntity.ok(), asked.replayed()).body(asked.response());
+  }
+
+  /**
+   * 진행 상황 남기기(REP-6). 누구든, 언제든(처리 완료 뒤에도). 글·사진 중 하나 이상, 사진은 한 번에 10장까지 그 진행 상황에 붙는다. 처음 성공과 다시 온
+   * 요청 모두 201과 만든 진행 상황 ID다.
+   *
+   * <p><b>아직 06과 다르다</b>: [상황이 바뀌었어요]({@code asksCheck: true})는 다음 PR에서 만든다(#219). 그 전에는 {@code
+   * VALIDATION_FAILED}다.
+   */
+  @PostMapping("/api/repair-cases/{id}/progress-notes")
+  public ResponseEntity<CreatedResponse> noteProgress(
+      @PathVariable UUID id,
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey,
+      @RequestBody ProgressNoteRequest request) {
+    ProgressNoteCreated created = repairs.noteProgress(id, memberId, idempotencyKey, request);
+    return withReplayed(ResponseEntity.status(HttpStatus.CREATED), created.replayed())
+        .body(new CreatedResponse(created.id()));
+  }
+
+  private static ResponseEntity<RepairProgressResponse> progressed(RepairProgressChanged changed) {
+    return withReplayed(ResponseEntity.ok(), changed.replayed()).body(changed.response());
   }
 
   private static ResponseEntity.BodyBuilder withReplayed(

@@ -1,4 +1,8 @@
-import { isMobilePhone, normalizePhone } from "@/lib/phone"
+import {
+  isMobilePhone,
+  MOBILE_PHONE_MESSAGE,
+  normalizePhone,
+} from "@/lib/phone"
 import {
   uid,
   type DemoState,
@@ -25,6 +29,19 @@ export function sideOf(
 // 초대받는 자리: 호실을 만든 쪽의 반대편
 export const inviteeSide = (room: Room): Role =>
   room.creator === "임대인" ? "임차인" : "임대인"
+// 화면에 보일 연결 상태. 공유를 그만뒀거나 상대가 탈퇴한 호실은 room.connection이 '연결됨'이어도(그 전 기록은 함께 봐요)
+// 정상 연결과 구분해 보여요. 서버 값은 room.server(06 4-3 counterpartStatus·myStatus)에 그대로 있어요.
+export function connectionText(room: Room) {
+  const s = room.server
+  if (room.counterpartLeft || s?.counterpartStatus === "WITHDRAWN")
+    return "상대 탈퇴"
+  if (s?.myStatus === "SHARING_STOPPED") return "공유 그만둠"
+  if (s?.counterpartStatus === "SHARING_STOPPED") return "상대가 공유 그만둠"
+  return room.connection
+}
+// 합류 전 기록(상대 기록에 합류해 읽기만 하는 내 기록). 목업은 합류한 호실 ID, 서버는 joinedAway로 알려요
+export const isPreJoin = (room: Room) =>
+  Boolean(room.preJoinOf || room.server?.joinedAway)
 export function canAccessRoom(room: Room, role: Role) {
   return room.creator === role || room.connection === "연결됨"
 }
@@ -131,8 +148,7 @@ export function sendSettlementLink(room: Room, role: Role, phone: string) {
     throw new Error("거주 종료 뒤 연결되지 않은 상대에게만 보낼 수 있어요.")
   if (room.creator !== role) throw new Error("호실을 만든 쪽이 보낼 수 있어요.")
   const next = normalizePhone(phone)
-  if (!isMobilePhone(next))
-    throw new Error("010으로 시작하는 11자리 번호를 입력해 주세요.")
+  if (!isMobilePhone(next)) throw new Error(MOBILE_PHONE_MESSAGE)
   const at = new Date().toISOString()
   room.settlementLinks = (room.settlementLinks || []).map((l) =>
     l.invalidatedAt
