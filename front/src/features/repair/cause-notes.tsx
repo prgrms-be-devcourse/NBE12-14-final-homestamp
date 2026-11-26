@@ -12,6 +12,7 @@ import { sideName } from "@/lib/words"
 import { Fold } from "@/components/common/fold"
 import { History } from "lucide-react"
 import type { RepairCommand } from "@/features/repair/use-repair-case"
+import { API_MODE } from "@/config"
 
 // 원인 설명(REP-8, 08 5-3). 고치면 언제나 새 설명으로 남아요(decisions 2026-11-13)
 const BASES = [
@@ -20,6 +21,9 @@ const BASES = [
   "업체·전문가 소견",
   "다른 사람에게 들었어요",
 ]
+// 누구에게 들었는지는 06 4-6 원인 설명 본문에 칸이 없어 서버에 남지 않아요. 저장된 것처럼 보였다 사라지지 않게
+// HTTP 모드에서는 입력칸을 숨겨요(#270 리뷰). 06에 칸이 생기면 이 줄을 지우고 http-repair-cases에서 보내요
+const ASK_SOURCE = API_MODE !== "http"
 function basisText(c: CauseClaim) {
   return `${c.basis}${c.company ? `(${c.company})` : ""}${c.source ? `(${c.source})` : ""}${c.photos?.length ? ` · 근거 사진 ${c.photos.length}` : ""}`
 }
@@ -130,7 +134,7 @@ export function CauseNotes({
         ? String(f.get("company") || "").trim() || undefined
         : undefined
     const source =
-      basis === "다른 사람에게 들었어요"
+      ASK_SOURCE && basis === "다른 사람에게 들었어요"
         ? String(f.get("source") || "").trim() || undefined
         : undefined
     // 원인 설명은 덧붙이기예요(decisions 2026-11-13): 고치면 언제나 새 설명으로 남고, 이전 설명은 '이전 설명'에 남아요.
@@ -240,7 +244,7 @@ export function CauseNotes({
             />
           </div>
         )}
-        {basis === "다른 사람에게 들었어요" && (
+        {ASK_SOURCE && basis === "다른 사람에게 들었어요" && (
           <div className="field">
             <label htmlFor="cause-source">누구에게 들었나요 · 선택</label>
             <Input
