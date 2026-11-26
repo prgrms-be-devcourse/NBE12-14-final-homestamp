@@ -1,0 +1,3 @@
+# 줄 끝은 OS와 상관없이 LF로 꺼낸다 (Prettier·Spotless 기준이 LF, Windows의 core.autocrlf보다 우선)
+# 폴더별 예외는 그 폴더의 .gitattributes에 둔다 (back/.gitattributes: *.bat은 CRLF, *.jar는 binary)
+* text=auto eol=lf
