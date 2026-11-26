@@ -4,14 +4,17 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 /**
  * 번호 조회 가짜. 테스트가 정해 둔 번호를 돌려준다.
  *
- * <p>room·member의 실제 구현이 들어오면 이 클래스를 지운다(같은 타입 빈이 둘이면 주입이 실패한다).
+ * <p>{@code app.sms.mode=fake}(local·test)에서만 켜진다. disabled에서는 {@link DisabledRecipientDirectory}가
+ * 빈 값을 돌려준다. room·member의 실제 구현이 들어오면 이 클래스를 지운다(같은 타입 빈이 둘이면 주입이 실패한다).
  */
 @Service
+@ConditionalOnProperty(name = "app.sms.mode", havingValue = "fake")
 public class FakeRecipientDirectory implements RecipientDirectory {
 
   private final Map<UUID, String> partyPhones = new ConcurrentHashMap<>();

@@ -36,6 +36,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -50,6 +51,7 @@ import org.springframework.transaction.support.TransactionTemplate;
       "spring.datasource.hikari.connection-init-sql=SET search_path TO state, record, log, public",
       "app.outbox.worker.enabled=false"
     })
+@ActiveProfiles("test")
 class OutboxWorkerTest {
 
   @Autowired private NoticeOutbox noticeOutbox;

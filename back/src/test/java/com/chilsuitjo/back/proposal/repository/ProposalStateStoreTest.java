@@ -38,6 +38,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -52,6 +53,7 @@ import org.springframework.transaction.annotation.Transactional;
     properties =
         "spring.datasource.hikari.connection-init-sql=SET search_path TO state, record, log, public")
 @Transactional
+@ActiveProfiles("test")
 class ProposalStateStoreTest {
 
   @Autowired private ProposalStateStore store;
