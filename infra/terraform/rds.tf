@@ -100,8 +100,10 @@ resource "aws_db_instance" "main" {
   performance_insights_enabled    = false
   monitoring_interval             = 0
 
-  # 실수로 지우지 않게 두 겹. 지울 때는 먼저 최종 스냅숏을 남긴다
-  # (최종·수동 스냅숏은 저절로 지워지지 않으므로 7장 "백업·이관"대로 따로 목록·기한을 둔다)
+  # 실수로 지우지 않게 두 겹. deletion_protection은 AWS가(콘솔·CLI·Terraform 모두) 지우기를 거절하고,
+  # 아래 prevent_destroy는 Terraform이 지우거나 교체하는 plan 자체를 거절한다(콘솔·CLI는 막지 못함).
+  # 계정을 정리할 때는 ① db_deletion_protection = false로 apply ② prevent_destroy를 빼는 PR ③ destroy 순서로 한다.
+  # 지울 때 최종 스냅숏을 남긴다(최종·수동 스냅숏은 저절로 지워지지 않으므로 7장 "백업·이관"대로 따로 목록·기한을 둔다)
   deletion_protection       = var.db_deletion_protection
   skip_final_snapshot       = false
   final_snapshot_identifier = "${local.db_identifier}-final"
