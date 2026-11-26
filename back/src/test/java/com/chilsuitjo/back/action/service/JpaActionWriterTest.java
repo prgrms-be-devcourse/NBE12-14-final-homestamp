@@ -301,8 +301,10 @@ class JpaActionWriterTest {
   @Test
   void 첫_행동이_체인_머리를_만든다() {
     ActionEntry first =
-        writer.write(command(tenant, ActionType.MOVE_OUT, "h1", null), UUID.randomUUID(), at);
+        writer.write(command(tenant, ActionType.CREATE_ROOM, "h1", null), UUID.randomUUID(), at);
 
+    assertThat(first.roomSeq()).isEqualTo(1);
+    assertThat(prevHashOf(first)).isEqualTo(ActionHash.start());
     assertThat(headSeq()).isEqualTo(1);
     assertThat(headHash()).isEqualTo(hashOf(first));
   }
@@ -355,6 +357,22 @@ class JpaActionWriterTest {
         .isInstanceOf(InvalidDataAccessApiUsageException.class)
         .hasMessageContaining("체인 머리");
     assertThat(reader.findByRoom(room)).hasSize(1);
+  }
+
+  @Test
+  void 체인_머리가_남은_행동보다_뒤처졌으면_번호를_정하지_않고_실패한다() {
+    // 머리 1, 남은 행동 2: 그대로 쓰면 2번을 다시 쓰게 된다(#247 리뷰)
+    writer.write(command(tenant, ActionType.MOVE_OUT, "l1", null), UUID.randomUUID(), at);
+    writer.write(command(tenant, ActionType.MOVE_OUT, "l2", null), UUID.randomUUID(), at);
+    entityManager.flush();
+    entityManager.clear();
+    jdbc.update("UPDATE action_chain_head SET last_seq = 1 WHERE room_record_id = ?", room);
+
+    assertThatThrownBy(() ->
+            writer.write(command(tenant, ActionType.MOVE_OUT, "l3", null), UUID.randomUUID(), at))
+        .isInstanceOf(InvalidDataAccessApiUsageException.class)
+        .hasMessageContaining("뒤처졌어요");
+    assertThat(reader.findByRoom(room)).hasSize(2);
   }
 
   /**

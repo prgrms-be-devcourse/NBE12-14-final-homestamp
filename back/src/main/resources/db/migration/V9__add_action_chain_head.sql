@@ -19,7 +19,9 @@ CREATE TABLE state.action_chain_head (
 
 -- 이미 행동이 있는 호실은 남은 마지막 행동으로 채운다. 이 V 파일 전에는 부분 삭제 경로가 없어(05 0장 "아직 구현하지 않았다")
 -- 남은 마지막 행동이 곧 지금까지 쓴 가장 큰 번호다. id는 V1 탈퇴 함수와 같이 DB의 uuidv7()로 만든다.
+-- created_at은 앱이 머리를 만드는 때(그 호실의 첫 행동)와 같게 첫 행동(room_seq 1) 시각으로 둔다.
 INSERT INTO state.action_chain_head (id, room_record_id, last_seq, last_hash, created_at, version)
-SELECT pg_catalog.uuidv7(), a.room_record_id, a.room_seq, a.hash, a.created_at, 0
+SELECT pg_catalog.uuidv7(), a.room_record_id, a.room_seq, a.hash,
+       (SELECT min(c.created_at) FROM record.action c WHERE c.room_record_id = a.room_record_id), 0
 FROM record.action a
 WHERE a.room_seq = (SELECT max(b.room_seq) FROM record.action b WHERE b.room_record_id = a.room_record_id);

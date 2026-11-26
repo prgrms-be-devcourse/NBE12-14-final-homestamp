@@ -127,7 +127,7 @@ DECLARE
     human_no_access_tables text[] := ARRAY[]::text[];
     -- Columns Human may read even though their names look sensitive. Reviewed reasons:
     -- keyed HMAC pseudonyms (phone_hmac; linkable to each other, not reversible without the server key),
-    -- record hash-chain values, timestamps/flags, region and part lookup codes/labels (room_part.name is user input),
+    -- record hash-chain values (including the chain head's last_hash in state), timestamps/flags, region and part lookup codes/labels (room_part.name is user input),
     -- small action payload values (today: answer, consentVersion, photo digests; open map, review new keys).
     human_approved_sensitive_columns text[] := ARRAY[
         'log.deletion_log.action_hash',
@@ -137,8 +137,8 @@ DECLARE
         'record.action.hash_version',
         'record.action.payload',
         'record.action.prev_hash',
-        'state.action_chain_head.last_hash',
         'record.photo.device_taken_at',
+        'state.action_chain_head.last_hash',
         'state.member.phone_verified_at',
         'state.part_template.name',
         'state.region.code',

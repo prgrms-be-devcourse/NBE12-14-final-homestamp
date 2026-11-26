@@ -193,7 +193,10 @@ class JpaActionWriter implements ActionWriter, ActionReader {
         .toList();
   }
 
-  /** 호실의 체인 머리를 {@code FOR UPDATE}로 읽는다. 첫 행동 전이면 null. 잠금 순서는 호실 행(pipeline 1단계) → 이 행이다. */
+  /**
+   * 호실의 체인 머리를 {@code FOR UPDATE}로 읽는다. 첫 행동 전이면 null. 호실 잠금(pipeline 1단계) 안에서만 잠그고, 작업자는 이 행을 잠그지
+   * 않는다.
+   */
   private ActionChainHead lockHead(UUID roomRecordId) {
     List<ActionChainHead> head =
         entityManager
