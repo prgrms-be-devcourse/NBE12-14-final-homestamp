@@ -57,6 +57,7 @@ app:
     verify-ticket:
     phone-hmac:
     upload-ticket: # 사진 업로드 표 전용 서명 키(32바이트 이상)
+    link-token: # 링크 토큰 키(32바이트 이상, 다른 키와 달라야 함). 초대 링크 토큰 = HMAC(키, 링크 ID). 열람은 저장한 토큰 해시로 찾아서 바꿔도 이미 보낸 링크는 닫히지 않고, 이전 키 없이는 기존 링크의 토큰을 다시 만들 수 없다(03 6-1 "링크 토큰", 키 버전·폐기는 #163 ③)
     # 로그인 토큰 키(32바이트 이상, 서로 달라야 함). access-token: 액세스 JWT 서명(HS256), refresh-token: 재발급한 리프레시 토큰 만들기(HMAC).
     # 둘 다 없으면 토큰 기능이 꺼지고 보호된 API는 모두 401이다. prod는 이때 시작하지 않는다
     access-token:
@@ -132,8 +133,34 @@ app:
     verify-ticket: local-test-only-verify-ticket-key
     phone-hmac: local-test-only-phone-hmac-key
     upload-ticket: local-test-only-photo-upload-ticket-signing-key
+    link-token: local-test-only-link-token-hmac-key
     # SecurityTestSupport.loginAs가 같은 값으로 테스트 토큰을 만든다. 바꾸면 그쪽도 함께 바꾼다
     access-token: local-test-only-access-token-signing-key
     refresh-token: local-test-only-refresh-token-rotation-key
+  # 문자는 보내지 않고 정해 둔 결과를 돌려준다(가짜, SmsMode). prod가 함께 켜지면 쓰지 않는다
+  sms:
+    mode: fake
   # Vite 개발 서버
   origin: http://localhost:5173
+
+---
+# 운영 문자 방식(decisions 2026-11-25 운영 문자 모드). 솔라피 연동 전에는 disabled: 보내지 않고 실패로 남긴다(인증은 SMS_SEND_FAILED).
+# 이 상태는 배포 검증용이고 실제 사용자에게 열지 않는다. solapi로 바꾸는 것은 솔라피 연동 PR과 오픈 승인 때 한다. fake는 prod에서 기동하지 않는다(SmsModeGuard)
+spring:
+  config:
+    activate:
+      on-profile: prod
+app:
+  sms:
+    mode: disabled
+
+---
+# local 전용: 가짜 인증 문자의 인증번호를 로그에 남겨 화면에서 가입을 이어 간다(#248). test·prod가 함께 켜지면 남기지 않는다.
+# 식은 FakeVerificationSmsSender.CODE_LOG_PROFILES와 같다(발송기가 실제 프로필을 한 번 더 본다)
+spring:
+  config:
+    activate:
+      on-profile: local & !test & !prod
+app:
+  sms:
+    log-code: true

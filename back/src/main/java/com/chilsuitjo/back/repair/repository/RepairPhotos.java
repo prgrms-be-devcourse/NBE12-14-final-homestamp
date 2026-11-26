@@ -9,6 +9,7 @@ import com.chilsuitjo.back.photo.dto.PhotoTarget;
 import com.chilsuitjo.back.photo.rule.PhotoStage;
 import com.chilsuitjo.back.photo.rule.PhotoTargetType;
 import com.chilsuitjo.back.photo.service.PhotoService;
+import com.chilsuitjo.back.repair.entity.CauseNote;
 import com.chilsuitjo.back.room.service.RoomAccessService;
 import java.util.ArrayList;
 import java.util.List;
@@ -23,8 +24,9 @@ import org.springframework.stereotype.Component;
  *
  * <p>하자 등록·보충 사진은 수리 건({@code REPAIR_CASE})에 붙고 단계는 {@code BEFORE}다(수리 전 모습, decisions 2026-11-24,
  * #167). 진행 상황 사진은 그 진행 상황({@code PROGRESS_NOTE})에 붙고 단계는 {@code PROGRESS}다(05 2-8). 한도는 수리 건 카드 전체
- * {@code photo.max.repair}(06 0-1)이고, 수리 건과 그 건의 진행 상황에 붙은 사진을 함께 센다. 원인 설명·지불 사진은 그 기능을 만들 때
- * {@link #quota}의 대상에 더한다.
+ * {@code photo.max.repair}(06 0-1)이고, 수리 건과 그 건의 진행 상황에 붙은 사진을 함께 센다. 원인 설명의 근거 사진은 그 설명({@code
+ * CAUSE_NOTE})에 붙고 단계는 {@code BASIS}다(06 REP-8). 원인 설명 사진도 한도에 함께 센다. 지불 사진은 그 기능을 만들 때 {@link
+ * #quota}의 대상에 더한다.
  */
 @Component
 public class RepairPhotos {
@@ -33,6 +35,7 @@ public class RepairPhotos {
   private final RoomAccessService access;
   private final ActionRequestContext requestContext;
   private final ProgressNoteRepository notes;
+  private final CauseNoteRepository causeNotes;
   private final int maxRepair;
 
   public RepairPhotos(
@@ -40,11 +43,13 @@ public class RepairPhotos {
       RoomAccessService access,
       ActionRequestContext requestContext,
       ProgressNoteRepository notes,
+      CauseNoteRepository causeNotes,
       @Value("${photo.max.repair:30}") int maxRepair) {
     this.photos = Objects.requireNonNull(photos, "photos");
     this.access = Objects.requireNonNull(access, "access");
     this.requestContext = Objects.requireNonNull(requestContext, "requestContext");
     this.notes = Objects.requireNonNull(notes, "notes");
+    this.causeNotes = Objects.requireNonNull(causeNotes, "causeNotes");
     this.maxRepair = maxRepair;
   }
 
@@ -75,6 +80,20 @@ public class RepairPhotos {
         uploadTickets);
   }
 
+  /**
+   * 업로드 표를 원인 설명의 근거 사진(소견서·견적서·현장 사진, 03 D-2 "근거 자료")으로 붙인다. 원인 설명 행은 먼저 DB에 내보내 있어야 한다. 그 밖에는
+   * {@link #attach}와 같다.
+   */
+  List<PhotoDigest> attachToCause(
+      ActionCommand command, UUID repairCaseId, UUID causeNoteId, List<String> uploadTickets) {
+    return attach(
+        command,
+        repairCaseId,
+        new PhotoTarget.Ref(PhotoTargetType.CAUSE_NOTE, causeNoteId),
+        PhotoStage.BASIS,
+        uploadTickets);
+  }
+
   private List<PhotoDigest> attach(
       ActionCommand command,
       UUID repairCaseId,
@@ -94,12 +113,15 @@ public class RepairPhotos {
             requestContext.at()));
   }
 
-  /** 수리 건 카드 전체: 수리 건과 그 건의 진행 상황(방금 만든 것 포함). */
+  /** 수리 건 카드 전체: 수리 건과 그 건의 진행 상황·원인 설명(방금 만든 것 포함). */
   private PhotoQuota quota(UUID repairCaseId) {
     List<PhotoTarget> counted = new ArrayList<>();
     counted.add(new PhotoTarget.Ref(PhotoTargetType.REPAIR_CASE, repairCaseId));
     for (UUID noteId : notes.findIdsByRepairCaseId(repairCaseId)) {
       counted.add(new PhotoTarget.Ref(PhotoTargetType.PROGRESS_NOTE, noteId));
+    }
+    for (CauseNote note : causeNotes.findByRepairCaseIdOrderByCreatedAtAscIdAsc(repairCaseId)) {
+      counted.add(new PhotoTarget.Ref(PhotoTargetType.CAUSE_NOTE, note.getId()));
     }
     return new PhotoQuota(maxRepair, List.copyOf(counted));
   }

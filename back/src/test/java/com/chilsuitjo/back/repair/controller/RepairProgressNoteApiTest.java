@@ -272,21 +272,24 @@ class RepairProgressNoteApiTest {
 
     // 등록한 세입자: 하자 버튼 없이 수리 진행 다음에 진행 상황 버튼이 온다
     detail(caseId, tenant)
-        .andExpect(jsonPath("$.availableActions.length()").value(3))
+        .andExpect(jsonPath("$.availableActions.length()").value(4))
         .andExpect(jsonPath("$.availableActions[0]").value("request-close"))
         .andExpect(jsonPath("$.availableActions[1]").value("ask-progress"))
-        .andExpect(jsonPath("$.availableActions[2]").value("progress-notes"));
+        .andExpect(jsonPath("$.availableActions[2]").value("progress-notes"))
+        .andExpect(jsonPath("$.availableActions[3]").value("cause-notes"));
     ask(caseId, tenant).andExpect(status().isOk());
 
     // 누가 물었든 한 건에 7일에 한 번이라 양쪽 모두 묻기가 빠진다
     detail(caseId, tenant)
-        .andExpect(jsonPath("$.availableActions.length()").value(2))
-        .andExpect(jsonPath("$.availableActions[1]").value("progress-notes"));
-    detail(caseId, landlord)
         .andExpect(jsonPath("$.availableActions.length()").value(3))
+        .andExpect(jsonPath("$.availableActions[1]").value("progress-notes"))
+        .andExpect(jsonPath("$.availableActions[2]").value("cause-notes"));
+    detail(caseId, landlord)
+        .andExpect(jsonPath("$.availableActions.length()").value(4))
         .andExpect(jsonPath("$.availableActions[0]").value("respond"))
         .andExpect(jsonPath("$.availableActions[1]").value("request-close"))
-        .andExpect(jsonPath("$.availableActions[2]").value("progress-notes"));
+        .andExpect(jsonPath("$.availableActions[2]").value("progress-notes"))
+        .andExpect(jsonPath("$.availableActions[3]").value("cause-notes"));
   }
 
   @Test
