@@ -317,7 +317,7 @@ erDiagram
 | 문자 발송 | | | `notice`(SENT, `sent_at`, `next_poll_at`) | 작업자가 발송 |
 | 전달 결과 조회 | | | `notice`(DELIVERED, `delivered_at`), `response_request`(`first_notified_at`, `renotify_due_at` = 전달 + 48h) | 1분·5분·15분마다 조회 |
 | 집주인 링크 열람 | `LINK_VIEW` | | `notice`(VIEWED) | |
-| 가입·연결 | `CONNECT`, `SHARE_CONSENT`(집주인) | | `party`(CONNECTED), `room_record.counterpart_first_connected_at`, `link`(무효) | |
+| 가입·연결 | `CONNECT`, `SHARE_CONSENT`(집주인) | | `party`(CONNECTED, `invite_phone` 지움), `room_record.counterpart_first_connected_at`(처음 한 번), `link`(무효, `invalidated_reason` = `CONNECTED`) | |
 | 확인 | `RESPOND_DEFECT`(ACK, 본 판 번호) | | `repair_case`(`defect_ack` ACK, 수리 진행은 그대로), `response_request`(ANSWERED) | 세입자에게 서비스 안 알림 |
 
 한 줄마다 **A·B·C와 아웃박스가 한 트랜잭션**이에요.
