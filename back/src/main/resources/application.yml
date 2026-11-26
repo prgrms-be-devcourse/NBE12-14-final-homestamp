@@ -109,6 +109,10 @@ sms:
 photo:
   max:
     repair: 30
+  # 사진 주소(06 0-1 photo.url.*): 회원 썸네일은 정각부터 member, 원본은 short. 둘 다 자격 증명 만료 − 10분을 넘지 않는다
+  url:
+    member: 2h
+    short: 5m
   s3:
     bucket: ${PHOTO_S3_BUCKET:}
     region: ${PHOTO_S3_REGION:ap-northeast-2}

@@ -18,7 +18,7 @@
 | 역할 | 담당 | 주인인 도메인 | 리뷰 짝 |
 |---|---|---|---|
 | A | 황희리 | 회원·인증·호실·점검 (`member`, `auth`, `room`, `inspection`, `global/security`) | D |
-| B | 유시헌 | 기록과 수리 (`action`, `repair`, `correction`) | C |
+| B | 유시헌 | 기록과 수리 (`action`, `repair`, `correction`, `download`) | C |
 | C | 이세진 | 돈과 증빙 (`proposal`, `payment`, `settlement`, `photo`) | B |
 | D | 백혜승 | 기다림·통지·링크 (`notification`, `link`, `respond`, `global/scheduler`) | A |
 | 운영 | 백혜승 | CI/CD·배포 (`infra/`, `.github/workflows/`) | + 1명 |
