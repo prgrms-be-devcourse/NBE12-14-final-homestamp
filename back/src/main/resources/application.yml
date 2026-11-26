@@ -130,6 +130,14 @@ upload:
     inspection: 40
 
 ---
+# prod 전용 조기 설정 공급. local·test는 이 import를 실행하지 않는다.
+spring:
+  config:
+    activate:
+      on-profile: prod
+    import: "homestamp-ssm:"
+
+---
 spring:
   config:
     activate:
