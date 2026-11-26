@@ -41,9 +41,11 @@ export function ConnectionPage({
           <h3>{sideText(other(role))}</h3>
           <Status>{connectionText(room)}</Status>
           <p>
-            {room.connection === "연결됨"
-              ? "휴대폰 인증 후 연결된 계정"
-              : "초대 후 가입·연결 확인이 필요해요"}
+            {connectionText(room) === "상대 탈퇴"
+              ? "탈퇴한 계정 · 함께 남긴 기록은 그대로 남아요"
+              : room.connection === "연결됨"
+                ? "휴대폰 인증 후 연결된 계정"
+                : "초대 후 가입·연결 확인이 필요해요"}
           </p>
         </div>
       </div>
