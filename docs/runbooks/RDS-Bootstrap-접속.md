@@ -24,7 +24,7 @@ psql: host=<RDS 주소>(인증서 이름 확인)  hostaddr=127.0.0.1(실제로 �
 - `~/.aws/config`의 관리 역할 프로필(`homestamp-ops-admin`, `role_session_name` = 자기 GitHub 아이디)
 - RDS 인증서 묶음: 원본은 04 6장 "공개 파일" 줄의 저장소 파일 `back/certs/rds-ca-ap-northeast-2.crt`다. 앱 이미지가 `/app/certs/rds-ca.crt`로 복사하는 것과 **같은 파일**을 쓴다. 이 파일은 AWS 공식 지역 묶음(`https://truststore.pki.rds.amazonaws.com/ap-northeast-2/ap-northeast-2-bundle.pem`)을 이름만 바꿔 저장소에 넣은 것이다
   - 저장소에 있으면: 그 파일의 SHA-256이 04 6장에 기록된 값과 같은지 확인하고 쓴다. 다르면 멈춘다
-  - 아직 없으면(이미지 작업 G2/G4 전): AWS URL에서 받아 SHA-256을 계산하고, 그 파일과 값을 저장소(`back/certs/`)·04 6장에 넣는 작업과 함께 한다. 노트북 사본과 저장소 파일을 따로 두지 않는다
+  - 아직 없으면(이미지 작업 G2/G4 전): AWS URL에서 받아 SHA-256을 계산하고, 그 파일을 `back/certs/`에 넣는 PR에서 SHA-256도 04 6장 "공개 파일" 줄에 함께 기록한다. 그 PR이 들어간 뒤에 이 절차를 시작한다. 노트북 사본과 저장소 파일을 따로 두지 않는다
 - Terraform 출력 세 개(인프라 담당이 `terraform output`으로 확인. 비밀값은 아니지만 계정 번호가 들어 있어 채팅에 붙이지 않는다): `db_endpoint_address`, `db_master_secret_arn`, `web_instance_id`
 
 ## 절차
@@ -68,6 +68,7 @@ aws ssm start-session --target "$INSTANCE_ID" --document-name homestamp-rds-forw
 SSM_PID=$!
 sleep 5
 ```
+- 6단계가 연결 거절(`connection refused`)로 실패하면 포워딩이 아직 열리지 않은 것이다. 몇 초 뒤 6단계만 다시 한다(`sslmode`는 낮추지 않는다)
 - 목적지(RDS 주소:5432)는 문서에 박혀 있어 요청에서 고르지 않는다. 범용 `AWS-StartPortForwardingSessionToRemoteHost`는 관리 역할에 없다
 
 ### 6. TLS `verify-full` 접속 확인
