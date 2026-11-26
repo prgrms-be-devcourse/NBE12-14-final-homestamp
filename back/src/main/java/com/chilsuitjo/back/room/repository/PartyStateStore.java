@@ -52,18 +52,16 @@ public class PartyStateStore {
   }
 
   /**
-   * 초대받은 회원의 자리 상태. 행동하는 회원의 인증 번호가 이 자리의 초대 번호와 같은지 본다(06 ROOM-5a·5b). 인증 번호가 없으면 다르다. 연결이면 그 회원이
-   * 이 호실의 다른 자리에 이미 있는지도 본다(불변식 13).
+   * 초대받은 회원의 자리 상태. 행동하는 회원의 인증 번호가 이 자리의 초대 번호와 같은지 본다(06 ROOM-5a·5b). 인증 번호가 없으면 다르다. 그 회원이 이 호실의
+   * 다른 자리에 이미 있는지도 본다(불변식 13, 연결·거절 모두).
    */
-  private PartyState inviteeState(ActionCommand command, boolean connecting) {
+  private PartyState inviteeState(ActionCommand command) {
     Party party = row(command);
     UUID memberId = command.actor().memberId();
     boolean phoneMatches = members.verifiedPhone(memberId).map(party::isInvitedPhone).orElse(false);
-    Boolean alreadyInRoom =
-        connecting
-            ? parties.findByRoomRecordId(command.roomRecordId()).stream()
-                .anyMatch(seat -> memberId.equals(seat.getMemberId()))
-            : null;
+    boolean alreadyInRoom =
+        parties.findByRoomRecordId(command.roomRecordId()).stream()
+            .anyMatch(seat -> memberId.equals(seat.getMemberId()));
     return new PartyState(party.getStatus(), null, null, null, phoneMatches, alreadyInRoom);
   }
 
@@ -82,7 +80,7 @@ public class PartyStateStore {
 
     @Override
     public PartyState load(ActionCommand command) {
-      return inviteeState(command, true);
+      return inviteeState(command);
     }
 
     /** 자리 → 호실 → 링크 순서로 한 트랜잭션에 넣는다. 시각은 행동 기록과 같은 {@code at()}이다. */
@@ -107,7 +105,7 @@ public class PartyStateStore {
 
     @Override
     public PartyState load(ActionCommand command) {
-      return inviteeState(command, false);
+      return inviteeState(command);
     }
 
     @Override

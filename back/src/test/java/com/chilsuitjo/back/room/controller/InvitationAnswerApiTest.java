@@ -324,6 +324,48 @@ class InvitationAnswerApiTest {
   }
 
   @Test
+  void 이_호실의_다른_자리에_이미_있는_회원은_거절할_수도_없다() throws Exception {
+    // 호실을 만든 사람의 인증 번호가 나중에 초대 번호와 같아져도 상대 자리를 거절하지 못한다(#265 리뷰)
+    UUID room = room("LIVING");
+    seat(room, "TENANT", me, "CONNECTED", null);
+    UUID seat = seat(room, "LANDLORD", null, "INVITED", phone);
+
+    reject(seat, me, key())
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value(ErrorCode.INVALID_STATE.name()));
+
+    assertThat(actions(room)).isEmpty();
+    assertThat(
+            jdbc.queryForObject("SELECT status FROM state.party WHERE id = ?", String.class, seat))
+        .isEqualTo("INVITED");
+  }
+
+  @Test
+  void 같은_키로_다시_온_거절에는_그_뒤_다른_회원이_연결한_호실_ID를_주지_않는다() throws Exception {
+    // 거절 → 번호를 고쳐 다시 초대 → 다른 회원이 연결 → 처음 거절한 회원이 같은 키로 다시 보냄(#265 리뷰)
+    UUID room = room("LIVING");
+    UUID seat = invitedSeat(room, phone);
+    String rejectKey = key();
+    reject(seat, me, rejectKey).andExpect(status().isOk());
+
+    String otherPhone = newPhone();
+    UUID other = member(otherPhone);
+    jdbc.update(
+        "UPDATE state.party SET status = 'INVITED', invite_phone = ? WHERE id = ?",
+        otherPhone,
+        seat);
+    connect(seat, other, key(), "v1")
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.roomRecordId").value(room.toString()));
+
+    reject(seat, me, rejectKey)
+        .andExpect(status().isOk())
+        .andExpect(header().string("Idempotent-Replayed", "true"))
+        .andExpect(jsonPath("$.status").value("CONNECTED"))
+        .andExpect(jsonPath("$.roomRecordId").doesNotExist());
+  }
+
+  @Test
   void 로그인하지_않으면_401이다() throws Exception {
     mvc.perform(
             post("/api/invitations/{id}/connect", UUID.randomUUID())

@@ -137,6 +137,14 @@ class PartyTransitionsTest {
   }
 
   @Test
+  void 이_호실의_다른_자리에_이미_있으면_거절할_수_없다() {
+    expect(
+        ErrorCode.INVALID_STATE,
+        new PartyState(PartyStatus.INVITED, null, null, null, true, true),
+        ActionType.REJECT_INVITE);
+  }
+
+  @Test
   void 이_호실의_다른_자리에_이미_있으면_연결할_수_없다() {
     expect(
         ErrorCode.INVALID_STATE,

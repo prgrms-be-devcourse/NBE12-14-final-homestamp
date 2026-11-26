@@ -16,7 +16,7 @@ import java.util.Objects;
  * @param living 호실이 거주 중인지. 초대만 본다(거주 종료 뒤 초대는 {@code INVALID_STATE}, #82·#163 3-1). 재계산이면 null
  * @param selfInvite 초대할 번호가 행동하는 회원의 인증 번호와 같은지. 초대만 본다(06 ROOM-4a). 재계산이면 null
  * @param phoneMatches 이 자리의 초대 번호가 행동하는 회원의 인증 번호와 같은지. 연결·거절만 본다(06 ROOM-5a·5b). 재계산이면 null
- * @param alreadyInRoom 행동하는 회원이 이 호실의 다른 자리에 이미 있는지. 연결만 본다(한 호실에 한 회원은 한 자리, 05 {@code
+ * @param alreadyInRoom 행동하는 회원이 이 호실의 다른 자리에 이미 있는지. 연결·거절만 본다(한 호실에 한 회원은 한 자리, 05 {@code
  *     uq_party_room_member}·불변식 13). 재계산이거나 보지 않는 행동이면 null
  */
 public record PartyState(
@@ -31,7 +31,7 @@ public record PartyState(
     Objects.requireNonNull(status, "status");
   }
 
-  /** {@code alreadyInRoom}을 보지 않는 행동(초대·거절)의 상태. */
+  /** {@code alreadyInRoom}을 보지 않는 행동(초대)의 상태. */
   public PartyState(
       PartyStatus status,
       Boolean byCreatorSide,

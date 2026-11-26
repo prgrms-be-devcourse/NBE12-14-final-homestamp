@@ -20,8 +20,9 @@ import org.springframework.stereotype.Component;
  *       수 있다(정산 완료는 pipeline이 {@code SETTLED}로 막음). 팀 최종 합의 전 임시 정책이다(#163 3-1). 받은 초대 목록({@code
  *       InvitationQueryService})도 같은 기준이다
  *   <li>{@code REJECT_INVITE}("제 집이 아니에요"): 초대됨 자리에 초대받은 사람이 → 거절됨. 03 3장 "제 집이 아니에요"는 초대받은
- *       사람만이라(권한 표 "△ 초대받은 사람") 연결과 같이 번호가 다르면 {@code PHONE_MISMATCH}, 초대됨이 아니면 {@code
- *       INVALID_STATE}다(06 4-3 {@code reject} 오류 칸, #252 리뷰)
+ *       사람만이라(권한 표 "△ 초대받은 사람") 연결과 같이 번호가 다르면 {@code PHONE_MISMATCH}, 초대됨이 아니거나 이 호실의 다른 자리에 이미 있는
+ *       회원이면 {@code INVALID_STATE}다(06 4-3 {@code reject} 오류 칸, #252·#265 리뷰. 호실을 만든 사람의 번호가 나중에 초대
+ *       번호와 같아져도 상대 자리를 거절하지 못하게)
  * </ul>
  *
  * <p>수신 거부 번호({@code PHONE_OPTED_OUT})는 D의 확인 창구가 정해진 뒤 더한다(#163 1-3).
@@ -51,9 +52,6 @@ public class PartyTransitions implements Transitions<PartyState> {
       }
       case CONNECT -> {
         requireInvitee(now);
-        if (Boolean.TRUE.equals(now.alreadyInRoom())) {
-          throw invalidState();
-        }
         yield withStatus(now, PartyStatus.CONNECTED);
       }
       case REJECT_INVITE -> {
@@ -75,6 +73,9 @@ public class PartyTransitions implements Transitions<PartyState> {
     }
     if (Boolean.FALSE.equals(now.phoneMatches())) {
       throw new BusinessException(ErrorCode.PHONE_MISMATCH);
+    }
+    if (Boolean.TRUE.equals(now.alreadyInRoom())) {
+      throw invalidState();
     }
   }
 

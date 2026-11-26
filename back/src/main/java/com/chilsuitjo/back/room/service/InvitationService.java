@@ -29,8 +29,8 @@ import org.springframework.stereotype.Service;
  * 연다(09 3-1).
  *
  * <p>오류: 판이 없으면 {@code CONSENT_REQUIRED}(연결만, 여기서 먼저), 자리가 없으면 {@code NOT_FOUND}, 정산 완료·합류 전 기록이면
- * pipeline 거절, 초대됨이 아니거나 이 호실의 다른 자리에 이미 있으면 {@code INVALID_STATE}, 인증 번호가 초대 번호와 다르면 {@code
- * PHONE_MISMATCH}. 동의 문구 판은 입력 검사라 자리 조회·잠금보다 먼저 본다(같은 키로 다시 와도 판이 없으면 거절).
+ * pipeline 거절, 초대됨이 아니거나 이 호실의 다른 자리에 이미 있으면(연결·거절 모두) {@code INVALID_STATE}, 인증 번호가 초대 번호와 다르면
+ * {@code PHONE_MISMATCH}. 동의 문구 판은 입력 검사라 자리 조회·잠금보다 먼저 본다(같은 키로 다시 와도 판이 없으면 거절).
  *
  * <p>아직 하지 않는 것(#163 범위 밖): 같은 집 기록 합류(ROOM-6, {@code JOIN_NOT_ALLOWED}), 초대한 측 서비스 안 알림(LINK-1g·03
  * B, D의 실제 알림 뒤), 쌓인 기록의 확인 요청 모음과 {@code first_shown_at}(ROOM-5a, 1-4), 연결할 때 정산 초대 링크 닫기(정산 초대 링크
@@ -64,7 +64,7 @@ public class InvitationService {
                     store.connecting(),
                     rules)
                 .record(ActionType.SHARE_CONSENT, Map.of("consentVersion", consentVersion)));
-    return answered(roomRecordId, partyId, result);
+    return answered(roomRecordId, partyId, memberId, result);
   }
 
   /** "제 집이 아니에요"({@code REJECT_INVITE}). 공유 동의는 남기지 않는다. */
@@ -79,7 +79,7 @@ public class InvitationService {
                     done -> ActionTarget.party(partyId),
                     store.rejecting(),
                     rules));
-    return answered(roomRecordId, partyId, result);
+    return answered(roomRecordId, partyId, memberId, result);
   }
 
   /**
@@ -93,12 +93,18 @@ public class InvitationService {
         .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
   }
 
-  /** 연결됐으면 호실 기록 ID를 주고, 아니면 주지 않는다(연결 전에는 호실 기록 ID를 알려 주지 않음, 06 4-3 {@code invitations}). */
-  private InvitationAnswered.Result answered(UUID roomRecordId, UUID partyId, BatchResult result) {
+  /**
+   * 요청한 회원이 그 자리에 연결돼 있으면 호실 기록 ID를 주고, 아니면 주지 않는다(연결 전에는 호실 기록 ID를 알려 주지 않음, 06 4-3 {@code
+   * invitations}). 같은 키로 다시 온 요청이면 그사이 다른 회원이 그 자리에 연결했을 수 있어서(거절 → 번호 고쳐 다시 초대 → 다른 사람 연결) 자리 상태만
+   * 보지 않고 연결한 회원이 요청한 회원인지 본다(#265 리뷰).
+   */
+  private InvitationAnswered.Result answered(
+      UUID roomRecordId, UUID partyId, UUID memberId, BatchResult result) {
     Party party = parties.findById(partyId).orElseThrow();
-    boolean connected = party.getStatus() == PartyStatus.CONNECTED;
+    boolean mine =
+        party.getStatus() == PartyStatus.CONNECTED && memberId.equals(party.getMemberId());
     return new InvitationAnswered.Result(
-        new InvitationAnswered(connected ? roomRecordId : null, partyId, party.getStatus()),
+        new InvitationAnswered(mine ? roomRecordId : null, partyId, party.getStatus()),
         result.replayed());
   }
 }
