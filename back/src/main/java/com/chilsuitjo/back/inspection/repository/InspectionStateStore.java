@@ -12,7 +12,6 @@ import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.inspection.entity.Inspection;
 import com.chilsuitjo.back.inspection.rule.InspectionKind;
 import com.chilsuitjo.back.inspection.rule.InspectionState;
-import com.chilsuitjo.back.notification.dto.InfoCommand;
 import com.chilsuitjo.back.notification.dto.OpenRequestCommand;
 import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.dto.RoomParties;
@@ -20,7 +19,6 @@ import com.chilsuitjo.back.notification.rule.PartyPresence;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.rule.RoomPhase;
 import com.chilsuitjo.back.notification.service.CounterpartReader;
-import com.chilsuitjo.back.notification.service.InAppNotifier;
 import com.chilsuitjo.back.notification.service.WaitService;
 import com.chilsuitjo.back.room.service.RoomMoveInDates;
 import java.time.Instant;
@@ -45,7 +43,6 @@ public class InspectionStateStore {
   private final CounterpartReader parties;
   private final ActionRequestContext requestContext;
   private final WaitService waits;
-  private final InAppNotifier notifier;
 
   /** 점검 시작(06 INSP-1a·2b)의 저장 방법. 종류와 채울 입주일은 payload에 있다. */
   public StateStore<InspectionState> starting() {
@@ -171,8 +168,11 @@ public class InspectionStateStore {
      *       {@code canGoSoloDirectly}로 판단한다
      * </ul>
      *
-     * <p>상대 측이 "지금까지 쓴 것으로" 보냈으면 기준 측에 서비스 안 알림을 보낸다(06 4-7). 공유 중단 제한이 살아 있으면 그 뒤의 상대 행동이 보이지 않아야
-     * 하므로 보내지 않는다(불변식 18). 알림 주제는 #116에서 정한다. 이 행동은 판을 보지 않아 내용 지문이 없다(안내서 3-3).
+     * <p><b>현재 구현 범위의 한계</b>: 상대 측이 "지금까지 쓴 것으로" 보냈을 때 기준 측에 가는 서비스 안 알림(06 4-7)은 아직 보내지 않는다. 지금
+     * {@code InAppNotifier}는 메모리에만 쌓는 가짜라 사용자가 볼 수 없어서, 실제 저장이 들어오는 U3-2 뒤에 주제를 정해 연결한다(#116 D 제안
+     * (가), #234 리뷰). 그때도 공유 중단 제한이 살아 있으면 보내지 않는다(불변식 18).
+     *
+     * <p>이 행동은 판을 보지 않아 내용 지문이 없다(안내서 3-3).
      */
     @Override
     public SavedState save(ActionCommand command, InspectionState next) {
@@ -191,10 +191,6 @@ public class InspectionStateStore {
         waits.open(
             new OpenRequestCommand(
                 command.roomRecordId(), RequestKind.INSPECTION_CONFIRM, target, author));
-      }
-      if (command.actor().side() != author && !stopped && room.mine().memberId() != null) {
-        notifier.notify(
-            new InfoCommand(room.mine().memberId(), command.roomRecordId(), target, null));
       }
       return SavedState.unchanged();
     }

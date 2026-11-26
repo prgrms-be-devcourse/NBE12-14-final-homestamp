@@ -17,11 +17,9 @@ import com.chilsuitjo.back.action.dto.DigestInput;
 import com.chilsuitjo.back.action.rule.ContentDigest;
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.common.TargetKind;
-import com.chilsuitjo.back.notification.dto.InfoCommand;
 import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.rule.RequestStatus;
-import com.chilsuitjo.back.notification.service.FakeInAppNotifier;
 import com.chilsuitjo.back.notification.service.FakeWaitService;
 import java.sql.Date;
 import java.sql.Timestamp;
@@ -75,7 +73,6 @@ class InspectionApiTest {
   @Autowired private MockMvc mvc;
   @Autowired private JdbcTemplate jdbc;
   @MockitoSpyBean private FakeWaitService waits;
-  @Autowired private FakeInAppNotifier notifier;
   @Autowired private MutableClock clock;
 
   private UUID room;
@@ -456,8 +453,6 @@ class InspectionApiTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("REQUESTED"))
         .andExpect(jsonPath("$.items[0].id").value(item.toString()));
-    // 기준 측이 보냈으니 기준 측에게 가는 안내는 없다
-    assertThat(notificationsTo(tenant, inspection)).isEmpty();
   }
 
   @Test
@@ -501,7 +496,7 @@ class InspectionApiTest {
   }
 
   @Test
-  void INSP_1f_작성_중_7일이_지나면_상대가_지금까지_쓴_것으로_보내고_기준_측에_알림이_간다() throws Exception {
+  void INSP_1f_작성_중_7일이_지나면_상대가_지금까지_쓴_것으로_보낸다() throws Exception {
     UUID inspection = created(start(tenant, "s", "MOVE_IN", null));
     UUID item = created(addItem(tenant, inspection, "i1", "벽지 찢어짐", "[]"));
     daysPass(8);
@@ -522,7 +517,6 @@ class InspectionApiTest {
                 String.class,
                 inspection))
         .isEqualTo("LANDLORD");
-    assertThat(notificationsTo(tenant, inspection)).hasSize(1);
     detail(landlord, inspection).andExpect(jsonPath("$.items[0].id").value(item.toString()));
   }
 
@@ -559,7 +553,6 @@ class InspectionApiTest {
     requestConfirm(landlord, inspection, "stale-after-stop").andExpect(status().isOk());
 
     assertThat(confirmRequest(inspection, PartySide.TENANT)).isEmpty();
-    assertThat(notificationsTo(tenant, inspection)).isEmpty();
     detail(tenant, inspection).andExpect(jsonPath("$.status").value("DRAFT"));
     // 보낸 상대에게는 자기 행동이라 상태는 확인 요청이지만, 기준 측이 그만둘 때 작성 중이던 항목은 드러나지 않는다(#218 리뷰)
     detail(landlord, inspection)
@@ -823,13 +816,6 @@ class InspectionApiTest {
 
   private Map<String, Object> inspectionRow(UUID inspection) {
     return jdbc.queryForMap("SELECT * FROM state.inspection WHERE id = ?", inspection);
-  }
-
-  private List<InfoCommand> notificationsTo(UUID member, UUID inspection) {
-    return notifier.sent().stream()
-        .filter(info -> member.equals(info.recipientMemberId()))
-        .filter(info -> info.target() != null && inspection.equals(info.target().id()))
-        .toList();
   }
 
   private ResultActions roomDetail(UUID member) throws Exception {
