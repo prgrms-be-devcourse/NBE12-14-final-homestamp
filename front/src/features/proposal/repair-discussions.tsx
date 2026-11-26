@@ -1,0 +1,638 @@
+import { post, proposalIdOf, type RecordRequest } from "@/api/records"
+import { endpoints } from "@/api/endpoints"
+import { useState } from "react"
+import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
+import { Choice, Panel, Status } from "@/components/common/blocks"
+import { ActionDialog } from "@/components/common/action-dialog"
+import { tryOn } from "@/lib/try-on"
+import { MoneyInput } from "@/components/common/money-input"
+import {
+  won,
+  type BurdenLine,
+  type Proposal,
+  type Repair,
+  type Role,
+  type Room,
+} from "@/data/demo"
+import { parseMoney } from "@/lib/money"
+import {
+  agreeProposal,
+  answerChangeProposal,
+  disputeProposal,
+  lastAgreement,
+  makeProposal,
+  proposalText,
+  proposalTotalMismatch,
+  roomSoloReason,
+  withdrawChangeProposal,
+  withdrawProposal,
+  workTotal,
+} from "@/lib/repair-rules"
+import { sideName, sideText } from "@/lib/words"
+import { Fold } from "@/components/common/fold"
+import { History } from "lucide-react"
+import { Notice } from "@/components/common/notice"
+import { WaitStatus } from "@/components/common/wait-status"
+import {
+  CurrentProposal,
+  PastProposal,
+  ProposalDispute,
+} from "@/components/common/money-proposal"
+import { proposalHead } from "@/lib/words"
+
+// request는 06 4장의 주소(api/records), text·update는 목업이 서버 대신 쓰는 값이에요
+type OnAction = (
+  request: RecordRequest,
+  text: string,
+  update: (r: Repair) => void,
+) => void
+const PLANS = [
+  "집주인 전부",
+  "세입자 전부",
+  "나눠서",
+  "제3자 포함",
+  "비용 없음",
+]
+
+function ProposalCard({ p, title }: { p: Proposal; title: string }) {
+  return (
+    <PastProposal
+      head={proposalHead(
+        title,
+        p.round,
+        sideText(p.by),
+        p.at,
+        p.withdrawn ? "거둠" : p.status,
+      )}
+    >
+      <p>
+        전체 {won(p.amount)} · {proposalText(p)}
+      </p>
+      {p.reason && <p className="muted">사유: {p.reason}</p>}
+      {p.disputeReason && (
+        <p>
+          {p.disputeBy} 이견: {p.disputeReason}
+        </p>
+      )}
+      {p.closedReason && (
+        <small className="muted block">바꾸자는 안 · {p.closedReason}</small>
+      )}
+    </PastProposal>
+  )
+}
+
+// 수리비 부담 합의(상태와 규칙 1-2·E). 같은 안에 양측 행동(제안 + 상대 동의)이 있을 때만 합의됨이 됩니다.
+export function CostAgreement({
+  repair: r,
+  room,
+  role,
+  readOnly,
+  onAction,
+}: {
+  repair: Repair
+  room: Room
+  role: Role
+  readOnly: boolean
+  onAction: OnAction
+}) {
+  const [mode, setMode] = useState<
+    "propose" | "counter" | "dispute" | "change-dispute" | "disagree" | null
+  >(null)
+  const [withCounter, setWithCounter] = useState(false)
+  const [plan, setPlan] = useState("집주인 전부")
+  const [error, setError] = useState("")
+  const p = r.proposal
+  const prevAgreement = lastAgreement(r)
+  const stage = r.waits?.proposal
+  const run = (
+    request: RecordRequest,
+    text: string,
+    update: (x: Repair) => void,
+  ) => {
+    const e = tryOn(r, update)
+    if (e) {
+      setError(e)
+      return e
+    }
+    setError("")
+    onAction(request, text, update)
+  }
+  function lines(f: FormData): BurdenLine[] | string {
+    if (plan === "비용 없음") return []
+    const total = parseMoney(String(f.get("total") || ""))
+    if (!Number.isSafeInteger(total) || total <= 0)
+      return "전체 금액을 1원 이상으로 입력해 주세요. 돈이 들지 않으면 ‘비용 없음’을 고르세요."
+    if (plan === "집주인 전부") return [{ side: "임대인", amount: total }]
+    if (plan === "세입자 전부") return [{ side: "임차인", amount: total }]
+    const tenant = parseMoney(String(f.get("tenantAmount") || "0"))
+    const third =
+      plan === "제3자 포함" ? parseMoney(String(f.get("thirdAmount") || "")) : 0
+    const label = String(f.get("thirdLabel") || "").trim()
+    if (
+      plan === "제3자 포함" &&
+      (!label || !Number.isSafeInteger(third) || third <= 0)
+    )
+      return "제3자 설명(예: 윗집)과 제3자 금액을 입력해 주세요. 연락처는 받지 않아요."
+    if (!Number.isSafeInteger(tenant) || tenant + third > total)
+      return "나눈 금액의 합이 전체 금액을 넘지 않게 입력해 주세요. 나머지는 집주인 부담이에요."
+    return [
+      ...(plan === "제3자 포함"
+        ? [{ side: "제3자" as const, label, amount: third }]
+        : []),
+      { side: "임차인", amount: tenant },
+      { side: "임대인", amount: total - tenant - third },
+    ]
+  }
+  function submitProposal(f: FormData) {
+    const l = lines(f)
+    if (typeof l === "string") return l
+    const reason = String(f.get("reason") || "")
+    const counter =
+      mode === "counter"
+        ? { disputeReason: String(f.get("disputeReason") || "") }
+        : undefined
+    const preview = {
+      lines: l,
+      amount: l.reduce((s, x) => s + x.amount, 0),
+      payer: "나눠서",
+      status: "합의 대기",
+      by: role,
+    } as Proposal
+    return run(
+      counter
+        ? post(endpoints.proposalAction(proposalIdOf(r.id), "counter"), {
+            lines: l,
+            reason,
+            disputeReason: counter.disputeReason,
+          })
+        : post(endpoints.proposals(r.id), { lines: l, reason }),
+      `${counter ? `부담 이견 + 다른 안 제안 ·${counter.disputeReason} · ` : "부담 제안 · "}${proposalText(preview)}`,
+      (x) => makeProposal(x, role, l, reason, counter),
+    )
+  }
+  return (
+    <Panel title="수리비 · 부담 합의">
+      <p className="muted">
+        하자 사실·원인 설명·수리 진행과 독립적인 비용 합의입니다. 금액만 적고
+        비율은 쓰지 않아요.
+      </p>
+      <div className="badges">
+        <Status>{p?.status || "미정"}</Status>
+        <WaitStatus stage={stage} />
+      </div>
+      {p ? (
+        <CurrentProposal
+          head={proposalHead(
+            "현재 제안",
+            p.round,
+            `제안한 쪽 ${sideName(p.by)}`,
+            p.at,
+          )}
+          amount={p.amount}
+          detail={proposalText(p)}
+          reason={p.reason}
+        >
+          {p.totalChanged && (
+            <div className="dispute-callout">
+              전체 금액이 바뀌었어요 · 지불 합계 {won(workTotal(r))}.{" "}
+              {proposalTotalMismatch(r)
+                ? "이 안의 합과 달라 동의할 수 없어요. 새 부담 제안을 내 주세요."
+                : "지금 지불 합계와 같아 이 안에 다시 동의할 수 있어요."}
+            </div>
+          )}
+          {!p.totalChanged &&
+            p.status === "합의 대기" &&
+            proposalTotalMismatch(r) && (
+              <div className="dispute-callout">
+                부담 금액의 합 {won(proposalTotalMismatch(r)!.sum)}이 전체 금액{" "}
+                {won(proposalTotalMismatch(r)!.total)}과 달라요. 합이 맞는
+                안이어야 동의할 수 있어요.
+              </div>
+            )}
+          {p.disputeReason && (
+            <ProposalDispute
+              title={`${p.disputeBy}의 비용 이견`}
+              reason={p.disputeReason}
+            />
+          )}
+        </CurrentProposal>
+      ) : (
+        <p>아직 제안이 없어요.</p>
+      )}
+      {r.changeProposal && (
+        <div className="dispute-callout">
+          <strong>
+            바꾸자는 안 있음 · {r.changeProposal.by} 제안
+            {r.changeProposal.at ? ` · ${r.changeProposal.at}` : ""}
+          </strong>
+          <p>{proposalText(r.changeProposal)}</p>
+          {r.changeProposal.reason && (
+            <p className="muted">{r.changeProposal.reason}</p>
+          )}
+          <small className="block muted">
+            상대가 동의할 때까지 지금 합의가 그대로 쓰여요. 이견·응답 없음이면
+            지금 합의가 유지돼요.
+          </small>
+          {!readOnly && (
+            <div className="actions mt-2">
+              {r.changeProposal.by !== role ? (
+                <>
+                  <Button
+                    size="sm"
+                    onClick={() =>
+                      run(
+                        post(
+                          endpoints.proposalAction(
+                            proposalIdOf(r.id, "change"),
+                            "agree",
+                          ),
+                        ),
+                        `바꾸자는 안 동의 · ${proposalText(r.changeProposal!)}`,
+                        (x) => answerChangeProposal(x, role, true),
+                      )
+                    }
+                  >
+                    동의
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setMode("change-dispute")}
+                  >
+                    이견
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    run(
+                      post(
+                        endpoints.proposalAction(
+                          proposalIdOf(r.id, "change"),
+                          "withdraw",
+                        ),
+                      ),
+                      "바꾸자는 안 거둠",
+                      (x) => withdrawChangeProposal(x, role),
+                    )
+                  }
+                >
+                  거두기
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+      {prevAgreement && (
+        <Notice>
+          이전 합의: {proposalText(prevAgreement)} ({prevAgreement.round || 1}회
+          · {prevAgreement.by} 제안) · 새 안이 합의될 때까지 함께 보여요.
+        </Notice>
+      )}
+      {(p?.round || 0) >= 3 && (
+        <p className="muted">
+          제안 {p!.round}회째예요. 직접 대화로 정한 뒤 제안·동의하면 합의됨으로
+          남아요.
+        </p>
+      )}
+      {(roomSoloReason(room) || stage === "미확인") && (
+        <p className="muted">
+          상대 응답이 없어도 돈 상태는 혼자 합의됨이 되지 않아요.
+        </p>
+      )}
+      {Boolean(r.proposalHistory?.length) && (
+        <Fold
+          title="이전 제안"
+          count={r.proposalHistory!.length}
+          icon={<History size={16} />}
+          className="mb-3"
+        >
+          {[...r.proposalHistory!].reverse().map((h, i) => (
+            <ProposalCard key={i} p={h} title="제안" />
+          ))}
+        </Fold>
+      )}
+      {!readOnly && (
+        <div className="actions">
+          {p?.status === "합의 대기" && p.by !== role && (
+            <>
+              {!proposalTotalMismatch(r) && (
+                <Button
+                  className="flex-1"
+                  onClick={() =>
+                    run(
+                      post(
+                        endpoints.proposalAction(proposalIdOf(r.id), "agree"),
+                      ),
+                      `부담 제안 동의 · ${proposalText(p)}`,
+                      (x) => agreeProposal(x, role),
+                    )
+                  }
+                >
+                  동의
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => {
+                  setWithCounter(false)
+                  setPlan("나눠서")
+                  setMode("disagree")
+                }}
+              >
+                아니에요 · 다른 안
+              </Button>
+            </>
+          )}
+          {p?.status === "합의 대기" && p.by === role && !p.totalChanged && (
+            <>
+              <Button
+                variant="outline"
+                onClick={() =>
+                  run(
+                    post(
+                      endpoints.proposalAction(proposalIdOf(r.id), "withdraw"),
+                    ),
+                    "부담 제안 철회",
+                    (x) => withdrawProposal(x, role),
+                  )
+                }
+              >
+                제안 거두기
+              </Button>
+              <p className="muted">
+                내 제안입니다. 상대가 같은 안에 동의해야 합의돼요. 응답 전에는
+                거둘 수 있어요.
+              </p>
+            </>
+          )}
+          {(p?.status !== "합의 대기" || p.totalChanged) &&
+            !(
+              (p?.status === "합의됨" || p?.status === "비용 없음") &&
+              r.changeProposal
+            ) && (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setPlan("집주인 전부")
+                  setMode("propose")
+                }}
+              >
+                {!p
+                  ? "부담 제안하기"
+                  : p.status === "합의됨" || p.status === "비용 없음"
+                    ? "바꾸자는 새 제안"
+                    : "새 부담 제안"}
+              </Button>
+            )}
+        </div>
+      )}
+      {error && (
+        <p role="alert" className="form-error">
+          {error}
+        </p>
+      )}
+      <ActionDialog
+        open={mode === "propose" || mode === "counter"}
+        title={mode === "counter" ? "이견 + 다른 안 제안" : "비용 부담 제안"}
+        description="상대가 같은 안에 동의해야 합의됩니다. 다른 안은 새 현재 제안이 되고 차례가 바뀌어요."
+        submitLabel="제안 보내기"
+        onClose={() => setMode(null)}
+        onSubmit={submitProposal}
+      >
+        {mode === "counter" && (
+          <div className="field">
+            <label htmlFor="counter-dispute">이견 사유 · 필수</label>
+            <Textarea id="counter-dispute" name="disputeReason" required />
+          </div>
+        )}
+        <div className="field">
+          <label>부담 방식</label>
+          <Choice
+            label="부담 방식"
+            value={plan}
+            values={PLANS}
+            onChange={setPlan}
+          />
+        </div>
+        {plan !== "비용 없음" && (
+          <div className="field">
+            <label htmlFor="burden-total">전체 금액 (원)</label>
+            <MoneyInput
+              id="burden-total"
+              name="total"
+              defaultValue={p?.amount || workTotal(r) || ""}
+              required
+            />
+          </div>
+        )}
+        {plan === "제3자 포함" && (
+          <div className="form-grid">
+            <div className="field">
+              <label htmlFor="third-label">제3자 설명</label>
+              <Input
+                id="third-label"
+                name="thirdLabel"
+                placeholder="예: 윗집 · 연락처는 적지 않아요"
+                required
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="third-amount">제3자 부담 (원)</label>
+              <MoneyInput id="third-amount" name="thirdAmount" required />
+            </div>
+          </div>
+        )}
+        {(plan === "나눠서" || plan === "제3자 포함") && (
+          <div className="field">
+            <label htmlFor="tenant-amount">
+              임차인 부담 (원) · 나머지는 임대인 부담
+            </label>
+            <MoneyInput
+              id="tenant-amount"
+              name="tenantAmount"
+              defaultValue="0"
+              required
+            />
+          </div>
+        )}
+        <div className="field">
+          <label htmlFor="burden-reason">제안 사유 · 선택</label>
+          <Textarea id="burden-reason" name="reason" />
+        </div>
+      </ActionDialog>
+      <ActionDialog
+        open={mode === "change-dispute"}
+        title="바꾸자는 안에 이견"
+        description="이견을 남기면 바꾸자는 안은 이력으로 닫히고 지금 합의가 그대로 유지돼요."
+        submitLabel="이견 남기기"
+        onClose={() => setMode(null)}
+        onSubmit={(f) =>
+          run(
+            post(
+              endpoints.proposalAction(proposalIdOf(r.id, "change"), "dispute"),
+              { reason: String(f.get("reason") || "") },
+            ),
+            `바꾸자는 안 이견 · ${String(f.get("reason") || "")}`,
+            (x) =>
+              answerChangeProposal(
+                x,
+                role,
+                false,
+                String(f.get("reason") || ""),
+              ),
+          )
+        }
+      >
+        <div className="field">
+          <label htmlFor="change-dispute">이견 사유 · 필수</label>
+          <Textarea id="change-dispute" name="reason" required />
+        </div>
+      </ActionDialog>
+      <ActionDialog
+        open={mode === "disagree"}
+        title="아니에요 · 다른 안"
+        description={
+          p ? `${sideName(p.by)} 제안: ${proposalText(p)}` : undefined
+        }
+        submitLabel="보내기"
+        onClose={() => setMode(null)}
+        onSubmit={(f) => {
+          const reason = String(f.get("disagreeReason") || "")
+          if (!reason.trim()) return "이유를 입력해 주세요."
+          if (!withCounter)
+            return run(
+              post(endpoints.proposalAction(proposalIdOf(r.id), "dispute"), {
+                reason,
+              }),
+              `부담 제안 이견 · ${reason}`,
+              (x) => disputeProposal(x, role, reason),
+            )
+          const l = lines(f)
+          if (typeof l === "string") return l
+          const preview = {
+            lines: l,
+            amount: l.reduce((s, x) => s + x.amount, 0),
+            payer: "나눠서",
+            status: "합의 대기",
+            by: role,
+          } as Proposal
+          return run(
+            post(endpoints.proposalAction(proposalIdOf(r.id), "counter"), {
+              lines: l,
+              disputeReason: reason,
+            }),
+            `부담 이견 + 다른 안 · ${reason} · ${proposalText(preview)}`,
+            (x) => makeProposal(x, role, l, "", { disputeReason: reason }),
+          )
+        }}
+      >
+        <div className="field">
+          <label htmlFor="disagree-reason">이유 (필수)</label>
+          <Textarea
+            id="disagree-reason"
+            name="disagreeReason"
+            required
+            placeholder="예: 출장비 영수증이 빠져 있어요."
+          />
+        </div>
+        {!p?.totalChanged && (
+          <label className="consent">
+            <Checkbox
+              checked={withCounter}
+              onCheckedChange={(v) => setWithCounter(Boolean(v))}
+            />
+            다른 안 제안하기 (선택)
+          </label>
+        )}
+        {withCounter && (
+          <div className="svc-summary space-y-3">
+            <div className="field">
+              <label>부담 방식</label>
+              <Choice
+                label="부담 방식"
+                value={plan}
+                values={PLANS}
+                onChange={setPlan}
+              />
+            </div>
+            {plan !== "비용 없음" && (
+              <div className="field">
+                <label htmlFor="d-total">전체 금액 (원)</label>
+                <MoneyInput
+                  id="d-total"
+                  name="total"
+                  defaultValue={p?.amount || workTotal(r) || ""}
+                  required
+                />
+              </div>
+            )}
+            {plan === "제3자 포함" && (
+              <div className="form-grid">
+                <div className="field">
+                  <label htmlFor="d-third-label">제3자 설명</label>
+                  <Input
+                    id="d-third-label"
+                    name="thirdLabel"
+                    placeholder="예: 윗집 · 연락처는 적지 않아요"
+                    required
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor="d-third-amount">제3자 부담 (원)</label>
+                  <MoneyInput id="d-third-amount" name="thirdAmount" required />
+                </div>
+              </div>
+            )}
+            {(plan === "나눠서" || plan === "제3자 포함") && (
+              <div className="field">
+                <label htmlFor="d-tenant-amount">
+                  임차인 부담 (원) · 나머지는 임대인 부담
+                </label>
+                <MoneyInput
+                  id="d-tenant-amount"
+                  name="tenantAmount"
+                  defaultValue="0"
+                  required
+                />
+              </div>
+            )}
+          </div>
+        )}
+        <p className="muted">
+          {withCounter
+            ? "이견과 함께 다른 안을 보내요. 상대가 그 안에 동의해야 합의돼요."
+            : "체크를 끄면 이유만 보내요."}
+        </p>
+      </ActionDialog>
+      <ActionDialog
+        open={mode === "dispute"}
+        title="부담 제안에 이견"
+        description="사유는 필수예요. 다른 안 없이 이견만 남기면 돈 상태는 ‘이견’이 되고, 누구든 새 제안을 낼 수 있어요."
+        submitLabel="이견 남기기"
+        onClose={() => setMode(null)}
+        onSubmit={(f) =>
+          run(
+            post(endpoints.proposalAction(proposalIdOf(r.id), "dispute"), {
+              reason: String(f.get("reason") || ""),
+            }),
+            `부담 제안 이견 · ${String(f.get("reason") || "")}`,
+            (x) => disputeProposal(x, role, String(f.get("reason") || "")),
+          )
+        }
+      >
+        <div className="field">
+          <label htmlFor="money-dispute">이견 사유 · 필수</label>
+          <Textarea id="money-dispute" name="reason" required />
+        </div>
+      </ActionDialog>
+    </Panel>
+  )
+}

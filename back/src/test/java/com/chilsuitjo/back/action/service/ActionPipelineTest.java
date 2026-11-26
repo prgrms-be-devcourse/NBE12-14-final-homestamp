@@ -326,9 +326,17 @@ class ActionPipelineTest {
   void 충돌_뒤_새_트랜잭션에서도_호실을_먼저_잠그고_처음_결과를_찾는다() {
     List<String> events = new ArrayList<>();
     RoomGateReader lockingGates =
-        (roomRecordId, actor) -> {
-          events.add("lock");
-          return gates.lockAndRead(roomRecordId, actor);
+        new RoomGateReader() {
+          @Override
+          public RoomGate lockAndRead(UUID roomRecordId, Actor actor) {
+            events.add("lock");
+            return gates.lockAndRead(roomRecordId, actor);
+          }
+
+          @Override
+          public RoomGate read(UUID roomRecordId, Actor actor) {
+            return gates.read(roomRecordId, actor);
+          }
         };
     RacingWriter racing = new RacingWriter(writer);
     ActionWriter loggingWriter =
@@ -443,6 +451,110 @@ class ActionPipelineTest {
         .isInstanceOfSatisfying(
             BusinessException.class,
             e -> assertThat(e.errorCode()).isEqualTo(ErrorCode.IDEMPOTENCY_KEY_REUSED));
+  }
+
+  @Test
+  void 현재_접근_검증은_새_요청과_멱등_replay_모두_멱등_조회보다_먼저_실행된다() {
+    List<String> order = new ArrayList<>();
+    ActionTarget target = ActionTarget.of(TargetKind.LINK, UUID.randomUUID());
+    ActionBatch first =
+        ActionBatch.of(room, Actor.link(target.id(), PartySide.TENANT), "view")
+            .accessCheck(() -> order.add("guard"))
+            .record(ActionType.LINK_VIEW, done -> target, Map.of());
+
+    pipeline.executeAll(first);
+    assertThat(order).containsExactly("guard");
+
+    pipeline.executeAll(
+        ActionBatch.of(room, Actor.link(target.id(), PartySide.TENANT), "view")
+            .accessCheck(() -> order.add("guard"))
+            .record(ActionType.LINK_VIEW, done -> target, Map.of()));
+
+    assertThat(order).containsExactly("guard", "guard");
+    assertThat(writer.findByTarget(target)).hasSize(1);
+  }
+
+  @Test
+  void 현재_접근_검증이_거절하면_저장된_성공도_replay하지_않는다() {
+    ActionTarget target = ActionTarget.of(TargetKind.LINK, UUID.randomUUID());
+    Actor actor = Actor.link(target.id(), PartySide.TENANT);
+    pipeline.executeAll(
+        ActionBatch.of(room, actor, "view").record(ActionType.LINK_VIEW, done -> target, Map.of()));
+
+    assertThatThrownBy(() ->
+            pipeline.executeAll(
+                ActionBatch.of(room, actor, "view")
+                    .accessCheck(() -> {
+                      throw new BusinessException(ErrorCode.LINK_INVALID);
+                    })
+                    .record(ActionType.LINK_VIEW, done -> target, Map.of())))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            e -> assertThat(e.errorCode()).isEqualTo(ErrorCode.LINK_INVALID));
+    assertThat(writer.findByTarget(target)).hasSize(1);
+  }
+
+  @Test
+  void 접근_검증이_붙은_요청은_호실_단위_거절이_접근_검증의_업무_오류보다_먼저다() {
+    // 06 4-10 순서: 정산 완료면 접근 검증이 무엇을 던지든 SETTLED이고, 접근 검증은 부르지 않는다
+    gates.putRoom(new RoomGate(room, null, true, false, false, true));
+    List<String> order = new ArrayList<>();
+    ActionTarget target = ActionTarget.of(TargetKind.LINK, UUID.randomUUID());
+
+    assertThatThrownBy(() ->
+            pipeline.executeAll(
+                ActionBatch.of(room, Actor.link(target.id(), PartySide.TENANT), "view")
+                    .accessCheck(() -> {
+                      order.add("guard");
+                      throw new BusinessException(ErrorCode.NOT_FOUND);
+                    })
+                    .record(ActionType.LINK_VIEW, done -> target, Map.of())))
+        .isInstanceOfSatisfying(
+            BusinessException.class, e -> assertThat(e.errorCode()).isEqualTo(ErrorCode.SETTLED));
+    assertThat(order).isEmpty();
+  }
+
+  @Test
+  void 접근_검증이_붙은_요청은_정산_완료_뒤_같은_키로_와도_저장된_성공을_재생하지_않는다() {
+    ActionTarget target = ActionTarget.of(TargetKind.LINK, UUID.randomUUID());
+    Actor actor = Actor.link(target.id(), PartySide.TENANT);
+    pipeline.executeAll(
+        ActionBatch.of(room, actor, "view")
+            .accessCheck(() -> {})
+            .record(ActionType.LINK_VIEW, done -> target, Map.of()));
+    gates.putRoom(new RoomGate(room, null, true, false, false, true));
+
+    assertThatThrownBy(() ->
+            pipeline.executeAll(
+                ActionBatch.of(room, actor, "view")
+                    .accessCheck(() -> {})
+                    .record(ActionType.LINK_VIEW, done -> target, Map.of())))
+        .isInstanceOfSatisfying(
+            BusinessException.class, e -> assertThat(e.errorCode()).isEqualTo(ErrorCode.SETTLED));
+    assertThat(writer.findByTarget(target)).hasSize(1);
+  }
+
+  @Test
+  void 접근_검증이_없는_요청은_지금처럼_멱등_재생이_호실_단위_거절보다_먼저다() {
+    // 같은 키로 다시 온 요청은 처음 결과를 돌려준다(06 4-0). 접근 검증을 붙인 요청만 재생 전에 호실을 본다
+    PipelineResult<Sample> first = pipeline.create(register("k1"), store, rules);
+    gates.put(tenantId, new RoomGate(room, PartySide.TENANT, true, false, false, true));
+
+    PipelineResult<Sample> again = pipeline.create(register("k1"), store, rules);
+
+    assertThat(again.action().replayed()).isTrue();
+    assertThat(again.action().actionId()).isEqualTo(first.action().actionId());
+  }
+
+  @Test
+  void 접근_검증을_두_번_붙이면_앞의_검증이_사라지지_않게_개발_오류다() {
+    ActionBatch batch =
+        ActionBatch.of(room, Actor.link(UUID.randomUUID(), PartySide.TENANT), "view")
+            .accessCheck(() -> {});
+
+    assertThatThrownBy(() -> batch.accessCheck(() -> {}))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("하나만");
   }
 
   @Test

@@ -1,73 +1,93 @@
-# React + TypeScript + Vite
+# HomeStamp 프론트엔드
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+호실 기록, 수리, 입주·퇴거 점검과 정산 화면입니다. 지금은 서버 없이 **목업**으로 모든 화면이 동작하고, 실제 API 연동은 기능마다 이어서 붙입니다.
 
-Currently, two official plugins are available:
+## 실행
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Node.js 22를 권장합니다. 자세한 환경은 [팀 설정 문서 7장](../docs/setup.md#7-로컬-실행-모두-필수)을 참고하세요.
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(["dist"]),
-  {
-    files: ["**/*.{ts,tsx}"],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ["./tsconfig.node.json", "./tsconfig.app.json"],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```sh
+cd front
+npm ci
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://npmx.dev/package/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://npmx.dev/package/eslint-plugin-react-dom) for React-specific lint rules:
+Vite가 터미널에 표시한 주소를 여세요. 기본 주소에는 확인용 101호가 열리고, 주소에 `?sample`을 붙이면 연남하우스 302호와 망원빌라 201호의 예시 기록으로 시작합니다.
 
-```js
-// eslint.config.js
-import reactX from "eslint-plugin-react-x"
-import reactDom from "eslint-plugin-react-dom"
+| 쪽     | 이메일            | 개발용 비밀번호 |
+| ------ | ----------------- | --------------- |
+| 세입자 | `test@gmail.com`  | `aaaa1111`      |
+| 집주인 | `test1@gmail.com` | `aaaa1111`      |
 
-export default defineConfig([
-  globalIgnores(["dist"]),
-  {
-    files: ["**/*.{ts,tsx}"],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs["recommended-typescript"],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ["./tsconfig.node.json", "./tsconfig.app.json"],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+두 계정은 목업 전용입니다. 새로고침하거나 새 탭을 열면 목업 기록이 초기화됩니다. 같은 탭에서 로그아웃하고 다른 계정으로 로그인하면 앞서 남긴 기록에 상대 쪽으로 응답할 수 있습니다.
+
+## 목업 모드와 HTTP 모드
+
+`VITE_API_MODE`로 고르고, 고르는 곳은 `src/api/create-api.ts`(기록)와 `src/api/auth.ts`(계정·인증) 두 곳뿐입니다.
+
+|                  | 목업(`mock`)                                               | HTTP(`http`)                                                                                                                                                                                                                        |
+| ---------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 기본으로 쓰는 때 | `npm run dev`, `npm test`                                  | `npm run build`(배포 빌드)                                                                                                                                                                                                          |
+| 기록             | 브라우저 메모리(`src/api/mock/`). 새로고침하면 처음 상태   | 서버(`VITE_API_BASE_URL`, 기본은 같은 출처 `/api`)                                                                                                                                                                                  |
+| 계정·인증        | 위 개발 계정 두 개. 문자는 보내지 않고 인증번호는 `123456` | 서버. 로컬 서버는 문자를 보내지 않으니 인증번호는 [`docs/postman/README.md`](../docs/postman/README.md) "인증번호 알아내기"로 찾습니다                                                                                              |
+| 화면 표시        | 맨 위에 "예시 모드" 띠                                     | 없음                                                                                                                                                                                                                                |
+| 지금 상태        | 모든 화면이 동작                                           | **로그인·재발급·로그아웃·내 정보, 가입·휴대폰 인증(인증 문자 보내기·인증번호 확인), 법정동 찾기·단계 선택, 호실 만들기·목록·상세만 연결했습니다.** 나머지 요청은 서버로 가지 않고 "아직 서버에 연결되지 않은 기능이에요"로 멈춥니다 |
+
+HTTP 모드는 `src/api/connected.ts`의 **연결을 마친 API 목록**에 있는 요청만 서버로 보냅니다. 요청·응답 모양이 서버와 아직 다른 요청이 가서 400·404가 나거나 잘못 기록되지 않게 하려는 것입니다. 배포 빌드에는 목업 코드와 개발 계정이 들어가지 않습니다(Vite가 모드 값으로 빼 줍니다).
+
+### 기능별 상태 (2026-11-25 dev 기준)
+
+| 기능                                                          | 목업 | 백엔드(dev)                    | HTTP 연결  |
+| ------------------------------------------------------------- | ---- | ------------------------------ | ---------- |
+| 로그인·재발급·로그아웃                                        | 동작 | 있음                           | 연결       |
+| 내 정보(`GET /api/me`)                                        | 동작 | 있음(#187)                     | 연결       |
+| 가입, 휴대폰 인증                                             | 동작 | 있음                           | 연결(#208) |
+| 호실 만들기·목록·상세                                         | 동작 | 있음                           | 연결(#232) |
+| 하자 등록·응답·보충                                           | 동작 | 있음(사진 업로드 표는 진행 중) | 연결 전    |
+| 법정동 찾기·단계 선택                                         | 동작 | 있음                           | 연결(#193) |
+| 초대·연결, 수리 건 상세, 점검, 정산, 돈 안건·지불, 알림, 사진 | 동작 | 없음(수리 건 상세는 진행 중)   | 연결 전    |
+| 06에 주소가 없는 행동(`notInSpec`)                            | 동작 | 없음                           | 연결 안 함 |
+
+## 시연 경로
+
+1. `?sample`로 시작해 세입자 계정으로 로그인합니다. **호실 기록 → 연남하우스 302호 → 하자 · 수리 기록**에서 상세 화면과 사진을 봅니다. 새 하자 기록을 남긴 뒤 같은 탭에서 집주인 계정으로 로그인해 응답 화면을 확인합니다.
+2. **호실 기록 → 망원빌라 201호 → 퇴거 · 정산**에서 입주·퇴거 비교와 정산을 봅니다. 송금은 상대가 확인한 금액과 확인을 기다리는 금액을 따로 표시합니다.
+3. 가입 전 화면은 새 탭에서 개발 서버 주소에 `?sample&share=leak`를 붙여 확인합니다.
+
+송금 보류·금액 이견과 `받았어요(혼자)`, 공유 그만두기·다시 공유, 부위 숨기기·다시 보이기, 확인 카드, 진행 상황 남기기는 아직 화면이 없습니다.
+
+## 폴더와 역할
+
+기준은 [`docs/rules/09-프로젝트-구조.md`](../docs/rules/09-프로젝트-구조.md) 5장입니다.
+
+| 폴더                 | 하는 일                                                                                                                                                                                                                                                                                                  |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pages/`             | 화면 하나에 파일 하나(공유 링크 화면 `share-page` 포함). 기록을 읽고 버튼은 `availableActions`로만 그립니다                                                                                                                                                                                              |
+| `features/<도메인>/` | 그 도메인의 부품·훅·입력 창. 폴더 이름은 `.github/CODEOWNERS`의 도메인과 같습니다(`auth`, `member`, `room`, `inspection`, `repair`, `proposal`, `payment`, `settlement`, `photo`). 입력 창은 `…-form.tsx`로 자기 칸 상태·확인·보내기를 함께 가집니다. 다른 도메인 폴더는 사진 보기(`photo`)만 불러옵니다 |
+| `components/common/` | 여러 도메인이 같이 쓰는 부품(응답 버튼, 보충 요청, 고친 내용 상자, 돈 안건 카드, 확인 없음 표시, 긴 글 펼치기, 입력 창 틀 `form-dialog`, 사진·구역 칸, 안내·빈 화면, 옆 메뉴·위쪽 막대·제목 줄)                                                                                                          |
+| `components/ui/`     | shadcn 부품                                                                                                                                                                                                                                                                                              |
+| `api/`               | 화면이 부르는 계약(`types.ts`, `repair-cases.ts`, `records.ts`, `available-actions.ts`), HTTP 구현(`http-*.ts`), 연결을 마친 API 목록(`connected.ts`)                                                                                                                                                    |
+| `api/mock/`          | 서버 대신 동작하는 목업. **`api/` 밖에서는 불러오지 않습니다**                                                                                                                                                                                                                                           |
+| `lib/`               | 규칙·문구 유틸(전화번호 `phone.ts`, 주소 이름 `region.ts` 등)                                                                                                                                                                                                                                            |
+
+`App.tsx`는 화면 틀·주소 이동과 어느 입력 창을 열지만 정하고, 기록을 보내는 함수(`commit`·`act`·`send`, 모양은 `lib/record-commands.ts`)를 창에 넘깁니다. 목업 전체 기록에서 내가 볼 수 있는 것을 거르는 계산도 아직 `App.tsx`에 있는데, HTTP로 연결하면 서버 응답으로 바뀌는 부분입니다.
+
+## 백엔드를 연결할 때 고칠 곳
+
+화면 코드는 바꾸지 않고 `api/` 안만 고치는 것이 목표입니다. 기능 하나를 연결할 때마다 `api/connected.ts`에 그 API를 한 줄 더합니다.
+
+1. **요청·응답 모양**: dev 백엔드와 다른 곳이 있습니다. 하자 `roomPartId`·보충 `{description, uploadTickets}`, 응답 결과 `AnswerResult`. 가입·휴대폰 인증은 `auth.ts`의 `createHttpAuth`가 서버 모양(`displayName`·`verificationTicket`·문구 판 `v1`, 인증 응답 `{id}`·`{ticket, expiresAt}`)으로 바꿔 보냅니다(#208). 호실은 `http-rooms.ts`가 서버 모양(`side` `TENANT`·`LANDLORD`, 목록 `{items, nextCursor}`, 상세)과 화면 모델을 바꾸고, 서버 값(`counterpartStatus`·`myStatus`·`joinedAway`·`availableActions` 등)은 `room.server`에 그대로 둡니다. 공유를 그만둔 상대·탈퇴한 상대는 `connection`이 `연결됨`이어도 `connectionText`로 따로 보입니다. 만들 때 상대 번호는 서버가 아직 받지 않아 HTTP에서는 칸을 숨깁니다(초대 #163에서 받음, #232).
+2. **응답 변환**: `http-api.ts`, `http-records.ts`, `http-repair-cases.ts`의 `toNotices`·`toView` 등은 지금 `as`로만 맞춥니다. 서버 응답(OpenAPI)이 정해지면 화면 모델(`data/demo.ts`)로 바꾸는 함수로 채웁니다.
+3. **읽기**: `http-records.ts`의 `load`는 호실(목록을 끝까지 받은 뒤 호실마다 상세)과 알림만 받습니다. 알림은 아직 연결 전이라 빈 목록으로 둡니다. 수리 건 목록·점검·정산·경과를 채워야 합니다.
+4. **버튼**: `http-available-actions.ts`는 기록마다 붙은 `availableActions`를 읽습니다. 2번 변환에서 서버 값을 붙여 주면 됩니다(점검·정산 상세는 아직 빈 목록).
+5. **06에 주소가 없는 행동**: `notInSpec(...)`으로 표시했습니다(`grep -rn notInSpec src`). 팀이 주소를 정하면 `post(endpoints...)`로 바꿉니다.
+6. **사진**: 지금은 브라우저에서 data URL로 읽습니다(`lib/photos.ts`). 서버가 생기면 업로드 표(PHO-1) 번호를 보냅니다.
+
+## 검증
+
+```sh
+npm run lint
+npm run format:check
+npm run build
+npm test
 ```

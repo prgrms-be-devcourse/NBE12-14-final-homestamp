@@ -25,4 +25,11 @@ public interface RoomGateReader {
    * </ul>
    */
   RoomGate lockAndRead(UUID roomRecordId, Actor actor);
+
+  /**
+   * 잠그지 않고 읽는다. 값과 거절({@code NOT_FOUND})은 {@link #lockAndRead}와 같다. 상세 조회가 {@code
+   * availableActions}(06 4-0)를 계산할 때 쓴다. 상태를 바꾸는 요청은 이 값으로 판단하지 않는다(09 3-1 "계약": pipeline이 잠근 뒤 다시
+   * 본다).
+   */
+  RoomGate read(UUID roomRecordId, Actor actor);
 }

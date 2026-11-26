@@ -27,6 +27,7 @@ sequenceDiagram
     C->>S: 요청 + Idempotency-Key
     S->>P: create / execute / executeAll
     P->>G: 1. 호실 잠그고 읽기
+    P->>P: 1 뒤(접근 검증이 붙은 요청만) 호실 단위 거절 → 현재 접근 검증
     P->>P: 2. 같은 키면 처음 결과 돌려주고 끝
     P->>P: 3. 호실 단위 거절 (정산 완료 등)
     P->>St: 5. load (지금 상태)
@@ -88,7 +89,7 @@ public class RepairTransitions implements Transitions<RepairState> {
 }
 ```
 
-`apply`에서 **보지 않는 것**: 정산 완료·합류 전 기록·내 공유 중단, 거주 종료 뒤 새 수리 건(`REGISTER`). pipeline이 3단계에서 먼저 막아요(09 3-1 순서 3). **그 밖의 "거주 중에만" 규칙**(거주 종료 뒤 수리 시작·종료 요청·종료 확인, 진행 상황 묻기 등)은 pipeline이 막지 않으니 `load`가 호실 단계를 상태에 담고 `apply`에서 막아요.
+`apply`에서 **보지 않는 것**: 정산 완료·합류 전 기록·내 공유 중단, 거주 종료 뒤 새 수리 건(`REGISTER`)·수리 시작(`START_REPAIR`)·혼자 종료(`CLOSE_ALONE`). pipeline이 3단계에서 먼저 막아요(09 3-1 순서 3). **그 밖의 "거주 중에만" 규칙**(거주 종료 뒤 종료 요청, 진행 상황 묻기 등)은 pipeline이 막지 않으니 `load`가 호실 단계를 상태에 담고 `apply`에서 막아요.
 `apply`에서 **보는 것**: 기록 단위 규칙(`NOT_COUNTERPART_SIDE`, `ACK_FINAL` …), 그리고 행동마다 결과가 다른 호실 사실(예: 상대 공유 중단에 따른 정산 끝내기 막기). 뒤의 것은 `load`가 상태 값에 담아 줘요(09 3-1 "계약").
 
 ### 3-2. 저장
@@ -208,7 +209,7 @@ public ResponseEntity<CreatedResponse> register(
 
 - `Actor.member(id)`의 측(TENANT/LANDLORD)은 넣지 않아요. pipeline이 `RoomGate`에서 채워요(호실 만들기만 예외).
 - `server`·`ops`는 호실 단위 거절을 건너뛰어요.
-- `link`는 호실 단위 거절을 거쳐요. 링크 열람은 호실이 정산 완료·합류 전 기록이면 link가 pipeline을 부르기 전에 `LINK_INVALID`로 돌려줘요(호실 상태를 드러내지 않게, 06 LINK-2, #83). 문자 그만 받기(`OPT_OUT`)는 호실 상태로 막히지 않아요.
+- `link`는 호실 단위 거절을 거쳐요. 링크 열람은 호실이 정산 완료·합류 전 기록이면 link가 pipeline을 부르기 전에 `LINK_INVALID`로 돌려줘요(호실 상태를 드러내지 않게, 06 LINK-2, #83). 그 뒤 잠그기 전에 바뀐 경우는 접근 검증이 붙은 요청이라 pipeline이 멱등 재생·최근 열람 생략보다 먼저 막고, link가 `LINK_INVALID`로 덮어요(09 3-1 "1 뒤"). 문자 그만 받기(`OPT_OUT`)는 호실 상태로 막히지 않아요.
 - 결과: `create`·`execute`는 `PipelineResult`(`state()` 저장 뒤 상태, `action()` 행동 결과), `executeAll`은 `BatchResult`(`actions()` 행동마다, `first()` 첫 행동). 다시 온 요청이면 `replayed()`가 참이고 `target()`에 처음 만든 ID가 있어요.
 
 ## 5. 테스트 쓰기
@@ -258,7 +259,7 @@ assertThat(fx.actions().findByRoom(roomId))
 | 거주 중, 막히는 것 없음 | `fx.gates().member(room, memberId, side)` | 통과 |
 | 당사자가 아님 | 아무것도 넣지 않음 | `NOT_FOUND` |
 | 정산 완료 | `put(memberId, new RoomGate(room, side, true, false, false, true))` | `SETTLED` (예외: `ActionType`에 `AFTER_SETTLED` 표시) |
-| 거주 종료 | `new RoomGate(room, side, false, false, false, true)` | `REGISTER`만 `ROOM_ENDED` |
+| 거주 종료 | `new RoomGate(room, side, false, false, false, true)` | `REGISTER`·`START_REPAIR`·`CLOSE_ALONE`만 `ROOM_ENDED` |
 | 합류 전 기록 | `new RoomGate(room, side, false, true, false, false)` | `JOINED_RECORD` (예외: `ON_JOINED`) |
 | 내가 공유를 그만둠 | `new RoomGate(room, side, false, false, true, false)` | `SHARING_STOPPED` (예외: `WHILE_SHARING_STOPPED`) |
 | 서버·운영 행동 | `fx.gates().putRoom(new RoomGate(room, null, …))` | 호실 단위 거절을 건너뜀 |
@@ -295,7 +296,7 @@ pipeline은 진짜이고, 안쪽 부품도 아래 표처럼 하나씩 진짜로 
 |---|---|---|---|
 | 행동 기록 저장 `ActionWriter` | **진짜** `JpaActionWriter`: `record.action`에 저장, `room_seq`·해시 체인. 메모리 가짜 `FakeActionWriter`는 테스트 코드에만 있고 `ActionPipelineFixture`가 써요 | — | B |
 | 호실 잠금·읽기 `RoomGateReader` | **진짜** `JpaRoomGateReader`(#143): `room_record`를 `FOR UPDATE`로 잠그고 `party`로 당사자 확인. `FakeRoomGateReader`는 DB 없는 테스트(`ActionPipelineFixture`)가 `new`로 써요 | — | A (ROOM-2) |
-| 부위 조회 `RoomQueryService.findPart` | **진짜** `JpaRoomQueryService`: `room_part`를 읽음 | — | room (#140) |
+| 부위 조회 `RoomQueryService.findPart`·`findPartAsSeenBy` | **진짜** `JpaRoomQueryService`: `room_part`를 읽음. 보는 사람 기준은 부위 목록과 같은 `PartViews.one`(#183) | — | room (#140) |
 | 자리 상태 `CounterpartReader` | **진짜** `JpaCounterpartReader`: `room_record`·`party`·`member`를 읽음. 수신 거부(`optedOut`)·가린 이름(`maskedName`)은 아직 채우지 않음(거짓·null, 문자 보내기 PR에서 채움) | — | room (#140) |
 
 배포 서버에서 기능을 확인하려면(07 6장 끝 기준) 잠금·읽기(`RoomGateReader`)가 진짜여야 하는데, #143으로 진짜가 됐어요.
@@ -367,7 +368,7 @@ case SUPPLEMENT -> {
 | 무엇 | 예 | 어디서 |
 |---|---|---|
 | 상대가 아직 볼 수 없는 기록 | 작성 중 점검의 항목(06 INSP-1a) | `apply`에서 `INVALID_STATE`, `canAnswer`도 `false`. 확인 카드도 같은 기준 |
-| 그 단계에서 할 수 없는 행동 | 거주 종료 뒤 열린 수리 건의 [종료 확인](03 A 상태별 표 "열린 수리 건의 수리 행동") | `load`가 담은 호실 단계로 `apply`에서 |
+| 그 단계에서 할 수 없는 행동 | 거주 종료 뒤 수리 건의 [종료 요청](종료 확인 요청을 열 수 없음, 03 A 상태별 표 "열린 수리 건의 수리 행동") | `load`가 담은 호실 단계로 `apply`에서 |
 | 규칙이 다른 응답 | 정산 끝내기(`AnswerResult` Javadoc), 돈 안건의 제안·동의(`ProposalService`, `OWN_PROPOSAL`) | 그 도메인 |
 
 ### 8-4. 응답 요청(notification)과 잇기

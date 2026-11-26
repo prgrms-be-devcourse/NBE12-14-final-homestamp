@@ -17,13 +17,21 @@ import com.chilsuitjo.back.action.rule.Replay;
 import com.chilsuitjo.back.action.service.ActionReader;
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.common.TargetKind;
+import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.notification.dto.OpenRequestCommand;
 import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.rule.RequestStatus;
 import com.chilsuitjo.back.notification.service.FakeWaitService;
+import com.chilsuitjo.back.photo.dto.PhotoCard;
+import com.chilsuitjo.back.photo.dto.PhotoTarget;
+import com.chilsuitjo.back.photo.rule.PhotoStage;
+import com.chilsuitjo.back.photo.rule.PhotoTargetType;
+import com.chilsuitjo.back.photo.service.FakePhotoService;
 import com.chilsuitjo.back.repair.rule.RepairState;
 import com.chilsuitjo.back.repair.rule.RepairTransitions;
+import com.chilsuitjo.back.room.dto.RoomAccess;
+import com.chilsuitjo.back.room.service.RoomAccessService;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -43,7 +51,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 06 REP-2 하자 응답·보충을 보안·pipeline·진짜 행동 기록 저장(PostgreSQL)까지 띄워 본다(#155). 응답 요청은 가짜({@code
- * FakeWaitService})라 상태만 확인한다. 보충 사진은 아직 없다.
+ * FakeWaitService})라 상태만 확인한다. 사진은 가짜 사진 창구({@code FakePhotoService})가 받는다(#167).
  *
  * <p>pipeline이 바깥 트랜잭션을 거절해서 {@code @Transactional}로 되돌리지 않는다. 테스트마다 새 호실을 만들어 섞이지 않게 한다.
  */
@@ -59,6 +67,8 @@ class RepairDefectApiTest {
   @Autowired private ActionReader actions;
   @Autowired private RepairTransitions rules;
   @Autowired private PlatformTransactionManager transactionManager;
+  @Autowired private FakePhotoService photos;
+  @Autowired private RoomAccessService access;
 
   private UUID room;
   private UUID tenant;
@@ -425,11 +435,62 @@ class RepairDefectApiTest {
   }
 
   @Test
-  void 아직_받지_않는_사진이_오거나_설명이_길면_VALIDATION_FAILED() throws Exception {
+  void 사진만으로_보충하면_사진이_수리_건에_붙고_보충_설명은_비어_있다() throws Exception {
+    UUID caseId = register();
+    respond(caseId, landlord, "r1", "NEED_MORE", "사진이 흐려요", 1).andExpect(status().isOk());
+    int before = cardsOf(caseId).size();
+
+    supplement(caseId, tenant, "s1", "{\"uploadTickets\":[\"" + UUID.randomUUID() + "\"]}")
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.defectAck").value("PENDING"));
+
+    List<PhotoCard> cards = cardsOf(caseId);
+    assertThat(cards).hasSize(before + 1);
+    PhotoCard added = cards.getLast();
+    assertThat(added.stage()).isEqualTo(PhotoStage.BEFORE);
+    assertThat(added.uploadedBy()).isEqualTo(PartySide.TENANT);
+    assertThat(added.sortOrder()).isEqualTo(before); // 등록 사진 뒤로 이어 붙는다
+    assertThat(
+            jdbc.queryForMap("SELECT * FROM record.supplement WHERE repair_case_id = ?", caseId)
+                .get("description"))
+        .isNull();
+    assertThat(action(caseId, "SUPPLEMENT").get("payload").toString())
+        .contains(added.id().toString());
+  }
+
+  @Test
+  void 보충_사진_검사에_실패하면_보충도_남지_않는다() throws Exception {
+    UUID caseId = register();
+    respond(caseId, landlord, "r1", "NEED_MORE", "사진이 흐려요", 1).andExpect(status().isOk());
+    String bad = UUID.randomUUID().toString();
+    photos.failTicket(bad, ErrorCode.UPLOAD_TICKET_EXPIRED);
+
+    supplement(
+            caseId,
+            tenant,
+            "s1",
+            "{\"description\":\"다시 찍었어요\",\"uploadTickets\":[\"" + bad + "\"]}")
+        .andExpect(jsonPath("$.code").value("UPLOAD_TICKET_EXPIRED"))
+        .andExpect(jsonPath("$.photoIndex").value(0));
+
+    assertThat(caseRow(caseId)).containsEntry("defect_ack", "NEED_MORE");
+    assertThat(countRows("record.supplement", caseId)).isZero();
+    assertThat(countActions(caseId, "SUPPLEMENT")).isZero();
+  }
+
+  @Test
+  void 보충_사진이_10장을_넘거나_설명이_길면_VALIDATION_FAILED() throws Exception {
     UUID caseId = register();
     respond(caseId, landlord, "r1", "NEED_MORE", "사진이 흐려요", 1).andExpect(status().isOk());
 
-    supplement(caseId, tenant, "s1", "{\"uploadTickets\":[\"t1\"]}")
+    StringBuilder eleven = new StringBuilder("[");
+    for (int i = 0; i < 11; i++) {
+      eleven.append(i == 0 ? "" : ",").append('"').append(UUID.randomUUID()).append('"');
+    }
+    supplement(caseId, tenant, "s1", "{\"uploadTickets\":" + eleven + "]}")
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    supplement(caseId, tenant, "s1b", "{\"uploadTickets\":[\" \"]}")
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
     supplement(caseId, tenant, "s2", "{\"description\":\"" + "가".repeat(2001) + "\"}")
@@ -465,7 +526,15 @@ class RepairDefectApiTest {
 
   // ---- 준비물 ----
 
-  /** 세입자가 하자를 등록하고 수리 건 ID를 돌려준다. */
+  /** 세입자가 보는 이 수리 건의 사진 카드(가짜 사진 창구). */
+  private List<PhotoCard> cardsOf(UUID caseId) {
+    RoomAccess viewer =
+        new TransactionTemplate(transactionManager).execute(s -> access.require(room, tenant));
+    PhotoTarget target = new PhotoTarget.Ref(PhotoTargetType.REPAIR_CASE, caseId);
+    return photos.cards(viewer, List.of(target)).get(target);
+  }
+
+  /** 세입자가 사진 한 장으로 하자를 등록하고 수리 건 ID를 돌려준다. */
   private UUID register() throws Exception {
     String body =
         mvc.perform(
@@ -476,7 +545,10 @@ class RepairDefectApiTest {
                     .content(
                         "{\"roomPartId\":\""
                             + part
-                            + "\",\"title\":\"천장 누수\",\"description\":\"비 오면 물이 떨어져요\"}"))
+                            + "\",\"title\":\"천장 누수\",\"description\":\"비 오면 물이 떨어져요\","
+                            + "\"uploadTickets\":[\""
+                            + UUID.randomUUID()
+                            + "\"]}"))
             .andExpect(status().isCreated())
             .andReturn()
             .getResponse()
@@ -588,13 +660,15 @@ class RepairDefectApiTest {
         memberId);
   }
 
+  /** 기본 목록(V7)에서 복사된 "방 › 천장". 공유를 그만둔 뒤 하자 등록은 보이는 부위로 판단해(#183) 실제 호실처럼 템플릿을 가리킨다. */
   private UUID part() {
     UUID id = UUID.randomUUID();
     jdbc.update(
         """
         INSERT INTO state.room_part
-          (id, room_record_id, zone, name, sort_order, created_at, version)
-        VALUES (?, ?, '안방', '천장', 0, CURRENT_TIMESTAMP, 0)
+          (id, room_record_id, template_id, zone, name, sort_order, created_at, version)
+        SELECT ?, ?, t.id, t.zone, t.name, t.sort_order, CURRENT_TIMESTAMP, 0
+        FROM state.part_template t WHERE t.zone = '방' AND t.name = '천장'
         """,
         id,
         room);

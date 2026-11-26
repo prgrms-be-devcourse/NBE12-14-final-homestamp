@@ -1,0 +1,281 @@
+package com.chilsuitjo.back.repair.service;
+
+import com.chilsuitjo.back.action.dto.ActionEntry;
+import com.chilsuitjo.back.action.dto.ActionTarget;
+import com.chilsuitjo.back.action.dto.Actor;
+import com.chilsuitjo.back.action.dto.RoomGate;
+import com.chilsuitjo.back.action.rule.ActionType;
+import com.chilsuitjo.back.action.rule.AnswerPayload;
+import com.chilsuitjo.back.action.rule.Replay;
+import com.chilsuitjo.back.action.rule.RoomGateReader;
+import com.chilsuitjo.back.action.service.ActionReader;
+import com.chilsuitjo.back.global.common.AckState;
+import com.chilsuitjo.back.global.common.PartySide;
+import com.chilsuitjo.back.global.error.BusinessException;
+import com.chilsuitjo.back.global.error.ErrorCode;
+import com.chilsuitjo.back.photo.dto.PhotoCard;
+import com.chilsuitjo.back.photo.dto.PhotoTarget;
+import com.chilsuitjo.back.photo.rule.PhotoTargetType;
+import com.chilsuitjo.back.photo.service.PhotoService;
+import com.chilsuitjo.back.repair.dto.RepairCaseDetail;
+import com.chilsuitjo.back.repair.entity.CauseNote;
+import com.chilsuitjo.back.repair.entity.RepairCase;
+import com.chilsuitjo.back.repair.entity.RepairContent;
+import com.chilsuitjo.back.repair.repository.CauseNoteRepository;
+import com.chilsuitjo.back.repair.repository.CauseNoteStateStore;
+import com.chilsuitjo.back.repair.repository.RepairCaseRepository;
+import com.chilsuitjo.back.repair.repository.RepairContentRepository;
+import com.chilsuitjo.back.repair.repository.RepairStateStore;
+import com.chilsuitjo.back.repair.rule.CauseNoteTransitions;
+import com.chilsuitjo.back.repair.rule.RepairState;
+import com.chilsuitjo.back.repair.rule.RepairStatus;
+import com.chilsuitjo.back.repair.rule.RepairTransitions;
+import com.chilsuitjo.back.room.dto.RoomAccess;
+import com.chilsuitjo.back.room.service.RoomAccessService;
+import com.chilsuitjo.back.room.service.RoomQueryService;
+import java.time.Clock;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+/**
+ * 수리 건 조회(06 4-6). 상태를 바꾸지 않아 pipeline을 거치지 않고 읽기 트랜잭션을 쓴다(09 3-1 "트랜잭션 경계": 조회만 하는 서비스는 읽기 트랜잭션을
+ * 써도 된다). 행동은 {@link RepairService}가 맡는다.
+ */
+@Service
+@RequiredArgsConstructor
+public class RepairQueryService {
+
+  /**
+   * {@code availableActions}의 이름. API 끝 단어와 같다(06 4-0 "할 수 있는 행동"). 순서는 {@code
+   * RepairTransitions.available}이 정한다.
+   */
+  private static final Map<ActionType, String> ACTION_NAMES =
+      Map.of(
+          ActionType.RESPOND_DEFECT, "respond",
+          ActionType.SUPPLEMENT, "supplement",
+          ActionType.START_REPAIR, "start",
+          ActionType.REQUEST_CLOSE, "request-close",
+          ActionType.CONFIRM_CLOSE, "confirm-close",
+          ActionType.NOT_YET, "not-yet",
+          ActionType.CLOSE_ALONE, "close-alone",
+          ActionType.ASK_PROGRESS, "ask-progress",
+          ActionType.NOTE_PROGRESS, "progress-notes");
+
+  /** 원인 설명 남기기·고치기의 {@code availableActions} 이름(06 4-6 {@code cause-notes}). */
+  static final String CAUSE_NOTES = "cause-notes";
+
+  private final RepairCaseRepository cases;
+  private final RepairContentRepository contents;
+  private final RepairStateStore store;
+  private final RepairTransitions rules;
+  private final RoomGateReader gates;
+  private final RoomQueryService rooms;
+  private final ActionReader actionReader;
+  private final PhotoService photos;
+  private final RoomAccessService access;
+  private final CauseNoteRepository causeNoteRows;
+  private final CauseNoteStateStore causeStore;
+  private final CauseNoteTransitions causeRules;
+  private final Clock clock;
+
+  /**
+   * 수리 건 상세(06 4-6, S-12). 없는 ID, 그 호실 당사자가 아님, 상대가 볼 수 없는 기록(공유를 그만둔 뒤 등록, 03 불변식 18)은 모두 {@code
+   * NOT_FOUND}다(있는지도 알 수 없게, ROOM-2a).
+   *
+   * <p>{@code availableActions}는 실제 요청과 같은 판단으로 만든다: 호실 단위 거절은 {@code RoomGate.rejection}(pipeline
+   * 3단계와 같음), 수리 건 규칙은 {@code RepairTransitions.available}({@code apply}와 같음). 잠그지 않고 읽으므로 화면을 연 뒤
+   * 상태가 바뀔 수 있고, 그때는 요청이 서버에서 다시 검사되어 거절된다.
+   *
+   * <p><b>공유를 그만둔 뒤</b>(어느 쪽이든, 제한이 살아 있을 때)에는 보이는 상태를 그만둔 시각으로 고정한다(03 6-6 9번 "상태도 그 시각까지로 다시 계산",
+   * 3-1 "사진·돈 포함 모든 줄", 양방향). 그 시각까지의 행동과 보는 사람 자신의 행동만으로 다시 계산하고({@code Replay.fold}), 그 시각을
+   * {@code asOf}로 돌려준다(화면의 "○월 ○일 기준"). 상대가 그 뒤에 바꾼 하자 인정·수리 진행·부담 상태는 드러나지 않는다(#166 리뷰). {@code
+   * availableActions}는 실제 요청과 같아야 해서 지금 상태로 계산한다: 그만둔 쪽은 pipeline이 막아({@code SHARING_STOPPED}) 버튼이
+   * 없고, 남은 쪽의 지금 상태에는 그만둔 쪽이 바꾼 것이 없다(하자 응답·보충은 공유 중단 중 막힘).
+   *
+   * <p>사진({@code photos})은 수리 건에 붙은 사진이다(하자 등록·보충). 보이는 범위(공유 중단 뒤 고정, 지운 사진 흔적)는 사진 창구가 03 3-1대로
+   * 거른다({@code PhotoService.cards}, #175).
+   */
+  @Transactional(readOnly = true)
+  public RepairCaseDetail detail(UUID repairCaseId, UUID memberId) {
+    UUID roomRecordId =
+        cases
+            .findRoomRecordIdById(repairCaseId)
+            .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
+    RoomGate gate = gates.read(roomRecordId, Actor.member(memberId));
+    RepairCase row =
+        cases
+            .findByIdAndRoomRecordId(repairCaseId, roomRecordId)
+            .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
+    RepairState state = store.current(row);
+    if (state.hiddenFromCounterpartKnown() && gate.side() != state.registeredBy()) {
+      throw new BusinessException(ErrorCode.NOT_FOUND);
+    }
+    Instant asOf = store.sharingCutoff(row, gate.side()).orElse(null);
+    List<ActionEntry> visible = visibleActions(row, gate.side(), asOf);
+    RepairState shown = asOf == null ? state : Replay.fold(rules, visible);
+    if (state.status() == RepairStatus.IN_PROGRESS) {
+      // 혼자 종료 버튼은 실제 혼자 종료와 같은 판단(06 4-0). 측마다 달라 상세에서만 채운다
+      state = state.withCanCloseAlone(store.canCloseAlone(row, gate.side()));
+    }
+    RepairContent content =
+        contents
+            .findByRepairCaseIdAndNo(row.getId(), shown.contentNo())
+            .orElseThrow(() -> new IllegalStateException("보이는 판이 없어요: " + row.getId()));
+    String partName = rooms.findPart(roomRecordId, content.getRoomPartId()).name();
+    List<String> actions =
+        new ArrayList<>(
+            rules.available(state, gate.side(), clock.instant()).stream()
+                .filter(type -> gate.rejection(type).isEmpty())
+                .map(ACTION_NAMES::get)
+                .toList());
+    // 원인 설명은 수리 진행과 따로라 상태와 상관없이 남기고 고친다(03 D-2). 호실 단위 거절만 본다
+    if (gate.side() != null && gate.rejection(ActionType.NOTE_CAUSE).isEmpty()) {
+      actions.add(CAUSE_NOTES);
+    }
+    RoomAccess viewer = access.require(roomRecordId, memberId);
+    PhotoTarget photoTarget = new PhotoTarget.Ref(PhotoTargetType.REPAIR_CASE, row.getId());
+    List<PhotoCard> photoCards = photos.cards(viewer, List.of(photoTarget)).get(photoTarget);
+    return new RepairCaseDetail(
+        row.getId(),
+        roomRecordId,
+        gate.side(),
+        row.getCreatedBySide(),
+        shown.status(),
+        shown.closeRequestedBy(),
+        shown.closedBy(),
+        closeObjection(shown, visible),
+        row.isSolo(),
+        row.getCreatedAt(),
+        asOf,
+        new RepairCaseDetail.Content(
+            content.getNo(),
+            content.getRoomPartId(),
+            partName,
+            content.getTitle(),
+            content.getDescription()),
+        new RepairCaseDetail.Defect(shown.defectAck(), rules.nextRerequestAt(shown)),
+        new RepairCaseDetail.Money(shown.moneyStatus()),
+        photoCards,
+        causeNotesOf(row, gate, viewer),
+        List.copyOf(actions));
+  }
+
+  /**
+   * 원인 설명(06 REP-8). 측마다 지금 설명(보이는 것 중 다음 수정본이 없는 것) 하나를 남긴 순서로 주고, 고치기 전 설명은 {@code previous}에
+   * 새것부터 접는다(REP-8c). 공유를 그만둔 뒤에는 그 시각까지의 설명·응답과 보는 사람 자신의 것만 보인다(03 6-6 9번, 불변식 18). 응답 버튼({@code
+   * canRespond})은 실제 요청과 같은 판단이다: 호실 단위 거절은 {@code RoomGate.rejection}, 설명 규칙은 {@code
+   * CauseNoteTransitions.canRespond}(지금 설명인지는 보이는 범위가 아니라 실제 기록으로 본다).
+   */
+  private List<RepairCaseDetail.CauseNote> causeNotesOf(
+      RepairCase row, RoomGate gate, RoomAccess viewer) {
+    CauseNoteStateStore.Visibility visibility = causeStore.visibilityFor(row, gate.side());
+    List<CauseNote> visible =
+        causeNoteRows.findByRepairCaseIdOrderByCreatedAtAscIdAsc(row.getId()).stream()
+            .filter(note -> visibility.sees(note.getSide(), note.getCreatedAt()))
+            .toList();
+    if (visible.isEmpty()) {
+      return List.of();
+    }
+    Map<UUID, CauseNote> byId = new HashMap<>();
+    Set<UUID> replaced = new HashSet<>();
+    List<PhotoTarget> targets = new ArrayList<>();
+    for (CauseNote note : visible) {
+      byId.put(note.getId(), note);
+      if (note.getPreviousId() != null) {
+        replaced.add(note.getPreviousId());
+      }
+      targets.add(new PhotoTarget.Ref(PhotoTargetType.CAUSE_NOTE, note.getId()));
+    }
+    Map<PhotoTarget, List<PhotoCard>> cards = photos.cards(viewer, targets);
+    boolean canAnswer = gate.side() != null && gate.rejection(ActionType.RESPOND_CAUSE).isEmpty();
+    List<RepairCaseDetail.CauseNote> result = new ArrayList<>();
+    for (CauseNote note : visible) {
+      if (replaced.contains(note.getId())) {
+        continue;
+      }
+      List<RepairCaseDetail.CauseNote> previous = new ArrayList<>();
+      for (CauseNote before = byId.get(note.getPreviousId());
+          before != null;
+          before = byId.get(before.getPreviousId())) {
+        previous.add(causeNoteView(before, visibility, cards, false, List.of()));
+      }
+      boolean canRespond =
+          canAnswer && causeRules.canRespond(causeStore.responseState(note), gate.side());
+      result.add(causeNoteView(note, visibility, cards, canRespond, previous));
+    }
+    return List.copyOf(result);
+  }
+
+  private RepairCaseDetail.CauseNote causeNoteView(
+      CauseNote note,
+      CauseNoteStateStore.Visibility visibility,
+      Map<PhotoTarget, List<PhotoCard>> cards,
+      boolean canRespond,
+      List<RepairCaseDetail.CauseNote> previous) {
+    RepairCaseDetail.CauseResponse response =
+        causeStore
+            .lastResponse(note.getId(), visibility)
+            .map(entry ->
+                new RepairCaseDetail.CauseResponse(
+                    AckState.valueOf(entry.payloadAs(AnswerPayload.class).answer().name()),
+                    entry.reason(),
+                    entry.createdAt()))
+            .orElse(null);
+    return new RepairCaseDetail.CauseNote(
+        note.getId(),
+        note.getSide(),
+        note.getText(),
+        note.getBasis(),
+        note.getExpertName(),
+        note.getPreviousId(),
+        note.getCreatedAt(),
+        response,
+        cards.getOrDefault(
+            new PhotoTarget.Ref(PhotoTargetType.CAUSE_NOTE, note.getId()), List.of()),
+        canRespond,
+        List.copyOf(previous));
+  }
+
+  /**
+   * 보는 사람에게 보이는 이 수리 건의 행동(03 6-6 9번). 고정 시각까지의 행동(그 시각에 남은 것 포함, 불변식 18 "뒤에 남긴 것은 ✕")과 보는 사람 측의
+   * 행동이다. 고정되지 않았으면 모두. 행동 기록이 원본이라 같은 규칙({@link RepairTransitions})으로 다시 계산하면 그때의 상태가 나온다(REP-10).
+   */
+  private List<ActionEntry> visibleActions(RepairCase row, PartySide viewer, Instant asOf) {
+    return actionReader.findByTarget(ActionTarget.repairCase(row.getId())).stream()
+        .filter(entry ->
+            asOf == null || !entry.createdAt().isAfter(asOf) || entry.actorSide() == viewer)
+        .toList();
+  }
+
+  /**
+   * 혼자 끝낸 처리 완료에 남은 이견(06 REP-5f): 마지막 혼자 종료 뒤의 마지막 [아직 안 됐어요]. 혼자 끝낸 처리 완료가 아니면(양측 확인이 되면 이견은 이력)
+   * 없다. 상태 행에 칸이 없고 행동 기록이 원본이다.
+   */
+  private static RepairCaseDetail.CloseObjection closeObjection(
+      RepairState shown, List<ActionEntry> visible) {
+    if (!shown.closedAlone()) {
+      return null;
+    }
+    ActionEntry objection = null;
+    for (ActionEntry entry : visible) {
+      if (entry.type() == ActionType.CLOSE_ALONE) {
+        objection = null;
+      } else if (entry.type() == ActionType.NOT_YET) {
+        objection = entry;
+      }
+    }
+    return objection == null
+        ? null
+        : new RepairCaseDetail.CloseObjection(
+            objection.actorSide(), objection.reason(), objection.createdAt());
+  }
+}
