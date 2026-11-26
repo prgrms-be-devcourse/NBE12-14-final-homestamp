@@ -15,12 +15,13 @@ import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.rule.RequestStatus;
 import com.chilsuitjo.back.notification.rule.SoloReason;
 import com.chilsuitjo.back.notification.rule.SoloRule;
+import java.time.Duration;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,16 +37,16 @@ import org.springframework.transaction.annotation.Transactional;
  * <p><b>아직 하지 않는 것.</b>
  *
  * <ul>
- *   <li>통지·문자: 요청을 열어도 통지를 만들지 않는다(요청 → 통지 연결은 NOTI-1, #100). 그래서 {@code first_notified_at}·기한은 비어
- *       있고 요청은 {@code WAITING}에서 넘어가지 않는다
- *   <li>기한 다시 세기({@code restart}의 "다시 센다"): 기한을 정하는 코드가 아직 없어 기한이 있으면 조용히 옛 기한을 남기지 않고 {@code
- *       IllegalStateException}이다(기다림 타이머 d3에서 정함)
+ *   <li>통지·문자: 요청을 열어도 통지를 만들지 않는다(요청 → 통지 연결은 NOTI-1, #100). 기다림 시작({@code first_notified_at}·재통지
+ *       기한)은 요청에 걸린 통지가 닿을 때 {@link NoticeWaitStart}가 적는다. 재통지·미확인 작업자가 없어 요청은 {@code WAITING}에서
+ *       넘어가지 않는다
+ *   <li>재통지 뒤 기한 다시 세기: {@code unconfirmed_due_at}이 있으면 {@code IllegalStateException}이다(기다림 타이머
+ *       d3에서 정함)
  *   <li>{@link #closeAll}: 닫는 범위가 #113에서 아직 정해지지 않았고 부르는 곳도 없어 {@code
  *       UnsupportedOperationException}이다
  * </ul>
  */
 @Service
-@RequiredArgsConstructor
 public class JpaWaitService implements WaitService, WaitQuery {
 
   private static final Set<RequestStatus> OPEN =
@@ -54,6 +55,18 @@ public class JpaWaitService implements WaitService, WaitQuery {
   private final ResponseRequestRepository requests;
   private final CounterpartReader counterparts;
   private final ActionRequestContext requestContext;
+  private final Duration renotifyAfter;
+
+  public JpaWaitService(
+      ResponseRequestRepository requests,
+      CounterpartReader counterparts,
+      ActionRequestContext requestContext,
+      @Value("${app.wait.renotify:48h}") Duration renotifyAfter) {
+    this.requests = requests;
+    this.counterparts = counterparts;
+    this.requestContext = requestContext;
+    this.renotifyAfter = WaitDurations.require(renotifyAfter, "app.wait.renotify");
+  }
 
   @Override
   @Transactional(propagation = Propagation.MANDATORY)
@@ -117,11 +130,12 @@ public class JpaWaitService implements WaitService, WaitQuery {
         throw new IllegalStateException(
             "상대 쪽 제안 요청이 열려 있어요. 역제안이면 answered 다음 open을 불러 주세요(05 proposal ③)");
       }
-      request.rewait();
-    } else if (!SoloRule.opensSolo(command.kind())) {
-      // 고친 내용 확인 등은 마지막으로 더한 시각부터 다시 센다(03 1-4 "기한"). 기한을 정하는 타이머 전이라 기한이 있으면 거절한다.
-      // 혼자 진행이 열리는 종류는 기한이 보낸 뒤 고정이라 묶기만 한다. 미확인 뒤 다시 고침은 #104에서 정해 상태를 그대로 둔다
-      request.requireNoDeadline();
+      request.rewait(requestContext.at(), renotifyAfter);
+    } else if (!SoloRule.opensSolo(command.kind())
+        && request.getStatus() == RequestStatus.WAITING) {
+      // 고친 내용 확인 등은 마지막으로 더한 시각부터 다시 센다(03 1-4 "기한"). 혼자 진행이 열리는 종류는 기한이 보낸 뒤 고정이라 묶기만
+      // 한다. 미확인 뒤 다시 고침은 #104에서 정하기 전이라 상태와 기한을 그대로 둔다
+      request.recount(requestContext.at(), renotifyAfter);
     }
     return new RequestHandle(request.getId(), false);
   }

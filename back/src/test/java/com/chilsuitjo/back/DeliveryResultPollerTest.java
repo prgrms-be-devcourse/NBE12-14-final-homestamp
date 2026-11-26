@@ -3,18 +3,22 @@ package com.chilsuitjo.back;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.chilsuitjo.back.action.rule.RoomGateReader;
 import com.chilsuitjo.back.notification.dto.ClaimedDeliveryPoll;
 import com.chilsuitjo.back.notification.dto.DeliveryQuery;
 import com.chilsuitjo.back.notification.dto.SmsMessage;
 import com.chilsuitjo.back.notification.dto.SmsSendResult;
+import com.chilsuitjo.back.notification.entity.Notice;
 import com.chilsuitjo.back.notification.repository.FakeSmsGateway;
 import com.chilsuitjo.back.notification.repository.NoticeRepository;
+import com.chilsuitjo.back.notification.repository.ResponseRequestRepository;
 import com.chilsuitjo.back.notification.repository.SmsGateway;
 import com.chilsuitjo.back.notification.rule.DeliveryOutcome;
 import com.chilsuitjo.back.notification.rule.DeliveryPollSchedule;
 import com.chilsuitjo.back.notification.service.DeliveryPollClaimer;
 import com.chilsuitjo.back.notification.service.DeliveryPollScheduler;
 import com.chilsuitjo.back.notification.service.DeliveryResultPoller;
+import com.chilsuitjo.back.notification.service.NoticeWaitStart;
 import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Duration;
@@ -36,6 +40,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -57,6 +62,7 @@ class DeliveryResultPollerTest {
   private static final String REGION = "9999999996";
   private static final Instant SENT = Instant.parse("2020-01-01T00:00:00Z");
   private static final Duration THREE_DAYS = Duration.ofDays(3);
+  private static final Duration RENOTIFY = Duration.ofHours(48);
   private static final Instant DEADLINE = SENT.plus(THREE_DAYS);
   private static final Instant FIRST_POLL = SENT.plus(Duration.ofMinutes(1));
   private static final DeliveryPollSchedule SCHEDULE =
@@ -65,6 +71,9 @@ class DeliveryResultPollerTest {
 
   @Autowired private NoticeRepository notices;
   @Autowired private PlatformTransactionManager transactionManager;
+  @Autowired private NoticeWaitStart waitStart;
+  @Autowired private ResponseRequestRepository requests;
+  @Autowired private RoomGateReader rooms;
   @Autowired private JdbcTemplate jdbc;
   @Autowired private ApplicationContext context;
 
@@ -105,6 +114,10 @@ class DeliveryResultPollerTest {
   void cleanUp() {
     jdbc.update(
         "DELETE FROM notice WHERE room_record_id IN (SELECT id FROM room_record WHERE region_code = ?)",
+        REGION);
+    jdbc.update(
+        "DELETE FROM response_request WHERE room_record_id IN"
+            + " (SELECT id FROM room_record WHERE region_code = ?)",
         REGION);
   }
 
@@ -157,7 +170,8 @@ class DeliveryResultPollerTest {
             fake,
             advancingClock,
             transactionManager,
-            Duration.ofMinutes(2))
+            Duration.ofMinutes(2),
+            waitStart)
         .runOnce(50);
 
     assertThat(reads.get()).isEqualTo(3);
@@ -402,7 +416,8 @@ class DeliveryResultPollerTest {
             fake,
             Clock.fixed(FIRST_POLL, ZoneOffset.UTC),
             transactionManager,
-            Duration.ofMinutes(2));
+            Duration.ofMinutes(2),
+            waitStart);
     CompletableFuture<Integer> polling = CompletableFuture.supplyAsync(() -> poller.runOnce(50));
     try {
       awaitLockWaiter();
@@ -661,7 +676,8 @@ class DeliveryResultPollerTest {
                 fake,
                 Clock.systemUTC(),
                 transactionManager,
-                Duration.ZERO))
+                Duration.ZERO,
+                waitStart))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() ->
             new DeliveryResultPoller(
@@ -670,7 +686,8 @@ class DeliveryResultPollerTest {
                 fake,
                 Clock.systemUTC(),
                 transactionManager,
-                Duration.ofMinutes(16)))
+                Duration.ofMinutes(16),
+                waitStart))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -774,6 +791,24 @@ class DeliveryResultPollerTest {
   }
 
   /** 다른 연결이 행 잠금을 기다리기 시작할 때까지 기다린다. */
+  /** 호실 행을 잠그려고 기다리는 연결이 생길 때까지. 다른 잠금 대기와 섞이지 않게 쿼리로 좁힌다. */
+  private void awaitRoomLockWaiter() throws InterruptedException {
+    long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+    while (System.nanoTime() < until) {
+      Integer waiting =
+          jdbc.queryForObject(
+              "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock'"
+                  + " AND query ILIKE '%room_record%'"
+                  + " AND pid <> pg_backend_pid()",
+              Integer.class);
+      if (waiting != null && waiting > 0) {
+        return;
+      }
+      Thread.sleep(20);
+    }
+    throw new IllegalStateException("호실 잠금을 기다리는 연결이 없음");
+  }
+
   private void awaitLockWaiter() throws InterruptedException {
     long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
     while (System.nanoTime() < until) {
@@ -795,13 +830,149 @@ class DeliveryResultPollerTest {
   }
 
   /** 가져갈 때와 적을 때의 시각을 따로 정한다(업체에 묻는 사이 시간이 흐름). */
+  // ---- 요청에 걸린 통지가 닿으면 기다림 시작(03 1-1 "타이머 시작점", 05 4장 "전달 결과 조회") ----
+
+  @Test
+  void 요청에_걸린_첫_통지가_전달되면_같은_트랜잭션에서_기다림이_시작된다() {
+    UUID request = linkedRequest("WAITING");
+    UUID id = linkedNotice(request, "REQUEST");
+    fake.respondDelivery(id, DeliveryOutcome.DELIVERED);
+
+    poller(FIRST_POLL, FIRST_POLL.plusSeconds(3), fake).runOnce(50);
+
+    assertThat(column(id, "status")).isEqualTo("DELIVERED");
+    Instant delivered = time(id, "delivered_at");
+    assertThat(requestTime(request, "first_notified_at")).isEqualTo(delivered);
+    // 06 0-1 wait.renotify(48h). 미확인 기한은 재통지가 닿아야 정한다
+    assertThat(requestTime(request, "renotify_due_at")).isEqualTo(delivered.plus(RENOTIFY));
+    assertThat(requestTime(request, "unconfirmed_due_at")).isNull();
+  }
+
+  @Test
+  void 요청_통지가_아닌_통지가_닿는_것은_기다림_시작이_아니다() {
+    UUID request = linkedRequest("WAITING");
+    List<UUID> others =
+        List.of(
+            linkedNotice(request, "RENOTIFY"),
+            linkedNotice(request, "INFO"),
+            linkedNotice(request, "INVITE"));
+    others.forEach(id -> fake.respondDelivery(id, DeliveryOutcome.DELIVERED));
+
+    poller(FIRST_POLL, FIRST_POLL, fake).runOnce(50);
+
+    others.forEach(id -> assertThat(column(id, "status")).isEqualTo("DELIVERED"));
+    assertThat(requestTime(request, "first_notified_at")).isNull();
+    assertThat(requestTime(request, "renotify_due_at")).isNull();
+  }
+
+  @Test
+  void 끝난_요청에_늦게_온_전달은_통지에만_남는다() {
+    UUID request = linkedRequest("ANSWERED");
+    UUID id = linkedNotice(request, "REQUEST");
+    fake.respondDelivery(id, DeliveryOutcome.DELIVERED);
+
+    poller(FIRST_POLL, FIRST_POLL, fake).runOnce(50);
+
+    assertThat(column(id, "status")).isEqualTo("DELIVERED");
+    assertThat(requestColumn(request, "status")).isEqualTo("ANSWERED");
+    assertThat(requestTime(request, "first_notified_at")).isNull();
+  }
+
+  @Test
+  void 기다림_시작이_실패하면_전달됨도_되돌아가_다음_조회에서_다시_적는다() {
+    UUID request = linkedRequest("WAITING");
+    UUID id = linkedNotice(request, "REQUEST");
+    fake.respondDelivery(id, DeliveryOutcome.DELIVERED);
+    NoticeWaitStart failing =
+        new NoticeWaitStart(notices, requests, rooms, RENOTIFY) {
+          @Override
+          public boolean reached(Notice notice, Instant at) {
+            throw new IllegalStateException("기다림 시작 실패");
+          }
+        };
+
+    new DeliveryResultPoller(
+            claimer(FIRST_POLL),
+            notices,
+            fake,
+            advancingClock(FIRST_POLL, FIRST_POLL),
+            transactionManager,
+            Duration.ofMinutes(2),
+            failing)
+        .runOnce(50);
+
+    assertThat(column(id, "status")).isEqualTo("SENT");
+    assertThat(time(id, "delivered_at")).isNull();
+    assertThat(requestTime(request, "first_notified_at")).isNull();
+  }
+
+  @Test
+  void 요청에_걸린_통지는_호실을_먼저_잠가_행동과_같은_순서로_기다린다() throws Exception {
+    UUID request = linkedRequest("WAITING");
+    UUID id = linkedNotice(request, "REQUEST");
+    fake.respondDelivery(id, DeliveryOutcome.DELIVERED);
+    TransactionTemplate tx = new TransactionTemplate(transactionManager);
+    CountDownLatch locked = new CountDownLatch(1);
+    CountDownLatch release = new CountDownLatch(1);
+    CompletableFuture<Void> holder =
+        CompletableFuture.runAsync(() ->
+            tx.executeWithoutResult(status -> {
+              // 행동(pipeline 1단계)처럼 호실 행을 잡고 있는다
+              jdbc.queryForList("SELECT id FROM room_record WHERE id = ? FOR UPDATE", room);
+              locked.countDown();
+              await(release);
+            }));
+    await(locked);
+    DeliveryResultPoller poller = poller(FIRST_POLL, FIRST_POLL, fake);
+    CompletableFuture<Integer> polling = CompletableFuture.supplyAsync(() -> poller.runOnce(50));
+    try {
+      awaitRoomLockWaiter();
+
+      // 작업자는 호실에서 기다리고 통지는 아직 잡지 않았다(호실 → 통지 → 요청)
+      List<UUID> noticeFree =
+          tx.execute(status ->
+              jdbc.queryForList(
+                  "SELECT id FROM notice WHERE id = ? FOR UPDATE NOWAIT", UUID.class, id));
+      assertThat(noticeFree).containsExactly(id);
+      assertThat(column(id, "status")).isEqualTo("SENT");
+    } finally {
+      release.countDown();
+      holder.get(10, TimeUnit.SECONDS);
+      assertThat(polling.get(10, TimeUnit.SECONDS)).isEqualTo(1);
+    }
+    assertThat(column(id, "status")).isEqualTo("DELIVERED");
+    assertThat(requestTime(request, "first_notified_at")).isEqualTo(time(id, "delivered_at"));
+  }
+
+  @Test
+  void 다른_호실의_요청에는_통지를_걸_수_없다() {
+    UUID otherRoom = UUID.randomUUID();
+    jdbc.update(
+        """
+        INSERT INTO room_record (id, region_code, alias, status, created_by_side, created_at, version)
+        VALUES (?, ?, '다른 호실', 'LIVING', 'TENANT', CURRENT_TIMESTAMP, 0)
+        """,
+        otherRoom,
+        REGION);
+    UUID otherRequest = requestIn(otherRoom, "WAITING");
+
+    assertThatThrownBy(() -> linkedNotice(otherRequest, "REQUEST"))
+        .isInstanceOf(DataIntegrityViolationException.class);
+  }
+
   private DeliveryResultPoller poller(Instant claimAt, Instant saveAt, SmsGateway gateway) {
     return poller(claimAt, advancingClock(claimAt, saveAt), gateway);
   }
 
   private DeliveryResultPoller poller(Instant claimAt, Clock workerClock, SmsGateway gateway) {
     return new DeliveryResultPoller(
-        claimer(claimAt), notices, gateway, workerClock, transactionManager, Duration.ofMinutes(2));
+        claimer(claimAt),
+        notices,
+        gateway,
+        workerClock,
+        transactionManager,
+        Duration.ofMinutes(2),
+        waitStart);
   }
 
   private static Clock sequenceClock(Instant... instants) {
@@ -873,6 +1044,45 @@ class DeliveryResultPollerTest {
   }
 
   /** 보낸 시각은 {@link #SENT}, 묶음 ID는 자기 자신, 전달 확인 기한은 보낸 뒤 3일(Notice.markSent와 같음). */
+  private UUID linkedRequest(String status) {
+    return requestIn(room, status);
+  }
+
+  /** 입주일 고친 내용 확인처럼 대상 칸이 빈(호실 기록) 요청. */
+  private UUID requestIn(UUID roomId, String status) {
+    UUID id = UUID.randomUUID();
+    jdbc.update(
+        """
+        INSERT INTO response_request (id, room_record_id, kind, requested_by_side, status,
+          created_at, version)
+        VALUES (?, ?, 'CORRECTION_CONFIRM', 'TENANT', ?, ?, 0)
+        """,
+        id,
+        roomId,
+        status,
+        Timestamp.from(SENT.minusSeconds(20)));
+    return id;
+  }
+
+  private UUID linkedNotice(UUID requestId, String kind) {
+    UUID id = notice(FIRST_POLL);
+    jdbc.update(
+        "UPDATE notice SET response_request_id = ?, kind = ? WHERE id = ?", requestId, kind, id);
+    return id;
+  }
+
+  private String requestColumn(UUID id, String column) {
+    return jdbc.queryForObject(
+        "SELECT " + column + " FROM response_request WHERE id = ?", String.class, id);
+  }
+
+  private Instant requestTime(UUID id, String column) {
+    Timestamp value =
+        jdbc.queryForObject(
+            "SELECT " + column + " FROM response_request WHERE id = ?", Timestamp.class, id);
+    return value == null ? null : value.toInstant();
+  }
+
   private UUID notice(Instant nextPollAt) {
     return notice(nextPollAt, DEADLINE);
   }
