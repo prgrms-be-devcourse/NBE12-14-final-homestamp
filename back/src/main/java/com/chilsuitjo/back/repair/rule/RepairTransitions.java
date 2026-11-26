@@ -221,7 +221,8 @@ public class RepairTransitions implements Transitions<RepairState> {
   /**
    * 보충하고 다시 확인 요청(06 REP-2e): 등록한 측만, 보류·이견일 때만, 지금 하자 확인 요청을 열 수 있을 때만(거주 종료 뒤 막힘, 03 K), 7일에 한
    * 번({@code AnswerSupport.rerequest}). 근거(사진이나 설명)는 서비스가 pipeline 전에 본다. 하자 인정은 확인 기다림으로 돌아간다.
-   * 재계산이라 요청을 열 수 있는지 모르면 그때 서버가 확인했다고 본다({@link RepairState} "요청할 때만 아는 값").
+   * 재계산이라 요청을 열 수 있는지 모르면 그때 서버가 확인했다고 본다({@link RepairState} "요청할 때만 아는 값"). 7일도 요청할 때만 지금 설정으로
+   * 보고, 재계산이면 간격 0으로 넘겨 기록된 보충을 다시 거절하지 않는다({@link RepairState#atRequest}).
    */
   private RepairState supplement(RepairState now, ActionEntry action) {
     requireExists(now);
@@ -232,7 +233,7 @@ public class RepairTransitions implements Transitions<RepairState> {
             true,
             !now.defectConfirmBlocked(),
             action.createdAt(),
-            rerequestInterval);
+            now.atRequest() ? rerequestInterval : Duration.ZERO);
     return now.withDefectAck(result.state()).withLastRerequestAt(result.rerequestedAt());
   }
 
@@ -314,7 +315,8 @@ public class RepairTransitions implements Transitions<RepairState> {
   /**
    * 진행 상황 묻기(06 REP-6b, 03 D): 당사자 누구든, 시작 전·처리 중에서만, 지금 진행 상황 묻기 요청을 열 수 있을 때만(거주 중, 03 K), 한 건에
    * {@code progress.ask.interval}에 한 번(누가 물었든, decisions 2026-11-13). 그 안이면 {@code ASKED_RECENTLY}.
-   * 수리 진행·하자 인정은 그대로이고 물은 시각만 남는다. 재계산이라 요청을 열 수 있는지 모르면 그때 서버가 확인했다고 본다.
+   * 수리 진행·하자 인정은 그대로이고 물은 시각만 남는다. 재계산이라 요청을 열 수 있는지 모르면 그때 서버가 확인했다고 본다. 7일도 요청할 때만 지금 설정으로
+   * 본다({@link RepairState#atRequest}).
    */
   private RepairState askProgress(RepairState now, ActionEntry action) {
     requireVisible(now, action);
@@ -322,7 +324,9 @@ public class RepairTransitions implements Transitions<RepairState> {
     if (!askableStatus(now.status()) || now.progressCheckBlocked()) {
       throw new BusinessException(ErrorCode.INVALID_STATE);
     }
-    AnswerSupport.checkInterval(now.lastProgressAskAt(), action.createdAt(), progressAskInterval);
+    if (now.atRequest()) {
+      AnswerSupport.checkInterval(now.lastProgressAskAt(), action.createdAt(), progressAskInterval);
+    }
     return now.withLastProgressAskAt(action.createdAt());
   }
 

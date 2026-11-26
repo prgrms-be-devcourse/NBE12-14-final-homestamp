@@ -148,6 +148,15 @@ public record RepairState(
         next);
   }
 
+  /**
+   * 요청할 때 읽은 상태인가. {@code load}({@code RepairStateStore.current})는 {@code canOpen…}을 늘 채우고,
+   * 재계산({@code Replay.fold})이면 비어 있다. 재계산이면 지금 설정값으로 보는 간격 검사(7일)를 하지 않는다: 설정을 늘린 뒤 이미 기록된 행동을 다시
+   * 거절하면 재계산이 실패한다(#234와 같은 방식, #259 리뷰).
+   */
+  public boolean atRequest() {
+    return canOpenDefectConfirm != null;
+  }
+
   /** 하자 확인 요청을 열 수 없다고 확인됐나. 모르면(재계산) 거짓이다. */
   public boolean defectConfirmBlocked() {
     return Boolean.FALSE.equals(canOpenDefectConfirm);

@@ -867,6 +867,41 @@ class RepairTransitionsTest {
   }
 
   @Test
+  void 재계산은_지금_설정으로_과거의_보충과_진행_상황_묻기를_다시_거절하지_않는다() {
+    // 7일 설정에서 8일 간격으로 기록된 행동을 14일 설정으로 다시 계산해도 실패하지 않는다(#259 리뷰)
+    RepairTransitions longer = new RepairTransitions(Duration.ofDays(14), Duration.ofDays(14));
+    Instant later = NOW.plus(Duration.ofDays(8));
+    List<ActionEntry> history =
+        List.of(
+            entry(ActionType.REGISTER, PartySide.TENANT),
+            respond(PartySide.LANDLORD, Answer.NEED_MORE, "사진이 흐려요", 1),
+            supplement(PartySide.TENANT, NOW),
+            respond(PartySide.LANDLORD, Answer.NEED_MORE, "아직 흐려요", 1),
+            supplement(PartySide.TENANT, later),
+            entry(ActionType.ASK_PROGRESS, PartySide.LANDLORD, null, null, Map.of(), NOW),
+            entry(ActionType.ASK_PROGRESS, PartySide.TENANT, null, null, Map.of(), later));
+
+    RepairState folded = Replay.fold(longer, history);
+
+    assertThat(folded.lastRerequestAt()).isEqualTo(later);
+    assertThat(folded.lastProgressAskAt()).isEqualTo(later);
+    assertThat(folded.atRequest()).isFalse();
+    // 요청할 때(load가 canOpen…을 채운 상태)는 지금 설정(14일)으로 막는다
+    assertError(
+        ErrorCode.ASKED_RECENTLY,
+        () ->
+            longer.apply(
+                inProgress().withLastProgressAskAt(later),
+                entry(
+                    ActionType.ASK_PROGRESS,
+                    PartySide.TENANT,
+                    null,
+                    null,
+                    Map.of(),
+                    later.plus(Duration.ofDays(10)))));
+  }
+
+  @Test
   void 재계산은_지금_설정으로_과거에_켠_상황이_바뀌었어요를_다시_거절하지_않는다() {
     // 7일 설정에서 8일 간격으로 기록된 행동을 14일 설정으로 다시 계산해도 실패하지 않는다(#234와 같은 방식, #259 리뷰)
     RepairTransitions longer = new RepairTransitions(Duration.ofDays(14), INTERVAL);
