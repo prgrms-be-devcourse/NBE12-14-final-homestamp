@@ -142,11 +142,22 @@ public class InspectionItemStateStore {
    * 함수"). 행동하는 측을 모르면(같은 키 재요청의 다시 읽기) 보이는지는 null이다. 트랜잭션 안에서 부른다(행동 기록 읽기).
    */
   public InspectionItemState current(Inspection parent, InspectionItem row, PartySide actor) {
+    return current(parent, row, actor, actor == null ? null : sight.of(parent, actor));
+  }
+
+  /**
+   * {@link #current(Inspection, InspectionItem, PartySide)}와 같은 값이고, 이 사람의 보이는 범위를 이미 구했으면 넘겨 다시 읽지
+   * 않는다(상세 조회가 항목마다 부를 때, #272 리뷰).
+   *
+   * @param seen {@code sight.of(parent, actor)}의 결과. 행동하는 측을 모르면 null
+   */
+  public InspectionItemState current(
+      Inspection parent, InspectionItem row, PartySide actor, InspectionSight.Sight seen) {
     InspectionItemVersion version =
         versions
             .findById(row.getCurrentVersionId())
             .orElseThrow(() -> new IllegalStateException("지금 판이 없어요: " + row.getId()));
-    Boolean hidden = actor == null ? null : !sight.of(parent, actor).sees(row);
+    Boolean hidden = seen == null ? null : !seen.sees(row);
     return new InspectionItemState(
         parent.getStatus(),
         parent.getAuthorSide(),
@@ -159,11 +170,17 @@ public class InspectionItemStateStore {
   }
 
   /**
-   * 모두 확인을 판단할 상태. 이 사람에게 보이는 항목 가운데 상대가 더했고 아직 답하지 않은 것(확인 기다림·확인 없음)이 대상이다. 상세 조회의 {@code
+   * 모두 확인을 판단할 상태. 이 사람에게 보이는 항목 가운데 상대가 더했고 아직 답하지 않은 것(확인 기다림·상대 미확인)이 대상이다. 상세 조회의 {@code
    * confirm-all} 버튼도 같은 값을 쓴다. "항목이 없는 점검"은 보이는 항목이 아니라 점검의 전체 항목 수로 본다(#272 리뷰).
    */
   public ConfirmAllState confirmAll(Inspection row, PartySide actor) {
-    InspectionSight.Sight seen = sight.of(row, actor);
+    return confirmAll(row, actor, sight.of(row, actor));
+  }
+
+  /**
+   * {@link #confirmAll(Inspection, PartySide)}와 같고, 이미 구한 보이는 범위({@code sight.of(row, actor)})를 쓴다.
+   */
+  public ConfirmAllState confirmAll(Inspection row, PartySide actor, InspectionSight.Sight seen) {
     List<InspectionItem> all = items.findByInspectionIdOrderByIdAsc(row.getId());
     List<InspectionItem> shown = all.stream().filter(seen::sees).toList();
     Map<UUID, Integer> unanswered = new LinkedHashMap<>();

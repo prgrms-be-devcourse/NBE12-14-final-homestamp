@@ -106,7 +106,7 @@ public class InspectionQueryService {
         seen.asOf(),
         shownItems,
         rules.counterpartCanRequestAt(now),
-        actions(row, now, gate));
+        actions(row, now, gate, seen));
   }
 
   private List<InspectionDetail.Item> visibleItems(
@@ -131,7 +131,7 @@ public class InspectionQueryService {
               .findById(item.getCurrentVersionId())
               .orElseThrow(() -> new IllegalStateException("지금 판이 없어요: " + item.getId()));
       String partName = rooms.findPart(roomRecordId, version.getRoomPartId()).name();
-      InspectionItemState state = itemStore.current(row, item, gate.side());
+      InspectionItemState state = itemStore.current(row, item, gate.side(), seen);
       result.add(
           new InspectionDetail.Item(
               item.getId(),
@@ -168,7 +168,8 @@ public class InspectionQueryService {
    * 지금 이 사람이 누를 수 있는 행동. 실제 요청과 같아야 해서 보이는 범위를 고정한 상태가 아니라 지금 상태로 계산한다(수리 건 상세와 같음): 그만둔 쪽은
    * pipeline이 막아({@code SHARING_STOPPED}) 버튼이 없다.
    */
-  private List<String> actions(Inspection row, InspectionState now, RoomGate gate) {
+  private List<String> actions(
+      Inspection row, InspectionState now, RoomGate gate, InspectionSight.Sight seen) {
     List<String> result = new ArrayList<>();
     if (InspectionItemTransitions.canAdd(row.getStatus(), row.getAuthorSide(), gate.side())
         && gate.rejection(ActionType.ADD_ITEM).isEmpty()) {
@@ -181,7 +182,7 @@ public class InspectionQueryService {
     if (gate.rejection(ActionType.CONFIRM_ALL).isEmpty()
         && gate.rejection(ActionType.RESPOND_ITEM).isEmpty()
         && ConfirmAllTransitions.canConfirmAll(
-            itemStore.confirmAll(row, gate.side()), gate.side())) {
+            itemStore.confirmAll(row, gate.side(), seen), gate.side())) {
       result.add("confirm-all");
     }
     return List.copyOf(result);
