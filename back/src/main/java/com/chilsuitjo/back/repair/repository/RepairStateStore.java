@@ -34,6 +34,7 @@ import com.chilsuitjo.back.repair.rule.RepairStatus;
 import com.chilsuitjo.back.repair.rule.RepairTransitions;
 import com.chilsuitjo.back.repair.rule.SituationCheck;
 import com.chilsuitjo.back.repair.rule.SituationOpening;
+import com.chilsuitjo.back.room.dto.RoomPartSummary;
 import com.chilsuitjo.back.room.service.RoomQueryService;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -428,8 +429,11 @@ public class RepairStateStore {
     public SavedState save(ActionCommand command, RepairState next) {
       UUID roomRecordId = command.roomRecordId();
       // 남의 부위·없는 부위는 NOT_FOUND(RoomQueryService). 숨긴 부위는 목록에서 빠지니 새 기록을 받지 않는다(06 ROOM-3a).
+      // 꺼 둔 설비·가전은 "이 집에 없음"이라 새 하자를 받지 않는다. 켠 뒤 등록한다(06 ROOM-3d, #182). 이미 있는 수리 건은 끄더라도 그대로다.
       // 공유를 그만둔 뒤에는 등록하는 사람에게 보이는 부위 상태로 본다: 그 뒤 상대가 바꾼 부위가 드러나지 않게(03 6-6 9번, 불변식 18, #183)
-      if (rooms.findPartAsSeenBy(roomRecordId, roomPartId, command.actor().memberId()).hidden()) {
+      RoomPartSummary seen =
+          rooms.findPartAsSeenBy(roomRecordId, roomPartId, command.actor().memberId());
+      if (seen.hidden() || !seen.enabled()) {
         throw new BusinessException(ErrorCode.VALIDATION_FAILED);
       }
       Instant at = requestContext.at();
