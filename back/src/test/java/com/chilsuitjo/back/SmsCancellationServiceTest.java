@@ -4,12 +4,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.chilsuitjo.back.action.service.ActionRequestContext;
+import com.chilsuitjo.back.notification.dto.DeliveryQuery;
+import com.chilsuitjo.back.notification.dto.SmsMessage;
 import com.chilsuitjo.back.notification.dto.SmsNoticeCommand;
 import com.chilsuitjo.back.notification.dto.SmsSendResult;
 import com.chilsuitjo.back.notification.repository.FakeSmsGateway;
 import com.chilsuitjo.back.notification.repository.NoticeRepository;
 import com.chilsuitjo.back.notification.repository.OutboxRepository;
 import com.chilsuitjo.back.notification.repository.SmsGateway;
+import com.chilsuitjo.back.notification.rule.DeliveryOutcome;
+import com.chilsuitjo.back.notification.rule.DeliveryPollSchedule;
 import com.chilsuitjo.back.notification.rule.NoticeKind;
 import com.chilsuitjo.back.notification.service.InMemoryRecipientDirectory;
 import com.chilsuitjo.back.notification.service.InviteLinks;
@@ -70,6 +74,7 @@ class SmsCancellationServiceTest {
   @Autowired private FakeSmsGateway gateway;
   @Autowired private InMemoryRecipientDirectory recipients;
   @Autowired private InviteLinks inviteLinks;
+  @Autowired private DeliveryPollSchedule deliveryPollSchedule;
   @Autowired private ActionRequestContext requestContext;
   @Autowired private TransactionTemplate transaction;
   @Autowired private JdbcTemplate jdbc;
@@ -514,12 +519,20 @@ class SmsCancellationServiceTest {
     CountDownLatch sending = new CountDownLatch(1);
     CountDownLatch release = new CountDownLatch(1);
     SmsGateway blocking =
-        message -> {
-          if (message.batchLeadId().equals(notice)) {
-            sending.countDown();
-            await(release);
+        new SmsGateway() {
+          @Override
+          public SmsSendResult send(SmsMessage message) {
+            if (message.batchLeadId().equals(notice)) {
+              sending.countDown();
+              await(release);
+            }
+            return SmsSendResult.sent("blocked-" + message.batchLeadId());
           }
-          return SmsSendResult.sent("blocked-" + message.batchLeadId());
+
+          @Override
+          public Map<UUID, DeliveryOutcome> queryResults(List<DeliveryQuery> queries) {
+            return Map.of();
+          }
         };
     OutboxWorker slowWorker =
         new OutboxWorker(
@@ -532,7 +545,8 @@ class SmsCancellationServiceTest {
             transactionManager,
             1,
             List.of(Duration.ofMinutes(1)),
-            Duration.ofDays(3));
+            Duration.ofDays(3),
+            deliveryPollSchedule);
     CompletableFuture<Integer> running = CompletableFuture.supplyAsync(slowWorker::runOnce);
     assertThat(sending.await(30, TimeUnit.SECONDS)).isTrue();
 
