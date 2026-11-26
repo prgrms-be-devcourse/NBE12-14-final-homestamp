@@ -32,8 +32,8 @@ import org.springframework.test.web.servlet.ResultActions;
  * 내려받기 최소판({@code GET /api/rooms/{id}/download}, 06 DL-1·3-12·S-19, #246). 응답의 {@code record}를 화면이
  * 그대로 {@code 기록.json}으로 저장하고, 사진은 {@code photoBatches}의 묶음마다 주소를 받아 ZIP에 넣는다(03 6-3 "가져가기").
  *
- * <p>주소 받기(묶음별 원본 5분 주소, DL-1b의 다시 받기)는 photo 쪽 {@code view-urls}로 할지 정하는 중이라(#246 댓글) 여기서는 묶음
- * 나누기까지만 본다. 테스트마다 새 호실을 만들어 섞이지 않게 한다.
+ * <p>주소 받기(묶음별 원본 5분 주소, DL-1b의 다시 받기)는 photo 쪽 {@code POST /api/photos/view-urls}({@code variant:
+ * ORIGINAL})가 맡아(#246) 여기서는 묶음 나누기까지만 본다. 테스트마다 새 호실을 만들어 섞이지 않게 한다.
  */
 @Import(TestcontainersConfiguration.class)
 @SpringBootTest
@@ -195,8 +195,8 @@ class RoomDownloadApiTest {
   }
 
   @Test
-  void 상대가_탈퇴해_풀린_공유_중단은_거르지_않는다() throws Exception {
-    // 06 CONS-3q: 상대가 탈퇴하면 남은 공유 중단 시각을 보지 않는다(보는 사람 기준, #175)
+  void 공유를_그만둔_상대가_탈퇴해도_그만둔_동안_남긴_기록은_들어가지_않는다() throws Exception {
+    // 03 6-4: 중단 동안 탈퇴자가 남긴 기록은 상대가 본 적이 없어 숨기고 지운다. CONS-3q의 "풀린다"는 할 수 있는 일이다(#274 리뷰)
     UUID caseId = register(1);
     respond(caseId, landlord, "ACK", null).andExpect(status().isOk());
     jdbc.update(
@@ -208,7 +208,27 @@ class RoomDownloadApiTest {
 
     String mine = body(download(tenant).andExpect(status().isOk()));
     List<String> types = JsonPath.read(mine, "$.record.actions[*].type");
-    assertThat(types).containsExactly("REGISTER", "RESPOND_DEFECT");
+    assertThat(types).containsExactly("REGISTER");
+  }
+
+  @Test
+  void 내가_공유를_그만둔_동안_상대가_남기고_탈퇴하면_그_기록은_들어가지_않는다() throws Exception {
+    // 03 6-4 "누가 공유를 그만뒀든 중단 동안 탈퇴자가 남긴 기록 전부". 내 제한이 풀려도(CONS-3p) 그 기록은 보이지 않는다
+    UUID caseId = register(1);
+    jdbc.update(
+        "UPDATE state.party SET status = 'SHARING_STOPPED', sharing_stopped_at ="
+            + " (SELECT created_at FROM state.repair_case WHERE id = ?)"
+            + " WHERE room_record_id = ? AND side = 'TENANT'",
+        caseId,
+        room);
+    respond(caseId, landlord, "ACK", null).andExpect(status().isOk());
+    jdbc.update(
+        "UPDATE state.party SET status = 'WITHDRAWN' WHERE room_record_id = ? AND side = 'LANDLORD'",
+        room);
+
+    String mine = body(download(tenant).andExpect(status().isOk()));
+    List<String> types = JsonPath.read(mine, "$.record.actions[*].type");
+    assertThat(types).containsExactly("REGISTER");
   }
 
   // ---- DL-1b 묶음 ----

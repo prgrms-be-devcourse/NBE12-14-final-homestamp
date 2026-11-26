@@ -5,8 +5,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.chilsuitjo.back.action.dto.ActionEntry;
 import com.chilsuitjo.back.action.dto.ActionTarget;
 import com.chilsuitjo.back.action.rule.ActionType;
+import com.chilsuitjo.back.download.rule.RecordVisibility.Cutoff;
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.common.TargetKind;
+import com.chilsuitjo.back.notification.dto.PartyFacts;
+import com.chilsuitjo.back.notification.dto.RoomParties;
+import com.chilsuitjo.back.notification.rule.PartyPresence;
+import com.chilsuitjo.back.notification.rule.RoomPhase;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -21,6 +26,7 @@ class RecordVisibilityTest {
   private static final Instant T0 = Instant.parse("2026-11-26T01:00:00Z");
   private static final Instant CUTOFF = T0.plusSeconds(60);
   private static final Instant AFTER = CUTOFF.plusSeconds(1);
+  private static final Cutoff SHARED = new Cutoff(CUTOFF, null);
 
   @Test
   void 시각_순으로_놓고_같은_시각이면_남긴_순으로_놓는다() {
@@ -28,7 +34,7 @@ class RecordVisibilityTest {
     ActionEntry sameB = entry(2, ActionType.RESPOND_DEFECT, PartySide.LANDLORD, T0);
     ActionEntry sameA = entry(1, ActionType.REGISTER, PartySide.TENANT, T0);
 
-    assertThat(RecordVisibility.select(List.of(late, sameB, sameA), PartySide.TENANT, null))
+    assertThat(RecordVisibility.select(List.of(late, sameB, sameA), PartySide.TENANT, Cutoff.NONE))
         .containsExactly(sameA, sameB, late);
   }
 
@@ -38,7 +44,7 @@ class RecordVisibilityTest {
     ActionEntry mine = entry(2, ActionType.NOTE_PROGRESS, PartySide.TENANT, AFTER);
     ActionEntry before = entry(3, ActionType.RESPOND_DEFECT, PartySide.LANDLORD, CUTOFF);
 
-    assertThat(RecordVisibility.select(List.of(theirs, mine, before), PartySide.TENANT, CUTOFF))
+    assertThat(RecordVisibility.select(List.of(theirs, mine, before), PartySide.TENANT, SHARED))
         .containsExactly(before, mine);
   }
 
@@ -46,8 +52,8 @@ class RecordVisibilityTest {
   void 공유_중단_뒤_서버_행동도_뺀다() {
     ActionEntry server = entry(1, ActionType.MARK_UNCONFIRMED, null, AFTER);
 
-    assertThat(RecordVisibility.visible(server, PartySide.TENANT, CUTOFF)).isFalse();
-    assertThat(RecordVisibility.visible(server, PartySide.TENANT, null)).isTrue();
+    assertThat(RecordVisibility.visible(server, PartySide.TENANT, SHARED)).isFalse();
+    assertThat(RecordVisibility.visible(server, PartySide.TENANT, Cutoff.NONE)).isTrue();
   }
 
   @ParameterizedTest
@@ -65,7 +71,7 @@ class RecordVisibilityTest {
   void 거주_종료_행동과_정산_완료는_공유_중단_뒤에도_넣는다(ActionType type) {
     assertThat(
             RecordVisibility.visible(
-                entry(1, type, PartySide.LANDLORD, AFTER), PartySide.TENANT, CUTOFF))
+                entry(1, type, PartySide.LANDLORD, AFTER), PartySide.TENANT, SHARED))
         .isTrue();
   }
 
@@ -76,18 +82,19 @@ class RecordVisibilityTest {
   void 나만_보는_행동과_통지_상태는_상대_내려받기에_넣지_않는다(ActionType type) {
     ActionEntry theirs = entry(1, type, PartySide.LANDLORD, T0);
 
-    assertThat(RecordVisibility.visible(theirs, PartySide.TENANT, null)).isFalse();
-    assertThat(RecordVisibility.visible(theirs, PartySide.LANDLORD, null)).isTrue();
+    assertThat(RecordVisibility.visible(theirs, PartySide.TENANT, Cutoff.NONE)).isFalse();
+    assertThat(RecordVisibility.visible(theirs, PartySide.LANDLORD, Cutoff.NONE)).isTrue();
   }
 
   @Test
-  void 확인_요청_전_상대_점검_초안은_빼고_내_초안은_넣는다() {
+  void 확인_요청_전_상대_점검은_시작만_넣고_내_초안은_모두_넣는다() {
     UUID inspection = UUID.randomUUID();
     ActionEntry start = startInspection(1, inspection, PartySide.LANDLORD, T0);
     ActionEntry item = addItem(2, inspection, PartySide.LANDLORD, T0.plusSeconds(1));
 
-    assertThat(RecordVisibility.select(List.of(start, item), PartySide.TENANT, null)).isEmpty();
-    assertThat(RecordVisibility.select(List.of(start, item), PartySide.LANDLORD, null))
+    assertThat(RecordVisibility.select(List.of(start, item), PartySide.TENANT, Cutoff.NONE))
+        .containsExactly(start);
+    assertThat(RecordVisibility.select(List.of(start, item), PartySide.LANDLORD, Cutoff.NONE))
         .containsExactly(start, item);
   }
 
@@ -109,7 +116,7 @@ class RecordVisibilityTest {
 
     assertThat(
             RecordVisibility.select(
-                List.of(start, item, request, otherDraft), PartySide.TENANT, null))
+                List.of(start, item, request, otherDraft), PartySide.TENANT, Cutoff.NONE))
         .containsExactly(start, item, request);
   }
 
@@ -117,6 +124,7 @@ class RecordVisibilityTest {
   void 확인_요청이_공유_중단_뒤라_빠졌으면_그_초안도_뺀다() {
     UUID inspection = UUID.randomUUID();
     ActionEntry start = startInspection(1, inspection, PartySide.LANDLORD, T0);
+    ActionEntry item = addItem(3, inspection, PartySide.LANDLORD, T0.plusSeconds(1));
     ActionEntry request =
         inspectionEntry(
             2,
@@ -126,8 +134,56 @@ class RecordVisibilityTest {
             Map.of(),
             AFTER);
 
-    assertThat(RecordVisibility.select(List.of(start, request), PartySide.TENANT, CUTOFF))
-        .isEmpty();
+    assertThat(RecordVisibility.select(List.of(start, item, request), PartySide.TENANT, SHARED))
+        .containsExactly(start);
+  }
+
+  @Test
+  void 상대가_탈퇴했으면_공유_중단_뒤_그_측_행동만_계속_뺀다() {
+    // 03 6-4: 중단 동안 탈퇴자가 남긴 기록은 지운다. 남은 사람의 행동과 서버 행동은 풀린 기준을 따른다
+    Cutoff departed = new Cutoff(null, CUTOFF);
+    ActionEntry theirs = entry(1, ActionType.RESPOND_DEFECT, PartySide.LANDLORD, AFTER);
+    ActionEntry theirsBefore = entry(2, ActionType.RESPOND_DEFECT, PartySide.LANDLORD, CUTOFF);
+    ActionEntry server = entry(3, ActionType.MARK_UNCONFIRMED, null, AFTER);
+    ActionEntry mine = entry(4, ActionType.SUPPLEMENT, PartySide.TENANT, AFTER);
+    ActionEntry moveOut = entry(5, ActionType.REQUEST_END, PartySide.LANDLORD, AFTER);
+
+    assertThat(
+            RecordVisibility.select(
+                List.of(theirs, theirsBefore, server, mine, moveOut), PartySide.TENANT, departed))
+        .containsExactly(theirsBefore, server, mine, moveOut);
+  }
+
+  @Test
+  void 상대가_탈퇴하면_공유_중단_제한은_풀고_남은_중단_시각은_탈퇴자_행동에_쓴다() {
+    Instant mine = T0;
+    Instant theirs = T0.plusSeconds(30);
+
+    Cutoff connected = RecordVisibility.cutoff(parties(mine, theirs, PartyPresence.CONNECTED));
+    assertThat(connected).isEqualTo(new Cutoff(mine, null));
+
+    Cutoff withdrawn = RecordVisibility.cutoff(parties(mine, theirs, PartyPresence.WITHDRAWN));
+    assertThat(withdrawn).isEqualTo(new Cutoff(null, mine));
+
+    Cutoff onlyTheirs = RecordVisibility.cutoff(parties(null, theirs, PartyPresence.WITHDRAWN));
+    assertThat(onlyTheirs).isEqualTo(new Cutoff(null, theirs));
+
+    Cutoff none = RecordVisibility.cutoff(parties(null, null, PartyPresence.CONNECTED));
+    assertThat(none).isEqualTo(Cutoff.NONE);
+  }
+
+  private static RoomParties parties(Instant mine, Instant theirs, PartyPresence counterpart) {
+    return new RoomParties(
+        RoomPhase.values()[0],
+        new PartyFacts(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            PartyPresence.CONNECTED,
+            mine,
+            false,
+            false,
+            null),
+        new PartyFacts(UUID.randomUUID(), null, counterpart, theirs, false, false, null));
   }
 
   @Test
@@ -135,7 +191,7 @@ class RecordVisibilityTest {
     ActionEntry photo =
         inspectionEntry(1, ActionType.ADD_PART_PHOTO, PartySide.LANDLORD, null, Map.of(), T0);
 
-    assertThat(RecordVisibility.select(List.of(photo), PartySide.TENANT, null)).isEmpty();
+    assertThat(RecordVisibility.select(List.of(photo), PartySide.TENANT, Cutoff.NONE)).isEmpty();
   }
 
   private static ActionEntry startInspection(

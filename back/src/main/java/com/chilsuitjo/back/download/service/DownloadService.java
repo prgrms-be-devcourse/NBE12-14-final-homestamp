@@ -17,7 +17,6 @@ import com.chilsuitjo.back.notification.service.CounterpartReader;
 import com.chilsuitjo.back.room.dto.RoomAccess;
 import com.chilsuitjo.back.room.service.RoomAccessService;
 import java.time.Clock;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -58,7 +57,8 @@ public class DownloadService {
   @Transactional(readOnly = true)
   public RoomDownload download(UUID roomRecordId, UUID memberId) {
     RoomAccess viewer = access.require(roomRecordId, memberId);
-    Instant cutoff = RecordVisibility.cutoff(parties.read(roomRecordId, viewer.side()));
+    RecordVisibility.Cutoff cutoff =
+        RecordVisibility.cutoff(parties.read(roomRecordId, viewer.side()));
     List<ActionEntry> all = actions.findByRoom(roomRecordId);
     List<ActionEntry> visible = RecordVisibility.select(all, viewer.side(), cutoff);
 
