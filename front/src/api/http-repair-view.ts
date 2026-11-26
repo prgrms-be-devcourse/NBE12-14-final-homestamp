@@ -108,6 +108,7 @@ function causesOf(notes: ServerCauseNote[]): CauseClaim[] {
     company: n.expertName ?? undefined,
     supersededBy,
     supersedes: n.previousId ?? undefined,
+    canRespond: n.canRespond,
   })
   return notes.flatMap((n) => [one(n), ...n.previous.map((p) => one(p, n.id))])
 }

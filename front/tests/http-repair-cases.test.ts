@@ -111,7 +111,7 @@ describe("수리 건 상세 응답을 화면 모델로 바꿔요", () => {
               at: "2026-11-25T02:00:00Z",
             },
             photos: [],
-            canRespond: false,
+            canRespond: true,
             previous: [
               {
                 id: "n1",
@@ -139,6 +139,7 @@ describe("수리 건 상세 응답을 화면 모델로 바꿔요", () => {
         company: "○○설비",
         supersededBy: undefined,
         supersedes: "n1",
+        canRespond: true,
         responses: [
           {
             by: "임대인",
@@ -152,6 +153,7 @@ describe("수리 건 상세 응답을 화면 모델로 바꿔요", () => {
         id: "n1",
         basis: "내 추측",
         supersededBy: "n2",
+        canRespond: false,
         responses: [],
       }),
     ])

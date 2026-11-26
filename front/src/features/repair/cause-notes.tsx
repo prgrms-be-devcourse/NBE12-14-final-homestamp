@@ -154,7 +154,8 @@ export function CauseNotes({
       </p>
       {active.map((c) => (
         <ClaimView key={c.id} c={c}>
-          {!readOnly && c.by !== role && (
+          {/* 응답 버튼은 서버가 이 설명에 응답할 수 있다고 할 때만(canRespond, 08 0장 원칙 6) */}
+          {!readOnly && c.by !== role && c.canRespond !== false && (
             <div className="actions">
               <Button
                 variant="outline"
