@@ -51,6 +51,8 @@ export interface CauseClaim {
   edits?: { text: string; at: string }[]
   supersededBy?: string
   supersedes?: string
+  // 서버가 이 설명에 지금 응답할 수 있다고 했는지(06 4-6 causeNotes[].canRespond). 목업은 비워 둬요
+  canRespond?: boolean
 }
 export interface AfterRecord {
   id: string

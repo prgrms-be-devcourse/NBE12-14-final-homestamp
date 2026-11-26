@@ -25,8 +25,8 @@ import org.hibernate.type.SqlTypes;
  * 호실 기록({@code state.room_record}, 05 2-2, C 테이블). 한 거주 기간의 기록을 모은다.
  *
  * <p>주소는 법정동 코드 하나와 별칭만 둔다(06 0-1 "주소 저장 범위"). 상태·기한·version 말고는 만들 때 한 번만 쓴다(05 0장). 예외: 비어 있던
- * 입주일은 입주 점검 시작이 한 번 채운다({@link #fillMoveInDate}). 지금은 호실 만들기와 권한 검사에 쓰는 칸만 옮겼다. 기한 칸(자동
- * 마감·삭제·무활동)은 그 기능을 만들 때 더한다.
+ * 입주일은 입주 점검 시작이 한 번 채우고({@link #fillMoveInDate}), 상대가 처음 연결한 시각은 연결이 한 번 채운다({@link
+ * #markCounterpartConnected}). 지금은 호실 만들기와 권한 검사에 쓰는 칸만 옮겼다. 기한 칸(자동 마감·삭제·무활동)은 그 기능을 만들 때 더한다.
  */
 @Entity
 @Table(schema = "state", name = "room_record")
@@ -64,6 +64,13 @@ public class RoomRecord {
   @Column(name = "joined_into_id")
   private UUID joinedIntoId;
 
+  /**
+   * 상대가 처음 연결한 시각(06 ROOM-5, 05 {@code room_record}). 처음 연결할 때 한 번만 채운다. 비어 있으면 탈퇴 때 통째
+   * 삭제한다(KEEP-4).
+   */
+  @Column(name = "counterpart_first_connected_at")
+  private Instant counterpartFirstConnectedAt;
+
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
 
@@ -93,5 +100,16 @@ public class RoomRecord {
       throw new IllegalStateException("이미 입주일이 있는 호실이에요: " + id);
     }
     this.moveInDate = Objects.requireNonNull(date, "date");
+  }
+
+  /**
+   * 상대가 연결했다(06 ROOM-5). 처음 연결한 시각만 남기고, 이미 있으면 그대로 둔다(그 뒤 다시 연결해도 처음 시각이 기준).
+   *
+   * @param at 연결 행동의 시각
+   */
+  public void markCounterpartConnected(Instant at) {
+    if (counterpartFirstConnectedAt == null) {
+      this.counterpartFirstConnectedAt = Objects.requireNonNull(at, "at");
+    }
   }
 }

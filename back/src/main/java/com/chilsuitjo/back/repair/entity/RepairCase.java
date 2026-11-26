@@ -139,6 +139,22 @@ public class RepairCase {
   }
 
   /**
+   * 도장 전 고치기(03 G, 06 REP-7a): 새 판을 지금 판으로 한다. 도장 판은 아직 없어 그대로다. 판은 같은 수리 건의 판이어야 한다(지연 FK, 같은
+   * 트랜잭션에서 판을 먼저 저장). 동시에 바뀌면 {@code @Version}이 막는다(409 {@code VERSION_CONFLICT}).
+   */
+  public void moveCurrent(UUID contentId) {
+    this.currentContentId = Objects.requireNonNull(contentId, "contentId");
+  }
+
+  /**
+   * 고친 내용을 상대가 확인했다(03 G, 06 REP-7e): "도장 판 + 그 칸"으로 만든 새 판이 지금 판이자 도장 판이 된다(두 가리킴을 함께 옮김, 05 2-5).
+   */
+  public void moveCurrentAndConfirmed(UUID contentId) {
+    this.currentContentId = Objects.requireNonNull(contentId, "contentId");
+    this.confirmedContentId = contentId;
+  }
+
+  /**
    * 돈 안건 head를 옮긴다(05 2-4, decisions 2026-11-24). 값은 {@code ProposalTransitions}가 정한 다음 head 그대로다.
    * 세 칸은 늘 함께 바뀌어서(예: 바탕 금액이 바뀌면 현재·합의 제안을 함께 비움) 한 메서드로 옮긴다. 제안 ID는 이 수리 건의 제안이어야 한다(V1 복합 FK
    * {@code fk_repair_case_current_proposal}·{@code fk_repair_case_agreed_proposal}). 동시에 바뀌면

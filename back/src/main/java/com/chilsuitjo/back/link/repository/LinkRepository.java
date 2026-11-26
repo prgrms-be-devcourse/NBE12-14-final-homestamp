@@ -18,6 +18,8 @@ public interface LinkRepository extends JpaRepository<Link, UUID> {
 
   Optional<Link> findByTokenHash(String tokenHash);
 
+  boolean existsByIdAndKindAndInvalidatedAtIsNotNull(UUID id, LinkKind kind);
+
   @Query("select l.roomRecordId from Link l where l.id = :id")
   Optional<UUID> findRoomRecordIdById(@Param("id") UUID id);
 
