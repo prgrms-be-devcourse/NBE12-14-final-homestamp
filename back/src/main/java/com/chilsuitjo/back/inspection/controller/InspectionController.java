@@ -1,8 +1,12 @@
 package com.chilsuitjo.back.inspection.controller;
 
+import com.chilsuitjo.back.global.common.dto.AnswerResult;
+import com.chilsuitjo.back.global.common.dto.RespondRequest;
+import com.chilsuitjo.back.global.common.dto.SupplementRequest;
 import com.chilsuitjo.back.global.response.CreatedResponse;
 import com.chilsuitjo.back.global.security.LoginMember;
 import com.chilsuitjo.back.inspection.dto.AddInspectionItemRequest;
+import com.chilsuitjo.back.inspection.dto.ConfirmAllRequest;
 import com.chilsuitjo.back.inspection.dto.InspectionCreated;
 import com.chilsuitjo.back.inspection.dto.InspectionDetail;
 import com.chilsuitjo.back.inspection.dto.InspectionStatusChanged;
@@ -91,6 +95,57 @@ public class InspectionController {
       response.header(REPLAYED, "true");
     }
     return response.body(new InspectionStatusResponse(changed.id(), changed.status()));
+  }
+
+  /**
+   * 항목 응답(06 4-7). 맞아요·보류·이견. 그 항목을 더하지 않은 측만, 확인 요청 뒤에만 답한다. 처음 성공과 다시 온 요청 모두 200과 {@code
+   * AnswerResult}다.
+   */
+  @PostMapping("/api/inspection-items/{id}/respond")
+  public ResponseEntity<AnswerResult> respond(
+      @PathVariable UUID id,
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey,
+      @RequestBody RespondRequest request) {
+    AnswerResult result = inspections.respond(id, memberId, idempotencyKey, request);
+    return withReplayed(result.replayed()).body(result);
+  }
+
+  /**
+   * 남은 항목 모두 확인(06 4-7). 본 미응답 항목과 판 번호를 모두 보내고, 지금과 다르면 {@code VERSION_CONFLICT}다. 항목이 없는 점검이면 빈
+   * 목록으로 "하자 기록 없음"을 확인한다. 처음 성공과 다시 온 요청 모두 200과 점검의 상태다.
+   */
+  @PostMapping("/api/inspections/{id}/confirm-all")
+  public ResponseEntity<InspectionStatusResponse> confirmAll(
+      @PathVariable UUID id,
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey,
+      @Valid @RequestBody ConfirmAllRequest request) {
+    InspectionStatusChanged changed = inspections.confirmAll(id, memberId, idempotencyKey, request);
+    return withReplayed(changed.replayed())
+        .body(new InspectionStatusResponse(changed.id(), changed.status()));
+  }
+
+  /**
+   * 보충하고 다시 확인 요청(06 4-7). 그 항목을 더한 측만, 보류·이견 뒤에, 7일에 한 번. 사진·설명 중 하나 이상이 필요하고 사진은 한 번에 10장까지 항목에
+   * 붙는다. 처음 성공과 다시 온 요청 모두 200이다.
+   */
+  @PostMapping("/api/inspection-items/{id}/supplement")
+  public ResponseEntity<AnswerResult> supplement(
+      @PathVariable UUID id,
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey,
+      @RequestBody SupplementRequest request) {
+    AnswerResult result = inspections.supplement(id, memberId, idempotencyKey, request);
+    return withReplayed(result.replayed()).body(result);
+  }
+
+  private static ResponseEntity.BodyBuilder withReplayed(boolean replayed) {
+    ResponseEntity.BodyBuilder response = ResponseEntity.ok();
+    if (replayed) {
+      response.header(REPLAYED, "true");
+    }
+    return response;
   }
 
   private static ResponseEntity<CreatedResponse> created(InspectionCreated created) {

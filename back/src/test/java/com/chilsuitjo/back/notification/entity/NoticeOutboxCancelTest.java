@@ -59,13 +59,14 @@ class NoticeOutboxCancelTest {
     Notice notice = notice();
     notice.markCancelled();
 
-    notice.markSent("provider-1", NOW);
+    notice.markSent("provider-1", NOW, NOW.plusSeconds(60), NOW.plusSeconds(3 * 24 * 3600));
     notice.markFailed(NOW);
 
     assertThat(notice.getStatus()).isEqualTo(NoticeStatus.CANCELLED);
     assertThat(notice.getSentAt()).isNull();
     assertThat(notice.getFailedAt()).isNull();
     assertThat(notice.getProviderMessageId()).isNull();
+    assertThat(notice.getDeliveryCheckDueAt()).isNull();
   }
 
   @Test

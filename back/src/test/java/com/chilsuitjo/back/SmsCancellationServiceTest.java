@@ -4,14 +4,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.chilsuitjo.back.action.service.ActionRequestContext;
+import com.chilsuitjo.back.notification.dto.DeliveryQuery;
+import com.chilsuitjo.back.notification.dto.SmsMessage;
 import com.chilsuitjo.back.notification.dto.SmsNoticeCommand;
 import com.chilsuitjo.back.notification.dto.SmsSendResult;
 import com.chilsuitjo.back.notification.repository.FakeSmsGateway;
 import com.chilsuitjo.back.notification.repository.NoticeRepository;
 import com.chilsuitjo.back.notification.repository.OutboxRepository;
 import com.chilsuitjo.back.notification.repository.SmsGateway;
+import com.chilsuitjo.back.notification.rule.DeliveryOutcome;
+import com.chilsuitjo.back.notification.rule.DeliveryPollSchedule;
 import com.chilsuitjo.back.notification.rule.NoticeKind;
-import com.chilsuitjo.back.notification.service.FakeRecipientDirectory;
+import com.chilsuitjo.back.notification.service.InMemoryRecipientDirectory;
 import com.chilsuitjo.back.notification.service.InviteLinks;
 import com.chilsuitjo.back.notification.service.NoticeOutbox;
 import com.chilsuitjo.back.notification.service.OutboxWorker;
@@ -49,9 +53,10 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * 보내지 않은 문자 취소(#100 U2)를 실제 PostgreSQL에서 확인한다. 작업자와 엇갈리는 경우는 커밋된 행과 두 트랜잭션이 필요해서 테스트 트랜잭션으로 감싸지
  * 않는다. {@link OutboxWorkerTest}와 같은 설정이라 같은 컨텍스트(작업자 예약 실행 꺼짐)를 쓰고, 끝나면 남은 보낼 줄을 닫아 그 테스트에 섞이지 않게
- * 한다.
+ * 한다. 번호 조회는 {@link OutboxWorkerTest}와 같은 test 가짜({@link InMemoryRecipientDirectory})를 받는다(main 가짜는
+ * 지움, #163).
  */
-@Import(TestcontainersConfiguration.class)
+@Import({TestcontainersConfiguration.class, OutboxWorkerTest.RecipientsConfig.class})
 @SpringBootTest(
     properties = {
       "spring.datasource.hikari.connection-init-sql=SET search_path TO state, record, log, public",
@@ -67,8 +72,9 @@ class SmsCancellationServiceTest {
   @Autowired private NoticeOutbox noticeOutbox;
   @Autowired private OutboxWorker worker;
   @Autowired private FakeSmsGateway gateway;
-  @Autowired private FakeRecipientDirectory recipients;
+  @Autowired private InMemoryRecipientDirectory recipients;
   @Autowired private InviteLinks inviteLinks;
+  @Autowired private DeliveryPollSchedule deliveryPollSchedule;
   @Autowired private ActionRequestContext requestContext;
   @Autowired private TransactionTemplate transaction;
   @Autowired private JdbcTemplate jdbc;
@@ -85,6 +91,7 @@ class SmsCancellationServiceTest {
   @BeforeEach
   void setUp() {
     gateway.reset();
+    recipients.reset();
     jdbc.update(
         "INSERT INTO region (code, sido, dong) VALUES ('9999999997', '테스트', '취소동')"
             + " ON CONFLICT DO NOTHING");
@@ -512,12 +519,20 @@ class SmsCancellationServiceTest {
     CountDownLatch sending = new CountDownLatch(1);
     CountDownLatch release = new CountDownLatch(1);
     SmsGateway blocking =
-        message -> {
-          if (message.batchLeadId().equals(notice)) {
-            sending.countDown();
-            await(release);
+        new SmsGateway() {
+          @Override
+          public SmsSendResult send(SmsMessage message) {
+            if (message.batchLeadId().equals(notice)) {
+              sending.countDown();
+              await(release);
+            }
+            return SmsSendResult.sent("blocked-" + message.batchLeadId());
           }
-          return SmsSendResult.sent("blocked-" + message.batchLeadId());
+
+          @Override
+          public Map<UUID, DeliveryOutcome> queryResults(List<DeliveryQuery> queries) {
+            return Map.of();
+          }
         };
     OutboxWorker slowWorker =
         new OutboxWorker(
@@ -530,7 +545,8 @@ class SmsCancellationServiceTest {
             transactionManager,
             1,
             List.of(Duration.ofMinutes(1)),
-            Duration.ofDays(3));
+            Duration.ofDays(3),
+            deliveryPollSchedule);
     CompletableFuture<Integer> running = CompletableFuture.supplyAsync(slowWorker::runOnce);
     assertThat(sending.await(30, TimeUnit.SECONDS)).isTrue();
 
