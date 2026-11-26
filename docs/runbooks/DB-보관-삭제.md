@@ -8,9 +8,79 @@ V1은 부모 삭제 보호·수신 거부 UPDATE 금지·회원 확인 기록 �
 
 ## 역할 분리
 
-- 마이그레이션 역할: 보호 테이블과 삭제 함수의 동일한 소유자. 앱에 이 역할의 멤버십을 주지 않는다.
+- 소유자 역할(Owner, NOLOGIN): 보호 테이블과 삭제 함수의 동일한 소유자. 마이그레이션 역할(Migration, LOGIN)은 객체를 직접 소유하지 않고 `SET ROLE`로 Owner가 되어 Flyway·GRANT를 실행한다(아래 역할 표). 앱·삭제 작업·Human에는 Owner 멤버십을 주지 않는다.
 - 앱 역할: superuser·소유권·관리 역할 멤버십·스키마 CREATE·TRUNCATE 없음. record의 A·B에는 SELECT·INSERT만, log의 삭제 감사에는 INSERT만 부여하고 직접 DELETE 및 `purge_room_record` EXECUTE는 주지 않는다. C의 DML과 신원 정보 삭제는 필요한 범위만 부여한다. 호실 밖 약관 확인 기록의 탈퇴 전용 함수만 아래 조건으로 EXECUTE를 허용한다.
 - 삭제 작업 역할: superuser·소유권·역할 관리 권한 없이, 승인된 작업을 준비할 조회·감사 기록·아웃박스 INSERT 권한과 `purge_room_record(uuid)` EXECUTE만 부여한다. A·B 직접 DELETE 권한은 없다.
+
+### 운영 Role Bootstrap
+
+`infra/db/bootstrap_roles.sql`은 운영 DB의 역할과 최소 선행 권한을 준비한다. 역할 이름은 현재 운영 설정에서 확정되지 않았다. 통합 테스트의 `homestamp_owner`, `homestamp_migration`, `homestamp_app`, `homestamp_purge`, `homestamp_human_read`(`DatabaseRoleBootstrapIntegrationTest`, `DatabaseGrantsIntegrationTest`의 `homestamp_human`도 같다)는 테스트 전용 이름이며 운영 이름으로 간주하지 않는다. 실행할 때 다섯 이름을 `psql` 변수로 명시한다. `human_role`은 사람 계정이 아니라 NOLOGIN Human 읽기 그룹(예: `homestamp_human_read`, decisions 2026-11-25)이다. GRANT는 이 그룹에 한 번만 주고, 사람별 LOGIN 역할은 Bootstrap이 만들지 않으며 아래 「사람별 Human 계정」 절차로 그룹에 넣고 뺀다.
+
+| 역할 | LOGIN | 상속 및 멤버십 |
+|---|---:|---|
+| Owner | 아니오 | `NOINHERIT`; 객체 소유 및 Flyway가 `SET ROLE`로 사용 |
+| Migration | 예 | `NOINHERIT`; Owner에 `SET TRUE`, `INHERIT FALSE`, `ADMIN FALSE`인 직접 멤버십 하나만 허용 |
+| App | 예 | `NOINHERIT`; Owner 멤버십 없음 |
+| Purge | 예 | `NOINHERIT`; Owner 멤버십 없음 |
+| Human 읽기 그룹 | 아니오 | `NOINHERIT`; Owner 멤버십 없음, 읽기 권한만 `grants.sql`에서 부여 |
+| 사람별 Human 계정 | 예, 사람마다 | Bootstrap이 만들지 않음. `NOINHERIT`, `VALID UNTIL` 필수; Human 읽기 그룹에 `INHERIT TRUE`, `SET FALSE`, `ADMIN FALSE` 멤버십 하나만, 직접 권한 없음 |
+
+모든 역할은 `NOSUPERUSER`, `NOCREATEDB`, `NOCREATEROLE`, `NOREPLICATION`, `NOBYPASSRLS`로 생성한다. PostgreSQL 18에서 비슈퍼유저 `CREATEROLE` 실행자는 생성한 역할마다 `ADMIN`만 가진 멤버십을 받으므로 Bootstrap 수행자도 신뢰된 DB 관리자여야 한다. 이 관리자 멤버십은 `INHERIT FALSE`, `SET FALSE`이며 App·Purge·Human·Migration 역할에 부여하지 않는다. Bootstrap은 로그인 역할의 비밀번호를 만들거나 변경하지 않는다. 운영 자격증명은 별도 안전한 계정 준비 절차에서 설정한다. 공급 경로는 역할마다 다르다. App은 앱 SSM 경로(`/homestamp/prod/app/`, #165)에서 읽는다. Migration은 SSM이 아니라 호스트가 Migration 컨테이너에만 마운트하는 전용 파일(`/run/secrets/homestamp-migration/`, B-1′, #173)에서 읽는다. 웹 EC2 역할은 앱 경로만 읽기 때문이다(#189). Purge·Human 자격증명의 공급 경로와 비밀번호 최초 발급·교체·복구 절차는 아직 정하지 않았다. 비밀번호를 SQL, 셸 인자, 로그에 넣지 않는다.
+
+실행 전용 DB 관리자는 역할 생성 권한(`CREATEROLE`) 외에도 대상 DB에 `CREATE`·`CONNECT` 권한을 부여할 수 있어야 하며, `public` 스키마 ACL을 바꿀 권한도 있어야 한다. 스크립트는 대상 데이터베이스에 Owner `CREATE`, Migration·App·Purge와 Human 읽기 그룹의 `CONNECT`(사람 계정은 그룹에서 상속)를 부여하고 `PUBLIC`의 임시 객체 생성 권한을 회수하며, `public` 스키마의 `PUBLIC` 권한을 회수한 뒤 Owner에 `USAGE, CREATE`를 준다. 따라서 App·Purge·Human은 임시 테이블도 만들 수 없다. 기존 역할 속성·역할 멤버십·직접 `public` ACL이 기대와 다르면 자동 수정하지 않고 실패한다. `public` 스키마 소유자가 Migration·App·Purge·Human 읽기 그룹이나 그 그룹의 사람 계정이면 소유권을 바꾸지 않고 실패한다(ACL 검사는 소유자의 암묵 권한을 보지 못하므로 따로 검사한다). 그룹을 만들 때 ADMIN 전용 멤버십을 받은 실행 관리자는 사람 계정으로 보지 않으므로(위 멤버십 검사와 같은 예외), 그 관리자가 `public`을 소유해도 통과한다. 사람 계정이 Human 읽기 그룹에 `INHERIT TRUE`, `SET FALSE`, `ADMIN FALSE`로 들어 있는 것만 허용하고, 다른 옵션의 그룹 멤버십은 실패한다. 이미 있는 `record`, `state`, `log` 스키마와 객체가 Owner 소유가 아니거나, `public.flyway_schema_history`가 Owner 소유가 아니면 소유권을 바꾸지 않고 중단한다. 실행은 `psql`에서 `ON_ERROR_STOP`을 켜고 트랜잭션으로 처리하므로 오류는 0이 아닌 종료와 롤백으로 이어져야 한다.
+
+```sh
+psql -X -v ON_ERROR_STOP=1 \
+  -v owner_role='<owner identifier>' \
+  -v migration_role='<migration login identifier>' \
+  -v app_role='<app login identifier>' \
+  -v purge_role='<purge login identifier>' \
+  -v human_role='<NOLOGIN human read group identifier>' \
+  -d '<dedicated database>' -f infra/db/bootstrap_roles.sql
+```
+
+이 명령에는 비밀번호를 전달하지 않는다. 실행자는 지정한 전용 DB가 맞는지, 기존 데이터·Flyway 이력·객체 소유자를 먼저 확인한다.
+
+#### 사람별 Human 계정
+
+사람 계정은 Bootstrap 밖에서 신뢰된 DB 관리자가 한 명씩 만든다. 실제 이름·비밀번호를 이 문서나 저장소, 셸 기록에 남기지 않는다. 계정 이름은 사람을 구별할 수 있되 실명이 아닌 식별자로 정한다.
+
+1. 발급: `CREATE ROLE <사람 식별자> LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS VALID UNTIL '<만료 시각>';` 다음 `GRANT <Human 읽기 그룹> TO <사람 식별자> WITH INHERIT TRUE, SET FALSE, ADMIN FALSE;` 비밀번호는 psql `\password`처럼 화면·셸 인자·로그에 남지 않는 방법으로 설정한다(공급 경로는 미정, #41).
+2. 확인: `psql -X -v ON_ERROR_STOP=1 -v human_role='<Human 읽기 그룹>' -d '<전용 DB>' -f infra/db/check_human_access.sql`. 읽기 전용 트랜잭션이라 아무것도 고치지 않고, 아래 중 하나라도 있으면 0이 아닌 종료로 실패한다.
+   - 그룹이 LOGIN이거나 관리 속성·다른 역할 멤버십이 있음
+   - 사람 계정이 LOGIN `NOINHERIT`가 아니거나 관리 속성이 있음, `VALID UNTIL`이 없음
+   - 그룹 멤버십 옵션이 `INHERIT TRUE`·`SET FALSE`·`ADMIN FALSE`가 아님
+   - 그룹 밖 멤버십(`pg_read_all_data`, Owner, App 등), 다른 역할이 사람 계정을 쓸 수 있는 멤버십
+   - 사람 계정에 직접 준 테이블·컬럼·스키마·함수·DB·기본 권한, 사람 계정이 소유한 객체. 그 밖의 카탈로그(언어·타입·large object·파라미터 등)와 같은 클러스터의 다른 DB에 남은 소유·권한·정책은 `pg_shdepend`로 잡는다
+   사람 추가·회수 뒤와 운영 배포 전에 실행한다. `grants.sql`은 사람 계정을 보지 않으므로 직접 권한은 이 점검으로만 잡는다. 점검 대상은 그룹의 멤버뿐이다. `PUBLIC`에 준 권한(Bootstrap·`grants.sql`이 관리)과, 그룹에서 빠졌지만 DROP되지 않은 LOGIN 역할은 보지 않으므로 회수 절차(4)를 끝까지 지킨다. 성공 메시지에는 점검한 사람 수와, 예외로 건너뛴 관리자(CREATEROLE·superuser의 ADMIN 전용 멤버십) 이름이 나온다. 사람 역할 자체를 다른 역할에 부여한 것도 같은 기준이다: CREATEROLE·superuser에게 준 ADMIN 전용(INHERIT·SET 없음)만 허용하고, 일반 LOGIN 역할의 ADMIN 전용을 포함해 나머지는 모두 실패한다.
+3. 연장: 만료 전에 `ALTER ROLE <사람 식별자> VALID UNTIL '<새 만료 시각>';`
+4. 회수: 아래 순서를 지킨다.
+   1. `REVOKE <Human 읽기 그룹> FROM <사람 식별자>;` (권한 회수)
+   2. `ALTER ROLE <사람 식별자> NOLOGIN;` (새 로그인 차단)
+   3. `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = '<사람 식별자>';` (열린 세션 종료)
+   4. 남은 소유 객체가 없는지 확인한 뒤 `DROP ROLE <사람 식별자>;`
+
+`VALID UNTIL`은 만료 뒤 **비밀번호 로그인만** 막는다. 이미 열린 세션은 끊지 않으며, 그 세션은 그룹 권한으로 계속 조회할 수 있다(PostgreSQL 18 통합 테스트에서 확인). 그래서 만료·회수 때는 세션 종료(4-3)를 따로 한다. 또 `session_user`로 누가 접속했는지는 알 수 있지만 어떤 SQL을 실행했는지는 남지 않는다. 사람별 조회 기록은 쿼리 로그와 RDS 로그 내보내기(04 「운영 접근」)로 남긴다.
+
+최초 설정과 배포는 실행 주체와 방식이 서로 다른 네 단계다. 각 단계는 따로 성공해야 다음으로 넘어간다.
+
+| 단계 | 실행 주체 | 방식 | 상태 |
+|---|---|---|---|
+| 1. Role Bootstrap | 신뢰된 DB 관리자(Migration 계정 아님) | `psql`로 `bootstrap_roles.sql` | 최초 한 번, 역할이 바뀔 때 |
+| 2. Migration | Migration 로그인 → `SET ROLE` Owner | 앱 이미지 `--migrate`(Flyway) | #173 Draft |
+| 3. GRANT | Migration 로그인 → `SET LOCAL ROLE` Owner | 앱 이미지 안의 JDBC 리소스 `db/grants/grants.sql`(아래 "실행 방식") | 실행 진입점 `--apply-grants`는 #173 후속, 미구현. 지금 계약은 테스트 실행기(`DatabaseGrantsIntegrationTest.GrantsJdbcExecutor`)로만 검증 |
+| 4. Green 시작 | 배포 스크립트 | 2·3이 모두 종료 코드 0일 때만 | 배포 스크립트 미구현 |
+
+Bootstrap의 `psql` 실행과 GRANT의 JDBC 실행은 다른 절차다. GRANT를 `psql`로 실행하지 않는다(`psql` 변수와 메타 명령을 쓰지 않는 SQL이고, 잠금·`set_config`를 실행기가 같은 트랜잭션에서 준비해야 한다).
+
+Migration이나 GRANT가 실패하면 Green을 시작하지 않고 Blue를 유지한다. 다만 Blue 유지가 DB 스키마 호환성까지 보장하지는 않는다. Flyway는 버전마다 따로 커밋하므로, 실패 전에 적용된 앞 버전은 남는다. GRANT는 한 트랜잭션이라 실패하면 권한이 실행 전 상태로 돌아간다. 다만 앞 단계에서 적용된 Migration은 되돌리지 않는다.
+
+새 빈 DB에서는 Bootstrap이 역할·DB 권한·public ACL을 준비한 뒤 이 순서를 진행한다. 기존 DB에는 이 스크립트를 바로 적용하지 않는다. 먼저 데이터 보존, Flyway 이력, 모든 기존 객체의 소유자와 역할 멤버십을 읽기 전용으로 조사한다. 기존 객체가 Owner 소유가 아니면 이 스크립트는 소유권을 이전하지 않으며, 별도 검토·백업·복구 계획이 정해질 때까지 중단한다. Testcontainers PostgreSQL 18.6 검증(`DatabaseRoleBootstrapIntegrationTest`: Bootstrap → `--migrate`와 같은 Flyway 설정 → JDBC GRANT → 역할별 실제 권한)은 로컬 동작만 보장한다. 실제 RDS 관리 계정에서의 Bootstrap 리허설, RDS CA 인증서 공급, EC2 비밀 파일 마운트, 운영 데이터 상태는 확인하지 않았다.
+
+운영 배포 전에 다시 점검할 권한 위험:
+- Purge는 인증 정보(`password_hash`·토큰 해시 등)를 포함한 모든 테이블을 SELECT한다.
+- Human이 테이블 단위로 읽는 자유 서술 기록에는 사용자가 개인정보를 적을 수 있다.
+- Human 조회 목적과 범위가 개인정보 처리방침과 맞는지 확인해야 한다.
 
 호실 삭제 함수의 PUBLIC 실행 권한은 V1에서 제거한다. 운영 역할 이름을 확정한 뒤 배포 설정에서 USAGE와 호실 삭제 함수 EXECUTE를 삭제 작업 역할에만 부여한다. 앱이 소유자로 접속하면 보호 경계를 우회할 수 있으므로 운영 접속 계정도 반드시 확인한다. 사람별 접근 기록은 04 「운영 접근」을 따른다.
 
