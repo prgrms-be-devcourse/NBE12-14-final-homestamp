@@ -9,6 +9,11 @@ import com.chilsuitjo.back.action.rule.AnswerPayload;
 import com.chilsuitjo.back.action.rule.Replay;
 import com.chilsuitjo.back.action.rule.RoomGateReader;
 import com.chilsuitjo.back.action.service.ActionReader;
+import com.chilsuitjo.back.correction.dto.CorrectionView;
+import com.chilsuitjo.back.correction.rule.CorrectionStatus;
+import com.chilsuitjo.back.correction.rule.CorrectionTargetKind;
+import com.chilsuitjo.back.correction.rule.CorrectionTransitions;
+import com.chilsuitjo.back.correction.service.CorrectionReader;
 import com.chilsuitjo.back.global.common.AckState;
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.error.BusinessException;
@@ -36,6 +41,7 @@ import com.chilsuitjo.back.room.service.RoomQueryService;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -73,6 +79,12 @@ public class RepairQueryService {
   /** 원인 설명 남기기·고치기의 {@code availableActions} 이름(06 4-6 {@code cause-notes}). */
   static final String CAUSE_NOTES = "cause-notes";
 
+  /** 고친 내용의 버튼 이름(06 4-6 {@code corrections/{id}/respond}·{@code withdraw}·{@code accept-all}). */
+  static final String RESPOND = "respond";
+
+  static final String WITHDRAW = "withdraw";
+  static final String ACCEPT_ALL = "accept-all";
+
   private final RepairCaseRepository cases;
   private final RepairContentRepository contents;
   private final RepairStateStore store;
@@ -85,6 +97,7 @@ public class RepairQueryService {
   private final CauseNoteRepository causeNoteRows;
   private final CauseNoteStateStore causeStore;
   private final CauseNoteTransitions causeRules;
+  private final CorrectionReader correctionReader;
   private final Clock clock;
 
   /**
@@ -141,6 +154,12 @@ public class RepairQueryService {
     if (gate.side() != null && gate.rejection(ActionType.NOTE_CAUSE).isEmpty()) {
       actions.add(CAUSE_NOTES);
     }
+    List<RepairCaseDetail.Correction> corrections = correctionsOf(row, gate, asOf);
+    if (corrections.stream()
+        .anyMatch(c ->
+            c.status() == CorrectionStatus.WAITING && c.availableActions().contains(RESPOND))) {
+      actions.add(ACCEPT_ALL);
+    }
     RoomAccess viewer = access.require(roomRecordId, memberId);
     PhotoTarget photoTarget = new PhotoTarget.Ref(PhotoTargetType.REPAIR_CASE, row.getId());
     List<PhotoCard> photoCards = photos.cards(viewer, List.of(photoTarget)).get(photoTarget);
@@ -166,7 +185,66 @@ public class RepairQueryService {
         new RepairCaseDetail.Money(shown.moneyStatus()),
         photoCards,
         causeNotesOf(row, gate, viewer),
+        corrections,
         List.copyOf(actions));
+  }
+
+  /**
+   * 내용의 고친 내용(06 REP-7). 버튼은 실제 요청과 같은 판단이다: 호실 단위 거절은 {@code RoomGate.rejection}, 고친 내용 규칙은 {@code
+   * CorrectionTransitions.canRespond}·{@code canWithdraw}.
+   *
+   * <p>공유를 그만둔 뒤({@code asOf})에는 그 시각까지 고친 것과 보는 사람 자신이 고친 것만 보인다. 내가 고친 것에 상대가 그 뒤 남긴 응답은 드러나지 않아
+   * 확인 전으로 보인다(03 6-6 9번, 불변식 18).
+   */
+  private List<RepairCaseDetail.Correction> correctionsOf(
+      RepairCase row, RoomGate gate, Instant asOf) {
+    PartySide viewer = gate.side();
+    boolean respondable = gate.rejection(ActionType.RESPOND_CORRECTION).isEmpty();
+    boolean withdrawable = gate.rejection(ActionType.WITHDRAW_CORRECTION).isEmpty();
+    List<RepairCaseDetail.Correction> result = new ArrayList<>();
+    for (CorrectionView view :
+        correctionReader.findByRecord(CorrectionTargetKind.REPAIR_CASE, row.getId())) {
+      if (asOf != null && view.createdAt().isAfter(asOf) && view.requestedBySide() != viewer) {
+        continue;
+      }
+      // 내가 고친 것에 상대가 그 뒤 남긴 응답만 가린다(내가 남긴 응답은 내 행동이라 보인다)
+      boolean hideAnswer =
+          asOf != null
+              && view.requestedBySide() == viewer
+              && view.answeredAt() != null
+              && view.answeredAt().isAfter(asOf);
+      CorrectionStatus status = hideAnswer ? CorrectionStatus.WAITING : view.status();
+      List<String> buttons = new ArrayList<>();
+      if (respondable && CorrectionTransitions.canRespond(status, view.requestedBySide(), viewer)) {
+        buttons.add(RESPOND);
+      }
+      if (withdrawable
+          && CorrectionTransitions.canWithdraw(status, view.requestedBySide(), viewer)) {
+        buttons.add(WITHDRAW);
+      }
+      String newPartName =
+          RepairCorrectable.ROOM_PART_ID.equals(view.field()) && view.newValue() != null
+              ? rooms
+                  .findPart(row.getRoomRecordId(), UUID.fromString(view.newValue().toString()))
+                  .name()
+              : null;
+      result.add(
+          new RepairCaseDetail.Correction(
+              view.id(),
+              view.field(),
+              view.newValue(),
+              newPartName,
+              view.requestedBySide(),
+              view.reason(),
+              status,
+              hideAnswer ? AckState.PENDING : view.answer(),
+              hideAnswer ? null : view.answerReason(),
+              hideAnswer ? null : view.answeredAt(),
+              view.closedReason(),
+              view.createdAt(),
+              List.copyOf(buttons)));
+    }
+    return List.copyOf(result);
   }
 
   /**
@@ -248,11 +326,23 @@ public class RepairQueryService {
   /**
    * 보는 사람에게 보이는 이 수리 건의 행동(03 6-6 9번). 고정 시각까지의 행동(그 시각에 남은 것 포함, 불변식 18 "뒤에 남긴 것은 ✕")과 보는 사람 측의
    * 행동이다. 고정되지 않았으면 모두. 행동 기록이 원본이라 같은 규칙({@link RepairTransitions})으로 다시 계산하면 그때의 상태가 나온다(REP-10).
+   *
+   * <p>내용의 고친 내용에 대한 응답({@code RESPOND_CORRECTION})도 함께 읽는다. 대상이 고친 내용이지만 맞아요가 내용의 새 판을 만들어서, 빼면
+   * 보이는 판 번호가 뒤처진다. 순서는 호실의 행동 번호({@code room_seq})다.
    */
   private List<ActionEntry> visibleActions(RepairCase row, PartySide viewer, Instant asOf) {
-    return actionReader.findByTarget(ActionTarget.repairCase(row.getId())).stream()
+    List<ActionEntry> all =
+        new ArrayList<>(actionReader.findByTarget(ActionTarget.repairCase(row.getId())));
+    for (CorrectionView correction :
+        correctionReader.findByRecord(CorrectionTargetKind.REPAIR_CASE, row.getId())) {
+      actionReader.findByTarget(ActionTarget.correctionRequest(correction.id())).stream()
+          .filter(entry -> entry.type() == ActionType.RESPOND_CORRECTION)
+          .forEach(all::add);
+    }
+    return all.stream()
         .filter(entry ->
             asOf == null || !entry.createdAt().isAfter(asOf) || entry.actorSide() == viewer)
+        .sorted(Comparator.comparingLong(ActionEntry::roomSeq))
         .toList();
   }
 
