@@ -90,16 +90,18 @@ public class InspectionStateStore {
         row.getCreatedAt(),
         null,
         null,
-        canOpen);
+        canOpen,
+        null,
+        row.isLate());
   }
 
   private InspectionState notStarted(ActionCommand command) {
-    boolean dateMissing = moveInDates.find(command.roomRecordId()).isEmpty();
+    LocalDate moveInDate = moveInDates.find(command.roomRecordId()).orElse(null);
     RoomPhase phase =
         parties
             .read(command.roomRecordId(), Objects.requireNonNull(command.actor().side(), "side"))
             .phase();
-    return InspectionState.notStarted(dateMissing, phase != RoomPhase.LIVING);
+    return InspectionState.notStarted(moveInDate, phase != RoomPhase.LIVING);
   }
 
   private Inspection row(ActionCommand command) {
@@ -126,6 +128,7 @@ public class InspectionStateStore {
     /**
      * 점검을 작성 중으로 만든다. 입주일이 비어 있던 호실이면 같은 트랜잭션에서 입주일을 채운다(06 4-7). 채운 입주일은 이미 행동 payload에 있어 그 기록이
      * 원본이다({@code RoomMoveInDates}). 작성 중이라 상대에게 아직 보이지 않는다({@code first_shown_at} 없음, 06 INSP-1a).
+     * 늦은 입주 표시는 규칙이 정한 값 그대로다(INSP-2a).
      */
     @Override
     public SavedState save(ActionCommand command, InspectionState next) {
@@ -136,7 +139,11 @@ public class InspectionStateStore {
       Inspection row =
           inspections.save(
               new Inspection(
-                  command.roomRecordId(), next.kind(), next.authorSide(), requestContext.at()));
+                  command.roomRecordId(),
+                  next.kind(),
+                  next.authorSide(),
+                  Boolean.TRUE.equals(next.late()),
+                  requestContext.at()));
       return SavedState.created(ActionTarget.inspection(row.getId()));
     }
   }

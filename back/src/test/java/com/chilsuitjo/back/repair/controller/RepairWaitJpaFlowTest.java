@@ -99,9 +99,10 @@ class RepairWaitJpaFlowTest {
         });
     // 같은 행동의 시각으로 만든다(decisions 2026-11-19)
     assertThat(rows.getFirst().get("created_at")).isEqualTo(actionAt(caseId, "REQUEST_CLOSE"));
+    // 등록이 연 하자 확인(#324)과 종료 확인이 함께 기다린다
     assertThat(waitQuery.awaiting(room, PartySide.LANDLORD))
         .extracting(RequestView::kind)
-        .containsExactly(RequestKind.CLOSE_CONFIRM);
+        .containsExactlyInAnyOrder(RequestKind.DEFECT_CONFIRM, RequestKind.CLOSE_CONFIRM);
 
     act(caseId, landlord, "confirm-close", null).andExpect(status().isOk());
 
@@ -113,7 +114,9 @@ class RepairWaitJpaFlowTest {
                 RequestKind.CLOSE_CONFIRM, RequestTarget.of(TargetKind.REPAIR_CASE, caseId)))
         .map(RequestView::status)
         .contains(RequestStatus.ANSWERED);
-    assertThat(waitQuery.awaiting(room, PartySide.LANDLORD)).isEmpty();
+    assertThat(waitQuery.awaiting(room, PartySide.LANDLORD))
+        .extracting(RequestView::kind)
+        .doesNotContain(RequestKind.CLOSE_CONFIRM);
   }
 
   @Test
