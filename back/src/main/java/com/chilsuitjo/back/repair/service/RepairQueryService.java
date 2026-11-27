@@ -30,6 +30,7 @@ import com.chilsuitjo.back.proposal.dto.AgendaRef;
 import com.chilsuitjo.back.proposal.rule.AgendaKind;
 import com.chilsuitjo.back.proposal.service.ProposalService;
 import com.chilsuitjo.back.repair.dto.RepairCaseDetail;
+import com.chilsuitjo.back.repair.dto.RepairCaseSummary;
 import com.chilsuitjo.back.repair.entity.CauseNote;
 import com.chilsuitjo.back.repair.entity.RepairCase;
 import com.chilsuitjo.back.repair.entity.RepairContent;
@@ -233,6 +234,30 @@ public class RepairQueryService {
                 view.closedReason(),
                 view.closedAt()))
         .orElse(null);
+  }
+
+  /**
+   * 이 회원에게 보이는 호실의 수리 건 한 줄씩(등록 순, 퇴거 점검 나란히 보기 06 INSP-3b). 다른 도메인이 부르는 창구다(09 3장 "inspection →
+   * repair"). 보이는 범위·보이는 판·상태·사진은 {@link #detail}과 같은 판단이라 수리 건마다 상세를 만들어 줄인다: 상세가 {@code
+   * NOT_FOUND}인 수리 건(공유를 그만둔 뒤 상대가 등록, 불변식 18)은 빠진다. 호실 당사자가 아니면 {@code NOT_FOUND}다.
+   *
+   * <p>수리 건마다 상세를 계산해 호실의 수리 건 수만큼 읽는다. 수리 건 목록 API(06 4-6 {@code GET
+   * /api/rooms/{id}/repair-cases})를 만들 때 같은 판단을 한 번에 읽는 길로 함께 바꾼다.
+   */
+  @Transactional(readOnly = true)
+  public List<RepairCaseSummary> summaries(UUID roomRecordId, UUID memberId) {
+    access.require(roomRecordId, memberId);
+    List<RepairCaseSummary> result = new ArrayList<>();
+    for (UUID id : cases.findIdsByRoomRecordId(roomRecordId)) {
+      try {
+        result.add(RepairCaseSummary.from(detail(id, memberId)));
+      } catch (BusinessException hidden) {
+        if (hidden.errorCode() != ErrorCode.NOT_FOUND) {
+          throw hidden;
+        }
+      }
+    }
+    return List.copyOf(result);
   }
 
   /**

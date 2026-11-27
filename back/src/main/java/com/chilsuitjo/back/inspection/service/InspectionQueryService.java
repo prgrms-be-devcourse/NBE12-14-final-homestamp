@@ -20,19 +20,24 @@ import com.chilsuitjo.back.inspection.repository.InspectionStateStore;
 import com.chilsuitjo.back.inspection.rule.ConfirmAllTransitions;
 import com.chilsuitjo.back.inspection.rule.InspectionItemState;
 import com.chilsuitjo.back.inspection.rule.InspectionItemTransitions;
+import com.chilsuitjo.back.inspection.rule.InspectionKind;
 import com.chilsuitjo.back.inspection.rule.InspectionState;
 import com.chilsuitjo.back.inspection.rule.InspectionTransitions;
 import com.chilsuitjo.back.photo.dto.PhotoCard;
 import com.chilsuitjo.back.photo.dto.PhotoTarget;
 import com.chilsuitjo.back.photo.rule.PhotoTargetType;
 import com.chilsuitjo.back.photo.service.PhotoService;
+import com.chilsuitjo.back.repair.dto.RepairCaseSummary;
+import com.chilsuitjo.back.repair.service.RepairQueryService;
 import com.chilsuitjo.back.room.service.RoomAccessService;
 import com.chilsuitjo.back.room.service.RoomQueryService;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -51,6 +56,7 @@ public class InspectionQueryService {
   private final InspectionItemVersionRepository versions;
   private final RoomGateReader gates;
   private final RoomQueryService rooms;
+  private final RepairQueryService repairs;
   private final PhotoService photos;
   private final RoomAccessService access;
   private final InspectionStateStore store;
@@ -84,13 +90,15 @@ public class InspectionQueryService {
             .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
     PartySide viewer = gate.side();
     InspectionSight.Sight seen = sight.of(row, viewer);
-    if (viewer != row.getAuthorSide()
-        && seen.asOf() != null
-        && row.getCreatedAt().isAfter(seen.asOf())) {
+    if (hidden(row, viewer, seen)) {
       throw new BusinessException(ErrorCode.NOT_FOUND);
     }
     List<InspectionDetail.Item> shownItems = visibleItems(row, roomRecordId, memberId, gate, seen);
     InspectionState now = store.current(row);
+    InspectionDetail.SideBySide sideBySide =
+        row.getKind() == InspectionKind.MOVE_OUT
+            ? sideBySide(roomRecordId, memberId, gate, shownItems)
+            : null;
     return new InspectionDetail(
         row.getId(),
         roomRecordId,
@@ -105,7 +113,84 @@ public class InspectionQueryService {
         seen.asOf(),
         shownItems,
         rules.counterpartCanRequestAt(now),
-        actions(row, now, gate, seen));
+        actions(row, now, gate, seen),
+        sideBySide);
+  }
+
+  /** 공유를 그만둔 뒤 상대가 시작해 이 사람이 볼 수 없는 점검인가(불변식 18). 그 점검은 있는지도 알 수 없다. */
+  private static boolean hidden(Inspection row, PartySide viewer, InspectionSight.Sight seen) {
+    return viewer != row.getAuthorSide()
+        && seen.asOf() != null
+        && row.getCreatedAt().isAfter(seen.asOf());
+  }
+
+  /**
+   * 퇴거 점검 나란히 보기(06 INSP-3b). 같은 부위의 입주 점검 항목 · 수리 건 · 퇴거 점검 항목을 부위마다 모은다. 각 기록은 그 기록의 상세와 같은 판단으로
+   * 보인다: 입주 항목은 입주 점검 상세의 {@code items}({@link InspectionSight}), 수리 건은 수리 건 상세({@code
+   * RepairQueryService.summaries}), 퇴거 항목은 이 상세의 {@code items}. 입주 점검이 없거나 이 사람이 볼 수 없으면 입주 칸은 비어
+   * 있다(화면은 "입주 점검에 기록 없음", 03 H).
+   *
+   * <p>표시는 기록이 있다는 사실만 본다: 입주 항목이 있으면 "입주 기존 하자", 없고 수리 건이 있으면 "거주 중 하자", 퇴거 항목만 있으면 표시하지 않는다(03 원칙
+   * 3 판정하지 않음). 부위 사진은 그 기능({@code /part-photos})을 만들 때 더한다.
+   */
+  private InspectionDetail.SideBySide sideBySide(
+      UUID roomRecordId, UUID memberId, RoomGate gate, List<InspectionDetail.Item> moveOutItems) {
+    InspectionDetail.MoveIn moveIn = null;
+    List<InspectionDetail.Item> moveInItems = List.of();
+    Optional<Inspection> moveInRow =
+        inspections.findByRoomRecordIdAndKind(roomRecordId, InspectionKind.MOVE_IN);
+    if (moveInRow.isPresent()) {
+      Inspection mi = moveInRow.get();
+      InspectionSight.Sight seen = sight.of(mi, gate.side());
+      if (!hidden(mi, gate.side(), seen)) {
+        moveIn =
+            new InspectionDetail.MoveIn(
+                mi.getId(), seen.shownStatus(), mi.getLockedAt(), mi.isLate(), mi.getCreatedAt());
+        moveInItems = visibleItems(mi, roomRecordId, memberId, gate, seen);
+      }
+    }
+    List<RepairCaseSummary> repairCases = repairs.summaries(roomRecordId, memberId);
+
+    Map<UUID, PartRows> byPart = new LinkedHashMap<>();
+    for (InspectionDetail.Item item : moveOutItems) {
+      partRows(byPart, item.version().roomPartId(), item.version().partName())
+          .moveOut
+          .add(item.id());
+    }
+    for (InspectionDetail.Item item : moveInItems) {
+      partRows(byPart, item.version().roomPartId(), item.version().partName()).moveIn.add(item);
+    }
+    for (RepairCaseSummary repair : repairCases) {
+      partRows(byPart, repair.roomPartId(), repair.partName()).repairs.add(repair);
+    }
+    List<InspectionDetail.Part> parts = new ArrayList<>();
+    byPart.forEach((partId, rows) -> parts.add(rows.toPart(partId)));
+    return new InspectionDetail.SideBySide(moveIn, List.copyOf(parts));
+  }
+
+  private static PartRows partRows(Map<UUID, PartRows> byPart, UUID partId, String partName) {
+    return byPart.computeIfAbsent(partId, id -> new PartRows(partName));
+  }
+
+  /** 나란히 보기에서 부위 하나에 모으는 중인 기록. */
+  private static final class PartRows {
+    private final String partName;
+    private final List<InspectionDetail.Item> moveIn = new ArrayList<>();
+    private final List<RepairCaseSummary> repairs = new ArrayList<>();
+    private final List<UUID> moveOut = new ArrayList<>();
+
+    private PartRows(String partName) {
+      this.partName = partName;
+    }
+
+    private InspectionDetail.Part toPart(UUID partId) {
+      InspectionDetail.SideMark mark =
+          !moveIn.isEmpty()
+              ? InspectionDetail.SideMark.PREEXISTING
+              : !repairs.isEmpty() ? InspectionDetail.SideMark.DURING_STAY : null;
+      return new InspectionDetail.Part(
+          partId, partName, mark, List.copyOf(moveIn), List.copyOf(repairs), List.copyOf(moveOut));
+    }
   }
 
   private List<InspectionDetail.Item> visibleItems(

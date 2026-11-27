@@ -21,6 +21,8 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -35,7 +37,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  *
  * <p><b>바로 혼자 진행({@link #canGoSoloDirectly})은 가짜가 아니다.</b> 진짜 {@link CounterpartReader}로 읽은 자리 사실을
  * {@link SoloRule}에 넘긴다. 메모리 요청·{@link #seedSolo}·{@link #markUnconfirmed}은 보지 않는다. 이 클래스가 운영에서도
- * 쓰이는 동안(진짜 구현 전) 테스트에서 만든 근거로 혼자 진행이 열리지 않게 하려고다.
+ * 쓰이던 때 테스트에서 만든 근거로 혼자 진행이 열리지 않게 하려던 것이고, 테스트에서도 그대로 둔다.
  *
  * <p>진짜 구현은 요청을 DB에 두어 부르는 쪽 트랜잭션과 함께 되돌아간다. 가짜도 같게, 트랜잭션 안에서 바꾼 요청은 그 트랜잭션이 커밋되지 않으면 바꾸기 전으로
  * 되돌린다(한 요청의 뒤 단계가 거절되면 앞 단계가 닫은 요청도 열린 채로 남는다, #177 리뷰). 트랜잭션 밖(단위 테스트)에서는 바로 적는다.
@@ -44,9 +46,16 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * firstNotifiedAt}·{@code dueAt}·{@code soloReason}을 늘 비운다(보내지 않은 통지의 시각이나 기한을 만들어 내지 않는다). {@link
  * #markUnconfirmed}로 바꾼 미확인도 이유는 비운다. {@code openedAt}은 처음 연 시각이고 묶어도 바뀌지 않는다.
  *
- * <p>실제 구현(NOTI-1·5, 기다림 타이머)이 들어오면 이 클래스를 지운다. 다른 도메인은 {@link WaitService}만 쓰므로 바뀌지 않는다.
+ * <p><b>테스트 전용이다.</b> 운영 빈은 {@link JpaWaitService}(DB)다. Spring 테스트에서는 이 가짜가 {@code @Primary}로 대신
+ * 들어가서 도메인 테스트가 {@link #markUnconfirmed}·{@link #seedSolo}·{@link #statusOf}로 상황을 만들고 확인한다. 실제 DB
+ * 구현으로 도메인 흐름을 보려면 테스트에 {@code test.notification.wait-service=jpa}를 준다(이 가짜가 빠짐).
  */
 @Service
+@Primary
+@ConditionalOnProperty(
+    name = "test.notification.wait-service",
+    havingValue = "fake",
+    matchIfMissing = true)
 public class FakeWaitService implements WaitService, WaitQuery {
 
   private final Map<Key, Request> requests = new ConcurrentHashMap<>();
