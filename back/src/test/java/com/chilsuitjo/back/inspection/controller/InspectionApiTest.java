@@ -106,7 +106,8 @@ class InspectionApiTest {
         .containsEntry("kind", "MOVE_IN")
         .containsEntry("author_side", "TENANT")
         .containsEntry("status", "DRAFT")
-        .containsEntry("late", false);
+        // 입주일(2026-03-01)보다 뒤에 시작해 늦은 입주 점검이다(INSP-2a)
+        .containsEntry("late", true);
     assertThat(row.get("first_shown_at")).isNull();
 
     Map<String, Object> action =
@@ -189,11 +190,103 @@ class InspectionApiTest {
         .andExpect(jsonPath("$.code").value("NOT_FOUND"));
   }
 
+  // ---- 늦은 입주 점검(INSP-2a) ----
+
   @Test
-  void 현재_구현_범위의_한계로_퇴거_점검은_시작할_수_없다() throws Exception {
-    start(tenant, "out", "MOVE_OUT", null)
+  void INSP_2a_입주일보다_늦게_시작하면_상세에_late가_붙는다() throws Exception {
+    UUID id = created(start(landlord, "late", "MOVE_IN", null));
+
+    detail(landlord, id).andExpect(status().isOk()).andExpect(jsonPath("$.late").value(true));
+  }
+
+  @Test
+  void INSP_2a_입주일이_아직_오지_않았으면_늦지_않다() throws Exception {
+    jdbc.update(
+        "UPDATE state.room_record SET move_in_date = ? WHERE id = ?",
+        Date.valueOf(LocalDate.now(ZoneId.of("Asia/Seoul")).plusDays(1)),
+        room);
+
+    UUID id = created(start(tenant, "on-time", "MOVE_IN", null));
+
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT late FROM state.inspection WHERE id = ?", Boolean.class, id))
+        .isFalse();
+  }
+
+  @Test
+  void INSP_2a_INSP_2b_시작하며_채운_입주일로_늦었는지_정한다() throws Exception {
+    clearMoveInDate();
+
+    UUID id = created(start(tenant, "fill-late", "MOVE_IN", "2026-02-15"));
+
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT late FROM state.inspection WHERE id = ?", Boolean.class, id))
+        .isTrue();
+  }
+
+  // ---- 퇴거 점검(INSP-3) ----
+
+  @Test
+  void INSP_3_퇴거_점검은_입주_점검과_따로_하나씩_시작한다() throws Exception {
+    UUID moveIn = created(start(tenant, "in", "MOVE_IN", null));
+    UUID moveOut = created(start(landlord, "out", "MOVE_OUT", null));
+
+    assertThat(moveOut).isNotEqualTo(moveIn);
+    Map<String, Object> row =
+        jdbc.queryForMap("SELECT * FROM state.inspection WHERE id = ?", moveOut);
+    assertThat(row)
+        .containsEntry("kind", "MOVE_OUT")
+        .containsEntry("author_side", "LANDLORD")
+        .containsEntry("status", "DRAFT")
+        .containsEntry("late", false);
+    start(tenant, "out-2", "MOVE_OUT", null)
         .andExpect(status().isConflict())
-        .andExpect(jsonPath("$.code").value("INVALID_STATE"));
+        .andExpect(jsonPath("$.code").value("INSPECTION_EXISTS"));
+    detail(landlord, moveOut)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.kind").value("MOVE_OUT"))
+        .andExpect(jsonPath("$.late").value(false));
+  }
+
+  @Test
+  void INSP_3a_거주_종료_뒤에도_퇴거_점검을_시작하고_확인_요청을_보낸다() throws Exception {
+    jdbc.update(
+        "UPDATE state.room_record SET status = 'ENDED', ended_at = CURRENT_TIMESTAMP WHERE id = ?",
+        room);
+
+    UUID id = created(start(tenant, "out-after-end", "MOVE_OUT", null));
+
+    requestConfirm(tenant, id, "out-req")
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("REQUESTED"));
+  }
+
+  @Test
+  void 퇴거_점검에_입주일을_보내면_VALIDATION_FAILED이고_입주일이_비어도_묻지_않는다() throws Exception {
+    clearMoveInDate();
+
+    start(tenant, "out-date", "MOVE_OUT", "2026-02-15")
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    created(start(tenant, "out-no-date", "MOVE_OUT", null));
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT move_in_date FROM state.room_record WHERE id = ?", Date.class, room))
+        .isNull();
+  }
+
+  @Test
+  void 정산_완료_뒤에는_퇴거_점검을_시작할_수_없다() throws Exception {
+    jdbc.update(
+        "UPDATE state.room_record SET status = 'SETTLED', ended_at = CURRENT_TIMESTAMP,"
+            + " settled_at = CURRENT_TIMESTAMP WHERE id = ?",
+        room);
+
+    start(tenant, "out-settled", "MOVE_OUT", null)
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("SETTLED"));
     assertThat(count("state.inspection")).isZero();
   }
 

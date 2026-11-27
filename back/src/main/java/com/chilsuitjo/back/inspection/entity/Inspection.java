@@ -53,7 +53,7 @@ public class Inspection {
   @Column(nullable = false, length = 10)
   private InspectionStatus status;
 
-  /** 입주일보다 늦게 시작한 입주 점검(06 INSP-2a). 표시는 B가 만들어 지금은 늘 거짓이다. */
+  /** 입주일보다 늦게 시작한 입주 점검(06 INSP-2a). 시작할 때 규칙이 정하고 바뀌지 않는다. 퇴거 점검은 늘 거짓이다. */
   @Column(nullable = false, updatable = false)
   private boolean late;
 
@@ -76,10 +76,15 @@ public class Inspection {
 
   /** 점검 시작. 작성 중에서 시작하고 아직 상대에게 보이지 않는다(06 INSP-1a). */
   public Inspection(
-      UUID roomRecordId, InspectionKind kind, PartySide authorSide, Instant createdAt) {
+      UUID roomRecordId,
+      InspectionKind kind,
+      PartySide authorSide,
+      boolean late,
+      Instant createdAt) {
     this.roomRecordId = Objects.requireNonNull(roomRecordId, "roomRecordId");
     this.kind = Objects.requireNonNull(kind, "kind");
     this.authorSide = Objects.requireNonNull(authorSide, "authorSide");
+    this.late = late;
     this.createdAt = Objects.requireNonNull(createdAt, "createdAt");
     this.status = InspectionStatus.DRAFT;
   }

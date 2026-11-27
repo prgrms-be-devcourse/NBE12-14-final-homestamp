@@ -20,7 +20,8 @@ import java.util.UUID;
  *
  * @param mySide 보는 사람의 측
  * @param authorSide 기준 기록을 쓰는 측(먼저 시작한 측)
- * @param late 입주 후 등록(06 INSP-2a). 표시는 B가 만들어 지금은 늘 거짓이다
+ * @param late 입주 후 등록(06 INSP-2a). 입주일보다 뒤에 시작한 입주 점검이면 참이고, 화면은 시작 날짜({@code createdAt})와 함께 "입주
+ *     당시 상태와 다를 수 있어요"를 붙인다. 퇴거 점검은 늘 거짓이다
  * @param lockedAt 잠긴 시각. 잠기지 않았으면 null
  * @param lockReason 잠긴 이유. 잠기지 않았으면 null
  * @param asOf 공유를 그만둬 보이는 범위를 고정한 시각(03 6-6 9번). 이 시각 뒤 상대가 더한 항목은 빠진다. 고정되지 않았으면 null
