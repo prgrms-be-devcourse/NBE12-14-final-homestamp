@@ -4,6 +4,7 @@ import { createHttpRepairCases } from "./http-repair-cases"
 import { createHttpRecords } from "./http-records"
 import { httpAvailableActions } from "./http-available-actions"
 import { createHttpDownloads } from "./downloads"
+import { createHttpPhotoUploads } from "./photo-uploads"
 import type { HttpRequest } from "./http-client"
 import { listAllRooms, roomFromSummary } from "./http-rooms"
 import type { Notice } from "@/data/demo"
@@ -13,12 +14,14 @@ const toNotices = (body: unknown) => body as Notice[]
 const toRegions = (body: unknown) => body as Region[]
 const toRegionOptions = (body: unknown) => body as RegionOption[]
 export function createHttpApi(request: HttpRequest): HomeStampApi {
+  const photoUploads = createHttpPhotoUploads(request)
   return {
     mode: "http",
-    repairCases: createHttpRepairCases(request),
+    repairCases: createHttpRepairCases(request, photoUploads),
     records: createHttpRecords(request),
     actions: httpAvailableActions,
     downloads: createHttpDownloads(request),
+    photoUploads,
     async listRooms(s) {
       return (await listAllRooms(request)).map((b) =>
         roomFromSummary(b, s.accountId),
