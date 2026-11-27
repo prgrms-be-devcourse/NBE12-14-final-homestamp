@@ -84,11 +84,21 @@ server {
     try_files /index.html =404;
   }
 
-  # 빌드 결과의 해시가 붙은 파일은 오래 캐시한다
+  # 빌드 결과의 해시가 붙은 파일(Vite assets)은 릴리스가 아니라 공용 불변 폴더(/srv/homestamp/front/assets)에서 낸다.
+  # 이전·새 판의 index.html이 부르는 파일이 전환·되돌리기 중에도 같이 있게(deploy-front.sh, 런북 배포-화면.md).
+  # 없는 파일은 404(index.html로 대신 답하지 않음). 이름이 내용 해시라 오래 캐시한다
   location /assets/ {
+    root /srv/homestamp/front;
     include /etc/nginx/snippets/security-headers.conf;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
     add_header Cache-Control "public, max-age=31536000, immutable" always;
+    try_files $uri =404;
+  }
+  # 지금 나가는 판(배포 확인용). 없으면 404(index.html로 대신 답하지 않음), 캐시하지 않는다
+  location = /version.json {
+    include /etc/nginx/snippets/security-headers.conf;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Cache-Control "no-store" always;
     try_files $uri =404;
   }
 

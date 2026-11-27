@@ -44,10 +44,14 @@ cleanup
 # ---------- 준비: 설정 복사, 가짜 화면, ACME 파일, 가짜 앱 ----------
 cp -R "$src" "$work/nginx"
 rm -rf "$work/nginx/run" "$work/nginx/test"
-mkdir -p "$work/le" "$work/webroot/.well-known/acme-challenge" "$work/front/releases/v1/assets"
+mkdir -p "$work/le" "$work/webroot/.well-known/acme-challenge" "$work/front/releases/v1/assets" "$work/front/assets"
 echo "acme-ok" > "$work/webroot/.well-known/acme-challenge/token123"
 echo "<html>homestamp-index</html>" > "$work/front/releases/v1/index.html"
-echo "console.log(1)" > "$work/front/releases/v1/assets/app.js"
+# assets는 공용 폴더(front/assets)에서 나간다. 릴리스 안의 assets/는 내지 않는다(배포-화면.md)
+echo "console.log(1)" > "$work/front/assets/app.js"
+echo "console.log('release-copy')" > "$work/front/releases/v1/assets/only-in-release.js"
+echo '{"revision":"v1"}' > "$work/front/releases/v1/version.json"
+mkdir -p "$work/front/releases/v2" && echo "<html>v2</html>" > "$work/front/releases/v2/index.html"
 ln -s releases/v1 "$work/front/current"
 cat > "$work/nginx/homestamp.env" <<EOF
 DOMAIN=$DOMAIN
@@ -153,6 +157,16 @@ check "화면: index.html" test "$body" = "<html>homestamp-index</html>"
 check "화면: 없는 경로도 index.html(SPA)" test "$(curl "${C[@]}" "https://$DOMAIN:$S/repairs/12")" = "<html>homestamp-index</html>"
 check "화면: /assets 오래 캐시" bash -c "curl ${C[*]} -D - -o /dev/null https://$DOMAIN:$S/assets/app.js | grep -qi 'cache-control: public, max-age=31536000, immutable'"
 check "화면: 없는 /assets 파일은 404" test "$(curl "${C[@]}" -o /dev/null -w '%{http_code}' "https://$DOMAIN:$S/assets/nope.js")" = "404"
+check "화면: /assets는 공용 폴더(릴리스 안의 assets는 안 나감)" test "$(curl "${C[@]}" -o /dev/null -w '%{http_code}' "https://$DOMAIN:$S/assets/only-in-release.js")" = "404"
+check "화면: /assets JS 종류" bash -c "curl ${C[*]} -D - -o /dev/null https://$DOMAIN:$S/assets/app.js | grep -qiE 'content-type: (application|text)/javascript'"
+check "화면: /version.json 내용·JSON" bash -c "test \"\$(curl ${C[*]} https://$DOMAIN:$S/version.json)\" = '{\"revision\":\"v1\"}' && curl ${C[*]} -D - -o /dev/null https://$DOMAIN:$S/version.json | grep -qi '^content-type: application/json'"
+vh="$(curl "${C[@]}" -D - -o /dev/null "https://$DOMAIN:$S/version.json")"
+check "화면: /version.json no-store 한 번, 보안 헤더" bash -c "test \"\$(grep -ci '^cache-control:' <<<'$vh')-\$(grep -ci '^cache-control: no-store' <<<'$vh')\" = 1-1 && grep -qi '^x-content-type-options: nosniff' <<<'$vh'"
+ln -sfn releases/v2 "$work/front/current.tmp" && mv -T "$work/front/current.tmp" "$work/front/current" 2>/dev/null || { rm -f "$work/front/current"; ln -s releases/v2 "$work/front/current"; }
+check "화면: current를 바꾸면 reload 없이 새 판" test "$(curl "${C[@]}" "https://$DOMAIN:$S/")" = "<html>v2</html>"
+check "화면: version.json이 없으면 404(index.html로 대신 답하지 않음)" test "$(curl "${C[@]}" -o /dev/null -w '%{http_code}' "https://$DOMAIN:$S/version.json")" = "404"
+check "화면: 판을 바꿔도 공용 assets 그대로" test "$(curl "${C[@]}" "https://$DOMAIN:$S/assets/app.js")" = "console.log(1)"
+rm -f "$work/front/current" && ln -s releases/v1 "$work/front/current"
 check "막기: /actuator 404" test "$(curl "${C[@]}" -o /dev/null -w '%{http_code}' "https://$DOMAIN:$S/actuator/health")" = "404"
 check "막기: /api/../actuator 우회 안 됨" test "$(curl "${C[@]}" --path-as-is -o /dev/null -w '%{http_code}' "https://$DOMAIN:$S/api/../actuator/health")" = "404"
 check "막기: 점 파일 404" test "$(curl "${C[@]}" -o /dev/null -w '%{http_code}' "https://$DOMAIN:$S/.env")" = "404"
