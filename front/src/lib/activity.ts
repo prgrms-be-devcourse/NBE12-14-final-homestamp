@@ -20,3 +20,22 @@ export const daysSince = (ms?: number) =>
     ? undefined
     : Math.max(1, Math.floor((Date.now() - ms) / DAY) + 1)
 export const moneyLabel = (r: Repair) => r.proposal?.status || "미정"
+// 홈 "오래 멈춘 건"(06 4장 GET /api/me/home "처리 중·보류", REP-6a·6e): 14일(repair.stale-after) 넘게 당사자 행동이 없는
+// 처리 중인 건과 하자가 보충 요청됨(보류)인 건. 종료 확인 대기(closeBy 있음)는 한쪽이 끝냈다고 하고 상대 답을
+// 기다리는 중이라 멈춘 건이 아니에요(수리 목록 "N일째"와 같은 기준). 멈춘 까닭(처리 중 / 보충 요청됨)을 돌려주고, 아니면 undefined
+export function staleReason(
+  r: Repair,
+  events: Event[],
+): "처리 중" | "보충 요청됨" | undefined {
+  const reason =
+    r.status === "처리 완료"
+      ? undefined
+      : r.ack === "보충 요청"
+        ? "보충 요청됨"
+        : r.status === "처리 중" && !r.closeBy
+          ? "처리 중"
+          : undefined
+  return reason && (daysSince(lastActivity(r, events)) ?? 0) > 14
+    ? reason
+    : undefined
+}

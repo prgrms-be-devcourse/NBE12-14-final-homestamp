@@ -87,7 +87,7 @@ public class RepairAgendaHeadStore implements AgendaHeadStore {
   }
 
   /** {@code AgendaStatus} → {@code MoneyStatus}. {@code EXCLUDED}는 정산 항목에만 있어 거절한다. */
-  private static MoneyStatus toMoneyStatus(AgendaStatus status) {
+  public static MoneyStatus toMoneyStatus(AgendaStatus status) {
     return switch (status) {
       case NONE -> MoneyStatus.UNDECIDED;
       case PENDING -> MoneyStatus.PENDING;

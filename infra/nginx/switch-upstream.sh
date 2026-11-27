@@ -10,6 +10,8 @@
 # 환경 변수(로컬 시험에서만 바꾼다)
 #   NGINX_TEST    설정 검사 명령(기본: docker exec homestamp-nginx nginx -t -q)
 #   NGINX_RELOAD  다시 읽기 명령(기본: docker exec homestamp-nginx nginx -s reload)
+#   NGINX_WORKERS 작업 프로세스 PID 목록 명령(기본: homestamp-nginx 안에서 master의 자식 PID)
+#   RELOAD_WAIT   reload 뒤 이전 작업 프로세스가 끝나기를 기다리는 초(기본 45, nginx worker_shutdown_timeout 30초보다 길게)
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -28,6 +30,9 @@ target="${1:?usage: switch-upstream.sh [--write-only] <host:port>}"
   || { echo "host:port 형식이 아닙니다: '$target'" >&2; exit 2; }
 port="${target##*:}"
 (( port >= 1 && port <= 65535 )) || { echo "포트 범위가 아닙니다: $port" >&2; exit 2; }
+# 파일을 바꾸기 전에 검사한다(잘못된 값으로 파일만 바뀐 채 끝나지 않게)
+RELOAD_WAIT="${RELOAD_WAIT:-45}"
+[[ "$RELOAD_WAIT" =~ ^[1-9][0-9]{0,2}$ ]] || { echo "RELOAD_WAIT 형식이 아닙니다" >&2; exit 2; }
 
 mkdir -p "$dir"
 tmp="$(mktemp "$dir/upstream.conf.XXXXXX")"
@@ -55,6 +60,13 @@ mv -f "$tmp" "$conf"
 
 NGINX_TEST="${NGINX_TEST:-docker exec homestamp-nginx nginx -t -q}"
 NGINX_RELOAD="${NGINX_RELOAD:-docker exec homestamp-nginx nginx -s reload}"
+workers() {
+  if [[ -n "${NGINX_WORKERS:-}" ]]; then
+    bash -c "$NGINX_WORKERS"
+  else
+    docker exec homestamp-nginx sh -c 'pgrep -P "$(cat /tmp/nginx.pid)"'
+  fi
+}
 
 restore() {
   if [[ -f "$prev" ]]; then
@@ -68,10 +80,34 @@ if ! $NGINX_TEST; then
   restore
   exit 1
 fi
+# reload는 신호만 보내고 바로 돌아온다. 이전 작업 프로세스는 처리 중인 요청을 마칠 때까지 옛 주소로 답하므로,
+# 그 프로세스가 모두 끝나야 새 연결이 모두 새 주소로 간다(전환 뒤 확인이 이전 앱의 답을 받지 않게)
+if ! old="$(workers)" || [[ -z "$old" ]]; then
+  echo "nginx 작업 프로세스를 읽지 못함: 바꾸지 않음" >&2
+  restore
+  exit 1
+fi
 if ! $NGINX_RELOAD; then
   echo "reload 실패: 이전 설정으로 되돌리고 다시 읽음" >&2
   restore
   $NGINX_RELOAD || true
   exit 1
 fi
+deadline=$((SECONDS + RELOAD_WAIT))
+while :; do
+  if now="$(workers)" && [[ -n "$now" ]]; then
+    left=0
+    for pid in $old; do
+      grep -qx "$pid" <<<"$now" && left=$((left + 1))
+    done
+    ((left == 0)) && break
+  fi
+  if ((SECONDS >= deadline)); then
+    echo "reload가 ${RELOAD_WAIT}초 안에 끝나지 않음: 이전 설정으로 되돌리고 다시 읽음" >&2
+    restore
+    $NGINX_RELOAD || true
+    exit 1
+  fi
+  sleep 0.5
+done
 echo "switched upstream: $target"

@@ -20,8 +20,8 @@ import com.chilsuitjo.back.repair.entity.CauseNote;
 import com.chilsuitjo.back.repair.entity.RepairCase;
 import com.chilsuitjo.back.repair.rule.CauseBasis;
 import com.chilsuitjo.back.repair.rule.CauseNoteState;
+import com.chilsuitjo.back.repair.rule.RepairSight;
 import com.chilsuitjo.back.repair.rule.RepairState;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -109,14 +109,14 @@ public class CauseNoteStateStore {
    * 설명의 마지막 응답. 응답이 없으면 {@code PENDING}이다. {@code visibleTo}가 있으면 그 사람에게 보이는 응답만 본다(공유를 그만둔 뒤 상대가
    * 남긴 응답은 보이지 않음, 03 불변식 18).
    */
-  public AckState lastAnswer(UUID causeNoteId, Visibility visibleTo) {
+  public AckState lastAnswer(UUID causeNoteId, RepairSight visibleTo) {
     return lastResponse(causeNoteId, visibleTo)
         .map(entry -> AckState.valueOf(entry.payloadAs(AnswerPayload.class).answer().name()))
         .orElse(AckState.PENDING);
   }
 
   /** 설명의 마지막 응답 행동. 행동은 {@code room_seq} 순이라 마지막 것이 지금 응답이다. */
-  public Optional<ActionEntry> lastResponse(UUID causeNoteId, Visibility visibleTo) {
+  public Optional<ActionEntry> lastResponse(UUID causeNoteId, RepairSight visibleTo) {
     ActionEntry last = null;
     for (ActionEntry entry : actions.findByTarget(target(causeNoteId))) {
       if (entry.type() == ActionType.RESPOND_CAUSE
@@ -127,22 +127,9 @@ public class CauseNoteStateStore {
     return Optional.ofNullable(last);
   }
 
-  /**
-   * 보는 사람에게 보이는 범위(03 6-6 9번, 불변식 18). 공유를 그만둔 시각이 있으면 그 시각까지의 기록과 보는 사람 자신의 기록만 보인다.
-   *
-   * @param viewer 보는 사람의 측
-   * @param cutoff 보이는 범위를 고정한 시각. 없으면 null(모두 보임)
-   */
-  public record Visibility(PartySide viewer, Instant cutoff) {
-
-    public boolean sees(PartySide side, Instant at) {
-      return cutoff == null || side == viewer || !at.isAfter(cutoff);
-    }
-  }
-
-  /** 이 사람에게 보이는 범위. 수리 건 상세와 같은 기준이다({@code RepairStateStore.sharingCutoff}). */
-  public Visibility visibilityFor(RepairCase row, PartySide viewer) {
-    return new Visibility(viewer, repairs.sharingCutoff(row, viewer).orElse(null));
+  /** 이 사람에게 보이는 범위. 수리 건 상세와 같은 기준이다({@code RepairStateStore.sightFor}). */
+  public RepairSight visibilityFor(RepairCase row, PartySide viewer) {
+    return repairs.sightFor(row, viewer);
   }
 
   private RepairCase caseRow(UUID repairCaseId, UUID roomRecordId) {
