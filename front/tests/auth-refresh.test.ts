@@ -221,6 +221,163 @@ describe("일반 API 401 → 재발급 후 다시 요청", () => {
   })
 })
 
+// 로그아웃·계정 전환 전후의 요청과 재발급 결과가 섞이지 않아야 해요(#331 리뷰).
+// A 계정(토큰 A1)으로 보낸 요청·재발급이 끝나기 전에 로그아웃하고 B 계정(토큰 B1)으로 로그인한 경우예요.
+describe("로그아웃·계정 전환과 겹친 401", () => {
+  const ME_B = {
+    id: "member-b",
+    email: "b@example.com",
+    displayName: "B",
+    phone: null,
+    smsEnabled: true,
+  }
+  const accountRoutes = {
+    "POST /api/auth/logout": () => new Response(null, { status: 204 }),
+    "POST /api/auth/login": json({ accessToken: "B1" }),
+    "GET /api/me": json(ME_B),
+  }
+  const count = (calls: { key: string }[], key: string) =>
+    keys(calls).filter((k) => k === key).length
+  // 실제 화면처럼 로그아웃한 뒤 B로 로그인해요
+  async function switchToB(session: ReturnType<typeof setup>["session"]) {
+    const auth = createHttpAuth(session)
+    await auth.logout()
+    await auth.login("b@example.com", "pw")
+    expect(session.token.get()).toBe("B1")
+  }
+
+  it("A로 보낸 요청의 401이 B 로그인 뒤 도착하면 A의 본문·키를 B 토큰으로 다시 보내지 않는다", async () => {
+    const first = deferred()
+    const calls = fakeServer({
+      ...accountRoutes,
+      "POST /api/rooms": first.reply,
+      "POST /api/auth/refresh": json({ accessToken: "X" }),
+    })
+    const { session, request, ended } = setup()
+
+    const pending = request("POST", "/api/rooms", {
+      body: { name: "A의 호실" },
+    })
+    await vi.waitFor(() => expect(count(calls, "POST /api/rooms")).toBe(1))
+    await switchToB(session)
+    first.resolve(expired())
+
+    await expect(pending).rejects.toMatchObject({ code: "LOGIN_REQUIRED" })
+    expect(count(calls, "POST /api/rooms")).toBe(1)
+    expect(count(calls, "POST /api/auth/refresh")).toBe(0)
+    expect(session.token.get()).toBe("B1")
+    expect(ended).toEqual([])
+  })
+
+  it("A의 재발급 응답이 B 로그인 뒤 도착하면 버리고 B 토큰을 덮어쓰지 않는다", async () => {
+    const refreshA = deferred()
+    const calls = fakeServer({
+      ...accountRoutes,
+      "POST /api/rooms": expired,
+      "POST /api/auth/refresh": refreshA.reply,
+    })
+    const { session, request, ended } = setup()
+
+    const pending = request("POST", "/api/rooms", {
+      body: { name: "A의 호실" },
+    })
+    await vi.waitFor(() =>
+      expect(count(calls, "POST /api/auth/refresh")).toBe(1),
+    )
+    await switchToB(session)
+    refreshA.resolve(json({ accessToken: "A2" })())
+
+    await expect(pending).rejects.toMatchObject({ code: "LOGIN_REQUIRED" })
+    expect(session.token.get()).toBe("B1")
+    // A의 요청은 다시 보내지 않아요
+    expect(count(calls, "POST /api/rooms")).toBe(1)
+    expect(ended).toEqual([])
+  })
+
+  it("A의 재발급 응답이 로그아웃 뒤 도착해도 토큰을 되살리지 않는다", async () => {
+    const refreshA = deferred()
+    const calls = fakeServer({
+      ...accountRoutes,
+      "GET /api/rooms": expired,
+      "POST /api/auth/refresh": refreshA.reply,
+    })
+    const { session, request } = setup()
+
+    const pending = request("GET", "/api/rooms")
+    await vi.waitFor(() =>
+      expect(count(calls, "POST /api/auth/refresh")).toBe(1),
+    )
+    await createHttpAuth(session).logout()
+    refreshA.resolve(json({ accessToken: "A2" })())
+
+    await expect(pending).rejects.toMatchObject({ code: "LOGIN_REQUIRED" })
+    expect(session.token.get()).toBeUndefined()
+  })
+
+  it("B의 401은 진행 중인 A의 재발급을 함께 기다리지 않고 B의 재발급을 따로 보낸다", async () => {
+    const refreshA = deferred()
+    const calls = fakeServer({
+      ...accountRoutes,
+      "GET /api/rooms": [expired, expired, json(ROOMS)],
+      "POST /api/auth/refresh": [refreshA.reply, json({ accessToken: "B2" })],
+    })
+    const { session, request } = setup()
+
+    const fromA = request("GET", "/api/rooms")
+    await vi.waitFor(() =>
+      expect(count(calls, "POST /api/auth/refresh")).toBe(1),
+    )
+    await switchToB(session)
+    await expect(request("GET", "/api/rooms")).resolves.toEqual(ROOMS)
+    expect(calls.at(-1)?.headers.Authorization).toBe("Bearer B2")
+    // A의 재발급이 늦게 와도 B2를 덮어쓰지 않아요
+    refreshA.resolve(json({ accessToken: "A2" })())
+    await expect(fromA).rejects.toMatchObject({ code: "LOGIN_REQUIRED" })
+    expect(count(calls, "POST /api/auth/refresh")).toBe(2)
+    expect(session.token.get()).toBe("B2")
+  })
+
+  it("A의 재발급이 B 로그인 뒤 REFRESH_REUSED로 끝나도 B 세션은 끝내지 않는다", async () => {
+    const refreshA = deferred()
+    const calls = fakeServer({
+      ...accountRoutes,
+      "GET /api/rooms": expired,
+      "POST /api/auth/refresh": refreshA.reply,
+    })
+    const { session, request, ended } = setup()
+
+    const pending = request("GET", "/api/rooms")
+    await vi.waitFor(() =>
+      expect(count(calls, "POST /api/auth/refresh")).toBe(1),
+    )
+    await switchToB(session)
+    refreshA.resolve(problem(401, "REFRESH_REUSED")())
+
+    await expect(pending).rejects.toMatchObject({ code: "REFRESH_REUSED" })
+    expect(session.token.get()).toBe("B1")
+    expect(ended).toEqual([])
+  })
+
+  it("A의 다시 보낸 요청이 B 로그인 뒤 401로 와도 B 세션은 끝내지 않는다", async () => {
+    const retryA = deferred()
+    const calls = fakeServer({
+      ...accountRoutes,
+      "GET /api/rooms": [expired, retryA.reply],
+      "POST /api/auth/refresh": json({ accessToken: "A2" }),
+    })
+    const { session, request, ended } = setup()
+
+    const pending = request("GET", "/api/rooms")
+    await vi.waitFor(() => expect(count(calls, "GET /api/rooms")).toBe(2))
+    await switchToB(session)
+    retryA.resolve(expired())
+
+    await expect(pending).rejects.toMatchObject({ code: "LOGIN_REQUIRED" })
+    expect(session.token.get()).toBe("B1")
+    expect(ended).toEqual([])
+  })
+})
+
 describe("재발급 실패", () => {
   it.each(["LOGIN_REQUIRED", "REFRESH_REUSED"])(
     "재발급이 %s면 토큰을 지우고 세션 끝을 알리며, 원래 요청은 그 오류로 실패한다",

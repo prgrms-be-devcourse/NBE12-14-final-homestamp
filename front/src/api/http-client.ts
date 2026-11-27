@@ -11,8 +11,11 @@ export interface HttpClientOptions {
   // 액세스 토큰이 만료돼(auth.access.ttl 15분) 401 LOGIN_REQUIRED가 오면 부르는 재발급(ACC-2).
   // 새 토큰을 받으면 원래 요청을 한 번만 다시 보내요. 재발급이 실패하면 그 오류를 그대로 던져요.
   refresh?: () => Promise<void>
-  // 재발급한 토큰으로 다시 보낸 요청도 401 LOGIN_REQUIRED면(탈퇴한 회원의 남은 토큰 등) 부르는 세션 끝
-  endSession?: (e: ApiError) => void
+  // 지금 로그인 세션의 번호. 로그인·로그아웃마다 바뀌고 재발급으로는 바뀌지 않아요.
+  // 요청을 보낸 세션과 지금 세션이 다르면(로그아웃·계정 전환) 재발급·재시도를 하지 않아요.
+  getSession?: () => number
+  // 재발급한 토큰으로 다시 보낸 요청도 401 LOGIN_REQUIRED면(탈퇴한 회원의 남은 토큰 등) 그 요청의 세션을 끝내요
+  endSession?: (e: ApiError, session: number) => void
 }
 // 액세스 토큰이 없거나 맞지 않아 거절된 401(06 4-10 LOGIN_REQUIRED)
 const isLoginRequired = (e: ApiError) =>
@@ -42,6 +45,7 @@ export function createHttpClient({
   getToken,
   allow = isConnected,
   refresh,
+  getSession = () => 0,
   endSession,
 }: HttpClientOptions) {
   return async function request<T>(
@@ -74,6 +78,8 @@ export function createHttpClient({
         throw networkError()
       }
     }
+    // 이 요청을 보낸 세션. 재시도는 이 세션 안에서만 해요
+    const session = getSession()
     const token = getToken?.()
     let res = await send(token)
     if (!res.ok) {
@@ -82,13 +88,17 @@ export function createHttpClient({
       const expired =
         refresh && token && path !== endpoints.refresh && isLoginRequired(error)
       if (!expired) throw error
-      // 이 요청이 기다리는 사이 다른 요청이 이미 재발급했으면(토큰이 바뀜) 다시 재발급하지 않아요
+      // 응답을 기다리는 사이 로그아웃·다른 계정 로그인이 있었으면, 이전 계정의 요청을 새 토큰으로 보내지 않아요
+      if (getSession() !== session) throw error
+      // 같은 세션에서 다른 요청이 이미 재발급했으면(토큰이 바뀜) 다시 재발급하지 않아요
       if (getToken?.() === token) await refresh()
+      // 재발급을 기다리는 사이 세션이 바뀌었어도 다시 보내지 않아요
+      if (getSession() !== session) throw error
       res = await send(getToken?.())
       if (!res.ok) {
         const again = await toApiError(res)
         // 새 토큰으로도 로그인이 필요하다면 이어 갈 수 없는 세션이라 끝내요(재발급을 되풀이하지 않아요)
-        if (isLoginRequired(again)) endSession?.(again)
+        if (isLoginRequired(again)) endSession?.(again, session)
         throw again
       }
     }

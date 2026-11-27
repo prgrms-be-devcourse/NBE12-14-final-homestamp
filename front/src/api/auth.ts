@@ -10,12 +10,17 @@ import { createHttpClient, type HttpRequest } from "./http-client"
 
 /* ── 로그인 세션: 액세스 토큰과 재발급 ──
    액세스 토큰은 메모리에만 둡니다(04 4-1: 리프레시는 HttpOnly 쿠키). 계정 요청(createHttpAuth)과
-   기록 요청(createHttpApi)이 같은 세션의 request를 써서, 401이면 함께 하나의 재발급을 기다려요(04 4-1 "동시 재발급"). */
+   기록 요청(createHttpApi)이 같은 세션의 request를 써서, 401이면 함께 하나의 재발급을 기다려요(04 4-1 "동시 재발급").
+   로그인 세션마다 번호를 붙여요. 로그인·로그아웃·세션 끝(token.set·end)마다 번호가 바뀌고, 재발급은 같은 세션이라 그대로예요.
+   요청의 재시도와 재발급 결과는 시작한 세션이 아직 지금 세션일 때만 적용해, 로그아웃·계정 전환 전후의
+   요청·토큰이 섞이지 않게 해요(#331 리뷰). */
 const isUnauthorized = (e: unknown) => e instanceof ApiError && e.status === 401
 export interface Session {
   request: HttpRequest
+  // set은 새 로그인 세션을 시작해요(로그인한 토큰, 또는 로그아웃의 undefined)
   token: { get: () => string | undefined; set: (t?: string) => void }
-  // 재발급(ACC-2). 겹쳐 불러도 서버로는 한 번만 보내요(리프레시 토큰은 한 번 쓰면 바뀌어요).
+  // 재발급(ACC-2). 같은 세션에서 겹쳐 불러도 서버로는 한 번만 보내요(리프레시 토큰은 한 번 쓰면 바뀌어요).
+  // 기다리는 사이 세션이 바뀌면 받은 토큰은 버려요.
   refresh(): Promise<void>
   // 쓰던 세션이 끝났을 때 알려요: 재발급이 LOGIN_REQUIRED·REFRESH_REUSED이거나,
   // 재발급한 토큰으로 다시 보낸 요청도 LOGIN_REQUIRED일 때. 돌려준 함수로 그만 들어요.
@@ -23,39 +28,53 @@ export interface Session {
 }
 export function createSession(baseUrl: string): Session {
   let accessToken: string | undefined
-  let refreshing: Promise<void> | undefined
+  let current = 0
+  // 진행 중인 재발급과 그것을 시작한 세션
+  let refreshing: { session: number; done: Promise<void> } | undefined
   const listeners = new Set<(e: ApiError) => void>()
   const token = {
     get: () => accessToken,
-    set: (t?: string) => void (accessToken = t),
+    set: (t?: string) => {
+      current++
+      accessToken = t
+    },
   }
+  // 그 세션이 아직 지금 세션일 때만 끝내요(이미 로그아웃·다른 계정으로 바뀌었으면 건드리지 않아요).
   // 토큰을 지우고, 로그인한 채 쓰다가 끝났을 때만 알려요(새로고침 뒤 처음 복원할 때는 원래 로그인 전이에요).
-  // 동시 요청이 함께 끝내도 토큰은 처음에만 있어서 한 번만 알려요.
-  const end = (e: ApiError) => {
+  // 동시 요청이 함께 끝내도 첫 번째가 세션을 바꿔서 한 번만 알려요.
+  const end = (e: ApiError, session: number) => {
+    if (session !== current) return
     const had = accessToken !== undefined
-    accessToken = undefined
+    token.set(undefined)
     if (had) listeners.forEach((l) => l(e))
   }
-  const refresh = () =>
-    (refreshing ??= (async () => {
+  const refresh = () => {
+    if (refreshing?.session === current) return refreshing.done
+    const session = current
+    const done = (async () => {
       try {
         const r = await request<{ accessToken: string }>(
           "POST",
           endpoints.refresh,
           { idempotent: false },
         )
-        accessToken = r.accessToken
+        // 기다리는 사이 로그아웃·다른 계정 로그인이 있었으면 이전 세션의 토큰이라 버려요
+        if (session === current) accessToken = r.accessToken
       } catch (e) {
         // 쿠키가 없거나 폐기됐으면 이미 끝난 세션이라 토큰을 지워요. 연결 오류·서버 오류는 토큰을 남겨 다시 시도할 수 있게 해요.
-        if (isUnauthorized(e)) end(e as ApiError)
+        if (isUnauthorized(e)) end(e as ApiError, session)
         throw e
       } finally {
-        refreshing = undefined
+        if (refreshing?.session === session) refreshing = undefined
       }
-    })())
+    })()
+    refreshing = { session, done }
+    return done
+  }
   const request = createHttpClient({
     baseUrl,
     getToken: token.get,
+    getSession: () => current,
     refresh,
     endSession: end,
   })
