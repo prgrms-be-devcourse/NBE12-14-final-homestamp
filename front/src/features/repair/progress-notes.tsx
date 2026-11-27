@@ -3,6 +3,8 @@ import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Choice, Panel } from "@/components/common/blocks"
 import { ActionDialog } from "@/components/common/action-dialog"
+import { PhotoField } from "@/components/common/photo-field"
+import { PhotoGallery } from "@/features/photo/photo-gallery"
 import type { ProgressNote, Repair, Role } from "@/data/demo"
 import { recordDate } from "@/api/http-repair-view"
 import { sideName } from "@/lib/words"
@@ -30,10 +32,17 @@ function NoteView({
         <span className="muted mr-2">{dateOf(n.at)}</span>
         <strong className="mr-2">{sideName(n.by)}</strong>
         {n.text || <span className="muted">사진만 남김</span>}
-        {n.photoCount > 0 && (
-          <span className="muted ml-2">[사진 {n.photoCount}]</span>
+        {n.photos.length > 0 && (
+          <span className="muted ml-2">[사진 {n.photos.length}]</span>
         )}
       </p>
+      {n.photos.length > 0 && (
+        <PhotoGallery
+          title={`진행 상황 · ${dateOf(n.at)}`}
+          photos={n.photos}
+          layout="compact"
+        />
+      )}
       {n.asksCheck && !n.response && (
         <p className="muted text-sm">
           {sideName(n.by === "임차인" ? "임대인" : "임차인")} 확인 기다림 ·
@@ -70,6 +79,8 @@ export function ProgressNotes({
   const [noteId, setNoteId] = useState("")
   const [answer, setAnswer] = useState<NotYetAnswer>("보류")
   const [asksCheck, setAsksCheck] = useState(false)
+  const [photos, setPhotos] = useState<string[]>([])
+  const [photoError, setPhotoError] = useState("")
   const [error, setError] = useState("")
   const notes = repair.progressNotes || []
   const counterpart = sideName(role === "임차인" ? "임대인" : "임차인")
@@ -129,6 +140,8 @@ export function ProgressNotes({
               variant="outline"
               onClick={() => {
                 setAsksCheck(false)
+                setPhotos([])
+                setPhotoError("")
                 setError("")
                 setMode("write")
               }}
@@ -161,11 +174,13 @@ export function ProgressNotes({
         onClose={() => setMode(null)}
         onSubmit={(f) => {
           const text = String(f.get("text") || "").trim()
-          if (!text) return "진행 상황을 입력해 주세요."
+          // 글이나 사진 하나 이상(06 4-6 EVIDENCE_REQUIRED)
+          if (!text && !photos.length)
+            return "지금 상황을 쓰거나 사진을 골라 주세요."
           return exec((api, sess) =>
             api.addProgressNote(sess, repair.id, {
               text,
-              photos: [],
+              photos: [...photos],
               asksCheck,
             }),
           )
@@ -178,9 +193,20 @@ export function ProgressNotes({
             name="text"
             maxLength={2000}
             placeholder="예: 업체가 수요일에 와요"
-            required
           />
         </div>
+        <PhotoField
+          label="사진"
+          required={false}
+          photos={photos}
+          onChange={setPhotos}
+          onError={setPhotoError}
+        />
+        {photoError && (
+          <p role="alert" className="form-error">
+            {photoError}
+          </p>
+        )}
         {/* 하자를 둘 다 확인한 건에서만 확인을 요청할 수 있어요(REP-6d). 한 건에 7일에 한 번 */}
         {repair.ack === "확인됨" && (
           <label className="flex items-start gap-2 text-sm">

@@ -66,8 +66,8 @@ export interface ProgressNote {
   // [상황이 바뀌었어요]를 켜서 상대에게 확인을 요청했는지(REP-6d)
   asksCheck: boolean
   at: string
-  // 진행 상황 사진 수(사진 보기는 사진 연결 뒤)
-  photoCount: number
+  // 진행 상황 사진(단계 PROGRESS). 화면은 썸네일 주소나 정해진 표시예요
+  photos: string[]
   // 상대의 지금 답. [상황이 바뀌었어요]가 아니거나 답 전이면 없어요
   response?: {
     by: Role

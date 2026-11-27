@@ -1161,7 +1161,7 @@ export function addProgressNote(
       text: note.text.trim(),
       asksCheck: note.asksCheck,
       at: new Date().toISOString(),
-      photoCount: note.photos.length,
+      photos: [...note.photos],
     },
   ]
 }

@@ -10,6 +10,7 @@ import {
 } from "../src/api/http-repair-view"
 import type { Repair } from "../src/data/demo"
 import { ProgressNotes } from "../src/features/repair/progress-notes"
+import { UNAVAILABLE_PHOTO } from "../src/lib/photos"
 
 // 진행 상황(06 4-6 progressNotes·ask-progress·progress-notes, REP-6, #367)
 const note = (patch: Record<string, unknown> = {}) => ({
@@ -52,10 +53,29 @@ const body = (progressNotes: unknown[]): RepairCaseDetailBody =>
   }) as unknown as RepairCaseDetailBody
 
 describe("상세의 진행 상황 → 화면 모델", () => {
-  test("남긴 측·글·사진 수를 옮기고, 답은 남긴 측의 상대가 한 것으로 보인다", () => {
+  test("남긴 측·글·사진(정렬 순, 주소 없으면 정해진 표시)을 옮기고, 답은 남긴 측의 상대가 한 것으로 보인다", () => {
     const { repair } = repairFromDetail(
       body([
-        note({ photos: [{}, {}] }),
+        note({
+          photos: [
+            {
+              id: "p2",
+              stage: "PROGRESS",
+              uploadedBy: "TENANT",
+              sortOrder: 1,
+              createdAt: "",
+              erased: null,
+            },
+            {
+              id: "p1",
+              stage: "PROGRESS",
+              uploadedBy: "TENANT",
+              sortOrder: 0,
+              createdAt: "",
+              erased: null,
+            },
+          ],
+        }),
         note({
           id: "n2",
           asksCheck: true,
@@ -67,6 +87,7 @@ describe("상세의 진행 상황 → 화면 모델", () => {
           canRespond: true,
         }),
       ]),
+      new Map([["p1", "https://s3/p1"]]),
     )
     expect(repair.progressNotes).toEqual([
       {
@@ -75,7 +96,7 @@ describe("상세의 진행 상황 → 화면 모델", () => {
         text: "업체가 수요일에 와요",
         asksCheck: false,
         at: "2026-11-20T03:00:00Z",
-        photoCount: 2,
+        photos: ["https://s3/p1", UNAVAILABLE_PHOTO],
         canRespond: false,
       },
       {
@@ -84,7 +105,7 @@ describe("상세의 진행 상황 → 화면 모델", () => {
         text: "업체가 수요일에 와요",
         asksCheck: true,
         at: "2026-11-20T03:00:00Z",
-        photoCount: 0,
+        photos: [],
         response: {
           by: "임대인",
           answer: "보류",
@@ -148,16 +169,29 @@ describe("진행 상황 요청은 06 4-6 모양으로 보낸다", () => {
     ])
   })
 
-  test("사진을 고르면 업로드 표 연결 전이라 보내지 않는다", async () => {
-    const { sent, api } = fake()
-    await expect(
-      api.addProgressNote(s, "c1", {
-        text: "",
-        photos: ["data:"],
-        asksCheck: false,
-      }),
-    ).rejects.toMatchObject({ code: "NOT_CONNECTED" })
-    expect(sent).toEqual([])
+  test("사진을 고르면 올린 뒤 업로드 표를 함께 보낸다(#371)", async () => {
+    const sent: { method: string; path: string; body?: unknown }[] = []
+    const request = (async (m: string, p: string, o?: { body?: unknown }) => {
+      sent.push({ method: m, path: p, body: o?.body })
+      return m === "GET" ? body([]) : undefined
+    }) as unknown as HttpRequest
+    const uploads: { roomId: string; photos: readonly string[] }[] = []
+    const api = createHttpRepairCases(request, {
+      upload: async (roomId, photos) => {
+        uploads.push({ roomId, photos })
+        return ["t0"]
+      },
+    })
+    await api.addProgressNote(s, "c1", {
+      text: "",
+      photos: ["data:"],
+      asksCheck: false,
+    })
+    expect(uploads).toEqual([{ roomId: "r1", photos: ["data:"] }])
+    expect(sent.find((x) => x.method === "POST")).toMatchObject({
+      path: endpoints.repairAction("c1", "progress-notes"),
+      body: { text: "", uploadTickets: ["t0"], asksCheck: false },
+    })
   })
 
   test("세 API는 서버로 보내는 목록에 있다", () => {
@@ -199,7 +233,7 @@ describe("진행 상황 화면(08 5-2)", () => {
             text: "구멍이 커졌어요",
             asksCheck: true,
             at: "2026-11-20T03:00:00Z",
-            photoCount: 1,
+            photos: ["https://s3/p1"],
             canRespond: true,
           },
           {
@@ -208,7 +242,7 @@ describe("진행 상황 화면(08 5-2)", () => {
             text: "업체가 와요",
             asksCheck: false,
             at: "2026-11-21T03:00:00Z",
-            photoCount: 0,
+            photos: [],
             canRespond: false,
           },
         ],
