@@ -120,7 +120,7 @@ nginx가 죽어도 앱 컨테이너는 그대로다. `docker compose --env-file 
 - 1~4 중 하나라도 실패하면 5를 부르지 않는다. **앞 단계에서 적용된 DB 변경(Migration)은 되돌리지 않는다**(스키마는 이전 앱과도 맞게, 04 8장)
 - 앱 포트는 blue `127.0.0.1:8081`·green `127.0.0.1:8082`다(관리 포트 9091·9092와 짝, decisions 2026-11-25). #205 배포 스크립트가 확정한다(#205가 먼저 들어가면 "확정(#205)"으로 고친다)
 - `switch-upstream.sh` 계약: 인자 `<host:port>` 하나(`--write-only`는 첫 설치용), 종료 0 성공·1 검사나 reload 실패(이전 주소로 되돌림, 처음이라 이전 파일이 없으면 되돌릴 것 없이 1)·2 주소 형식 오류(파일을 바꾸지 않음, 인자가 없으면 1). 지금 앱은 `run/upstream/upstream.conf`의 `server` 줄로 판단한다. 헬스는 다시 보지 않는다
-- 화면(React)은 배포 스크립트가 `/srv/homestamp/front/releases/<버전>`에 풀고 `current` 링크만 바꾼다. nginx reload는 필요 없다. **아직 이 단계를 맡은 곳이 없다**(#205 `deploy.sh`·#206 `deploy.yml`에 프론트 빌드·풀기가 없음). 첫 배포 전에 #205·#206 쪽에서 맡을 곳을 정한다(후속)
+- 화면(React)은 배포 스크립트가 `/srv/homestamp/front/releases/<버전>`에 풀고 `current` 링크만 바꾼다. nginx reload는 필요 없다. **아직 이 단계를 맡은 곳이 없다**(#205 `deploy.sh`·#206 `deploy.yml`에 프론트 빌드·풀기가 없음). 프론트는 백엔드와 따로 정적 파일 이미지(GHCR)로 발행하고 전용 배포 스크립트가 이 경로에 푸는 방식으로 정했고, 후속 PR `feat/common/front-image`·`feat/common/front-deploy`가 맡는다. 그 전에는 사용자 공개 배포를 하지 않는다
 - 요청 제한(04 3-2 `limit_req`: 로그인·인증 문자·링크 조회)은 이 PR에 넣지 않았다. 경로와 기준을 정하는 후속 작업으로 둔다. 로그인·인증 문자의 횟수 제한은 앱이 따로 한다(`RATE_LIMITED`·`DAILY_LIMIT`). 링크 조회의 IP 제한이 비어 있다
 
 ## 8. HSTS 켜기 (HTTPS가 잘 도는 것을 확인한 뒤)

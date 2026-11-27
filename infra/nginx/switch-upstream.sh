@@ -4,8 +4,8 @@
 #         switch-upstream.sh --write-only <host:port>  파일만 만든다(render.sh의 첫 설치용)
 #
 # 부르는 쪽(배포 스크립트)의 약속: --migrate·--apply-grants가 둘 다 0으로 끝나고, 새 앱의 헬스 체크가
-# 통과한 뒤에만 부른다. 이 스크립트는 헬스를 다시 보지 않는다. 0이 아니면 배포 스크립트는 새 앱을 지우고
-# 이전 앱을 그대로 둔다. DB 변경(앞 단계 Migration)은 되돌리지 않는다.
+# 통과한 뒤에만 부른다. 이 스크립트는 헬스를 다시 보지 않는다. 0이 아니면 배포 스크립트는 새 앱을 멈추고
+# 남긴 채(지우는 것은 다음 배포) 이전 앱을 그대로 둔다. DB 변경(앞 단계 Migration)은 되돌리지 않는다.
 #
 # 환경 변수(로컬 시험에서만 바꾼다)
 #   NGINX_TEST    설정 검사 명령(기본: docker exec homestamp-nginx nginx -t -q)
