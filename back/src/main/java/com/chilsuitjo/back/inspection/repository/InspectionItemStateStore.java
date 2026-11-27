@@ -270,21 +270,15 @@ public class InspectionItemStateStore {
    *
    * <p>입주 점검만 잠근다(#326 범위). 퇴거 점검은 거주 종료와 따로 잠기는 규칙(03 H "퇴거 점검")과 함께 후속에서 연결한다.
    *
-   * @param noItemsNow 이 단계가 기준 측이 아닌 쪽의 "하자 기록 없음" 확인인가(그 행동은 이 단계 뒤에 기록되어 아직 읽히지 않는다)
+   * @param noItemsConfirmed 이 단계가 기준 측이 아닌 쪽의 "하자 기록 없음" 확인인가. 항목이 하나도 없을 때만 판단에 쓰이고, 항목 없는 점검에 오는
+   *     저장은 그 확인({@code ConfirmingAll})뿐이라 이전 기록을 다시 읽지 않는다(그 행동은 이 단계 뒤에 기록되어 아직 읽히지도 않는다)
    */
-  private void lockIfSettled(UUID roomRecordId, UUID inspectionId, boolean noItemsNow) {
+  private void lockIfSettled(UUID roomRecordId, UUID inspectionId, boolean noItemsConfirmed) {
     Inspection parent = inspection(roomRecordId, inspectionId);
     if (parent.getKind() != InspectionKind.MOVE_IN) {
       return;
     }
     List<InspectionItem> all = items.findByInspectionIdOrderByIdAsc(inspectionId);
-    boolean noItemsConfirmed =
-        noItemsNow
-            || actions.findByTarget(ActionTarget.inspection(inspectionId)).stream()
-                .anyMatch(e ->
-                    e.type() == ActionType.CONFIRM_ALL
-                        && e.actorSide() != null
-                        && e.actorSide() != parent.getAuthorSide());
     Optional<LockReason> reason =
         InspectionLock.decide(
             parent.getStatus(),
