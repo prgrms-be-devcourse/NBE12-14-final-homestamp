@@ -6,7 +6,12 @@ import com.chilsuitjo.back.room.dto.RoomPartSummary;
 import com.chilsuitjo.back.room.dto.RoomPartView;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 
@@ -52,5 +57,32 @@ public class JpaRoomQueryService implements RoomQueryService {
     }
     Object[] row = rows.getFirst();
     return new RoomPartSummary((String) row[0], (Boolean) row[1], (Boolean) row[2]);
+  }
+
+  @Override
+  public Map<UUID, RoomPartSummary> findParts(UUID roomRecordId, Collection<UUID> roomPartIds) {
+    Set<UUID> wanted = new HashSet<>(roomPartIds);
+    if (wanted.isEmpty()) {
+      return Map.of();
+    }
+    @SuppressWarnings("unchecked")
+    List<Object[]> rows =
+        entityManager
+            .createNativeQuery(
+                "SELECT id, name, hidden_at IS NOT NULL, enabled FROM state.room_part"
+                    + " WHERE id IN (:parts) AND room_record_id = :room")
+            .setParameter("parts", wanted)
+            .setParameter("room", roomRecordId)
+            .getResultList();
+    if (rows.size() != wanted.size()) {
+      // 없는 부위와 다른 호실의 부위를 구별하지 않는다(ROOM-2a, findPart와 같음)
+      throw new BusinessException(ErrorCode.NOT_FOUND);
+    }
+    Map<UUID, RoomPartSummary> parts = new HashMap<>();
+    for (Object[] row : rows) {
+      parts.put(
+          (UUID) row[0], new RoomPartSummary((String) row[1], (Boolean) row[2], (Boolean) row[3]));
+    }
+    return parts;
   }
 }

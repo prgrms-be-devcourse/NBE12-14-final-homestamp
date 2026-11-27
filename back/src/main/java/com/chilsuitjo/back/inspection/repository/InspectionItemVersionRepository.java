@@ -1,6 +1,7 @@
 package com.chilsuitjo.back.inspection.repository;
 
 import com.chilsuitjo.back.inspection.entity.InspectionItemVersion;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -13,6 +14,10 @@ public interface InspectionItemVersionRepository
   /** 한 항목의 그 번호 판. 응답할 때 본 판의 내용 지문에 쓴다(안내서 3-3). */
   Optional<InspectionItemVersion> findByInspectionItemIdAndNo(UUID inspectionItemId, int no);
 
-  /** 한 항목의 모든 판(번호 순). 공유 중단 기준 시각까지의 판을 고를 때 쓴다(불변식 18, {@code InspectionSight.itemVersion}). */
-  List<InspectionItemVersion> findByInspectionItemIdOrderByNoAsc(UUID inspectionItemId);
+  /**
+   * 이 항목들의 모든 판(항목·번호 순). 보이는 판을 항목마다 따로 읽지 않고 한 번에 고른다(불변식 18, {@code InspectionSight.items}, #397
+   * 리뷰).
+   */
+  List<InspectionItemVersion> findByInspectionItemIdInOrderByInspectionItemIdAscNoAsc(
+      Collection<UUID> inspectionItemIds);
 }
