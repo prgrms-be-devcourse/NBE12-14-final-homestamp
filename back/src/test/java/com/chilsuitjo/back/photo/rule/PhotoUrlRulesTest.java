@@ -75,4 +75,42 @@ class PhotoUrlRulesTest {
             () -> PhotoUrlRules.forMember(PhotoVariant.THUMB, NOW, MEMBER, SHORT, credentials))
         .isInstanceOf(IllegalStateException.class);
   }
+
+  // ---- 링크 열람자 ----
+
+  @Test
+  void 링크_열람자_주소는_정각이_아니라_지금_서명해_5분에_끝나고_저장하지_않게_한다() {
+    UrlPlan plan = PhotoUrlRules.forLink(NOW, SHORT, null);
+
+    assertThat(plan.signedAt()).isEqualTo(Instant.parse("2026-11-26T03:17:42Z"));
+    assertThat(plan.expiresAt()).isEqualTo(Instant.parse("2026-11-26T03:22:42Z"));
+    assertThat(plan.cacheControl()).isEqualTo("no-store");
+  }
+
+  @Test
+  void 링크_열람자_주소는_요청마다_달라진다() {
+    UrlPlan first = PhotoUrlRules.forLink(NOW, SHORT, null);
+    UrlPlan later = PhotoUrlRules.forLink(NOW.plusSeconds(1), SHORT, null);
+
+    assertThat(later.signedAt()).isAfter(first.signedAt());
+    assertThat(later.expiresAt()).isAfter(first.expiresAt());
+  }
+
+  @Test
+  void 링크_열람자_주소도_자격_증명_만료_빼기_10분을_넘지_않는다() {
+    Instant credentials = NOW.plus(Duration.ofMinutes(13));
+
+    UrlPlan plan = PhotoUrlRules.forLink(NOW, SHORT, credentials);
+
+    assertThat(plan.expiresAt()).isEqualTo(Instant.parse("2026-11-26T03:20:42Z"));
+    assertThat(plan.cacheControl()).isEqualTo("no-store");
+  }
+
+  @Test
+  void 자격_증명이_10분_안에_끝나면_링크_열람자_주소도_만들지_않는다() {
+    Instant credentials = NOW.plus(Duration.ofMinutes(10));
+
+    assertThatThrownBy(() -> PhotoUrlRules.forLink(NOW, SHORT, credentials))
+        .isInstanceOf(IllegalStateException.class);
+  }
 }

@@ -1,13 +1,13 @@
 package com.chilsuitjo.back.download.service;
 
 import com.chilsuitjo.back.action.dto.ActionEntry;
+import com.chilsuitjo.back.action.rule.ActionVisibility;
 import com.chilsuitjo.back.correction.dto.CorrectionView;
 import com.chilsuitjo.back.correction.rule.CorrectionStatus;
 import com.chilsuitjo.back.correction.rule.CorrectionTargetKind;
 import com.chilsuitjo.back.correction.service.CorrectionReader;
 import com.chilsuitjo.back.download.dto.RoomDownload.PendingCorrection;
 import com.chilsuitjo.back.download.dto.RoomDownload.Target;
-import com.chilsuitjo.back.download.rule.RecordVisibility;
 import com.chilsuitjo.back.global.common.AckState;
 import com.chilsuitjo.back.global.common.ClosedReason;
 import com.chilsuitjo.back.global.common.PartySide;
@@ -50,7 +50,7 @@ class PendingCorrections {
    * @param all 호실 행동 전체(보이는 범위로 거르기 전). 상대만 남긴 기록에도 내 고친 내용이 있을 수 있다
    */
   List<PendingCorrection> of(
-      UUID roomRecordId, List<ActionEntry> all, PartySide viewer, RecordVisibility.Cutoff cutoff) {
+      UUID roomRecordId, List<ActionEntry> all, PartySide viewer, ActionVisibility.Cutoff cutoff) {
     Instant limit = earliest(cutoff.shared(), cutoff.departed());
     List<PendingCorrection> result = new ArrayList<>();
     for (Record record : records(roomRecordId, all)) {

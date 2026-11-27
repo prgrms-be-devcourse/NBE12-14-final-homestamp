@@ -20,6 +20,7 @@
 /back/src/*/java/com/chilsuitjo/back/repair/          @yoo-sihun
 /back/src/*/java/com/chilsuitjo/back/correction/      @yoo-sihun
 /back/src/*/java/com/chilsuitjo/back/download/        @yoo-sihun
+/back/src/*/java/com/chilsuitjo/back/timeline/        @yoo-sihun
 
 # C: 돈과 증빙
 /back/src/*/java/com/chilsuitjo/back/proposal/        @jinni1
@@ -41,6 +42,7 @@
 /front/src/features/action/                           @yoo-sihun
 /front/src/features/repair/                           @yoo-sihun
 /front/src/features/correction/                       @yoo-sihun
+/front/src/features/download/                         @yoo-sihun
 /front/src/features/proposal/                         @jinni1
 /front/src/features/payment/                          @jinni1
 /front/src/features/settlement/                       @jinni1

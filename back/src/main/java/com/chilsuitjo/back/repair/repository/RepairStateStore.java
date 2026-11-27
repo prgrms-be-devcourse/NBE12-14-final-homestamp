@@ -315,9 +315,9 @@ public class RepairStateStore {
 
   /**
    * 지금 종료를 요청한 측: 종료 확인 대기일 때 마지막 {@code REQUEST_CLOSE}의 측(행동 기록이 원본, 상태 행에 칸이 없음). 대기가 아니면 null.
-   * 행동은 {@code room_seq} 순이라 마지막 것이 지금 요청이다.
+   * 행동은 {@code room_seq} 순이라 마지막 것이 지금 요청이다. 목록(06 4-6)도 같은 값을 쓴다.
    */
-  private static PartySide closeRequestedBy(RepairCase row, List<ActionEntry> history) {
+  public static PartySide closeRequestedBy(RepairCase row, List<ActionEntry> history) {
     if (row.getStatus() != RepairStatus.CLOSE_WAIT) {
       return null;
     }
@@ -333,8 +333,8 @@ public class RepairStateStore {
   /**
    * 지금 이 종류의 확인 요청을 열 수 있나(03 K "거주 종료 뒤", 1-4). 호실 단계는 {@code CounterpartReader}가 실제 호실 상태로
    * 돌려주고({@code RoomParties.canOpen} = {@code RequestOpening}), 그 위에 notification이 막아 둔 것도 함께
-   * 본다({@code WaitService.canOpen}). 지금 {@code FakeWaitService}는 호실 단계를 보지 않아서, 호실 단계를 여기서도 봐야 거주
-   * 종료 뒤 보충·종료 요청이 막힌다(#157 리뷰).
+   * 본다({@code WaitService.canOpen}). 실제 구현(#301)도 같은 호실 단계를 보지만, 가짜({@code FakeWaitService})는 테스트가
+   * 막아 둔 것만 보므로 어느 구현이든 거주 종료 뒤 보충·종료 요청이 막히도록 호실 단계를 여기서 함께 본다(#157 리뷰, #318).
    */
   private boolean canOpen(RoomParties room, UUID roomRecordId, RequestKind kind) {
     return room.canOpen(kind) && waits.canOpen(roomRecordId, kind);
@@ -358,7 +358,22 @@ public class RepairStateStore {
    * @param viewer 보는 사람의 측
    */
   public RepairSight sightFor(RepairCase row, PartySide viewer) {
-    return RepairSight.of(parties.read(row.getRoomRecordId(), viewer), viewer);
+    return sightFor(row.getRoomRecordId(), viewer);
+  }
+
+  /** {@link #sightFor(RepairCase, PartySide)}와 같다. 보이는 범위는 호실 단위라 목록은 한 번만 읽는다(06 4-6). */
+  public RepairSight sightFor(UUID roomRecordId, PartySide viewer) {
+    return RepairSight.of(parties.read(roomRecordId, viewer), viewer);
+  }
+
+  /**
+   * 이 측이 이 시각보다 뒤에 등록한 수리 건은 상대 측이 볼 수 없다(03 불변식 18). 상세의 {@code hiddenFromCounterpart}와 같은
+   * 판단이다(등록한 측에서 본 공유 중단 시각). 숨는 기록이 없으면 비어 있다.
+   *
+   * @param registrant 등록한 측
+   */
+  public Optional<Instant> hiddenAfter(UUID roomRecordId, PartySide registrant) {
+    return Optional.ofNullable(sharingCutoff(parties.read(roomRecordId, registrant)));
   }
 
   /**
@@ -382,6 +397,18 @@ public class RepairStateStore {
   private boolean counterpartSeesNow(UUID roomRecordId, PartySide mySide) {
     RoomParties room = parties.read(roomRecordId, mySide);
     return room.counterpart().presence() == PartyPresence.CONNECTED
+        && !room.mySharingStoppedApplies()
+        && !room.counterpartSharingStoppedApplies();
+  }
+
+  /**
+   * 하자 확인 요청을 받을 상대가 있나(03 1-4 "연결 전 상대" ①, #318). 상대가 연결됐거나 연결 전({@code INVITED})이고 어느 쪽이든 공유 중단
+   * 제한이 없을 때다(불변식 18). 초대 전·번호만·거절·탈퇴면 기다릴 상대가 없다(03 D "하자 등록"). 점검 확인의 받을 상대와 같은 기준이다({@code
+   * InspectionSight.reachable}).
+   */
+  private static boolean defectRequestReachable(RoomParties room) {
+    PartyPresence presence = room.counterpart().presence();
+    return (presence == PartyPresence.CONNECTED || presence == PartyPresence.INVITED)
         && !room.mySharingStoppedApplies()
         && !room.counterpartSharingStoppedApplies();
   }
@@ -424,6 +451,23 @@ public class RepairStateStore {
             new DigestField("description", content.getDescription())));
   }
 
+  /**
+   * 등록한 하자에 상대의 하자 확인 요청을 연다(05 4장 "하자 등록 + 알리기", 03 1-4 "연결 전 상대" ①, #318). 받을 상대가 없거나 호실 단계에서 열 수
+   * 없으면 열지 않는다. 연결 전 상대에게 열린 요청은 연결하면 그대로 이어진다. 통지·문자는 만들지 않는다(NOTI-1).
+   */
+  private void openDefectRequest(UUID roomRecordId, UUID caseId, PartySide side) {
+    RoomParties room = parties.read(roomRecordId, side);
+    if (!defectRequestReachable(room) || !canOpen(room, roomRecordId, RequestKind.DEFECT_CONFIRM)) {
+      return;
+    }
+    waits.open(
+        new OpenRequestCommand(
+            roomRecordId,
+            RequestKind.DEFECT_CONFIRM,
+            RequestTarget.of(TargetKind.REPAIR_CASE, caseId),
+            side));
+  }
+
   private final class Registering implements StateStore<RepairState> {
 
     private final UUID roomPartId;
@@ -449,7 +493,8 @@ public class RepairStateStore {
      * {@code at()}이다. 내용 지문은 새로 만든 판 #1이다(안내서 3-3).
      *
      * <p>사진은 머리·판을 DB에 내보낸 뒤 수리 건에 붙인다(사진 행이 수리 건을 가리키므로, REP-1a "한 트랜잭션에 수리 건·판·사진·행동"). 사진 지문은 행동
-     * payload {@code photos}로 남는다(05 2-3). 사진이 실패하면 머리·판도 함께 되돌려진다.
+     * payload {@code photos}로 남는다(05 2-3). 사진이 실패하면 머리·판도 함께 되돌려진다. 받을 상대가 있으면 하자 확인 요청도 같은 트랜잭션에서
+     * 연다({@link #openDefectRequest}).
      */
     @Override
     public SavedState save(ActionCommand command, RepairState next) {
@@ -477,6 +522,7 @@ public class RepairStateStore {
               contentId, roomRecordId, caseId, 1, roomPartId, title, description, null, side, at);
       contents.save(first);
       cases.flush();
+      openDefectRequest(roomRecordId, caseId, side);
 
       return new SavedState(ActionTarget.repairCase(caseId), digest(first))
           .withPhotos(photos.attach(command, caseId, uploadTickets));
