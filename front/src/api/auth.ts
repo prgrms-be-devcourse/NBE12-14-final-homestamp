@@ -8,21 +8,71 @@ import { ApiError } from "./errors"
 import { endpoints } from "./endpoints"
 import { createHttpClient, type HttpRequest } from "./http-client"
 
-// 액세스 토큰은 메모리에만 둡니다(명세: 리프레시는 HttpOnly 쿠키).
-let accessToken: string | undefined
-export const tokenStore = {
-  get: () => accessToken,
-  set: (t?: string) => {
-    accessToken = t
-  },
+/* ── 로그인 세션: 액세스 토큰과 재발급 ──
+   액세스 토큰은 메모리에만 둡니다(04 4-1: 리프레시는 HttpOnly 쿠키). 계정 요청(createHttpAuth)과
+   기록 요청(createHttpApi)이 같은 세션의 request를 써서, 401이면 함께 하나의 재발급을 기다려요(04 4-1 "동시 재발급"). */
+const isUnauthorized = (e: unknown) => e instanceof ApiError && e.status === 401
+export interface Session {
+  request: HttpRequest
+  token: { get: () => string | undefined; set: (t?: string) => void }
+  // 재발급(ACC-2). 겹쳐 불러도 서버로는 한 번만 보내요(리프레시 토큰은 한 번 쓰면 바뀌어요).
+  refresh(): Promise<void>
+  // 쓰던 세션이 끝났을 때 알려요: 재발급이 LOGIN_REQUIRED·REFRESH_REUSED이거나,
+  // 재발급한 토큰으로 다시 보낸 요청도 LOGIN_REQUIRED일 때. 돌려준 함수로 그만 들어요.
+  onEnd(listener: (e: ApiError) => void): () => void
 }
+export function createSession(baseUrl: string): Session {
+  let accessToken: string | undefined
+  let refreshing: Promise<void> | undefined
+  const listeners = new Set<(e: ApiError) => void>()
+  const token = {
+    get: () => accessToken,
+    set: (t?: string) => void (accessToken = t),
+  }
+  // 토큰을 지우고, 로그인한 채 쓰다가 끝났을 때만 알려요(새로고침 뒤 처음 복원할 때는 원래 로그인 전이에요).
+  // 동시 요청이 함께 끝내도 토큰은 처음에만 있어서 한 번만 알려요.
+  const end = (e: ApiError) => {
+    const had = accessToken !== undefined
+    accessToken = undefined
+    if (had) listeners.forEach((l) => l(e))
+  }
+  const refresh = () =>
+    (refreshing ??= (async () => {
+      try {
+        const r = await request<{ accessToken: string }>(
+          "POST",
+          endpoints.refresh,
+          { idempotent: false },
+        )
+        accessToken = r.accessToken
+      } catch (e) {
+        // 쿠키가 없거나 폐기됐으면 이미 끝난 세션이라 토큰을 지워요. 연결 오류·서버 오류는 토큰을 남겨 다시 시도할 수 있게 해요.
+        if (isUnauthorized(e)) end(e as ApiError)
+        throw e
+      } finally {
+        refreshing = undefined
+      }
+    })())
+  const request = createHttpClient({
+    baseUrl,
+    getToken: token.get,
+    refresh,
+    endSession: end,
+  })
+  return {
+    request,
+    token,
+    refresh,
+    onEnd(listener) {
+      listeners.add(listener)
+      return () => void listeners.delete(listener)
+    },
+  }
+}
+// 앱 전체가 쓰는 세션(HTTP 모드에서만 서버로 요청해요)
+export const session = createSession(API_BASE_URL)
 export function createAuth(): AuthApi {
-  return API_MODE === "http"
-    ? createHttpAuth(
-        createHttpClient({ baseUrl: API_BASE_URL, getToken: tokenStore.get }),
-        tokenStore,
-      )
-    : createLocalAuth()
+  return API_MODE === "http" ? createHttpAuth(session) : createLocalAuth()
 }
 
 // 계정·인증(명세 4-1, S-01·S-02). 화면은 이 모양만 씁니다.
@@ -54,10 +104,13 @@ export interface AuthApi {
   ): Promise<{ phoneToken: string }>
   signup(input: SignupInput): Promise<Account>
   login(email: string, password: string): Promise<Account>
-  // 새로고침 뒤 로그인 유지: 리프레시 쿠키로 다시 받은 토큰으로 내 정보를 불러와요. 없으면 null.
+  // 새로고침 뒤 로그인 유지: 리프레시 쿠키로 다시 받은 토큰으로 내 정보를 불러와요.
+  // 로그인 전이면(401) null. 연결 오류·서버 오류는 로그아웃으로 보지 않고 그대로 던져 화면이 다시 시도하게 해요.
   restore(): Promise<Account | null>
   logout(): Promise<void>
   getToken(): string | undefined
+  // 쓰던 세션이 끝났을 때(토큰 만료 뒤 재발급도 실패) 알려요. 화면은 로그인으로 보내요. 돌려준 함수로 그만 들어요.
+  onSessionEnd(listener: (e: Error) => void): () => void
 }
 
 // 임시(개발용) 고정 인증번호. 서버 없이 개발할 때(createLocalAuth)만 쓰여요.
@@ -121,7 +174,6 @@ export const SMS_SEND_FAILED_MESSAGE =
   "문자를 보내지 못했어요. 잠시 뒤 다시 받아 주세요"
 
 /* ── 백엔드 연결 ── */
-const isUnauthorized = (e: unknown) => e instanceof ApiError && e.status === 401
 // GET /api/me 응답(06 4-1). smsEnabled(ACC-6)는 아직 쓰는 화면이 없어 Account로 옮기지 않아요.
 interface MeResponse {
   id: string
@@ -130,10 +182,12 @@ interface MeResponse {
   phone: string | null
   smsEnabled: boolean
 }
-export function createHttpAuth(
-  request: HttpRequest,
-  token: { get: () => string | undefined; set: (t?: string) => void },
-): AuthApi {
+export function createHttpAuth({
+  request,
+  token,
+  refresh,
+  onEnd,
+}: Session): AuthApi {
   // 내 정보(06 4-1 GET /api/me). 서버의 displayName을 화면의 name으로 바꿔요.
   // phone은 다른 계정이 같은 번호를 인증하면(ACC-3a) null이라, 화면이 "번호 없음"으로 쓰는 ""로 바꿔요.
   const me = async (): Promise<Account> => {
@@ -145,23 +199,15 @@ export function createHttpAuth(
       phone: r.phone ?? "",
     }
   }
-  // 재발급(ACC-2): 리프레시 쿠키(HttpOnly, Path=/api/auth/refresh)로 새 액세스 토큰을 받아요. 쿠키는 브라우저가 붙여요.
-  const refresh = async () => {
-    const r = await request<{ accessToken: string }>(
-      "POST",
-      endpoints.refresh,
-      { idempotent: false },
-    )
-    token.set(r.accessToken)
-  }
   // 로그아웃: 서버가 액세스 토큰에 담긴 토큰 묶음을 폐기하고 리프레시 쿠키를 지워요.
   const revoke = () =>
     request<void>("POST", endpoints.logout, { idempotent: false })
-  // 개발 모드(StrictMode)처럼 restore가 겹쳐 불려도 재발급은 한 번만 보내요(리프레시 토큰은 한 번 쓰면 바뀌어요).
+  // 개발 모드(StrictMode)처럼 restore가 겹쳐 불려도 재발급·내 정보는 한 번만 보내요.
   let restoring: Promise<Account | null> | undefined
   return {
     mode: "http",
     getToken: token.get,
+    onSessionEnd: onEnd,
     // 인증 문자(06 4-1): 서버는 201 + 인증 ID(id)만 줘요. 만료 시각은 받은 때부터 verify.code.ttl(5분)로 계산해요.
     // 가입·인증 문자는 행동 기록을 남기지 않아 Idempotency-Key를 보내지 않아요(06 4-0).
     async requestPhoneCode(phone) {
@@ -222,8 +268,9 @@ export function createHttpAuth(
       try {
         return await me()
       } catch (e) {
-        // 내 정보를 못 받으면 로그인하지 않은 상태로 되돌려요(토큰만 남아 반쯤 로그인된 상태를 막아요)
-        await revoke().catch(() => undefined)
+        // 내 정보를 못 받으면 로그인하지 않은 상태로 되돌려요(토큰만 남아 반쯤 로그인된 상태를 막아요).
+        // 재발급해도 LOGIN_REQUIRED라 세션이 이미 끝났으면(토큰 없음) 서버도 받지 않으니 로그아웃을 보내지 않아요
+        if (token.get()) await revoke().catch(() => undefined)
         token.set(undefined)
         throw e
       }
@@ -231,9 +278,13 @@ export function createHttpAuth(
     restore() {
       restoring ??= (async () => {
         try {
+          // 리프레시 쿠키(HttpOnly, Path=/api/auth/refresh)는 브라우저가 붙여요
           await refresh()
           return await me()
-        } catch {
+        } catch (e) {
+          // 쿠키가 없거나 폐기됐으면(재발급 401), 또는 탈퇴한 회원의 토큰이면(내 정보 401) 로그인 전이에요.
+          // 연결 오류·서버 오류(429·5xx)는 로그아웃하지 않고 그대로 알려요(#191)
+          if (!isUnauthorized(e)) throw e
           token.set(undefined)
           return null
         } finally {
@@ -244,21 +295,13 @@ export function createHttpAuth(
     },
     // 로그아웃이 서버에서 끝났을 때만 토큰을 지워요. 연결 오류·서버 오류로 실패하면 토큰을 남기고 오류를 그대로 알려,
     // 화면이 로그인 상태를 지키고 다시 누를 수 있게 해요(실패를 삼키면 리프레시 쿠키가 남아 새로고침할 때 다시 로그인돼요).
+    // 액세스 토큰이 만료(auth.access.ttl 15분)됐으면 요청 함수가 재발급한 뒤 한 번 더 보내요(06 4-1 logout).
     async logout() {
       try {
         await revoke()
       } catch (e) {
+        // 재발급도 401(LOGIN_REQUIRED·REFRESH_REUSED)이면 쿠키가 없거나 폐기된 것이라 이미 끝난 세션이에요
         if (!isUnauthorized(e)) throw e
-        // 액세스 토큰이 없거나 만료(auth.access.ttl 15분)되면 401이에요. 리프레시 쿠키로 새 토큰을 받아 한 번 더 보내요.
-        try {
-          await refresh()
-        } catch (e2) {
-          // 재발급도 401(LOGIN_REQUIRED·REFRESH_REUSED)이면 쿠키가 없거나 폐기된 것이라 이미 끝난 세션이에요
-          if (!isUnauthorized(e2)) throw e2
-          token.set(undefined)
-          return
-        }
-        await revoke()
       }
       token.set(undefined)
     },
@@ -302,6 +345,8 @@ export function createLocalAuth(): AuthApi {
   return {
     mode: "mock",
     getToken: () => current?.id,
+    // 서버 없이 개발할 때는 토큰이 만료되지 않아요
+    onSessionEnd: () => () => undefined,
     async requestPhoneCode(phone) {
       const n = normalizePhone(phone)
       if (!isMobilePhone(n)) fail("VALIDATION_FAILED", MOBILE_PHONE_MESSAGE)
