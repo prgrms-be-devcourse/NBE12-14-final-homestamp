@@ -4,6 +4,7 @@ import { createHttpRepairCases } from "./http-repair-cases"
 import { createHttpRecords } from "./http-records"
 import { httpAvailableActions } from "./http-available-actions"
 import { createHttpDownloads } from "./downloads"
+import { createHttpPhotoUploads } from "./photo-uploads"
 import type { HttpRequest } from "./http-client"
 import { listAllRooms, roomFromSummary } from "./http-rooms"
 import type { Notice } from "@/data/demo"
@@ -19,6 +20,7 @@ export function createHttpApi(request: HttpRequest): HomeStampApi {
     records: createHttpRecords(request),
     actions: httpAvailableActions,
     downloads: createHttpDownloads(request),
+    photoUploads: createHttpPhotoUploads(request),
     async listRooms(s) {
       return (await listAllRooms(request)).map((b) =>
         roomFromSummary(b, s.accountId),
