@@ -362,6 +362,57 @@ class InspectionAnswerApiTest {
   }
 
   @Test
+  void 잠금을_일으킨_응답을_같은_키로_다시_보내도_다시_잠그지_않는다() throws Exception {
+    UUID inspection = requestedWith(1);
+    UUID item = items(inspection)[0];
+    respond(landlord, item, "a1", "ACK", null, 1).andExpect(status().isOk());
+
+    respond(landlord, item, "a1", "ACK", null, 1)
+        .andExpect(status().isOk())
+        .andExpect(header().string(InspectionController.REPLAYED, "true"));
+
+    assertThat(inspectionRow(inspection)).containsEntry("status", "LOCKED");
+    assertThat(lockActions(inspection)).isEqualTo(1);
+  }
+
+  @Test
+  void 모두_확인은_중간_단계에서_잠겨도_남은_항목에_답하고_한_번만_잠근다() throws Exception {
+    // 앞 항목에 답하면 남은 항목이 상대 미확인뿐이라 첫 응답 단계에서 잠기고, 다음 단계는 잠긴 뒤의 늦은 답이다
+    UUID inspection = requestedWith(2);
+    UUID[] items = items(inspection);
+    jdbc.update("UPDATE state.inspection_item SET status = 'UNCONFIRMED' WHERE id = ?", items[1]);
+
+    confirmAll(landlord, inspection, "all", seen(items))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("LOCKED"));
+
+    assertThat(itemRow(items[0])).containsEntry("status", "ACK");
+    assertThat(itemRow(items[1])).containsEntry("status", "ACK");
+    assertThat(lockActions(inspection)).isEqualTo(1);
+  }
+
+  @Test
+  void 퇴거_점검은_아직_잠그지_않는다() throws Exception {
+    // #326 범위는 입주 점검. 퇴거 점검은 거주 종료와 따로 잠기는 규칙과 함께 후속에서 다룬다
+    UUID inspection =
+        created(
+            mvc.perform(
+                post("/api/rooms/{id}/inspections", room)
+                    .with(loginAs(tenant))
+                    .header("Idempotency-Key", "start-out")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"kind\":\"MOVE_OUT\"}")));
+    created(addItem(inspection, "out"));
+    requestConfirm(inspection);
+    UUID item = items(inspection)[0];
+
+    respond(landlord, item, "a1", "ACK", null, 1).andExpect(status().isOk());
+
+    assertThat(inspectionRow(inspection)).containsEntry("status", "REQUESTED");
+    assertThat(lockActions(inspection)).isZero();
+  }
+
+  @Test
   void INSP_1c_항목이_없으면_하자_기록_없음_확인으로_잠긴다() throws Exception {
     UUID inspection = created(start());
     requestConfirm(inspection);
