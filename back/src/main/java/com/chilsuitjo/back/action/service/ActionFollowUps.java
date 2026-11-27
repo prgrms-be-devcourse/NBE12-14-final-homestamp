@@ -21,7 +21,9 @@ import org.springframework.stereotype.Component;
  * followUps.add(Actor.server(), ActionType.CLOSE_FINISH_REQUEST, ActionTarget.settlement(id), Map.of());
  * }</pre>
  *
- * <p>상태를 바꾸지 않는 기록만, 같은 호실에만 남긴다. pipeline 밖에서 부르면 {@link IllegalStateException}.
+ * <p>같은 호실에만 남긴다. 상태를 옮기는 딸린 행동은 서버 행동만 허용한다. 그 도메인의 {@code Transitions.apply}에 같은 전이가 있고 {@code
+ * CHANGES}에 포함되어, {@code Replay.fold}로 행과 같은 상태가 나와야 한다(#363 리뷰 합의). pipeline 밖에서 부르면 {@link
+ * IllegalStateException}.
  */
 @Component
 public class ActionFollowUps {

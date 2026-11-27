@@ -15,6 +15,7 @@ on:
       - back/**
       - .github/workflows/image-publish.yml
       - .github/scripts/image/**
+      - .github/gradle/**
   workflow_dispatch:
 
 permissions: {}
@@ -53,6 +54,12 @@ jobs:
         with:
           distribution: temurin
           java-version: '25'
+      # 의존성은 Maven Central 대신 미러에서 받는다(러너 공유 IP의 429 막기, #372). Docker 빌드에도 같은 설정을 넘긴다
+      - name: CI Maven 미러
+        run: |
+          mkdir -p ~/.gradle/init.d "$RUNNER_TEMP/gradle-home/init.d"
+          cp .github/gradle/ci-mirror.init.gradle ~/.gradle/init.d/
+          cp .github/gradle/ci-mirror.init.gradle "$RUNNER_TEMP/gradle-home/init.d/"
       - name: 백엔드 검증(spotless·테스트)
         if: github.event_name != 'pull_request'
         working-directory: back
@@ -65,6 +72,7 @@ jobs:
           SOURCE: ${{ github.server_url }}/${{ github.repository }}
         run: |
           docker build --platform linux/amd64 \
+            --build-context gradle-home="$RUNNER_TEMP/gradle-home" \
             --label "org.opencontainers.image.revision=$REVISION" \
             --label "org.opencontainers.image.source=$SOURCE" \
             --tag homestamp-back:candidate --file back/Dockerfile back
