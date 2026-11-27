@@ -548,6 +548,111 @@ class InspectionAnswerApiTest {
         .andExpect(jsonPath("$.lockReason").doesNotExist());
   }
 
+  @Test
+  void 불변식_18_공유를_그만둔_뒤_상대의_응답은_그만둔_사람의_항목에_보이지_않고_답한_사람에게는_보인다() throws Exception {
+    UUID inspection = requestedWith(2);
+    UUID[] items = items(inspection);
+    // 그만두기 전의 응답은 그만둔 뒤에도 보인다
+    respond(landlord, items[0], "a1", "NEED_MORE", "사진이 흐려요", 1).andExpect(status().isOk());
+    detail(tenant, inspection)
+        .andExpect(jsonPath("$.items[0].status").value("NEED_MORE"))
+        .andExpect(jsonPath("$.items[0].availableActions", hasItem("supplement")));
+    stopSharing(PartySide.TENANT, clock.instant());
+    clock.advance(Duration.ofSeconds(1));
+
+    respond(landlord, items[1], "a2", "ACK", null, 1).andExpect(status().isOk());
+    assertThat(itemRow(items[1])).containsEntry("status", "ACK");
+    assertThat(inspectionRow(inspection)).containsEntry("status", "LOCKED");
+
+    // 그만둔 사람: 점검 상태와 같은 시각 기준(#363). 점검 행동은 모두 SHARING_STOPPED라 버튼도 없다
+    detail(tenant, inspection)
+        .andExpect(jsonPath("$.asOf").exists())
+        .andExpect(jsonPath("$.status").value("REQUESTED"))
+        .andExpect(jsonPath("$.items[0].status").value("NEED_MORE"))
+        .andExpect(jsonPath("$.items[1].status").value("PENDING"))
+        .andExpect(jsonPath("$.items[0].availableActions.length()").value(0))
+        .andExpect(jsonPath("$.items[1].availableActions.length()").value(0))
+        .andExpect(jsonPath("$.availableActions", not(hasItem("confirm-all"))));
+    // 답한 사람에게는 자기 응답이 보인다
+    detail(landlord, inspection)
+        .andExpect(jsonPath("$.items[0].status").value("NEED_MORE"))
+        .andExpect(jsonPath("$.items[1].status").value("ACK"));
+  }
+
+  @Test
+  void 불변식_18_공유를_그만둔_뒤_상대의_보충은_그만둔_사람의_항목에_보이지_않는다() throws Exception {
+    UUID inspection = requestedWith(2);
+    UUID item = items(inspection)[0];
+    respond(landlord, item, "a1", "NEED_MORE", "사진이 흐려요", 1).andExpect(status().isOk());
+    stopSharing(PartySide.LANDLORD, clock.instant());
+    clock.advance(Duration.ofSeconds(1));
+
+    supplement(tenant, item, "s1", "{\"description\":\"밝게 다시 찍었어요\"}").andExpect(status().isOk());
+    assertThat(itemRow(item)).containsEntry("status", "PENDING");
+
+    // 그만둔 사람: 보충 전 보류 그대로이고 다음 보충 시각도 없다. 답하기 버튼도 없다(SHARING_STOPPED)
+    detail(landlord, inspection)
+        .andExpect(jsonPath("$.items[0].status").value("NEED_MORE"))
+        .andExpect(jsonPath("$.items[0].nextRerequestAt").doesNotExist())
+        .andExpect(jsonPath("$.items[0].availableActions.length()").value(0))
+        .andExpect(jsonPath("$.availableActions", not(hasItem("confirm-all"))));
+    // 보충한 사람에게는 보인다
+    detail(tenant, inspection)
+        .andExpect(jsonPath("$.items[0].status").value("PENDING"))
+        .andExpect(jsonPath("$.items[0].nextRerequestAt").exists());
+  }
+
+  @Test
+  void 불변식_18_공유_중단_뒤_남은_쪽이_시작하고_확인_요청한_점검은_그_사람에게_그대로_보인다() throws Exception {
+    stopSharing(PartySide.TENANT, clock.instant());
+    clock.advance(Duration.ofSeconds(1));
+    UUID inspection =
+        created(
+            mvc.perform(
+                post("/api/rooms/{id}/inspections", room)
+                    .with(loginAs(landlord))
+                    .header("Idempotency-Key", "start-after-stop")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"kind\":\"MOVE_IN\"}")));
+    UUID item = created(addItemAs(landlord, inspection, "item-after-stop", "[]"));
+    mvc.perform(
+            post("/api/inspections/{id}/request-confirm", inspection)
+                .with(loginAs(landlord))
+                .header("Idempotency-Key", "request-after-stop"))
+        .andExpect(status().isOk());
+
+    // 고정한 시각에 없던 점검이라도 시작한 사람에게는 자기 행동으로 다시 계산한 그대로 보인다
+    detail(landlord, inspection)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.asOf").exists())
+        .andExpect(jsonPath("$.status").value("REQUESTED"))
+        .andExpect(jsonPath("$.authorSide").value("LANDLORD"))
+        .andExpect(jsonPath("$.items.length()").value(1))
+        .andExpect(jsonPath("$.items[0].id").value(item.toString()))
+        .andExpect(jsonPath("$.items[0].status").value("PENDING"))
+        .andExpect(jsonPath("$.items[0].version.no").value(1));
+    // 그만둔 사람에게는 있는지도 알 수 없다
+    detail(tenant, inspection).andExpect(status().isNotFound());
+  }
+
+  @Test
+  void 불변식_18_퇴거_나란히_보기의_입주_항목도_입주_점검_상세와_같은_시각_기준이다() throws Exception {
+    UUID moveIn = requestedWith(2);
+    UUID[] items = items(moveIn);
+    UUID moveOut = created(startMoveOut());
+    stopSharing(PartySide.TENANT, clock.instant());
+    clock.advance(Duration.ofSeconds(1));
+
+    respond(landlord, items[1], "a1", "ACK", null, 1).andExpect(status().isOk());
+
+    detail(tenant, moveOut)
+        .andExpect(jsonPath("$.sideBySide.moveIn.status").value("REQUESTED"))
+        .andExpect(jsonPath("$.sideBySide.parts[0].moveInItems[0].status").value("PENDING"))
+        .andExpect(jsonPath("$.sideBySide.parts[0].moveInItems[1].status").value("PENDING"));
+    detail(landlord, moveOut)
+        .andExpect(jsonPath("$.sideBySide.parts[0].moveInItems[1].status").value("ACK"));
+  }
+
   // ---- 보충 ----
 
   @Test
@@ -872,6 +977,15 @@ class InspectionAnswerApiTest {
             .header("Idempotency-Key", "start")
             .contentType(MediaType.APPLICATION_JSON)
             .content("{\"kind\":\"MOVE_IN\"}"));
+  }
+
+  private ResultActions startMoveOut() throws Exception {
+    return mvc.perform(
+        post("/api/rooms/{id}/inspections", room)
+            .with(loginAs(tenant))
+            .header("Idempotency-Key", "start-out")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"kind\":\"MOVE_OUT\"}"));
   }
 
   private ResultActions addItem(UUID inspection, String key) throws Exception {
