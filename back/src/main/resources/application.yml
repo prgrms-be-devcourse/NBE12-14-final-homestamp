@@ -101,6 +101,15 @@ verify:
   resend:
     interval: 60s
 
+# 지금 유효한 문구 판(06 0-1 terms.version.*, CONS-4). 정식 약관 전문이 준비되기 전까지는 v1, 실제 문구가 바뀌면 새 판(YYYY-MM-DD)으로 바꾼다.
+# 판을 바꾸면 그 판으로 확인하지 않은 회원은 다시 확인하기 전까지 보기만 한다(03 6-2). 화면의 정적 페이지와 같은 배포에서 바꾼다
+terms:
+  version:
+    age14: v1
+    terms: v1
+    privacy-notice: v1
+    share-consent: v1
+
 sms:
   daily:
     total: 40

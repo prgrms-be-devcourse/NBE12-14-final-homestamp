@@ -1,9 +1,11 @@
 package com.chilsuitjo.back.member.repository;
 
 import com.chilsuitjo.back.member.entity.Member;
+import jakarta.persistence.LockModeType;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -36,6 +38,15 @@ public interface MemberRepository extends JpaRepository<Member, UUID> {
           "SELECT password_hash FROM state.member WHERE id = :id AND status = 'ACTIVE' FOR SHARE",
       nativeQuery = true)
   Optional<String> lockPasswordHashForShare(@Param("id") UUID id);
+
+  /**
+   * 회원 행을 쓰기 잠금하고 읽는다({@code FOR UPDATE}, 트랜잭션이 끝날 때 풀림). 같은 회원의 약관 다시 확인이 동시에 와도 확인 기록이 두 줄이 되지 않게
+   * 다시 확인 트랜잭션에서 부른다(CONS-4). 탈퇴 확인 기록 삭제 함수({@code record.purge_member_acknowledgements})도 같은 행을
+   * 잠근다.
+   */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("SELECT m FROM Member m WHERE m.id = :id")
+  Optional<Member> lockById(@Param("id") UUID id);
 
   /** 이 번호를 인증한 회원({@code ux_member_phone}이라 많아야 하나). */
   Optional<Member> findByPhone(String phone);

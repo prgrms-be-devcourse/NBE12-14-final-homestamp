@@ -10,7 +10,7 @@ import java.util.Map;
  * 가입 확인 항목 세 개와 각 문구 판(06 ACC-1a·1b, CONS-1a, 03 6-2 "가입할 때"). 만들 때 세 항목이 모두 체크됐는지와 판이 비어 있지 않은지를
  * 본다.
  *
- * <p>판이 지금 유효한 판인지는 보지 않는다. 그 기준(현재 판을 어디서 읽을지)은 아직 정하지 않았다.
+ * <p>판이 지금 유효한 판인지는 여기서 보지 않고 {@code MemberService}가 {@code TermsVersions}로 본다(CONS-4).
  */
 public record SignupAcknowledgements(Map<AcknowledgementKind, String> textVersions) {
 
