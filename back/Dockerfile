@@ -1,8 +1,12 @@
-FROM eclipse-temurin:25-jdk-noble AS builder
+# 의존성만 받는 단계. 소스와 따로 두어, Gradle 파일이 바뀌지 않으면 CI가 이 층을 캐시로 다시 쓴다(Maven Central 429 줄이기, #350)
+FROM eclipse-temurin:25-jdk-noble AS deps
 WORKDIR /workspace
 
 COPY gradlew settings.gradle build.gradle lombok.config ./
 COPY gradle/ ./gradle/
+RUN ./gradlew resolveDependencies --no-daemon
+
+FROM deps AS builder
 COPY src/main/ ./src/main/
 
 RUN ./gradlew bootJar --no-daemon -x test

@@ -16,10 +16,15 @@ import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.notification.dto.RequestView;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.service.WaitQuery;
+import com.chilsuitjo.back.photo.dto.PhotoCard;
+import com.chilsuitjo.back.photo.dto.PhotoTarget;
+import com.chilsuitjo.back.photo.rule.PhotoTargetType;
+import com.chilsuitjo.back.photo.service.PhotoService;
 import com.chilsuitjo.back.proposal.dto.AgendaRef;
 import com.chilsuitjo.back.proposal.rule.AgendaKind;
 import com.chilsuitjo.back.proposal.service.ProposalService;
 import com.chilsuitjo.back.repair.dto.RepairCaseList;
+import com.chilsuitjo.back.repair.dto.RepairCaseSummary;
 import com.chilsuitjo.back.repair.entity.CauseNote;
 import com.chilsuitjo.back.repair.entity.ProgressNote;
 import com.chilsuitjo.back.repair.entity.RepairCase;
@@ -33,6 +38,7 @@ import com.chilsuitjo.back.repair.repository.RepairStateStore;
 import com.chilsuitjo.back.repair.rule.RepairSight;
 import com.chilsuitjo.back.repair.rule.RepairState;
 import com.chilsuitjo.back.repair.rule.RepairTransitions;
+import com.chilsuitjo.back.room.service.RoomAccessService;
 import com.chilsuitjo.back.room.service.RoomQueryService;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -76,6 +82,8 @@ public class RepairListService {
   private final ActionReader actionReader;
   private final CorrectionQueryService corrections;
   private final ProposalService proposalService;
+  private final PhotoService photos;
+  private final RoomAccessService access;
   private final WaitQuery waits;
 
   /**
@@ -111,15 +119,69 @@ public class RepairListService {
             : afterCursor(roomRecordId, viewer, hiddenAfter, cursor, limit);
     boolean more = page.size() > size;
     List<RepairCase> shown = more ? page.subList(0, size) : page;
+    List<RepairCaseList.Item> items =
+        lines(roomRecordId, memberId, sight, shown).stream().map(Line::item).toList();
+    return new RepairCaseList(
+        asOf, viewer, items, more ? shown.getLast().getId().toString() : null);
+  }
+
+  /**
+   * 이 회원에게 보이는 호실의 수리 건 한 줄씩, 등록 순(퇴거 점검 나란히 보기 06 INSP-3b). 다른 도메인이 부르는 창구다(09 3장 "inspection →
+   * repair"). 보이는 범위·보이는 판·상태·부위 이름은 {@link #list}와 같은 계산이라 상세와 같다(공유 중단 뒤 상대가 등록한 건은 빠짐, 불변식 18).
+   * 사진은 상세와 같은 사진 창구로 한 번에 읽는다({@code PhotoService.cards}). 호실 당사자가 아니면 {@code NOT_FOUND}다.
+   */
+  @Transactional(readOnly = true)
+  public List<RepairCaseSummary> summaries(UUID roomRecordId, UUID memberId) {
+    RoomGate gate = gates.read(roomRecordId, Actor.member(memberId));
+    PartySide viewer = gate.side();
+    RepairSight sight = store.sightFor(roomRecordId, viewer);
+    Instant hiddenAfter =
+        store.hiddenAfter(roomRecordId, counterpartOf(viewer)).orElse(NOTHING_HIDDEN);
+    List<RepairCase> shown =
+        cases.findVisible(roomRecordId, viewer, hiddenAfter, Limit.unlimited()).reversed();
+    List<Line> lines = lines(roomRecordId, memberId, sight, shown);
+    if (lines.isEmpty()) {
+      return List.of();
+    }
+    Map<PhotoTarget, List<PhotoCard>> cards =
+        photos.cards(
+            access.require(roomRecordId, memberId),
+            lines.stream()
+                .<PhotoTarget>map(
+                    line -> new PhotoTarget.Ref(PhotoTargetType.REPAIR_CASE, line.item().id()))
+                .toList());
+    return lines.stream()
+        .map(line -> {
+          RepairCaseList.Item item = line.item();
+          return new RepairCaseSummary(
+              item.id(),
+              line.roomPartId(),
+              item.content().partName(),
+              item.content().title(),
+              item.status(),
+              item.defect().ack(),
+              item.createdAt(),
+              cards.getOrDefault(
+                  new PhotoTarget.Ref(PhotoTargetType.REPAIR_CASE, item.id()), List.of()));
+        })
+        .toList();
+  }
+
+  /** 목록 한 줄과 그 줄의 보이는 판 부위. 부위 ID는 목록 응답에 없어 나란히 보기에만 쓴다. */
+  private record Line(RepairCaseList.Item item, UUID roomPartId) {}
+
+  /** 보이는 수리 건들의 줄({@link #list}와 {@link #summaries}가 같이 쓴다). 행동·판은 이 건들 것만 한 번에 읽는다. */
+  private List<Line> lines(
+      UUID roomRecordId, UUID memberId, RepairSight sight, List<RepairCase> shown) {
     if (shown.isEmpty()) {
-      return new RepairCaseList(asOf, viewer, List.of(), null);
+      return List.of();
     }
 
     List<UUID> caseIds = shown.stream().map(RepairCase::getId).toList();
     List<ProgressNote> notesOfPage = progressNotes.findByRepairCaseIdIn(caseIds);
     Map<UUID, List<ActionEntry>> historyByCase = historyByCase(roomRecordId, caseIds, notesOfPage);
     Map<UUID, List<RepairCaseList.Waiting>> waitingByCase =
-        asOf == null ? waitingByCase(roomRecordId, caseIds, notesOfPage) : Map.of();
+        sight.asOf() == null ? waitingByCase(roomRecordId, caseIds, notesOfPage) : Map.of();
     Map<UUID, Map<Integer, RepairContent>> contentsByCase = new HashMap<>();
     for (RepairContent content :
         contents.findByRepairCaseIdIn(shown.stream().map(RepairCase::getId).toList())) {
@@ -129,14 +191,14 @@ public class RepairListService {
     }
     Map<UUID, String> partNames = new HashMap<>();
 
-    List<RepairCaseList.Item> items = new ArrayList<>();
+    List<Line> lines = new ArrayList<>();
     for (RepairCase row : shown) {
       List<ActionEntry> visible =
           historyByCase.getOrDefault(row.getId(), List.of()).stream()
               .filter(entry -> sight.sees(entry.actorSide(), entry.createdAt()))
               .toList();
-      items.add(
-          item(
+      lines.add(
+          line(
               row,
               visible,
               sight,
@@ -145,11 +207,10 @@ public class RepairListService {
               partNames,
               waitingByCase.getOrDefault(row.getId(), List.of())));
     }
-    return new RepairCaseList(
-        asOf, viewer, List.copyOf(items), more ? shown.getLast().getId().toString() : null);
+    return List.copyOf(lines);
   }
 
-  private RepairCaseList.Item item(
+  private Line line(
       RepairCase row,
       List<ActionEntry> visible,
       RepairSight sight,
@@ -186,27 +247,29 @@ public class RepairListService {
             .map(ActionEntry::createdAt)
             .max(Instant::compareTo)
             .orElse(row.getCreatedAt());
-    return new RepairCaseList.Item(
-        row.getId(),
-        row.getCreatedBySide(),
-        row.getCreatedAt(),
-        new RepairCaseList.Content(content.getNo(), partName, content.getTitle()),
-        replayed == null ? row.getStatus() : replayed.status(),
-        lastActionAt,
-        replayed == null
-            ? RepairStateStore.closeRequestedBy(row, caseActions)
-            : replayed.closeRequestedBy(),
-        replayed == null ? row.getClosedBy() : replayed.closedBy(),
-        new RepairCaseList.Defect(replayed == null ? row.getDefectAck() : replayed.defectAck()),
-        new RepairCaseList.Money(
+    RepairCaseList.Item item =
+        new RepairCaseList.Item(
+            row.getId(),
+            row.getCreatedBySide(),
+            row.getCreatedAt(),
+            new RepairCaseList.Content(content.getNo(), partName, content.getTitle()),
+            replayed == null ? row.getStatus() : replayed.status(),
+            lastActionAt,
             replayed == null
-                ? row.getMoneyStatus()
-                : RepairAgendaHeadStore.toMoneyStatus(
-                    proposalService.statusAsSeen(
-                        row.getRoomRecordId(),
-                        new AgendaRef(AgendaKind.REPAIR_BURDEN, row.getId()),
-                        sight::sees))),
-        waiting);
+                ? RepairStateStore.closeRequestedBy(row, caseActions)
+                : replayed.closeRequestedBy(),
+            replayed == null ? row.getClosedBy() : replayed.closedBy(),
+            new RepairCaseList.Defect(replayed == null ? row.getDefectAck() : replayed.defectAck()),
+            new RepairCaseList.Money(
+                replayed == null
+                    ? row.getMoneyStatus()
+                    : RepairAgendaHeadStore.toMoneyStatus(
+                        proposalService.statusAsSeen(
+                            row.getRoomRecordId(),
+                            new AgendaRef(AgendaKind.REPAIR_BURDEN, row.getId()),
+                            sight::sees))),
+            waiting);
+    return new Line(item, content.getRoomPartId());
   }
 
   /**

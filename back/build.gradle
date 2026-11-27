@@ -76,14 +76,58 @@ tasks.register('localAccessToken', JavaExec) {
     mainClass = 'com.chilsuitjo.back.global.security.LocalAccessToken'
 }
 
+// 운영 jar를 만드는 데 필요한 의존성 jar만 받아 둔다(소스 없이). Dockerfile의 deps 단계가 써서, 소스가 바뀌어도 이 층은
+// CI 캐시로 다시 쓴다(Maven Central 429 줄이기, #350)
+tasks.register('resolveDependencies') {
+    group = 'build setup'
+    description = 'bootJar에 필요한 의존성 jar를 받아 둔다'
+    def wanted = ['compileClasspath', 'runtimeClasspath', 'annotationProcessor'].collect { configurations.getByName(it) }
+    doLast {
+        wanted.each { it.resolve() }
+    }
+}
+
 tasks.named('test') {
     useJUnitPlatform()
+    // 테스트 클래스를 나눠 돌릴 JVM 수(#335). 기본 1개, -PtestForks=N으로 바꾼다. JVM마다 테스트 DB 컨테이너가 따로라 섞이지 않는다
+    maxParallelForks = (project.findProperty('testForks') ?: '1') as int
+    // 이 테스트를 뺀다(쉼표로 여러 개, 클래스 이름 패턴). CI는 오래 걸리는 Migration 통합 테스트를 다른 job에서 동시에 돌리려고 쓴다(#350)
+    if (project.hasProperty('excludeTests')) {
+        filter {
+            project.property('excludeTests').toString().split(',').each { excludeTestsMatching it.trim() }
+        }
+    }
     // MigrationRunnerIntegrationTest가 운영 bootJar를 UID 10002 컨테이너에서 --migrate로 실행한다
     dependsOn tasks.named('bootJar')
     doFirst {
         systemProperty 'migration.test.production-boot-jar', tasks.named('bootJar').get().archiveFile.get().asFile.absolutePath
     }
     finalizedBy 'jacocoTestReport'
+
+    // 오래 걸린 테스트 클래스를 끝에 찍는다(CI 로그에서 어디에 시간을 쓰는지 보려고). 클래스 시간에는 그 클래스가 처음 띄운 Spring 컨텍스트·컨테이너
+    // 시간도 들어 있다. 실패해도 찍는다(맨 위 묶음이 끝날 때). -q로 돌리면 보이지 않는다
+    def classTimes = Collections.synchronizedList([])
+    def log = logger
+    addTestListener(new org.gradle.api.tasks.testing.TestListener() {
+        void beforeSuite(org.gradle.api.tasks.testing.TestDescriptor suite) {}
+
+        void afterSuite(org.gradle.api.tasks.testing.TestDescriptor desc, org.gradle.api.tasks.testing.TestResult result) {
+            if (desc.className != null) {
+                classTimes << [name: desc.className, ms: result.endTime - result.startTime, tests: result.testCount]
+            } else if (desc.parent == null) {
+                def top = classTimes.sort(false) { -it.ms }.take(20)
+                def total = classTimes.sum(0) { it.ms }
+                log.lifecycle("오래 걸린 테스트 클래스 상위 ${top.size()}개 (클래스 시간 합 ${(long) (total / 1000)}초, 클래스 ${classTimes.size()}개)")
+                top.each {
+                    log.lifecycle(String.format('%6.1f초 %4d개  %s', it.ms / 1000.0d, it.tests, it.name))
+                }
+            }
+        }
+
+        void beforeTest(org.gradle.api.tasks.testing.TestDescriptor test) {}
+
+        void afterTest(org.gradle.api.tasks.testing.TestDescriptor test, org.gradle.api.tasks.testing.TestResult result) {}
+    })
 }
 
 // 서식: google-java-format 버전은 팀 IntelliJ 플러그인(2.0.0.1)과 같게 고정한다(docs/rules/04 17장)

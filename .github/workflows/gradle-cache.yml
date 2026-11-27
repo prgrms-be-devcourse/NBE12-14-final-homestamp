@@ -1,0 +1,58 @@
+# dev에 머지될 때 백엔드 캐시를 dev 범위에 저장한다(#335·#350).
+# CI(ci.yml)는 PR에서만 돌고 GitHub 캐시는 PR끼리 나눠 쓰지 못해, 새 PR마다 "gradle cache is not found"로 처음부터 받았다.
+# dev 범위에 있는 캐시는 dev를 향한 모든 PR이 읽는다.
+#   warm  : Gradle 배포본·의존성. 키는 setup-java가 Gradle 파일 해시로 정하므로 ci.yml back·back-migration과 같다
+#   image : 백엔드 Dockerfile의 deps 층(의존성만 받는 단계). scope가 ci.yml back-image와 같다(back-image)
+name: Gradle 캐시
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - back/build.gradle
+      - back/settings.gradle
+      - back/gradle/**
+      - back/Dockerfile
+      - .github/workflows/gradle-cache.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gradle-cache
+  cancel-in-progress: true
+
+jobs:
+  warm:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: back
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: gradle
+      # 테스트는 돌리지 않는다. 컴파일과 서식 검사가 쓰는 의존성만 받아 캐시에 넣는다
+      - name: 의존성 받기
+        run: ./gradlew spotlessCheck compileTestJava --no-daemon
+
+  image:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v3
+      # deps 단계까지만 빌드해 그 층을 캐시에 넣는다(소스는 넣지 않음)
+      - name: 이미지 의존성 층 받기
+        uses: docker/build-push-action@v6
+        with:
+          context: back
+          file: back/Dockerfile
+          target: deps
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha,scope=back-image
+          cache-to: type=gha,scope=back-image,mode=max
