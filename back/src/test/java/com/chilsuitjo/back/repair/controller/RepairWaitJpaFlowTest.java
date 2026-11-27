@@ -2,7 +2,14 @@ package com.chilsuitjo.back.repair.controller;
 
 import static com.chilsuitjo.back.global.security.SecurityTestSupport.loginAs;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsInAnyOrder;
+import static org.hamcrest.Matchers.everyItem;
+import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.chilsuitjo.back.TestcontainersConfiguration;
@@ -117,6 +124,34 @@ class RepairWaitJpaFlowTest {
     assertThat(waitQuery.awaiting(room, PartySide.LANDLORD))
         .extracting(RequestView::kind)
         .doesNotContain(RequestKind.CLOSE_CONFIRM);
+  }
+
+  @Test
+  void 수리_목록_waiting과_상세_closeRequest가_실제_DB_요청으로_채워진다() throws Exception {
+    // 가짜가 아니라 JpaWaitService가 주는 값이 repair 응답까지 오는지(#339, #344 리뷰)
+    UUID caseId = register();
+    act(caseId, tenant, "start", null).andExpect(status().isOk());
+    act(caseId, tenant, "request-close", null).andExpect(status().isOk());
+
+    mvc.perform(get("/api/rooms/{id}/repair-cases", room).with(loginAs(landlord)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.items[0].waiting.length()").value(2))
+        .andExpect(
+            jsonPath("$.items[0].waiting[*].kind")
+                .value(containsInAnyOrder("DEFECT_CONFIRM", "CLOSE_CONFIRM")))
+        .andExpect(
+            jsonPath("$.items[0].waiting[*].answeringSide").value(everyItem(is("LANDLORD"))));
+    mvc.perform(get("/api/repair-cases/{id}", caseId).with(loginAs(tenant)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.closeRequest.status").value("WAITING"))
+        .andExpect(jsonPath("$.closeRequest.openedAt").isNotEmpty());
+
+    act(caseId, landlord, "confirm-close", null).andExpect(status().isOk());
+
+    mvc.perform(get("/api/repair-cases/{id}", caseId).with(loginAs(tenant)))
+        .andExpect(jsonPath("$.closeRequest.status").value("ANSWERED"));
+    mvc.perform(get("/api/rooms/{id}/repair-cases", room).with(loginAs(landlord)))
+        .andExpect(jsonPath("$.items[0].waiting[*].kind").value(not(hasItem("CLOSE_CONFIRM"))));
   }
 
   @Test
