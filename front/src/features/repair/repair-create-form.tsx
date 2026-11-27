@@ -10,7 +10,7 @@ import { useApi } from "@/api/hooks"
 import { errorMessage } from "@/api/errors"
 import type { Room } from "@/data/demo"
 import { ZONE_PART_ERROR } from "@/lib/record-commands"
-import { splitPartLabel } from "@/lib/room-parts"
+import { splitPartLabel, type RoomPart } from "@/lib/room-parts"
 
 // 같은 곳 재발이면 이전 수리 건과 그 부위로 시작해요(상태와 규칙 D 재발)
 export interface RepairPrefill {
@@ -37,7 +37,8 @@ export function RepairCreateForm({
   onCancel: () => void
 }) {
   const api = useApi()
-  const [roomPartId, setRoomPartId] = useState(prefill?.roomPartId ?? "")
+  // 부위 칸이 넘긴 부위만 둬요. 이전 수리 건의 부위 ID는 부위 칸이 고를 수 있는지 본 뒤에 넘겨요(#402)
+  const [part, setPart] = useState<RoomPart>()
   const [photos, setPhotos] = useState<string[]>([])
   const [shareChoice, setShareChoice] = useState<"now" | "later" | null>(null)
   const [error, setError] = useState("")
@@ -48,7 +49,7 @@ export function RepairCreateForm({
       onError={setError}
       onCancel={onCancel}
       onSubmit={(text) => {
-        if (!roomPartId) {
+        if (!part) {
           setError(ZONE_PART_ERROR)
           return
         }
@@ -64,7 +65,7 @@ export function RepairCreateForm({
         api.repairCases
           .create({ accountId }, room.id, {
             title: text("title"),
-            roomPartId,
+            roomPartId: part.id,
             description: text("description"),
             photos,
             recurrenceOf: prefill?.recurrenceOf || undefined,
@@ -81,11 +82,11 @@ export function RepairCreateForm({
       )}
       <PartField
         roomId={room.id}
-        value={roomPartId}
-        onChange={(p) => setRoomPartId(p?.id ?? "")}
+        value={part?.id ?? ""}
+        onChange={setPart}
         defaultPart={
           prefill
-            ? splitPartLabel(prefill.zone)
+            ? { ...splitPartLabel(prefill.zone), id: prefill.roomPartId }
             : { zone: "욕실", name: "천장" }
         }
       />
