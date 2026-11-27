@@ -87,7 +87,10 @@ public interface WaitService {
    */
   void close(RequestTarget target, RequestKind kind, ClosedReason reason);
 
-  /** 호실의 열린 요청 중 이 종류들을 모두 닫고 닫은 개수를 돌려준다(예: 거주 종료로 하자 확인·진행 상황 묻기·상황 변화 확인을 닫음, 03 K). */
+  /**
+   * 호실의 요청 중 이 종류들을 이유에 맞게 모두 닫고 닫은 개수를 돌려준다. 지금 받는 이유는 상대 탈퇴(열린 요청 모두, 양방향, 모든 종류)뿐이고, 거주 종료·공유
+   * 중단·정산 완료는 #113에서 범위를 정하기 전이라 {@code UnsupportedOperationException}이다({@code CloseAllScope}).
+   */
   int closeAll(UUID roomRecordId, ClosedReason reason, Set<RequestKind> kinds);
 
   /**
