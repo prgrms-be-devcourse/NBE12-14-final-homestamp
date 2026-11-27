@@ -64,8 +64,8 @@ public class InspectionQueryService {
    * 점검 하나(06 4-7, S-14). 없는 ID, 그 호실 당사자가 아님, 공유를 그만둔 뒤 상대가 시작해 볼 수 없는 점검(불변식 18)은 모두 {@code
    * NOT_FOUND}다(있는지도 알 수 없게, ROOM-2a).
    *
-   * <p>보이는 상태와 항목은 {@link InspectionSight}가 정한다: <b>작성 중</b>이면 기준 측이 아닌 사람에게 "작성 중"만 보이고({@code
-   * items} null, 06 INSP-1a), 그 밖에는 보는 사람 자신이 더한 항목과 공유를 그만둔 시각까지 상대가 더한 항목을 준다(불변식 18). 항목 응답·모두
+   * <p>보이는 상태와 항목은 {@link InspectionSight}가 정한다: <b>작성 중</b>이면 기준 측이 아닌 사람에게 기준 측이 쓴 항목은 가리고 자기가 더한
+   * 항목만 준다(06 INSP-1a, #286), 그 밖에는 보는 사람 자신이 더한 항목과 공유를 그만둔 시각까지 상대가 더한 항목을 준다(불변식 18). 항목 응답·모두
    * 확인도 같은 판단을 쓴다.
    *
    * <p>{@code availableActions}는 실제 요청과 같은 판단으로 만든다: 호실 단위 거절은 {@code RoomGate.rejection}, 점검 규칙은 각
@@ -89,8 +89,7 @@ public class InspectionQueryService {
         && row.getCreatedAt().isAfter(seen.asOf())) {
       throw new BusinessException(ErrorCode.NOT_FOUND);
     }
-    List<InspectionDetail.Item> shownItems =
-        seen.itemsHidden() ? null : visibleItems(row, roomRecordId, memberId, gate, seen);
+    List<InspectionDetail.Item> shownItems = visibleItems(row, roomRecordId, memberId, gate, seen);
     InspectionState now = store.current(row);
     return new InspectionDetail(
         row.getId(),
@@ -171,7 +170,7 @@ public class InspectionQueryService {
   private List<String> actions(
       Inspection row, InspectionState now, RoomGate gate, InspectionSight.Sight seen) {
     List<String> result = new ArrayList<>();
-    if (InspectionItemTransitions.canAdd(row.getStatus(), row.getAuthorSide(), gate.side())
+    if (InspectionItemTransitions.canAdd(row.getStatus(), gate.side())
         && gate.rejection(ActionType.ADD_ITEM).isEmpty()) {
       result.add("items");
     }

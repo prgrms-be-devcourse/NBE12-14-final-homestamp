@@ -6,7 +6,9 @@ import com.chilsuitjo.back.global.common.TargetKind;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -21,7 +23,8 @@ import java.util.stream.Collectors;
  *   <li>공유 중단 기준 시각({@link #cutoff}) 뒤에 상대·서버가 남긴 행동은 뺀다. 상대가 탈퇴했으면 중단 동안 그 측이 남긴 행동은 계속 뺀다(03
  *       6-4). 거주 종료 행동과 정산 완료는 예외로 넣는다(3-1 "예외로 거주 종료 행동(이사했어요, 거주 종료 요청과 답)과 정산 완료는 양쪽에 보인다")
  *   <li>상대의 나만 보는 행동({@code CONFIRM_LIVING})과 통지 상태(3-1 "보낸 측만")는 뺀다
- *   <li>확인 요청 전인 점검(작성 중)의 상대 점검 행동은 뺀다(3-1 "작성 중 점검 → 상대 측은 '작성 중'만", 06 INSP-1a)
+ *   <li>확인 요청 전인 점검(작성 중)에서 그 점검 기준 측이 남긴 점검 행동은 기준 측이 아닌 사람에게 뺀다(3-1 "작성 중 점검 → 상대 측은 '작성 중'만", 06
+ *       INSP-1a). 기준 측이 아닌 측이 작성 중에 더한 항목은 기준 측도 보고 답하므로 넣는다(#286, 화면의 {@code InspectionSight}와 같음)
  * </ul>
  */
 public final class ActionVisibility {
@@ -50,7 +53,7 @@ public final class ActionVisibility {
           ActionType.MARK_UNDELIVERED);
 
   /**
-   * 확인 요청 전(작성 중)에 쌓이는 점검 내용 행동. 그 점검의 확인 요청이 넣을 행동에 없으면 상대에게는 넣지 않는다. 점검 시작({@code
+   * 확인 요청 전(작성 중)에 쌓이는 점검 내용 행동. 그 점검의 확인 요청이 넣을 행동에 없으면 기준 측이 남긴 것은 상대에게 넣지 않는다. 점검 시작({@code
    * START_INSPECTION})은 넣는다: 3-1 "'작성 중'만"은 점검이 있다는 것은 보인다는 뜻이고, 시작 행동에는 종류·입주일만 있고 항목 내용·사진이 없다.
    */
   static final Set<ActionType> DRAFT_WORK =
@@ -125,7 +128,11 @@ public final class ActionVisibility {
     return at != null && entry.createdAt().isAfter(at);
   }
 
-  /** 보이는 행동만 {@link #ORDER} 순으로. 확인 요청이 기준 시각 뒤의 상대 행동이라 빠졌으면 보는 사람은 그 점검을 작성 중으로만 봤으므로 초안도 뺀다. */
+  /**
+   * 보이는 행동만 {@link #ORDER} 순으로. 확인 요청이 기준 시각 뒤의 상대 행동이라 빠졌으면 보는 사람은 그 점검을 작성 중으로만 봤으므로 초안도 뺀다. 점검의
+   * 기준 측은 그 점검 시작({@code START_INSPECTION})을 남긴 측이다. 시작 행동은 공유 중단 기준으로 빠졌어도 기준 측을 아는 데만 쓰므로 전체 행동에서
+   * 찾는다.
+   */
   public static List<ActionEntry> select(List<ActionEntry> all, PartySide viewer, Cutoff cutoff) {
     List<ActionEntry> passed = all.stream().filter(e -> visible(e, viewer, cutoff)).toList();
     Set<UUID> requested =
@@ -134,17 +141,40 @@ public final class ActionVisibility {
             .map(ActionVisibility::inspectionOf)
             .filter(Objects::nonNull)
             .collect(Collectors.toSet());
-    return passed.stream().filter(e -> !hiddenDraft(e, viewer, requested)).sorted(ORDER).toList();
+    Map<UUID, PartySide> authors = new HashMap<>();
+    for (ActionEntry entry : all) {
+      UUID inspection = inspectionOf(entry);
+      if (entry.type() == ActionType.START_INSPECTION
+          && inspection != null
+          && entry.actorSide() != null) {
+        authors.putIfAbsent(inspection, entry.actorSide());
+      }
+    }
+    return passed.stream()
+        .filter(e -> !hiddenDraft(e, viewer, requested, authors))
+        .sorted(ORDER)
+        .toList();
   }
 
-  /** 상대의 작성 중 점검 행동인가. 어느 점검인지 알 수 없으면 보이지 않는 쪽으로 둔다. */
-  static boolean hiddenDraft(ActionEntry entry, PartySide viewer, Set<UUID> requested) {
+  /**
+   * 가릴 작성 중 점검 행동인가: 확인 요청 전 점검에서 기준 측이 남긴, 기준 측이 아닌 사람이 보는 행동. 어느 점검인지나 그 점검의 기준 측을 알 수 없으면 보이지 않는
+   * 쪽으로 둔다.
+   */
+  static boolean hiddenDraft(
+      ActionEntry entry, PartySide viewer, Set<UUID> requested, Map<UUID, PartySide> authors) {
     if (!DRAFT_WORK.contains(entry.type())
         || (entry.actorSide() != null && entry.actorSide() == viewer)) {
       return false;
     }
     UUID inspection = inspectionOf(entry);
-    return inspection == null || !requested.contains(inspection);
+    if (inspection == null) {
+      return true;
+    }
+    if (requested.contains(inspection)) {
+      return false;
+    }
+    PartySide author = authors.get(inspection);
+    return author == null || entry.actorSide() == null || entry.actorSide() == author;
   }
 
   private static UUID inspectionOf(ActionEntry entry) {
