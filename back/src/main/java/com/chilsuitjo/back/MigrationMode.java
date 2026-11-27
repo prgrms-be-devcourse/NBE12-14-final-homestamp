@@ -1,8 +1,11 @@
 package com.chilsuitjo.back;
 
+import com.chilsuitjo.back.global.config.migration.DatabaseGrants;
+import com.chilsuitjo.back.global.config.migration.GrantRoles;
 import com.chilsuitjo.back.global.config.migration.MigrationSettings;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -33,12 +36,18 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Flyway 계약: 위치 {@code classpath:db/migration}만, 연결마다 {@code SET ROLE "<owner>"}, 미래 버전·체크섬
  * 불일치·이미 적용된 버전의 누락은 모두 검증 실패(종료 1). {@code clean}·{@code repair}·이력 수정은 하지 않는다.
+ *
+ * <p>{@code --apply-grants}는 같은 파일·같은 Hikari·Flyway 구성으로 접속하지만 {@code migrate()}를 하지 않는다. {@code
+ * validate()}로 DB 이력이 이 이미지의 Migration과 정확히 같은지(대기·미래·체크섬·누락 없음) 확인한 뒤에만 {@link DatabaseGrants}로
+ * {@code db/grants/grants.sql}을 한 트랜잭션에서 실행한다. 대상 역할은 이미지 안의 {@link GrantRoles#RESOURCE}에서만 읽는다. 두
+ * 인자는 함께 받지 않는다(배포는 {@code --migrate} 성공 뒤 별도 실행으로 {@code --apply-grants}).
  */
 public final class MigrationMode {
 
   private static final Logger log = LoggerFactory.getLogger(MigrationMode.class);
 
   static final String MIGRATE_ARGUMENT = "--migrate";
+  static final String APPLY_GRANTS_ARGUMENT = "--apply-grants";
   static final String MIGRATION_LOCATION = "classpath:db/migration";
   static final String DRIVER = "org.postgresql.Driver";
   static final String POOL_NAME = "homestamp-migration";
@@ -47,9 +56,25 @@ public final class MigrationMode {
 
   private MigrationMode() {}
 
-  /** 실행 인자나 프로필이 Migration을 가리키면 이 모드로 보낸다(그다음 인자 검사에서 {@code --migrate} 하나만 통과한다). */
+  /** 한 번 실행에서 하는 일. 인자 하나로만 고른다. */
+  enum Operation {
+    MIGRATE("Migration"),
+    APPLY_GRANTS("GRANT");
+
+    final String label;
+
+    Operation(String label) {
+      this.label = label;
+    }
+  }
+
+  /**
+   * 실행 인자나 프로필이 Migration·GRANT를 가리키면 이 모드로 보낸다(그다음 인자 검사에서 {@code --migrate}나 {@code
+   * --apply-grants} 하나만 통과한다).
+   */
   public static boolean isRequested(String[] args) {
     return Arrays.asList(args).contains(MIGRATE_ARGUMENT)
+        || Arrays.asList(args).contains(APPLY_GRANTS_ARGUMENT)
         || requestedProfileNames(args).stream().anyMatch(MigrationMode::isMigrationProfile);
   }
 
@@ -62,12 +87,17 @@ public final class MigrationMode {
     // Spring LoggingSystem을 거치지 않으므로 logback 기본값(DEBUG)을 INFO로 고정한다(Hikari가 DEBUG에서 접속 설정을 찍음)
     if (LoggerFactory.getILoggerFactory() instanceof ch.qos.logback.classic.LoggerContext context) {
       context.getLogger(Logger.ROOT_LOGGER_NAME).setLevel(ch.qos.logback.classic.Level.INFO);
+      // Flyway는 INFO에서 "Database: <JDBC 주소>"를 찍는다(호스트·DB 이름·인증서 경로). 주소는 로그에 남기지 않는다
+      context
+          .getLogger("org.flywaydb.core.FlywayExecutor")
+          .setLevel(ch.qos.logback.classic.Level.WARN);
     }
+    String label = Arrays.asList(args).contains(APPLY_GRANTS_ARGUMENT) ? "GRANT를" : "Migration을";
     try {
       run(args, System.getProperties(), settings);
       return 0;
     } catch (RuntimeException exception) {
-      log.error("Migration을 실행하지 못했다: {}", describe(exception));
+      log.error("{} 실행하지 못했다: {}", label, describe(exception));
       return 1;
     }
   }
@@ -80,7 +110,23 @@ public final class MigrationMode {
   /** 위치는 운영에서 {@link #MIGRATION_LOCATION} 고정이다. 다른 위치는 위치 없음·빈 위치·이름 오류를 재현하는 테스트에서만 넘긴다. */
   static void run(
       String[] args, Properties systemProperties, MigrationSettings settings, String location) {
+    run(args, systemProperties, settings, location, GrantRoles.RESOURCE);
+  }
+
+  /** 역할 설정 리소스는 운영에서 {@link GrantRoles#RESOURCE} 고정이다. 다른 이름은 형식 오류를 재현하는 테스트에서만 넘긴다. */
+  static void run(
+      String[] args,
+      Properties systemProperties,
+      MigrationSettings settings,
+      String location,
+      String rolesResource) {
     Prepared prepared = prepare(args, systemProperties, settings);
+    // GRANT 역할 설정은 DB에 닿기 전에 읽고 검증한다
+    GrantRoles roles =
+        prepared.operation() == Operation.APPLY_GRANTS
+            ? GrantRoles.fromResource(
+                rolesResource, prepared.ownerRole(), prepared.values().username())
+            : null;
     // 인자 없는 생성자는 풀을 바로 만들지 않는다. 첫 연결은 Flyway가 검사를 통과한 뒤 연다
     try (HikariDataSource dataSource = new HikariDataSource()) {
       prepared.hikari().copyStateTo(dataSource);
@@ -91,11 +137,74 @@ public final class MigrationMode {
       if (flyway.info().all().length == 0) {
         throw new IllegalStateException("적용하거나 검증할 Migration이 하나도 없다");
       }
-      flyway.migrate();
+      if (prepared.operation() == Operation.MIGRATE) {
+        flyway.migrate();
+        return;
+      }
+      applyGrants(dataSource, flyway, roles);
     }
   }
 
-  record Prepared(HikariConfig hikari, MigrationSettings.Values values) {
+  /**
+   * DB 이력 지문 → {@code validate()}(대기 중인 Migration·미래 버전·체크섬·누락이 있으면 실패) → GRANT 트랜잭션 안에서 지문을 다시
+   * 확인하고 실행. 검증에 실패하면 GRANT SQL을 실행하지 않는다.
+   */
+  private static void applyGrants(HikariDataSource dataSource, Flyway flyway, GrantRoles roles) {
+    try {
+      String fingerprint;
+      try (Connection connection = dataSource.getConnection()) {
+        fingerprint = readFingerprint(connection, roles.owner());
+      }
+      flyway.validate();
+      if (fingerprint == null) {
+        // 지문을 읽을 때는 이력이 없었는데 검증은 통과했다: 그 사이 다른 Migration이 끼었다
+        throw new IllegalStateException(
+            "Flyway 검증 뒤 Migration 이력이 바뀌었다(다른 배포와 겹침). GRANT를 실행하지 않는다");
+      }
+      try (Connection connection = dataSource.getConnection()) {
+        DatabaseGrants.apply(connection, roles, fingerprint);
+        log.info("GRANT를 적용했다");
+      }
+    } catch (SQLException exception) {
+      throw new GrantFailure(exception);
+    }
+  }
+
+  private static String readFingerprint(Connection connection, String owner) throws SQLException {
+    try {
+      return DatabaseGrants.readHistoryFingerprint(connection, owner);
+    } catch (SQLException exception) {
+      // 이력 테이블이 없으면(아무것도 적용하지 않은 DB) 아래 validate가 대기 중인 Migration으로 실패한다
+      if ("42P01".equals(exception.getSQLState())) {
+        return null;
+      }
+      throw exception;
+    }
+  }
+
+  /** GRANT 실행 중 SQL 오류. 로그에는 SQLState와 grants.sql이 직접 낸 고정 메시지만 남긴다. */
+  static final class GrantFailure extends RuntimeException {
+    final String sqlState;
+    final String safeMessage;
+
+    GrantFailure(SQLException exception) {
+      super("GRANT SQL 실패", null, false, false);
+      this.sqlState = exception.getSQLState();
+      String message = null;
+      // P0001 = grants.sql의 RAISE EXCEPTION(사전 검사). 첫 줄(서버 기본 메시지)만 쓰고 Where·SQL·상세는 버린다
+      if ("P0001".equals(sqlState) && exception.getMessage() != null) {
+        String first = exception.getMessage().lines().findFirst().orElse("");
+        String primary = first.substring(first.indexOf(": ") + 2);
+        // 허용 문자(영숫자·식별자·구두점)만이면 앞 600자까지 남긴다. 테이블·컬럼 이름 목록이 길 수 있다
+        if (first.contains(": ") && primary.matches("[A-Za-z0-9 _.,:;'(){}%=<>/-]{1,4000}")) {
+          message = primary.length() > 600 ? primary.substring(0, 600) + "..." : primary;
+        }
+      }
+      this.safeMessage = message;
+    }
+  }
+
+  record Prepared(Operation operation, HikariConfig hikari, MigrationSettings.Values values) {
     String ownerRole() {
       return values.ownerRole();
     }
@@ -103,7 +212,7 @@ public final class MigrationMode {
 
   /** DB에 연결하지 않는 단계: 인자·Hikari 설정 파일 속성 거절 → 파일 읽기·검증 → Hikari 설정 생성·재검사. */
   static Prepared prepare(String[] args, Properties systemProperties, MigrationSettings settings) {
-    rejectArguments(args);
+    Operation operation = rejectArguments(args);
     rejectHikariConfigurationFile(systemProperties);
     MigrationSettings.Values values = settings.load();
     HikariConfig config = new HikariConfig();
@@ -116,7 +225,7 @@ public final class MigrationMode {
     config.setMinimumIdle(1);
     config.setInitializationFailTimeout(1);
     verifyHikari(config, values);
-    return new Prepared(config, values);
+    return new Prepared(operation, config, values);
   }
 
   /** Flyway 설정을 코드에서만 만든다. 환경변수·설정 파일을 읽는 {@code envVars()}·{@code configuration(...)}은 부르지 않는다. */
@@ -133,7 +242,8 @@ public final class MigrationMode {
             .failOnMissingLocations(true)
             // 이름이 규칙에 맞지 않는 SQL 파일(예: V9_add.sql)을 조용히 건너뛰지 않고 실패한다
             .validateMigrationNaming(true)
-            // GRANT 실행 방식(#156)이 정해질 때까지 위치 안의 SQL 콜백(afterMigrate*.sql 등)을 실행하지 않는다(임시 안전장치)
+            // 위치 안의 SQL 콜백(afterMigrate*.sql 등)은 실행하지 않는다. GRANT는 Flyway 콜백이 아니라 별도 --apply-grants
+            // 실행이다
             .skipDefaultCallbacks(true)
             .initSql(setRole(ownerRole))
             // 기본 *:future 무시를 끈다: DB 이력에 이 이미지가 모르는 버전이 있으면 검증 실패
@@ -150,13 +260,21 @@ public final class MigrationMode {
     return "SET ROLE \"" + ownerRole + "\"";
   }
 
-  private static void rejectArguments(String[] args) {
-    if (!Arrays.equals(args, new String[] {MIGRATE_ARGUMENT})) {
+  private static Operation rejectArguments(String[] args) {
+    Operation operation;
+    if (Arrays.equals(args, new String[] {MIGRATE_ARGUMENT})) {
+      operation = Operation.MIGRATE;
+    } else if (Arrays.equals(args, new String[] {APPLY_GRANTS_ARGUMENT})) {
+      operation = Operation.APPLY_GRANTS;
+    } else if (Arrays.asList(args).contains(APPLY_GRANTS_ARGUMENT)) {
+      throw new IllegalStateException("GRANT 실행 인자는 --apply-grants 하나만 받는다");
+    } else {
       throw new IllegalStateException("Migration 실행 인자는 --migrate 하나만 받는다");
     }
     if (requestedProfileNames(args).stream().anyMatch(profile -> !isMigrationProfile(profile))) {
       throw new IllegalStateException("Migration 모드에는 앱 프로필을 함께 쓰지 않는다");
     }
+    return operation;
   }
 
   /** HikariConfig 생성자가 이 시스템 속성의 파일을 읽어 설정을 채우므로 있으면 거절한다. */
@@ -214,6 +332,11 @@ public final class MigrationMode {
 
   /** 우리 코드의 메시지는 그대로, Flyway 검증 실패는 버전 차이만, 그 밖의 라이브러리 예외는 종류만 남긴다(값이 섞일 수 있으므로). */
   static String describe(RuntimeException exception) {
+    if (exception instanceof GrantFailure grant) {
+      return "GRANT SQL 실패(전체 ROLLBACK) sqlstate="
+          + grant.sqlState
+          + (grant.safeMessage == null ? "" : " message=" + grant.safeMessage);
+    }
     if (exception instanceof FlywayValidateException validate) {
       return describeValidation(validate);
     }
