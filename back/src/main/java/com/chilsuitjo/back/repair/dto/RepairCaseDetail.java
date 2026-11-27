@@ -4,6 +4,8 @@ import com.chilsuitjo.back.correction.rule.CorrectionStatus;
 import com.chilsuitjo.back.global.common.AckState;
 import com.chilsuitjo.back.global.common.ClosedReason;
 import com.chilsuitjo.back.global.common.PartySide;
+import com.chilsuitjo.back.notification.rule.RequestStatus;
+import com.chilsuitjo.back.notification.rule.SoloReason;
 import com.chilsuitjo.back.photo.dto.PhotoCard;
 import com.chilsuitjo.back.repair.rule.CauseBasis;
 import com.chilsuitjo.back.repair.rule.ClosedBy;
@@ -42,6 +44,8 @@ import java.util.UUID;
  * @param causeNotes 원인 설명(06 REP-8). 측마다 지금 설명 하나이고 고치기 전 설명은 {@code previous}에 접혀 있다. 공유를 그만둔 뒤에는
  *     {@code asOf}까지의 설명·응답과 보는 사람 자신의 것만 보인다(03 6-6 9번)
  * @param progressNotes 진행 상황(06 REP-6, 남긴 순서). 공유를 그만둔 뒤에는 그 시각까지 남긴 것과 보는 사람 자신의 것만 보인다(03 6-6 9번)
+ * @param closeRequest 종료 확인 요청 중 가장 최근 것(06 4-6, REP-5, #339). 요청이 없었으면 null. 공유를 그만둔 뒤에는 그 시각 뒤에
+ *     상대가 연 요청이면 null이다({@code RepairSight}와 같은 기준)
  * @param corrections 내용(부위·제목·설명)의 고친 내용(06 REP-7, 만든 순서). 기다림·보류·이견은 앞모습 아래 상자에, 확인됨·거둠·대신됨·닫힘은
  *     [고친 이력 ▸]에 그린다(03 G "화면 규칙 네 줄"). 공유를 그만둔 뒤에는 {@code asOf}까지 고친 것과 보는 사람 자신이 고친 것만 보이고, 그 뒤
  *     상대의 응답은 드러나지 않는다(03 6-6 9번)
@@ -67,8 +71,30 @@ public record RepairCaseDetail(
     List<PhotoCard> photos,
     List<CauseNote> causeNotes,
     List<ProgressNote> progressNotes,
+    CloseRequest closeRequest,
     List<Correction> corrections,
     List<String> availableActions) {
+
+  /**
+   * 종료 확인 요청(06 4-6 {@code closeRequest}). 화면의 "종료 요청됨 · ○○ 님 확인 없음(날짜부터) · 이유"의 날짜는 미확인이 된 기한
+   * {@code dueAt}, 이유는 {@code soloReason}이고, 답 없이 닫혔으면 {@code closedReason}이다(03 4장 "'확인 없음' 화면
+   * 표시").
+   *
+   * @param status {@code WAITING}·{@code ANSWERED}·{@code UNCONFIRMED}·{@code WITHDRAWN}·{@code
+   *     CLOSED}
+   * @param openedAt 처음 연 시각
+   * @param dueAt 미확인이 되는 기한. 아직 정해지지 않았으면 null(NOTI-4b)
+   * @param soloReason 혼자 진행이 열린 이유. 없으면 null
+   * @param closedReason 답 없이 닫혔으면 그 이유, 아니면 null
+   * @param closedAt 닫힌 시각, 닫히지 않았으면 null
+   */
+  public record CloseRequest(
+      RequestStatus status,
+      Instant openedAt,
+      Instant dueAt,
+      SoloReason soloReason,
+      ClosedReason closedReason,
+      Instant closedAt) {}
 
   /**
    * 고친 내용 하나(03 G). 상대 화면은 앞모습({@code content})과 새 값을 비교해 바뀐 글자만 표시한다(REP-7f).

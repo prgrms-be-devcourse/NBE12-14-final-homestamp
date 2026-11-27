@@ -27,6 +27,8 @@ export const CONNECTED_APIS: readonly {
   { method: "POST", path: /^\/api\/rooms$/ },
   { method: "GET", path: /^\/api\/rooms$/ },
   { method: "GET", path: /^\/api\/rooms\/[^/]+$/ },
+  // 호실 경과(06 4장, REP-11, #359)
+  { method: "GET", path: /^\/api\/rooms\/[^/]+\/timeline$/ },
   // 호실 기록 내려받기 목록과 사진 주소 받기(06 4장·4-5, DL-1·S-19, #321)
   { method: "GET", path: /^\/api\/rooms\/[^/]+\/download$/ },
   { method: "POST", path: /^\/api\/photos\/view-urls$/ },

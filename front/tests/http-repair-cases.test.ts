@@ -295,3 +295,23 @@ describe("수리 건 API 중 연결한 것만 서버로 보내요", () => {
     expect(isConnected("GET", "/api/repair-cases/c1/extra")).toBe(false)
   })
 })
+
+test("혼자 끝낸 처리 완료에 남은 이견(closeObjection)을 화면 모델로 옮긴다(REP-5f, #359)", () => {
+  const { repair } = repairFromDetail(
+    body({
+      status: "DONE",
+      closedBy: "LANDLORD",
+      closeObjection: {
+        side: "TENANT",
+        reason: "아직 물이 새요",
+        at: "2026-11-27T05:00:00Z",
+      },
+    }),
+  )
+  expect(repair.closeObjection).toEqual({
+    by: "임차인",
+    reason: "아직 물이 새요",
+    at: "2026-11-27T05:00:00Z",
+  })
+  expect(repairFromDetail(body()).repair.closeObjection).toBeUndefined()
+})
