@@ -114,6 +114,7 @@ class DeliveryPollSchedulerTest {
             .withBean(DeliveryPollClaimer.class, () -> mock(DeliveryPollClaimer.class))
             .withBean(NoticeRepository.class, () -> mock(NoticeRepository.class))
             .withBean(SmsGateway.class, () -> mock(SmsGateway.class))
+            .withBean(NoticeWaitStart.class, () -> mock(NoticeWaitStart.class))
             .withBean(Clock.class, () -> Clock.fixed(Instant.EPOCH, ZoneOffset.UTC))
             .withBean(
                 PlatformTransactionManager.class, () -> mock(PlatformTransactionManager.class))
