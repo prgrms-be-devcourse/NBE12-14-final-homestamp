@@ -150,6 +150,20 @@ class RoomTimelineApiTest {
 
   @Tag("invariant-18")
   @Test
+  void REP_11a_기준_측이_공유를_그만둔_뒤_상대가_보낸_확인_요청으로_작성_중_항목이_드러나지_않는다() throws Exception {
+    // #352 · 06 INSP-1f · 불변식 18: 점검 상세(InspectionSight)와 같게 그만둔 시각에 작성 중이던 항목은 보이지 않는다
+    draftHiddenThenCounterpartRequests();
+
+    String theirs = body(timeline(landlord).andExpect(status().isOk()));
+    List<String> landlordSees = JsonPath.read(theirs, "$.items[*].type");
+    assertThat(landlordSees).containsExactly("START_INSPECTION", "REQUEST_INSPECTION_CONFIRM");
+
+    String mine = body(timeline(tenant).andExpect(status().isOk()));
+    List<String> tenantSees = JsonPath.read(mine, "$.items[*].type");
+    assertThat(tenantSees).containsExactly("START_INSPECTION", "ADD_ITEM");
+  }
+
+  @Test
   void REP_11a_내가_공유를_그만둔_뒤에도_상대_행동은_안_보인다_양방향() throws Exception {
     // 집주인이 그만두면 그 뒤 세입자의 보충은 집주인에게 안 보이고, 세입자는 자기 보충을 본다
     UUID caseId = register(1);
@@ -246,6 +260,50 @@ class RoomTimelineApiTest {
         at,
         room,
         side.name());
+  }
+
+  /**
+   * #352 재현: 세입자(기준 측)가 퇴거 점검을 시작해 사진 1장 항목을 더하고 공유를 그만둔 뒤, 7일이 지나 집주인이 직접 확인 요청을 보낸다(06 INSP-1f).
+   * 시작 시각은 점검 행만 옮겨 작성 중 기간을 지난 것으로 한다. 행동 기록 시각은 그대로라 항목은 공유 중단 전, 확인 요청은 뒤다.
+   */
+  private void draftHiddenThenCounterpartRequests() throws Exception {
+    String started =
+        mvc.perform(
+                post("/api/rooms/{id}/inspections", room)
+                    .with(loginAs(tenant))
+                    .header("Idempotency-Key", "start-" + UUID.randomUUID())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"kind\":\"MOVE_OUT\"}"))
+            .andExpect(status().isCreated())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    UUID inspection = UUID.fromString(started.replaceAll(".*\"id\":\"([^\"]+)\".*", "$1"));
+    mvc.perform(
+            post("/api/inspections/{id}/items", inspection)
+                .with(loginAs(tenant))
+                .header("Idempotency-Key", "item-" + UUID.randomUUID())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"roomPartId\":\""
+                        + part
+                        + "\",\"description\":\"벽지 찢어짐\",\"uploadTickets\":[\""
+                        + UUID.randomUUID()
+                        + "\"]}"))
+        .andExpect(status().isCreated());
+    jdbc.update(
+        "UPDATE state.party SET status = 'SHARING_STOPPED', sharing_stopped_at = ?"
+            + " WHERE room_record_id = ? AND side = 'TENANT'",
+        Timestamp.from(Instant.now()),
+        room);
+    jdbc.update(
+        "UPDATE state.inspection SET created_at = created_at - INTERVAL '8 days' WHERE id = ?",
+        inspection);
+    mvc.perform(
+            post("/api/inspections/{id}/request-confirm", inspection)
+                .with(loginAs(landlord))
+                .header("Idempotency-Key", "req-" + UUID.randomUUID()))
+        .andExpect(status().isOk());
   }
 
   private static String body(ResultActions result) throws Exception {

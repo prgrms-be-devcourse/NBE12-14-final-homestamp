@@ -148,6 +148,23 @@ class RoomDownloadApiTest {
   }
 
   @Test
+  void 기준_측이_공유를_그만둔_뒤_상대가_보낸_확인_요청으로_작성_중_항목과_사진이_드러나지_않는다() throws Exception {
+    // #352 · 06 INSP-1f · 불변식 18: 점검 상세(InspectionSight)와 같게 그만둔 시각에 작성 중이던 항목은 보이지 않는다
+    draftHiddenThenCounterpartRequests();
+
+    String theirs = body(download(landlord).andExpect(status().isOk()));
+    List<String> landlordSees = JsonPath.read(theirs, "$.record.actions[*].type");
+    assertThat(landlordSees).containsExactly("START_INSPECTION", "REQUEST_INSPECTION_CONFIRM");
+    assertThat((Integer) JsonPath.read(theirs, "$.photoCount")).isZero();
+
+    // 기준 측은 자기 항목과 사진을 그대로 본다
+    String mine = body(download(tenant).andExpect(status().isOk()));
+    List<String> tenantSees = JsonPath.read(mine, "$.record.actions[*].type");
+    assertThat(tenantSees).containsExactly("START_INSPECTION", "ADD_ITEM");
+    assertThat((Integer) JsonPath.read(mine, "$.photoCount")).isEqualTo(1);
+  }
+
+  @Test
   void 공유를_그만둔_뒤_상대가_남긴_행동은_그만둔_쪽_내려받기에_들어가지_않는다() throws Exception {
     // 불변식 18 · 03 6-6 9번: 그만둔 시각 뒤의 상대 행동은 보는 사람에게 보이지 않는다. 내가 남긴 행동은 늘 보인다
     UUID caseId = register(1);
@@ -449,6 +466,50 @@ class RoomDownloadApiTest {
 
   private ResultActions download(UUID memberId) throws Exception {
     return mvc.perform(get("/api/rooms/{id}/download", room).with(loginAs(memberId)));
+  }
+
+  /**
+   * #352 재현: 세입자(기준 측)가 퇴거 점검을 시작해 사진 1장 항목을 더하고 공유를 그만둔 뒤, 7일이 지나 집주인이 직접 확인 요청을 보낸다(06 INSP-1f).
+   * 시작 시각은 점검 행만 옮겨 작성 중 기간을 지난 것으로 한다. 행동 기록 시각은 그대로라 항목은 공유 중단 전, 확인 요청은 뒤다.
+   */
+  private void draftHiddenThenCounterpartRequests() throws Exception {
+    String started =
+        mvc.perform(
+                post("/api/rooms/{id}/inspections", room)
+                    .with(loginAs(tenant))
+                    .header("Idempotency-Key", "start-" + UUID.randomUUID())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"kind\":\"MOVE_OUT\"}"))
+            .andExpect(status().isCreated())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    UUID inspection = UUID.fromString(started.replaceAll(".*\"id\":\"([^\"]+)\".*", "$1"));
+    mvc.perform(
+            post("/api/inspections/{id}/items", inspection)
+                .with(loginAs(tenant))
+                .header("Idempotency-Key", "item-" + UUID.randomUUID())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"roomPartId\":\""
+                        + part
+                        + "\",\"description\":\"벽지 찢어짐\",\"uploadTickets\":[\""
+                        + UUID.randomUUID()
+                        + "\"]}"))
+        .andExpect(status().isCreated());
+    jdbc.update(
+        "UPDATE state.party SET status = 'SHARING_STOPPED', sharing_stopped_at = ?"
+            + " WHERE room_record_id = ? AND side = 'TENANT'",
+        Timestamp.from(Instant.now()),
+        room);
+    jdbc.update(
+        "UPDATE state.inspection SET created_at = created_at - INTERVAL '8 days' WHERE id = ?",
+        inspection);
+    mvc.perform(
+            post("/api/inspections/{id}/request-confirm", inspection)
+                .with(loginAs(landlord))
+                .header("Idempotency-Key", "req-" + UUID.randomUUID()))
+        .andExpect(status().isOk());
   }
 
   private static String body(ResultActions result) throws Exception {
