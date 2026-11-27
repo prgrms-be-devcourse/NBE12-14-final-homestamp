@@ -105,7 +105,17 @@ for key in MIGRATION_SECRETS_DIR UPSTREAM_FILE SWITCH_CMD STATE_DIR LOCK_FILE; d
   check "$key" "${!key}" '^/[A-Za-z0-9._/-]+$'
 done
 check POST_SWITCH_URL "$POST_SWITCH_URL" '^https?://[A-Za-z0-9.-]+(:[0-9]+)?/[A-Za-z0-9._/-]*$'
-[[ -z $POST_SWITCH_RESOLVE ]] || check POST_SWITCH_RESOLVE "$POST_SWITCH_RESOLVE" '^[a-z0-9.-]+:[0-9]+:[0-9.]+$'
+# nginx는 127.0.0.1에서 온 요청에만 확인 헤더를 붙인다. 다른 곳으로 가면 매 배포가 16으로 끝나므로 처음부터 2로 막는다
+[[ $POST_SWITCH_URL =~ ^https?://([A-Za-z0-9.-]+)(:([0-9]+))?/ ]] || die $EXIT_USAGE "POST_SWITCH_URL 값이 형식에 맞지 않습니다"
+url_host=${BASH_REMATCH[1]}
+url_port=${BASH_REMATCH[3]:-$([[ $POST_SWITCH_URL == https:* ]] && echo 443 || echo 80)}
+if [[ -n $POST_SWITCH_RESOLVE ]]; then
+  check POST_SWITCH_RESOLVE "$POST_SWITCH_RESOLVE" '^[A-Za-z0-9.-]+:[0-9]+:127\.0\.0\.1$'
+  [[ ${POST_SWITCH_RESOLVE%:127.0.0.1} == "$url_host:$url_port" ]] ||
+    die $EXIT_USAGE "POST_SWITCH_RESOLVE의 이름·포트가 POST_SWITCH_URL과 다릅니다(그러면 curl이 이 값을 쓰지 않음)"
+elif [[ $url_host != 127.0.0.1 ]]; then
+  die $EXIT_USAGE "POST_SWITCH_RESOLVE가 없으면 POST_SWITCH_URL이 127.0.0.1이어야 합니다(nginx가 127.0.0.1 요청에만 확인 헤더를 붙임)"
+fi
 check HEALTH_TIMEOUT "$HEALTH_TIMEOUT" '^[1-9][0-9]{0,2}$'
 check APP_MEMORY "$APP_MEMORY" '^[1-9][0-9]*[mg]$'
 check STOP_TIMEOUT "$STOP_TIMEOUT" '^[1-9][0-9]{0,2}$'
@@ -219,6 +229,37 @@ trap 'interrupted=1; exit 129' HUP
 
 log "시작: $deploy_id $image"
 
+# 전환 뒤 확인(8단계·되돌리기·noop 확인에서 같이 쓴다): upstream이 그 슬롯이고, nginx를 거친 요청에 그 슬롯의 앱이 답한다.
+#   응답 코드가 POST_SWITCH_EXPECT(기본 401)이고 nginx가 붙인 X-Homestamp-Upstream(127.0.0.1에서 온 요청에만, 앱이 보낸
+#   같은 이름은 nginx가 지움)이 정확히 한 줄로 그 슬롯 주소일 때만 통과한다. 이전 슬롯의 401, nginx 자신의 404·503,
+#   헤더 없음·여러 줄·다른 주소는 통과하지 못한다. 매번 새 연결(curl 새 실행)로 VERIFY_TIMEOUT초 안에서 다시 묻는다
+verify() { # <슬롯>
+  [[ "$(read_active)" == "$1" ]] || return 1
+  local want hdr code got n deadline=$((SECONDS + VERIFY_TIMEOUT))
+  local args=(-sS -o /dev/null -D - --max-time 5)
+  want="127.0.0.1:$(slot_port "$1")"
+  [[ -z $POST_SWITCH_RESOLVE ]] || args+=(--resolve "$POST_SWITCH_RESOLVE")
+  while :; do
+    hdr="$(curl "${args[@]}" "$POST_SWITCH_URL" 2>/dev/null | tr -d '\r' || true)"
+    code="$(awk 'NR==1{print $2}' <<<"$hdr")"
+    n="$(grep -ci '^x-homestamp-upstream:' <<<"$hdr" || true)"
+    got="$(grep -i '^x-homestamp-upstream:' <<<"$hdr" | head -n 1 | cut -d: -f2- | tr -d ' ' || true)"
+    [[ $code == "$POST_SWITCH_EXPECT" && $n == 1 && $got == "$want" ]] && return 0
+    if ((SECONDS >= deadline)); then
+      log "전환 뒤 확인 실패($1): 응답 ${code:-없음}, 답한 앱 ${got:-알 수 없음}(헤더 ${n:-0}줄), 기대 $POST_SWITCH_EXPECT·$want"
+      return 1
+    fi
+    sleep 1
+  done
+}
+healthy() { # <포트>: /actuator/health가 VERIFY_TIMEOUT초 안에 200 + UP
+  local deadline=$((SECONDS + VERIFY_TIMEOUT))
+  until [[ "$(curl -fsS --max-time 3 "http://127.0.0.1:$1/actuator/health" 2>/dev/null || true)" == *'"status":"UP"'* ]]; do
+    ((SECONDS < deadline)) || return 1
+    sleep 1
+  done
+}
+
 # ---- 1. 활성 슬롯
 active="$(read_active)"
 [[ $active != unknown ]] || die $EXIT_STATE "upstream이 blue·green 주소가 아닙니다. 손으로 확인하세요(런북 복구)"
@@ -245,9 +286,21 @@ docker pull -q "$image" >/dev/null || die $EXIT_IMAGE "이미지를 받지 못�
 docker image inspect -f '{{range .RepoDigests}}{{println .}}{{end}}' "$image" | grep -qxF "$image" ||
   die $EXIT_IMAGE "받은 이미지의 digest가 다릅니다"
 
+# 같은 이미지라도 바로 noop으로 끝내지 않는다. 전환 뒤 확인 전에 배포가 멈췄으면(SSM 제한 시간·재시작) upstream은
+# 확인한 적 없는 슬롯을 가리킬 수 있다. 활성 슬롯의 헬스와 전환 뒤 확인을 통과해야 noop이고, 아니면 바꾸지 않고 4로 멈춘다
 if [[ $prev_running == true && "$(c_field "$(slot_name "$active")" '{{.Config.Image}}')" == "$image" ]]; then
+  step=noop-check
+  if ! healthy "$(slot_port "$active")" || ! verify "$active"; then
+    die $EXIT_STATE "같은 이미지가 활성 슬롯($active)에 있지만 헬스나 전환 뒤 확인을 통과하지 못했습니다. noop으로 보지 않고 아무것도 바꾸지 않습니다(런북 \"같은 이미지인데 확인 실패\")"
+  fi
+  # 확인을 통과한 슬롯이 활성인데 다른 슬롯도 떠 있으면 멈춘 배포가 9단계를 못 한 것이다. 그 단계만 마친다(지우지 않음)
+  other_name="$(slot_name "$(other_slot "$active")")"
+  if c_running "$other_name"; then
+    log "확인을 통과했고, 멈춘 배포가 남긴 이전 슬롯 앱이 실행 중입니다. 멈춥니다(지우지 않음)"
+    docker stop -t "$STOP_TIMEOUT" "$other_name" >/dev/null || log "경고: 이전 앱을 멈추지 못했습니다"
+  fi
   result=noop
-  log "같은 이미지가 이미 활성 슬롯에서 실행 중입니다. 아무것도 바꾸지 않습니다"
+  log "같은 이미지가 활성 슬롯에서 실행 중이고 확인을 통과했습니다. 새로 배포하지 않습니다"
   exit 0
 fi
 
@@ -337,30 +390,8 @@ if ! "$SWITCH_CMD" "127.0.0.1:$target_port"; then
   die $EXIT_SWITCH "nginx 전환이 실패했습니다. 이전 앱을 그대로 둡니다"
 fi
 
-# ---- 8. 전환 뒤 확인: upstream이 그 슬롯이고, nginx를 거친 요청에 그 슬롯의 앱이 답한다.
-#      응답 코드가 POST_SWITCH_EXPECT(기본 401)이고 nginx가 붙인 X-Homestamp-Upstream(127.0.0.1에서 온 요청에만, 앱이 보낸
-#      같은 이름은 nginx가 지움)이 정확히 한 줄로 그 슬롯 주소일 때만 통과한다. 이전 슬롯의 401, nginx 자신의 404·503,
-#      헤더 없음·여러 줄·다른 주소는 통과하지 못한다. 매번 새 연결(curl 새 실행)로 VERIFY_TIMEOUT초 안에서 다시 묻는다
+# ---- 8. 전환 뒤 확인(verify, 위 정의)
 step=verify
-verify() { # <슬롯>
-  [[ "$(read_active)" == "$1" ]] || return 1
-  local want hdr code got n deadline=$((SECONDS + VERIFY_TIMEOUT))
-  local args=(-sS -o /dev/null -D - --max-time 5)
-  want="127.0.0.1:$(slot_port "$1")"
-  [[ -z $POST_SWITCH_RESOLVE ]] || args+=(--resolve "$POST_SWITCH_RESOLVE")
-  while :; do
-    hdr="$(curl "${args[@]}" "$POST_SWITCH_URL" 2>/dev/null | tr -d '\r' || true)"
-    code="$(awk 'NR==1{print $2}' <<<"$hdr")"
-    n="$(grep -ci '^x-homestamp-upstream:' <<<"$hdr" || true)"
-    got="$(grep -i '^x-homestamp-upstream:' <<<"$hdr" | head -n 1 | cut -d: -f2- | tr -d ' ' || true)"
-    [[ $code == "$POST_SWITCH_EXPECT" && $n == 1 && $got == "$want" ]] && return 0
-    if ((SECONDS >= deadline)); then
-      log "전환 뒤 확인 실패($1): 응답 ${code:-없음}, 답한 앱 ${got:-알 수 없음}(헤더 ${n:-0}줄), 기대 $POST_SWITCH_EXPECT·$want"
-      return 1
-    fi
-    sleep 1
-  done
-}
 if ! verify "$target"; then
   log "전환 뒤 확인이 실패했습니다. 이 사이 새 앱이 받은 요청의 DB 변경은 그대로 남습니다"
   if [[ $prev_running == true ]]; then
