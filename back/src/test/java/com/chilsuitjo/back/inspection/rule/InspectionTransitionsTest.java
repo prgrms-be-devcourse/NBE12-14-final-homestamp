@@ -297,8 +297,34 @@ class InspectionTransitionsTest {
 
   @Test
   void 점검_규칙은_다른_행동을_받지_않는다() {
-    assertThatThrownBy(
-            () -> rules.apply(InspectionState.NONE, entry(ActionType.LOCK, null, Map.of())))
+    assertThatThrownBy(() ->
+            rules.apply(InspectionState.NONE, entry(ActionType.FINISH_INSPECTION, null, Map.of())))
+        .hasMessage(ErrorCode.INVALID_STATE.name());
+  }
+
+  // ---- 잠금(#326) ----
+
+  @Test
+  void 재계산은_서버_잠금으로_확인_요청을_잠김으로_옮긴다() {
+    InspectionState folded =
+        Replay.fold(
+            rules,
+            List.of(
+                start(PartySide.TENANT, "MOVE_IN", null),
+                request(PartySide.TENANT, NOW),
+                entry(ActionType.LOCK, null, Map.of(InspectionLock.LOCK_REASON, "ALL_RESOLVED"))));
+
+    assertThat(folded.status()).isEqualTo(InspectionStatus.LOCKED);
+  }
+
+  @Test
+  void 확인_요청이_아니면_잠금을_받지_않는다() {
+    InspectionState draft = draft(PartySide.TENANT, NOW, true);
+    InspectionState locked = draft.withStatus(InspectionStatus.LOCKED);
+
+    assertThatThrownBy(() -> rules.apply(draft, entry(ActionType.LOCK, null, Map.of())))
+        .hasMessage(ErrorCode.INVALID_STATE.name());
+    assertThatThrownBy(() -> rules.apply(locked, entry(ActionType.LOCK, null, Map.of())))
         .hasMessage(ErrorCode.INVALID_STATE.name());
   }
 

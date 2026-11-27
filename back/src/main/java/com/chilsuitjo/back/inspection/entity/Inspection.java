@@ -98,6 +98,20 @@ public class Inspection {
   }
 
   /**
+   * 잠근다(03 H "잠기는 조건"). 잠글지는 {@code InspectionLock.decide}가 정하고, 상태는 {@code InspectionTransitions}의
+   * {@code LOCK}과 같은 값(확인 요청 → 잠김)이다. 잠긴 시각과 이유는 함께 채운다(V1 CHECK). 시각은 그 행동의 시각({@code
+   * ActionRequestContext.at()})이다.
+   */
+  public void lock(Instant at, LockReason reason) {
+    if (status != InspectionStatus.REQUESTED) {
+      throw new IllegalStateException("확인 요청 중인 점검만 잠가요: " + status);
+    }
+    this.status = InspectionStatus.LOCKED;
+    this.lockedAt = Objects.requireNonNull(at, "at");
+    this.lockReason = Objects.requireNonNull(reason, "reason");
+  }
+
+  /**
    * 상대에게 실제로 보이게 된 시각을 남긴다(decisions 2026-11-18·2026-11-23). 이미 있으면 그대로 둔다: 한 번 보인 기록은 다시 숨겨지지 않아
    * 처음 시각만 뜻이 있다. 시각은 그 행동의 시각({@code ActionRequestContext.at()})이다.
    */

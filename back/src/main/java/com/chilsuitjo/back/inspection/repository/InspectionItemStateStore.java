@@ -3,10 +3,12 @@ package com.chilsuitjo.back.inspection.repository;
 import com.chilsuitjo.back.action.dto.ActionCommand;
 import com.chilsuitjo.back.action.dto.ActionEntry;
 import com.chilsuitjo.back.action.dto.ActionTarget;
+import com.chilsuitjo.back.action.dto.Actor;
 import com.chilsuitjo.back.action.dto.DigestField;
 import com.chilsuitjo.back.action.dto.DigestInput;
 import com.chilsuitjo.back.action.dto.SavedState;
 import com.chilsuitjo.back.action.rule.ActionType;
+import com.chilsuitjo.back.action.service.ActionFollowUps;
 import com.chilsuitjo.back.action.service.ActionReader;
 import com.chilsuitjo.back.action.service.ActionRequestContext;
 import com.chilsuitjo.back.action.service.StateStore;
@@ -22,7 +24,10 @@ import com.chilsuitjo.back.inspection.entity.InspectionItem;
 import com.chilsuitjo.back.inspection.entity.InspectionItemVersion;
 import com.chilsuitjo.back.inspection.rule.ConfirmAllState;
 import com.chilsuitjo.back.inspection.rule.InspectionItemState;
+import com.chilsuitjo.back.inspection.rule.InspectionKind;
+import com.chilsuitjo.back.inspection.rule.InspectionLock;
 import com.chilsuitjo.back.inspection.rule.InspectionStatus;
+import com.chilsuitjo.back.inspection.rule.LockReason;
 import com.chilsuitjo.back.notification.dto.OpenRequestCommand;
 import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.dto.RoomParties;
@@ -75,6 +80,7 @@ public class InspectionItemStateStore {
   private final CounterpartReader parties;
   private final WaitService waits;
   private final SupplementWriter supplementWriter;
+  private final ActionFollowUps followUps;
 
   /**
    * 항목 더하기(03 H "항목")의 저장 방법.
@@ -257,6 +263,47 @@ public class InspectionItemStateStore {
     }
   }
 
+  /**
+   * 항목 응답을 저장한 뒤 점검이 잠기는지 보고, 잠기면 같은 트랜잭션에서 잠근다(03 H "잠기는 조건", INSP-1b·1c·1d). 판단은 {@link
+   * InspectionLock#decide}이고, 잠기면 모든 항목의 판에 도장을 찍고(03 G "점검 전체": 상대 미확인 항목도 도장 뒤, 이미 답한 항목은 그 판
+   * 그대로) 서버 행동 {@code LOCK}을 딸린 행동으로 남긴다(05 행동 표 {@code LOCK}(서버)).
+   *
+   * <p>입주 점검만 잠근다(#326 범위). 퇴거 점검은 거주 종료와 따로 잠기는 규칙(03 H "퇴거 점검")과 함께 후속에서 연결한다.
+   *
+   * @param noItemsConfirmed 이 단계가 기준 측이 아닌 쪽의 "하자 기록 없음" 확인인가. 항목이 하나도 없을 때만 판단에 쓰이고, 항목 없는 점검에 오는
+   *     저장은 그 확인({@code ConfirmingAll})뿐이라 이전 기록을 다시 읽지 않는다(그 행동은 이 단계 뒤에 기록되어 아직 읽히지도 않는다)
+   */
+  private void lockIfSettled(UUID roomRecordId, UUID inspectionId, boolean noItemsConfirmed) {
+    Inspection parent = inspection(roomRecordId, inspectionId);
+    if (parent.getKind() != InspectionKind.MOVE_IN) {
+      return;
+    }
+    List<InspectionItem> all = items.findByInspectionIdOrderByIdAsc(inspectionId);
+    Optional<LockReason> reason =
+        InspectionLock.decide(
+            parent.getStatus(),
+            parent.getAuthorSide(),
+            all.stream()
+                .map(item -> new InspectionLock.Item(item.getAddedBySide(), item.getStatus()))
+                .toList(),
+            noItemsConfirmed);
+    if (reason.isEmpty()) {
+      return;
+    }
+    for (InspectionItem item : all) {
+      if (item.getConfirmedVersionId() == null) {
+        item.stampCurrent();
+      }
+    }
+    parent.lock(requestContext.at(), reason.get());
+    inspections.flush();
+    followUps.add(
+        Actor.server(),
+        ActionType.LOCK,
+        ActionTarget.inspection(inspectionId),
+        Map.of(InspectionLock.LOCK_REASON, reason.get().name()));
+  }
+
   private static RequestTarget confirmRequest(UUID inspectionId) {
     return RequestTarget.of(TargetKind.INSPECTION, inspectionId);
   }
@@ -361,7 +408,8 @@ public class InspectionItemStateStore {
 
     /**
      * 항목 응답을 바꾸고 답한 판에 도장을 찍는다(03 1-3 "[맞아요]·보류·이견 모두 도장"). 그 방향의 미응답 항목이 남지 않으면 점검 확인 요청을 닫는다. 내용
-     * 지문은 서비스가 넘긴 본 판이다. 항목을 더한 측에게 가는 서비스 안 알림은 알리기 작업(#116)에서 붙인다.
+     * 지문은 서비스가 넘긴 본 판이다. 그 뒤 점검이 잠기는지 본다({@link #lockIfSettled}, INSP-1b·1d). 항목을 더한 측에게 가는 서비스 안
+     * 알림은 알리기 작업(#116)에서 붙인다.
      */
     @Override
     public SavedState save(ActionCommand command, InspectionItemState next) {
@@ -370,6 +418,7 @@ public class InspectionItemStateStore {
       row.stampCurrent();
       items.flush();
       answerIfSettled(row.getInspectionId(), row.getAddedBySide(), command.actor().side());
+      lockIfSettled(command.roomRecordId(), row.getInspectionId(), false);
       return SavedState.unchanged();
     }
   }
@@ -435,8 +484,8 @@ public class InspectionItemStateStore {
     }
 
     /**
-     * 행동만 남긴다(점검 상태는 그대로). 각 항목의 맞아요는 뒤따르는 {@code RESPOND_ITEM} 단계가 남기고 요청도 거기서 닫힌다. 항목이 없는 점검이면
-     * 여기서 "하자 기록 없음" 확인으로 점검 확인 요청을 닫는다(03 H).
+     * 행동만 남긴다. 각 항목의 맞아요는 뒤따르는 {@code RESPOND_ITEM} 단계가 남기고 요청 닫기·잠금도 거기서 한다. 항목이 없는 점검이면 여기서 "하자
+     * 기록 없음" 확인으로 점검 확인 요청을 닫고, 항목이 하나도 없으면 잠근다(03 H, INSP-1c).
      */
     @Override
     public SavedState save(ActionCommand command, ConfirmAllState next) {
@@ -445,6 +494,9 @@ public class InspectionItemStateStore {
             confirmRequest(command.target().id()),
             RequestKind.INSPECTION_CONFIRM,
             command.actor().side());
+        // 항목이 하나도 없는 점검이면 이 확인으로 잠긴다(INSP-1c). 항목이 있으면 뒤따르는 응답 단계가 잠근다
+        lockIfSettled(
+            command.roomRecordId(), command.target().id(), command.actor().side() != next.author());
       }
       return SavedState.unchanged();
     }
