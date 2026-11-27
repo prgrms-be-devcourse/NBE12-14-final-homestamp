@@ -141,9 +141,15 @@ public class FakeWaitService implements WaitService, WaitQuery {
       write(key, existing.with(RequestStatus.WAITING));
       return new RequestHandle(existing.id(), false);
     }
+    if (command.kind() == RequestKind.CORRECTION_CONFIRM
+        && existing.status() == RequestStatus.UNCONFIRMED) {
+      // 미확인 뒤 같은 기록을 또 고치면 새 요청을 열지 않고 같은 요청이 다시 기다림이 된다(03 1-4 "미확인 뒤 다시 고침", #104).
+      // 기록마다 요청 하나(03 1-4 "요청", 05 response_request)이고 제안 바꾸기(②)와 같은 모양이다
+      write(key, existing.with(RequestStatus.WAITING));
+      return new RequestHandle(existing.id(), false);
+    }
     // 그 밖의 열린 요청(기다림·미확인)은 상태를 그대로 두고 묶는다. 혼자 진행이 열리는 종류는 미확인이면 혼자 진행도 그대로다(03 1-4
-    // "열리는 요청의 기한은 보낸 뒤 고정"). 고친 내용 확인이 미확인일 때 다시 고치는 경우(03 1-4 "미확인 뒤 다시 고침")는 아직 정하지 않아 지금 동작을
-    // 둔다(#104).
+    // "열리는 요청의 기한은 보낸 뒤 고정")
     return new RequestHandle(existing.id(), false);
   }
 

@@ -368,7 +368,7 @@ case SUPPLEMENT -> {
 
 | 무엇 | 예 | 어디서 |
 |---|---|---|
-| 상대가 아직 볼 수 없는 기록 | 작성 중 점검의 항목(06 INSP-1a) | `apply`에서 `INVALID_STATE`, `canAnswer`도 `false`. 확인 카드도 같은 기준 |
+| 상대가 아직 볼 수 없는 기록 | 작성 중 점검에서 기준 측이 쓴 항목(06 INSP-1a. 상대가 더한 항목은 기준 측이 작성 중에도 답한다) | `apply`에서 `INVALID_STATE`, `canAnswer`도 `false`. 확인 카드도 같은 기준 |
 | 그 단계에서 할 수 없는 행동 | 거주 종료 뒤 수리 건의 [종료 요청](종료 확인 요청을 열 수 없음, 03 A 상태별 표 "열린 수리 건의 수리 행동") | `load`가 담은 호실 단계로 `apply`에서 |
 | 규칙이 다른 응답 | 정산 끝내기(`AnswerResult` Javadoc), 돈 안건의 제안·동의(`ProposalService`, `OWN_PROPOSAL`) | 그 도메인 |
 

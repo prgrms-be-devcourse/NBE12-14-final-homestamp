@@ -197,6 +197,22 @@ class JpaWaitServiceTest extends SchemaTestSupport {
   }
 
   @Test
+  void 미확인_고친_내용_확인에_또_고치면_같은_요청이_다시_기다림이다() {
+    UUID room = room();
+    RequestTarget repair = repairCase(room);
+    RequestHandle first = open(room, RequestKind.CORRECTION_CONFIRM, repair, PartySide.TENANT);
+    setStatus(first.requestId(), "UNCONFIRMED");
+
+    // 03 1-4 "미확인 뒤 다시 고침", decisions 2026-11-27(#104): 새 요청을 열지 않는다
+    RequestHandle again = restart(room, RequestKind.CORRECTION_CONFIRM, repair, PartySide.TENANT);
+
+    assertThat(again.created()).isFalse();
+    assertThat(again.requestId()).isEqualTo(first.requestId());
+    assertThat(status(first)).isEqualTo("WAITING");
+    assertThat(count(room)).isEqualTo(1);
+  }
+
+  @Test
   void 열리는_요청은_미확인이어도_묶기만_하고_상태를_그대로_둔다() {
     UUID room = room();
     RequestTarget repair = repairCase(room);
@@ -238,7 +254,7 @@ class JpaWaitServiceTest extends SchemaTestSupport {
   }
 
   @Test
-  void 미확인이_된_고친_내용에_더하면_정하기_전이라_상태와_기한을_그대로_둔다() {
+  void 재통지_뒤_미확인이_된_고친_내용에_더하면_기한_다시_세기를_타이머_전이라_거절한다() {
     UUID room = room();
     RequestTarget repair = repairCase(room);
     RequestHandle request = open(room, RequestKind.CORRECTION_CONFIRM, repair, PartySide.TENANT);
@@ -251,9 +267,12 @@ class JpaWaitServiceTest extends SchemaTestSupport {
         request.requestId());
     entityManager.clear();
 
-    restart(room, RequestKind.CORRECTION_CONFIRM, repair, PartySide.TENANT);
-
-    // #104 미확인 뒤 다시 고침은 아직 정하지 않음
+    // 같은 요청을 다시 기다림으로 돌리는 것은 정했지만(#104), 재통지 뒤 "미확인 72시간을 다시 정함"(03 1-4 "기한")을 어떻게 저장할지는
+    // 기다림 타이머(d3)에서 정한다. 조용히 옛 기한을 남기지 않고 거절한다. 타이머 전이라 운영에서는 미확인이 생기지 않는다
+    assertThatThrownBy(
+            () -> restart(room, RequestKind.CORRECTION_CONFIRM, repair, PartySide.TENANT))
+        .isInstanceOf(IllegalStateException.class);
+    entityManager.clear();
     assertThat(row(request.requestId()))
         .containsEntry("status", "UNCONFIRMED")
         .containsEntry("unconfirmed_due_at", Timestamp.from(AT.plus(Duration.ofHours(72))));

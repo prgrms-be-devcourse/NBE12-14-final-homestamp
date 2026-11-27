@@ -131,10 +131,14 @@ public class JpaWaitService implements WaitService, WaitQuery {
             "상대 쪽 제안 요청이 열려 있어요. 역제안이면 answered 다음 open을 불러 주세요(05 proposal ③)");
       }
       request.rewait(requestContext.at(), renotifyAfter);
+    } else if (command.kind() == RequestKind.CORRECTION_CONFIRM
+        && request.getStatus() == RequestStatus.UNCONFIRMED) {
+      // 미확인 뒤 같은 기록을 또 고치면 새 요청을 열지 않고 같은 요청이 다시 기다림이 된다(03 1-4 "미확인 뒤 다시 고침", #104)
+      request.rewait(requestContext.at(), renotifyAfter);
     } else if (!SoloRule.opensSolo(command.kind())
         && request.getStatus() == RequestStatus.WAITING) {
       // 고친 내용 확인 등은 마지막으로 더한 시각부터 다시 센다(03 1-4 "기한"). 혼자 진행이 열리는 종류는 기한이 보낸 뒤 고정이라 묶기만
-      // 한다. 미확인 뒤 다시 고침은 #104에서 정하기 전이라 상태와 기한을 그대로 둔다
+      // 한다(미확인이어도 상태·기한 그대로)
       request.recount(requestContext.at(), renotifyAfter);
     }
     return new RequestHandle(request.getId(), false);

@@ -224,13 +224,17 @@ public class ResponseRequest {
   }
 
   /**
-   * 제안을 낸 쪽이 자기 안을 바꿨다(05 {@code proposal} ②). 같은 요청이 다시 기다림이 되고 미확인 때 열린 혼자 진행 이유는 지운다. 기한은 바꾼
-   * 시각부터 다시 센다({@link #recount}, 03 E).
+   * 같은 요청이 다시 기다림이 된다. 두 경우만이다: 제안을 낸 쪽이 자기 안을 바꿨다(05 {@code proposal} ②), 미확인이 된 고친 내용 확인에 같은 기록을
+   * 또 고쳤다(03 1-4 "미확인 뒤 다시 고침", decisions 2026-11-27, #104). 요청 ID·만든 시각·첫 통지 시각은 그대로이고, 미확인 때 열린
+   * 혼자 진행 이유는 지운다. 기한은 그 시각부터 다시 센다({@link #recount}, 03 1-4 "기한"·03 E). 타이머가 만든 미확인은 {@code
+   * unconfirmed_due_at}이 있어 {@link #recount}가 거절한다(재통지 뒤 다시 세기는 d3에서 정함).
    */
   public void rewait(Instant at, Duration renotifyAfter) {
     requireOpen();
-    if (kind != RequestKind.PROPOSAL) {
-      throw new IllegalStateException("다시 기다림은 제안 요청만이에요: " + kind);
+    boolean correctionAgain =
+        kind == RequestKind.CORRECTION_CONFIRM && status == RequestStatus.UNCONFIRMED;
+    if (kind != RequestKind.PROPOSAL && !correctionAgain) {
+      throw new IllegalStateException("다시 기다림은 제안 요청과 미확인 고친 내용 확인만이에요: " + kind);
     }
     recount(at, renotifyAfter);
     status = RequestStatus.WAITING;

@@ -133,7 +133,59 @@ class ResponseRequestTransitionTest extends SchemaTestSupport {
   }
 
   @Test
-  void 다시_기다림은_제안만이다() {
+  void 미확인_고친_내용_확인을_또_고치면_같은_요청이_다시_기다림이고_첫_통지_시각은_그대로다() {
+    UUID room = room();
+    ResponseRequest correction = save(room, RequestKind.CORRECTION_CONFIRM, repairCase(room));
+    jdbc.update(
+        "UPDATE state.response_request SET status = 'UNCONFIRMED', first_notified_at = ?"
+            + " WHERE id = ?",
+        Timestamp.from(CREATED),
+        correction.getId());
+    entityManager.clear();
+
+    // 03 1-4 "미확인 뒤 다시 고침", decisions 2026-11-27(#104)
+    ResponseRequest unconfirmed = requests.findById(correction.getId()).orElseThrow();
+    unconfirmed.rewait(CLOSED_AT, RENOTIFY);
+    entityManager.flush();
+    entityManager.clear();
+
+    ResponseRequest again = requests.findById(correction.getId()).orElseThrow();
+    assertThat(again.getStatus()).isEqualTo(RequestStatus.WAITING);
+    assertThat(again.getCreatedAt()).isEqualTo(CREATED);
+    assertThat(again.getFirstNotifiedAt()).isEqualTo(CREATED);
+    // 재통지 전 기한이면 그 시각부터 다시 센다(03 1-4 "기한")
+    assertThat(again.getRenotifyDueAt()).isEqualTo(CLOSED_AT.plus(RENOTIFY));
+  }
+
+  @Test
+  void 재통지_뒤_미확인인_고친_내용_확인은_기한_다시_세기를_타이머_전이라_거절한다() {
+    UUID room = room();
+    ResponseRequest correction = save(room, RequestKind.CORRECTION_CONFIRM, repairCase(room));
+    jdbc.update(
+        "UPDATE state.response_request SET status = 'UNCONFIRMED', first_notified_at = ?,"
+            + " unconfirmed_due_at = ? WHERE id = ?",
+        Timestamp.from(CREATED),
+        Timestamp.from(CLOSED_AT),
+        correction.getId());
+    entityManager.clear();
+
+    ResponseRequest renotified = requests.findById(correction.getId()).orElseThrow();
+    assertThatThrownBy(() -> renotified.rewait(CLOSED_AT, RENOTIFY))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(renotified.getStatus()).isEqualTo(RequestStatus.UNCONFIRMED);
+  }
+
+  @Test
+  void 기다리는_고친_내용_확인은_다시_기다림이_아니라_묶기다() {
+    UUID room = room();
+    ResponseRequest waiting = save(room, RequestKind.CORRECTION_CONFIRM, repairCase(room));
+
+    assertThatThrownBy(() -> waiting.rewait(CLOSED_AT, RENOTIFY))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
+  void 다시_기다림은_제안과_미확인_고친_내용만이다() {
     UUID room = room();
     ResponseRequest defect = save(room, RequestKind.DEFECT_CONFIRM, repairCase(room));
 
