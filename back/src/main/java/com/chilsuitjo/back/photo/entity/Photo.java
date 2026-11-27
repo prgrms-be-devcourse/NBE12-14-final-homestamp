@@ -1,6 +1,7 @@
 package com.chilsuitjo.back.photo.entity;
 
 import com.chilsuitjo.back.global.common.PartySide;
+import com.chilsuitjo.back.photo.dto.PhotoTarget;
 import com.chilsuitjo.back.photo.rule.PhotoStage;
 import com.chilsuitjo.back.photo.rule.PhotoTargetType;
 import jakarta.persistence.Column;
@@ -280,5 +281,38 @@ public class Photo {
     photo.inspectionId = inspectionId;
     photo.roomPartId = roomPartId;
     return photo;
+  }
+
+  /**
+   * 사진이 붙은 대상. 채워진 대상 칸 하나로 만든다(V1 {@code num_nonnulls(...) = 1}). {@link #forTarget}의 switch와 짝이라
+   * {@link PhotoTargetType}에 값을 더하면 여기에도 더한다(PhotoTest가 종류마다 확인한다).
+   */
+  public PhotoTarget target() {
+    if (inspectionId != null) {
+      return new PhotoTarget.InspectionPart(inspectionId, roomPartId);
+    }
+    if (repairCaseId != null) {
+      return new PhotoTarget.Ref(PhotoTargetType.REPAIR_CASE, repairCaseId);
+    }
+    if (inspectionItemId != null) {
+      return new PhotoTarget.Ref(PhotoTargetType.INSPECTION_ITEM, inspectionItemId);
+    }
+    if (paymentId != null) {
+      return new PhotoTarget.Ref(PhotoTargetType.PAYMENT, paymentId);
+    }
+    if (causeNoteId != null) {
+      return new PhotoTarget.Ref(PhotoTargetType.CAUSE_NOTE, causeNoteId);
+    }
+    if (settlementItemId != null) {
+      return new PhotoTarget.Ref(PhotoTargetType.SETTLEMENT_ITEM, settlementItemId);
+    }
+    if (progressNoteId != null) {
+      return new PhotoTarget.Ref(PhotoTargetType.PROGRESS_NOTE, progressNoteId);
+    }
+    if (correctionRequestId != null) {
+      return new PhotoTarget.Ref(PhotoTargetType.CORRECTION_REQUEST, correctionRequestId);
+    }
+    // V1 CHECK로 생길 수 없는 상태라 막지 않고 버그로 드러낸다
+    throw new IllegalStateException("사진의 대상 칸이 비어 있어요: " + id);
   }
 }

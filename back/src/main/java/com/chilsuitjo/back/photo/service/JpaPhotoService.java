@@ -4,6 +4,7 @@ import com.chilsuitjo.back.action.dto.PhotoDigest;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.notification.service.OrphanCheckOutbox;
+import com.chilsuitjo.back.photo.dto.ErasedPhoto;
 import com.chilsuitjo.back.photo.dto.LinkPhoto;
 import com.chilsuitjo.back.photo.dto.PhotoAttachCommand;
 import com.chilsuitjo.back.photo.dto.PhotoCard;
@@ -16,9 +17,14 @@ import com.chilsuitjo.back.photo.repository.PhotoObjectStore;
 import com.chilsuitjo.back.photo.repository.PhotoObjectStore.ObjectChangedException;
 import com.chilsuitjo.back.photo.repository.PhotoObjectStore.ObjectHead;
 import com.chilsuitjo.back.photo.repository.PhotoRepository;
+import com.chilsuitjo.back.photo.repository.PhotoTargetRepository;
+import com.chilsuitjo.back.photo.repository.PhotoUrlSigner;
 import com.chilsuitjo.back.photo.repository.PhotoVisibilityRepository;
 import com.chilsuitjo.back.photo.rule.PhotoContentRules;
+import com.chilsuitjo.back.photo.rule.PhotoSight;
 import com.chilsuitjo.back.photo.rule.PhotoUploadFileRules;
+import com.chilsuitjo.back.photo.rule.PhotoUrlRules;
+import com.chilsuitjo.back.photo.rule.PhotoUrlRules.UrlPlan;
 import com.chilsuitjo.back.room.dto.RoomAccess;
 import java.time.Clock;
 import java.time.Duration;
@@ -26,12 +32,17 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -53,7 +64,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * 연결을 하나 더 써서({@code REQUIRES_NEW}) 먼저 커밋한다. 기본값을 켜기 전에 배포 환경에서 재 본 뒤 동시 검사와 트랜잭션 밖 준비로 고친다. 그때 옮기기
  * 쉽게 준비와 저장을 메서드로 나눠 두었다.
  *
- * <p>{@code photo.service=jpa}일 때만 뜬다. {@code cards}·{@code linkPhotos}까지 채운 뒤 기본값을 바꾼다.
+ * <p>{@code photo.service=jpa}일 때만 뜬다. 기본값은 #275(트랜잭션 밖 준비)와 실제 S3 확인 뒤에 바꾼다.
  */
 @Service
 @ConditionalOnProperty(name = "photo.service", havingValue = "jpa")
@@ -64,14 +75,24 @@ public class JpaPhotoService implements PhotoService {
   private static final String PHOTOS = "photos/";
   private static final String JPEG = "image/jpeg";
 
+  /**
+   * 같은 대상 안의 표시 순서. {@code FakePhotoService}와 같다. 같은 {@code sortOrder}끼리는 ID로 정하는데, Postgres의 uuid
+   * 비교(바이트 순)와 Java {@code UUID.compareTo}(부호 있는 long)가 달라서 SQL이 아니라 여기서 정렬한다.
+   */
+  private static final Comparator<Photo> PHOTO_ORDER =
+      Comparator.comparingInt(Photo::getSortOrder).thenComparing(Photo::getId);
+
   private final PhotoUploadTicketSigner tickets;
   private final PhotoObjectStore files;
   private final PhotoRepository photos;
   private final PhotoVisibilityRepository visibilities;
   private final PhotoCountRepository counts;
+  private final PhotoTargetRepository targetPhotos;
+  private final PhotoUrlSigner urlSigner;
   private final OrphanCheckOutbox orphanChecks;
   private final Clock clock;
   private final Duration checkAfter;
+  private final Duration linkUrlTtl;
 
   JpaPhotoService(
       PhotoUploadTicketSigner tickets,
@@ -79,17 +100,23 @@ public class JpaPhotoService implements PhotoService {
       PhotoRepository photos,
       PhotoVisibilityRepository visibilities,
       PhotoCountRepository counts,
+      PhotoTargetRepository targetPhotos,
+      PhotoUrlSigner urlSigner,
       OrphanCheckOutbox orphanChecks,
       Clock clock,
-      @Value("${orphan.check-after}") Duration checkAfter) {
+      @Value("${orphan.check-after}") Duration checkAfter,
+      @Value("${photo.url.short}") Duration linkUrlTtl) {
     this.tickets = tickets;
     this.files = files;
     this.photos = photos;
     this.visibilities = visibilities;
     this.counts = counts;
+    this.targetPhotos = targetPhotos;
+    this.urlSigner = urlSigner;
     this.orphanChecks = orphanChecks;
     this.clock = clock;
     this.checkAfter = checkAfter;
+    this.linkUrlTtl = linkUrlTtl;
   }
 
   /** 표에서 꺼낸 사진 한 장. {@code index}는 업로드 표 목록의 위치(0부터, {@code photoIndex}). */
@@ -344,15 +371,158 @@ public class JpaPhotoService implements PhotoService {
     }
   }
 
+  // ---- 읽기: 회원 카드·링크 사진 ----
+  //
+  // 두 메서드는 같은 틀이다: 사진과 공개 상태를 한 번씩 읽고(read) → 보는 사람에 맞게 거르고 → 대상별로 묶는다(byTarget).
+  // 다른 것은 거르는 조건과 한 장을 무엇으로 바꾸는지뿐이다.
+  //   cards       회원. PhotoSight로 거르고, 링크에서 숨긴 사진도 남긴다. 주소 없음(화면이 view-urls로 받음)
+  //   linkPhotos  링크 열람자. 링크에서 숨긴 사진을 빼고, 남은 사진에 5분 주소를 붙인다
+
+  /**
+   * 회원 화면 카드. 보이는 범위는 {@link PhotoSight}로 Java에서 거른다. view-urls와 같은 함수라 같은 규칙을 SQL에 또 적지 않는다.
+   *
+   * <p><b>보지 않는 것</b>: 사진이 붙은 대상이 가려졌는지. 부르는 쪽이 보는 사람에게 보이는 대상만 넘긴다({@code InspectionQueryService}는
+   * {@code InspectionSight}로 항목을 거른 뒤 부른다). 상대의 작성 중 점검 사진은 #295에서 공개 상태 칸으로 가린다.
+   *
+   * <p>{@code availableActions}는 빈 목록이다. 사진 행동(PHO-3·5·9)을 만들 때 그 판단과 같은 함수로 채운다(decisions
+   * 2026-11-24).
+   */
   @Override
+  @Transactional(readOnly = true)
   public Map<PhotoTarget, List<PhotoCard>> cards(
       RoomAccess viewer, Collection<PhotoTarget> targets) {
-    throw new UnsupportedOperationException("cards는 아직 없어요(#112)");
+    Set<PhotoTarget> keys = new LinkedHashSet<>(targets);
+    List<Stored> visible =
+        read(viewer.roomRecordId(), keys).stream()
+            .filter(stored ->
+                PhotoSight.visibleTo(
+                    stored.photo().getUploadedBySide(),
+                    stored.photo().getCreatedAt(),
+                    viewer.side(),
+                    viewer.sharingStoppedAt()))
+            .toList();
+    return byTarget(keys, visible, JpaPhotoService::card);
   }
 
+  /**
+   * 링크 열람 화면 사진. 링크에서 숨긴 사진은 빼고, 남은 사진은 썸네일·원본 모두 요청마다 새로 서명한 {@code photo.url.short} 주소에 {@code
+   * no-store}다({@link PhotoUrlRules#forLink}). 한 번 부를 때의 주소는 모두 같은 서명 시각·만료다.
+   *
+   * <p>{@link PhotoSight}로 거르지 않는다: 공유를 그만두면 링크가 닫혀서(03 B "공유 그만두기") 링크 열람자에게 공유 중단 뒤의 사진이 갈 일이 없다.
+   * 링크가 유효한지, 대상이 링크가 가리키는 기록의 것인지는 부르는 쪽(link)이 본다.
+   *
+   * <p><b>알려진 한계</b>: view-urls와 같다. 서명한 자격 증명이 10분 안에 끝나면 {@code IllegalStateException}(500)이다.
+   */
   @Override
+  @Transactional(readOnly = true)
   public Map<PhotoTarget, List<LinkPhoto>> linkPhotos(
       UUID roomRecordId, Collection<PhotoTarget> targets) {
-    throw new UnsupportedOperationException("linkPhotos는 아직 없어요(#112)");
+    Set<PhotoTarget> keys = new LinkedHashSet<>(targets);
+    List<Stored> shown =
+        read(roomRecordId, keys).stream()
+            .filter(stored -> !stored.state().isHiddenOnLink())
+            .toList();
+    // 지운 사진만 있으면 서명할 것이 없어 자격 증명도 읽지 않는다(PhotoViewService.needsUrl과 같음)
+    UrlPlan plan =
+        shown.stream().anyMatch(stored -> stored.erased() == null)
+            ? PhotoUrlRules.forLink(
+                clock.instant(), linkUrlTtl, urlSigner.credentialsExpireAt().orElse(null))
+            : null;
+    return byTarget(keys, shown, stored -> linkPhoto(stored, plan));
+  }
+
+  /** 읽은 사진 한 장과 그 공개 상태. 둘은 같은 트랜잭션에서 함께 만들어서({@link #save}) 늘 짝이 있다. */
+  private record Stored(Photo photo, PhotoVisibility state) {
+
+    /** 지운 사진이면 흔적(불변식 16), 아니면 null. {@code THIRD_PARTY}면 측은 {@link ErasedPhoto}가 지운다. */
+    ErasedPhoto erased() {
+      return state.getErasedAt() == null
+          ? null
+          : new ErasedPhoto(photo.getUploadedBySide(), state.getErasedAt(), state.getEraseReason());
+    }
+  }
+
+  /**
+   * 이 호실 기록에서 대상들에 붙은 사진과 공개 상태. 쿼리는 사진·공개 상태 한 번씩이다. 지운 사진·숨긴 사진·안 보이는 사진도 모두 담고, 거르는 것은 부르는 쪽이다.
+   * {@link #PHOTO_ORDER} 순서다.
+   */
+  private List<Stored> read(UUID roomRecordId, Set<PhotoTarget> targets) {
+    List<Photo> found = targetPhotos.findByTargets(roomRecordId, targets);
+    if (found.isEmpty()) {
+      return List.of();
+    }
+    Map<UUID, PhotoVisibility> states =
+        visibilities.findAllById(found.stream().map(Photo::getId).toList()).stream()
+            .collect(Collectors.toMap(PhotoVisibility::getPhotoId, Function.identity()));
+    return found.stream()
+        .sorted(PHOTO_ORDER)
+        .map(photo -> {
+          PhotoVisibility state = states.get(photo.getId());
+          if (state == null) {
+            // 사진 카드와 공개 상태는 같은 트랜잭션에서 함께 만든다(save). 없으면 만드는 쪽 버그다
+            throw new IllegalStateException("사진 공개 상태가 없어요: " + photo.getId());
+          }
+          return new Stored(photo, state);
+        })
+        .toList();
+  }
+
+  /** 넘긴 대상마다 키를 두고(사진이 없으면 빈 목록), 순서를 지킨 채 대상별로 넣는다. {@code stored}는 {@link #read} 순서 그대로여야 한다. */
+  private static <T> Map<PhotoTarget, List<T>> byTarget(
+      Set<PhotoTarget> targets, List<Stored> stored, Function<Stored, T> item) {
+    Map<PhotoTarget, List<T>> result = new LinkedHashMap<>();
+    for (PhotoTarget target : targets) {
+      result.put(target, new ArrayList<>());
+    }
+    for (Stored one : stored) {
+      List<T> items = result.get(one.photo().target());
+      if (items == null) {
+        // 쿼리 조건(PhotoTargetSql)과 Photo.target()이 어긋났다는 뜻이다
+        throw new IllegalStateException("넘기지 않은 대상의 사진을 읽었어요: " + one.photo().getId());
+      }
+      items.add(item.apply(one));
+    }
+    result.replaceAll((target, items) -> List.copyOf(items));
+    return Map.copyOf(result);
+  }
+
+  private static PhotoCard card(Stored stored) {
+    Photo photo = stored.photo();
+    PhotoVisibility state = stored.state();
+    return new PhotoCard(
+        photo.getId(),
+        photo.target(),
+        photo.getStage(),
+        photo.getUploadedBySide(),
+        photo.getSortOrder(),
+        photo.getCreatedAt(),
+        photo.getDeviceTakenAt(),
+        state.isHiddenOnLink(),
+        state.getMarkedWrongAt(),
+        photo.getRedactedFromPhotoId(),
+        stored.erased(),
+        List.of());
+  }
+
+  /** 지운 사진은 파일이 없어 어떤 주소도 만들지 않는다(불변식 16). 그때 {@code plan}은 쓰지 않는다. */
+  private LinkPhoto linkPhoto(Stored stored, UrlPlan plan) {
+    Photo photo = stored.photo();
+    ErasedPhoto erased = stored.erased();
+    if (erased != null) {
+      return new LinkPhoto(
+          photo.getId(), photo.target(), photo.getSortOrder(), null, null, null, erased);
+    }
+    return new LinkPhoto(
+        photo.getId(),
+        photo.target(),
+        photo.getSortOrder(),
+        sign(photo.getThumbKey(), plan),
+        sign(photo.getOriginalKey(), plan),
+        plan.expiresAt(),
+        null);
+  }
+
+  private String sign(String key, UrlPlan plan) {
+    return urlSigner.presignGet(key, plan.signedAt(), plan.expiresAt(), plan.cacheControl());
   }
 }

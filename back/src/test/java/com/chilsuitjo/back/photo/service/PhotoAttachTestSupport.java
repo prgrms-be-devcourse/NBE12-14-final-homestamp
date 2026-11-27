@@ -261,8 +261,18 @@ abstract class PhotoAttachTestSupport {
     return ((Timestamp) timestamp).toInstant();
   }
 
-  /** 이미 붙어 있는 사진(한도 셈용). 파일은 없다. */
+  /** 이미 붙어 있는 사진(한도 셈용). 파일은 없다. 표시 순서는 이 호실의 사진 수다. */
   UUID existingPhoto(PhotoTarget.Ref target, PartySide side, Instant createdAt, boolean erased) {
+    return existingPhoto(target, side, createdAt, erased, null);
+  }
+
+  /** {@code sortOrder}가 null이면 이 호실의 사진 수를 표시 순서로 쓴다. */
+  UUID existingPhoto(
+      PhotoTarget.Ref target,
+      PartySide side,
+      Instant createdAt,
+      boolean erased,
+      Integer sortOrder) {
     UUID id = UUID.randomUUID();
     String column =
         switch (target.type()) {
@@ -277,7 +287,8 @@ abstract class PhotoAttachTestSupport {
             + ", stage, uploaded_by_side, original_key, thumb_key, original_sha256, thumb_sha256,"
             + " size_bytes, sort_order, created_at)"
             + " VALUES (?, ?, ?, 'BEFORE', ?, ?, ?, ?, ?, 1,"
-            + " (SELECT count(*) FROM record.photo WHERE room_record_id = ?), ?)",
+            + " COALESCE(CAST(? AS int), (SELECT count(*) FROM record.photo WHERE room_record_id = ?)),"
+            + " ?)",
         id,
         room,
         target.id(),
@@ -286,6 +297,7 @@ abstract class PhotoAttachTestSupport {
         "photos/" + room + "/" + id + "/thumb.jpg",
         "0".repeat(64),
         "0".repeat(64),
+        sortOrder,
         room,
         Timestamp.from(createdAt));
     jdbc.update(

@@ -1,19 +1,20 @@
 package com.chilsuitjo.back.photo.repository;
 
+import static com.chilsuitjo.back.photo.repository.PhotoTargetSql.anyOf;
+import static com.chilsuitjo.back.photo.repository.PhotoTargetSql.condition;
+
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.photo.dto.PhotoTarget;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.Query;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.stereotype.Repository;
 
-/** 사진 붙이기가 세는 값: 대상 한도의 장수와 다음 표시 순서. 대상 칸이 여덟 개라 대상마다 조건을 만든다. */
+/** 사진 붙이기가 세는 값: 대상 한도의 장수와 다음 표시 순서. 대상 조건은 {@link PhotoTargetSql}이 만든다. */
 @Repository
 public class PhotoCountRepository {
 
@@ -70,41 +71,5 @@ public class PhotoCountRepository {
             .setParameter("room", roomRecordId);
     params.forEach(query::setParameter);
     return ((Number) query.getSingleResult()).intValue();
-  }
-
-  private static String anyOf(Collection<PhotoTarget> targets, Map<String, Object> params) {
-    List<String> conditions = new ArrayList<>();
-    int i = 0;
-    for (PhotoTarget target : targets) {
-      conditions.add(condition(target, i++, params));
-    }
-    return String.join(" OR ", conditions);
-  }
-
-  private static String condition(PhotoTarget target, int i, Map<String, Object> params) {
-    return switch (target) {
-      case PhotoTarget.Ref ref -> {
-        params.put("t" + i, ref.id());
-        yield "p." + column(ref) + " = :t" + i;
-      }
-      case PhotoTarget.InspectionPart part -> {
-        params.put("t" + i, part.inspectionId());
-        params.put("r" + i, part.roomPartId());
-        yield "(p.inspection_id = :t" + i + " AND p.room_part_id = :r" + i + ")";
-      }
-    };
-  }
-
-  /** {@code Photo.forTarget}과 같은 칸. 칸 이름은 이 switch에서만 나와 SQL에 사용자 값이 섞이지 않는다. */
-  private static String column(PhotoTarget.Ref ref) {
-    return switch (ref.type()) {
-      case REPAIR_CASE -> "repair_case_id";
-      case INSPECTION_ITEM -> "inspection_item_id";
-      case PAYMENT -> "payment_id";
-      case CAUSE_NOTE -> "cause_note_id";
-      case SETTLEMENT_ITEM -> "settlement_item_id";
-      case PROGRESS_NOTE -> "progress_note_id";
-      case CORRECTION_REQUEST -> "correction_request_id";
-    };
   }
 }
