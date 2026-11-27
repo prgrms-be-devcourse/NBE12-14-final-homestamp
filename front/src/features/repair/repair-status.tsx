@@ -26,6 +26,7 @@ import {
   soloReasonText,
 } from "@/lib/repair-rules"
 import { versionOf } from "@/lib/versions"
+import { recordDate } from "@/api/http-repair-view"
 import { ackText, sideName, waitLabel } from "@/lib/words"
 import type { RepairCommand } from "@/features/repair/use-repair-case"
 
@@ -97,6 +98,15 @@ export function RepairBadges({
           </strong>
           <small className="block">{r.ackDispute.at}</small>
           <p>{r.ackDispute.reason}</p>
+        </div>
+      )}
+      {r.closeObjection && (
+        <div className="dispute-callout">
+          <strong>
+            {sideName(r.closeObjection.by)} · 이견 · 아직 안 됐어요
+          </strong>
+          <small className="block">{recordDate(r.closeObjection.at)}</small>
+          <p>{r.closeObjection.reason}</p>
         </div>
       )}
       {prev && (

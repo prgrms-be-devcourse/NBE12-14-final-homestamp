@@ -68,6 +68,8 @@ const emptyRepairs = {
   items: [],
   nextCursor: null,
 }
+// 호실 경과(06 4장 timeline). 호실 시험에서는 비어 있어요
+const emptyTimeline = { mySide: "TENANT", asOf: null, items: [] }
 
 describe("목록 한 줄 → 화면 모델", () => {
   test("주소·상태·내 쪽을 화면 값으로 바꾸고, 연결 전 호실은 내가 만든 호실이다", () => {
@@ -218,6 +220,7 @@ describe("HTTP 기록 API의 호실 받기", () => {
       if (path.startsWith(`${endpoints.rooms}?`))
         return { items: [summary()], nextCursor: null }
       if (isRepairPage(path)) return emptyRepairs
+      if (path.endsWith("/timeline")) return emptyTimeline
       if (path.startsWith(`${endpoints.rooms}/`))
         return detailOf(decodeURIComponent(path.split("/").pop()!))
       return []
@@ -578,4 +581,59 @@ test("만든 시각(UTC)은 한국 날짜로 보인다", () => {
 test("호실 쪽은 서버 값(TENANT·LANDLORD)으로 보낸다", () => {
   expect(roomSide("임차인")).toBe("TENANT")
   expect(roomSide("임대인")).toBe("LANDLORD")
+})
+
+describe("호실 경과(06 4장 timeline, #359)", () => {
+  const notYet = {
+    id: "a1",
+    at: "2026-11-27T05:00:00Z",
+    type: "NOT_YET",
+    side: "TENANT",
+    target: { kind: "REPAIR_CASE", id: "c1" },
+    reason: "아직 물이 새요",
+    payload: {},
+    photos: [],
+  }
+  const server = (timeline: () => unknown) =>
+    (async (_m: string, path: string) => {
+      if (path.startsWith(`${endpoints.rooms}?`))
+        return { items: [summary()], nextCursor: null }
+      if (isRepairPage(path)) return emptyRepairs
+      if (path.endsWith("/timeline")) return timeline()
+      if (path.startsWith(`${endpoints.rooms}/`)) return detail()
+      return []
+    }) as HttpRequest
+
+  test("호실을 받을 때 경과도 받아, [아직 안 됐어요] 사유가 그 수리 건 줄에 보인다", async () => {
+    const records = createHttpRecords(
+      server(() => ({ ...emptyTimeline, items: [notYet] })),
+    )
+    await records.load({ accountId: "me" })
+    expect(records.getSnapshot().events).toEqual([
+      {
+        id: "a1",
+        roomId: "r1",
+        text: "아직 안 됐어요 · 아직 물이 새요",
+        by: "임차인",
+        at: "2026-11-27T05:00:00Z",
+        target: { kind: "repair", id: "c1" },
+        ref: { kind: "REPAIR_CASE", id: "c1" },
+      },
+    ])
+  })
+
+  test("경과만 실패하면 호실은 반영하고 앞서 받은 경과를 둔다", async () => {
+    let fail = false
+    const records = createHttpRecords(
+      server(() => {
+        if (fail) throw new ApiError({ status: 500, code: "INTERNAL_ERROR" })
+        return { ...emptyTimeline, items: [notYet] }
+      }),
+    )
+    await records.load({ accountId: "me" })
+    fail = true
+    await records.loadRoom({ accountId: "me" }, "r1")
+    expect(records.getSnapshot().events.map((e) => e.id)).toEqual(["a1"])
+    expect(records.getSnapshot().rooms.map((r) => r.id)).toEqual(["r1"])
+  })
 })

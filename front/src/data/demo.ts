@@ -16,6 +16,8 @@ export interface Event {
   by: string
   at: string
   privateTo?: Role
+  // 서버 경과의 원래 대상(06 4장 timeline target). 원인 설명·고친 내용 응답처럼 수리 건이 아닌 대상을 그 수리 건 경과에 붙일 때 써요
+  ref?: { kind: string; id: string }
 }
 export interface AmountOffer {
   id: string
@@ -222,6 +224,8 @@ export interface Repair {
   afterRecords?: AfterRecord[]
   closeBy?: Role
   soloClosed?: Role
+  // 혼자 끝낸 처리 완료에 상대가 남긴 이견(마지막 [아직 안 됐어요], 06 REP-5f). 양측 확인이 되면 없어요
+  closeObjection?: { by: Role; reason: string; at: string }
   afterPhotos?: string[]
   hidden?: boolean
   notes?: { text: string; by: Role; kind: string; at?: string }[]
