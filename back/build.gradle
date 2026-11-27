@@ -76,10 +76,27 @@ tasks.register('localAccessToken', JavaExec) {
     mainClass = 'com.chilsuitjo.back.global.security.LocalAccessToken'
 }
 
+// 운영 jar를 만드는 데 필요한 의존성 jar만 받아 둔다(소스 없이). Dockerfile의 deps 단계가 써서, 소스가 바뀌어도 이 층은
+// CI 캐시로 다시 쓴다(Maven Central 429 줄이기, #350)
+tasks.register('resolveDependencies') {
+    group = 'build setup'
+    description = 'bootJar에 필요한 의존성 jar를 받아 둔다'
+    def wanted = ['compileClasspath', 'runtimeClasspath', 'annotationProcessor'].collect { configurations.getByName(it) }
+    doLast {
+        wanted.each { it.resolve() }
+    }
+}
+
 tasks.named('test') {
     useJUnitPlatform()
     // 테스트 클래스를 나눠 돌릴 JVM 수(#335). 기본 1개, -PtestForks=N으로 바꾼다. JVM마다 테스트 DB 컨테이너가 따로라 섞이지 않는다
     maxParallelForks = (project.findProperty('testForks') ?: '1') as int
+    // 이 테스트를 뺀다(쉼표로 여러 개, 클래스 이름 패턴). CI는 오래 걸리는 Migration 통합 테스트를 다른 job에서 동시에 돌리려고 쓴다(#350)
+    if (project.hasProperty('excludeTests')) {
+        filter {
+            project.property('excludeTests').toString().split(',').each { excludeTestsMatching it.trim() }
+        }
+    }
     // MigrationRunnerIntegrationTest가 운영 bootJar를 UID 10002 컨테이너에서 --migrate로 실행한다
     dependsOn tasks.named('bootJar')
     doFirst {
