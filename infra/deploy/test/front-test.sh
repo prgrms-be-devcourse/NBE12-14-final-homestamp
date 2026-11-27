@@ -372,6 +372,26 @@ expect "F16 current 그대로" "$(cut -d/ -f2 <<<"$(cur)")" "$id_now"
 [ ! -f "$V/state/in-progress" ] && ok "F16 in-progress 없음" || bad "F16 in-progress"
 chmod 644 "$(asset index a js)"
 
+echo "== F17 확정(last-good 갱신) 뒤 정리 중 TERM: 되돌리지 않고 current = last-good = 새 판"
+for i in $(seq 1 15000); do : >"$V/front/assets/junk$i-zzzzzzzz.js"; done # 정리할 것을 많이 둬 정리 단계를 길게
+lg_before="$(cat "$V/state/last-good")"
+runner --name $T-gc $T-runner:local bash "$SRC/infra/deploy/deploy-front.sh" --config "$W/deploy-front.env" "$IMG_b" >"$W/out/gc" 2>&1 &
+p=$!
+for _ in $(seq 1 600); do [ "$(cat "$V/state/last-good" 2>/dev/null)" != "$lg_before" ] && break; sleep 0.1; done
+sleep 0.3
+docker kill -s TERM $T-gc >/dev/null 2>&1
+wait $p
+expect "F17 TERM → 143" "$?" 143
+grep -q '정리:' "$W/out/gc" && bad "F17 정리가 끝난 뒤에 신호(시험이 정리 중을 겨누지 못함)" || ok "F17 정리 중에 신호"
+id_gc="$(cat "$V/state/last-good")"
+expect "F17 current = last-good(새 판)" "$(cut -d/ -f2 <<<"$(cur)")" "$id_gc"
+[ "$id_gc" != "$lg_before" ] && ok "F17 last-good은 새 판" || bad "F17 last-good"
+[ ! -f "$V/state/in-progress" ] && ok "F17 in-progress 없음(상태 일치)" || bad "F17 in-progress 남음"
+expect "F17 HTTPS로 b" "$(served_rev)" "{\"revision\":\"$(rev_of b)\"}"
+expect "F17b 같은 이미지 다시 → noop 0(다음 실행이 막히지 않음)" "$(deploy "$IMG_b")" 0
+expect "F17b 결과 noop" "$(field result)" noop
+find "$V/front/assets" -name 'junk*-zzzzzzzz.js' -delete
+
 echo "== F12 계약 시험: check-front.sh(CI)와 deploy-front.sh --check-dir(서버)가 같은 판단"
 for tag in a blink bhard bdot bname bext bmap bsub bnohash bver bnoidx bref bout bbig; do
   r="$(rev_of "$tag")"

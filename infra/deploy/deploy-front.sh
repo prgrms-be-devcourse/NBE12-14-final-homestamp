@@ -295,6 +295,10 @@ finish() {
   rm -f "$pool"/.tmp."$deploy_id".* "$FRONT_ROOT/.current.tmp.$$"
   if ((rc == 0)); then
     [[ $result == noop ]] || result=success
+  elif [[ $phase == confirmed ]]; then
+    # 확정 뒤(정리·기록 중) 실패·신호: 배포는 그대로 두고 실패 코드만 남긴다. in-progress는 지운다(상태가 일치함)
+    ((interrupted)) && result=interrupted || result=failed
+    log "새 판($deploy_id)은 확정됐고(current = last-good) 그 뒤 단계($step)에서 멈췄습니다. 되돌리지 않습니다"
   elif ((interrupted)); then
     result=interrupted
     cur="$(current_target)"
@@ -560,6 +564,9 @@ step=verify
 if retry check_release_once "$deploy_id" && { [[ -z $prev_id ]] || retry check_assets_once "$prev_id"; }; then
   printf '%s success\n' "$deploy_id" >>"$STATE_DIR/releases.log"
   put "$STATE_DIR/last-good" "$deploy_id"
+  # 배포 확정 지점: last-good까지 새 판으로 바뀐 뒤에는 되돌리지 않는다(뒤의 정리·기록이 실패하거나 신호를 받아도
+  # current = last-good = 새 판으로 둔다. 되돌리면 last-good과 current가 어긋나 다음 실행이 4로 멈춘다)
+  phase=confirmed
 else
   # 되돌리기: 이전 current(또는 없음)로 링크를 돌리고, 그 상태가 실제로 나가는지 다시 확인한다
   step=rollback
