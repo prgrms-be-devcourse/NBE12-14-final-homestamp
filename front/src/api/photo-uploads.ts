@@ -1,6 +1,7 @@
 import { endpoints } from "./endpoints"
 import { ApiError } from "./errors"
 import type { HttpRequest } from "./http-client"
+import { takenAtOf } from "@/lib/photos"
 
 // 사진 올리기(06 4-5 POST /api/rooms/{id}/upload-tickets, PHO-1, 04 "사진" 표 #365).
 // ① 화면이 다시 그린 사진(lib/photos, 긴 변 2048px JPEG, 위치 정보 빠짐)과 썸네일(긴 변 480px)의 크기·SHA-256을 만들고
@@ -147,13 +148,13 @@ export function createHttpPhotoUploads(
           detail: `사진은 한 번에 ${UPLOAD_BATCH_MAX}장까지 올릴 수 있어요.`,
         })
       const prepared = await Promise.all(photos.map((p) => prepare(p)))
-      // 촬영 시각(PHO-1f)은 다시 그리기 전 파일에서 읽어야 해서, 화면이 원본 파일을 들고 있게 바뀐 뒤 채워요
-      const files: UploadFileBody[] = prepared.map((p) => ({
+      // 촬영 시각(PHO-1f)은 사진을 고를 때 다시 그리기 전에 읽어 둔 값이에요(lib/photos). 참고값이라 없으면 null
+      const files: UploadFileBody[] = prepared.map((p, i) => ({
         originalBytes: p.original.size,
         thumbBytes: p.thumb.size,
         originalSha256: p.originalSha256,
         thumbSha256: p.thumbSha256,
-        deviceTakenAt: null,
+        deviceTakenAt: takenAtOf(photos[i]),
       }))
       const { slots } = await request<{ slots: UploadSlotBody[] }>(
         "POST",
