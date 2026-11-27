@@ -2,11 +2,17 @@ package com.chilsuitjo.back.inspection.repository;
 
 import com.chilsuitjo.back.action.dto.ActionEntry;
 import com.chilsuitjo.back.action.dto.ActionTarget;
+import com.chilsuitjo.back.action.rule.ActionType;
 import com.chilsuitjo.back.action.rule.Replay;
 import com.chilsuitjo.back.action.service.ActionReader;
+import com.chilsuitjo.back.global.common.AckState;
 import com.chilsuitjo.back.global.common.PartySide;
+import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.inspection.entity.Inspection;
 import com.chilsuitjo.back.inspection.entity.InspectionItem;
+import com.chilsuitjo.back.inspection.entity.InspectionItemVersion;
+import com.chilsuitjo.back.inspection.rule.InspectionItemState;
+import com.chilsuitjo.back.inspection.rule.InspectionItemTransitions;
 import com.chilsuitjo.back.inspection.rule.InspectionState;
 import com.chilsuitjo.back.inspection.rule.InspectionStatus;
 import com.chilsuitjo.back.inspection.rule.InspectionTransitions;
@@ -16,8 +22,10 @@ import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.service.CounterpartReader;
 import com.chilsuitjo.back.notification.service.WaitService;
 import java.time.Instant;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Predicate;
 import lombok.RequiredArgsConstructor;
@@ -31,9 +39,15 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class InspectionSight {
 
+  /** 항목 응답을 바꾸는 행동({@link InspectionItemTransitions#apply}가 받는 것). */
+  private static final Set<ActionType> ITEM_CHANGES =
+      EnumSet.of(ActionType.ADD_ITEM, ActionType.RESPOND_ITEM, ActionType.SUPPLEMENT_ITEM);
+
   private final CounterpartReader parties;
   private final ActionReader actions;
   private final InspectionTransitions rules;
+  private final InspectionItemTransitions itemRules;
+  private final InspectionItemVersionRepository versions;
   private final WaitService waits;
 
   /**
@@ -45,13 +59,16 @@ public class InspectionSight {
    *       RepairQueryService.visibleState}와 같은 방법)
    *   <li>기준 측 항목을 가리나: 기준 측이 아닌 사람에게 작성 중이면 기준 측이 쓴 항목을 가린다(06 INSP-1a). 자기가 더한 항목은 보인다(#286).
    *       고정됐으면 <b>그 시각까지의 행동만</b>으로 보아, 그때 작성 중이었으면 그 뒤 누가 확인 요청을 보냈든 가린다(#218 리뷰)
+   *   <li>작성 중으로 보나({@code draft}): 위 판단에서 보는 측을 빼고 본 값이다. 링크 열람은 보는 측과 상관없이 작성 중 점검을 보이지 않으므로(03
+   *       3-1 링크 열람자 "작성 중 점검 ✕") 이 값을 쓴다
    * </ul>
    */
   public Sight of(Inspection row, PartySide viewer) {
     Instant asOf = sharingCutoff(parties.read(row.getRoomRecordId(), viewer));
     if (asOf == null) {
-      boolean hidden = viewer != row.getAuthorSide() && row.getStatus() == InspectionStatus.DRAFT;
-      return new Sight(viewer, null, row.getStatus(), hidden);
+      boolean draft = row.getStatus() == InspectionStatus.DRAFT;
+      return new Sight(
+          viewer, null, row.getStatus(), viewer != row.getAuthorSide() && draft, draft);
     }
     List<ActionEntry> history =
         actions.findByTarget(ActionTarget.inspection(row.getId())).stream()
@@ -59,12 +76,51 @@ public class InspectionSight {
             .toList();
     InspectionStatus shown =
         folded(row, history, e -> !e.createdAt().isAfter(asOf) || e.actorSide() == viewer);
-    boolean hidden =
-        viewer != row.getAuthorSide()
-            && (shown == InspectionStatus.DRAFT
-                || folded(row, history, e -> !e.createdAt().isAfter(asOf))
-                    == InspectionStatus.DRAFT);
-    return new Sight(viewer, asOf, shown, hidden);
+    boolean draft =
+        shown == InspectionStatus.DRAFT
+            || folded(row, history, e -> !e.createdAt().isAfter(asOf)) == InspectionStatus.DRAFT;
+    return new Sight(viewer, asOf, shown, viewer != row.getAuthorSide() && draft, draft);
+  }
+
+  /**
+   * 이 사람에게 보이는 항목 응답(불변식 18). 보이는 범위를 고정하지 않았으면 지금 값이다. 고정했으면 그 시각까지의 행동과 보는 사람 측의 행동만으로 다시
+   * 계산해({@link #of}의 점검 상태와 같은 방법), 고정 뒤 상대가 답하거나 보충한 것이 드러나지 않는다.
+   *
+   * <p>지금 항목 응답을 바꾸는 행동은 더하기·응답·보충뿐이고, 판은 더할 때 만든 #1뿐이라 다시 계산의 판 번호가 응답의 본 판과 맞는다. 미확인 표시({@code
+   * MARK_UNCONFIRMED}, #370 A-9)나 판을 바꾸는 항목 고치기가 들어오면 여기도 같이 맞춘다. 상대가 탈퇴하면 기준 시각이 없어지는 것은 {@link
+   * #of}와 같다(#288).
+   *
+   * @param seen 이 사람의 {@link #of} 결과. 그 항목이 이 사람에게 보여야 한다({@link Sight#sees})
+   */
+  public AckState itemStatus(InspectionItem item, Sight seen) {
+    if (seen.asOf() == null) {
+      return item.getStatus();
+    }
+    List<ActionEntry> history =
+        actions.findByTarget(ActionTarget.of(TargetKind.INSPECTION_ITEM, item.getId())).stream()
+            .filter(entry -> ITEM_CHANGES.contains(entry.type()))
+            .filter(e -> !e.createdAt().isAfter(seen.asOf()) || e.actorSide() == seen.viewer())
+            .toList();
+    InspectionItemState state = Replay.fold(itemRules, history);
+    return state.exists() ? state.status() : item.getStatus();
+  }
+
+  /**
+   * 이 사람에게 보이는 항목 판(불변식 18). 보이는 범위를 고정하지 않았거나 자기가 더한 항목이면 지금 판이다. 상대가 더한 항목은 고정한 시각까지 만든 판 가운데 마지막
+   * 것이라, 고정 뒤 상대가 판을 바꿔도 드러나지 않는다.
+   *
+   * @param seen 이 사람의 {@link #of} 결과. 그 항목이 이 사람에게 보여야 한다({@link Sight#sees})
+   */
+  public InspectionItemVersion itemVersion(InspectionItem item, Sight seen) {
+    if (seen.asOf() == null || Objects.equals(item.getAddedBySide(), seen.viewer())) {
+      return versions
+          .findById(item.getCurrentVersionId())
+          .orElseThrow(() -> new IllegalStateException("지금 판이 없어요: " + item.getId()));
+    }
+    return versions.findByInspectionItemIdOrderByNoAsc(item.getId()).stream()
+        .filter(version -> !version.getCreatedAt().isAfter(seen.asOf()))
+        .reduce((earlier, later) -> later)
+        .orElseThrow(() -> new IllegalStateException("고정한 시각까지의 판이 없어요: " + item.getId()));
   }
 
   /** 지금 호실 단계에서 점검 확인 요청을 열 수 있나(03 K). */
@@ -124,9 +180,19 @@ public class InspectionSight {
    * @param asOf 보이는 범위를 고정하는 시각. 없으면 null
    * @param shownStatus 이 사람에게 보이는 점검 상태
    * @param draftHidden 기준 측이 쓴 항목을 가리나(작성 중 점검을 기준 측이 아닌 사람이 볼 때). 자기가 더한 항목은 보인다
+   * @param draft 보는 측과 상관없이 작성 중으로 보나: 보이는 상태가 작성 중이거나, 고정한 시각까지의 행동만으로 작성 중이다(#352와 같은 경계)
    */
   public record Sight(
-      PartySide viewer, Instant asOf, InspectionStatus shownStatus, boolean draftHidden) {
+      PartySide viewer,
+      Instant asOf,
+      InspectionStatus shownStatus,
+      boolean draftHidden,
+      boolean draft) {
+
+    /** 공유를 그만둔 뒤 상대가 시작해 이 사람이 볼 수 없는 점검인가(불변식 18). 그 점검은 있는지도 알 수 없다. */
+    public boolean hides(Inspection row) {
+      return viewer != row.getAuthorSide() && asOf != null && row.getCreatedAt().isAfter(asOf);
+    }
 
     /**
      * 이 항목이 보이나: 자신이 더한 것은 늘 보이고, 상대가 더한 것은 가리지 않을 때 범위를 고정한 시각까지 더한 것만. 기준 측 작성 중 항목을 가리면 상대 항목은
