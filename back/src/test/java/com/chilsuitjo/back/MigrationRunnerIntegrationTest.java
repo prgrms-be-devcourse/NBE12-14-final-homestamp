@@ -859,7 +859,8 @@ class MigrationRunnerIntegrationTest {
         .doesNotContain(PASSWORD, "jdbc:");
     assertThat(statements(log, db, MIGRATION))
         .noneMatch(s -> s.startsWith("-- HomeStamp DB grants"));
-    assertThat(ddlAudit(log, db)).isEmpty();
+    // 직전 관리자 REVOKE(표시용 DDL)의 로그가 늦게 흘러들 수 있어 Migration 로그인의 DDL만 본다
+    assertThat(ddlAudit(log, db, MIGRATION)).isEmpty();
     assertThat(acl(db)).isEqualTo(acl);
   }
 
@@ -1466,6 +1467,18 @@ class MigrationRunnerIntegrationTest {
     Matcher m = LINE.matcher(log);
     while (m.find()) {
       if (m.group(2).equals(db) && m.group(5).startsWith("hsddl|")) {
+        String[] p = m.group(5).split("\\|", 5);
+        rows.add(new String[] {p[1], p[2], p[3], p.length > 4 ? p[4] : ""});
+      }
+    }
+    return rows;
+  }
+
+  static List<String[]> ddlAudit(String log, String db, String user) {
+    List<String[]> rows = new ArrayList<>();
+    Matcher m = LINE.matcher(log);
+    while (m.find()) {
+      if (m.group(1).equals(user) && m.group(2).equals(db) && m.group(5).startsWith("hsddl|")) {
         String[] p = m.group(5).split("\\|", 5);
         rows.add(new String[] {p[1], p[2], p[3], p.length > 4 ? p[4] : ""});
       }
