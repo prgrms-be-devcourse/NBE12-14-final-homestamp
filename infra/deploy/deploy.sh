@@ -59,7 +59,7 @@ done
 # ---- 설정: KEY=value 줄만 읽는다(source 하지 않음). 비밀값은 넣지 않는 파일이다
 KEYS="IMAGE_REPOSITORY BLUE_PORT GREEN_PORT NAME_PREFIX MIGRATION_UID MIGRATION_SECRETS_DIR UPSTREAM_FILE SWITCH_CMD
 POST_SWITCH_URL POST_SWITCH_RESOLVE POST_SWITCH_EXPECT STATE_DIR LOCK_FILE HEALTH_TIMEOUT APP_MEMORY STOP_TIMEOUT
-MIGRATE_TIMEOUT GRANTS_TIMEOUT"
+MIGRATE_TIMEOUT GRANTS_TIMEOUT VERIFY_TIMEOUT"
 BLUE_PORT=8081
 GREEN_PORT=8082
 NAME_PREFIX=homestamp-app
@@ -72,6 +72,8 @@ POST_SWITCH_EXPECT=401
 # 일회성 실행의 제한 시간(초). --apply-grants를 모르는 이미지는 웹 앱으로 떠 끝나지 않으므로 반드시 끝을 둔다
 MIGRATE_TIMEOUT=900
 GRANTS_TIMEOUT=300
+# 전환 뒤 확인을 다시 묻는 시간(초). switch-upstream.sh가 reload 끝을 기다린 뒤라 보통 첫 요청에서 끝난다
+VERIFY_TIMEOUT=20
 STATE_DIR=/var/lib/homestamp/deploy
 LOCK_FILE=/run/lock/homestamp-deploy.lock
 HEALTH_TIMEOUT=120
@@ -110,6 +112,7 @@ check STOP_TIMEOUT "$STOP_TIMEOUT" '^[1-9][0-9]{0,2}$'
 check POST_SWITCH_EXPECT "$POST_SWITCH_EXPECT" '^[1-5][0-9][0-9]$'
 check MIGRATE_TIMEOUT "$MIGRATE_TIMEOUT" '^[1-9][0-9]{0,4}$'
 check GRANTS_TIMEOUT "$GRANTS_TIMEOUT" '^[1-9][0-9]{0,4}$'
+check VERIFY_TIMEOUT "$VERIFY_TIMEOUT" '^[1-9][0-9]{0,2}$'
 for tool in docker curl flock; do
   command -v "$tool" >/dev/null || die $EXIT_USAGE "$tool 명령이 없습니다"
 done
@@ -334,19 +337,29 @@ if ! "$SWITCH_CMD" "127.0.0.1:$target_port"; then
   die $EXIT_SWITCH "nginx 전환이 실패했습니다. 이전 앱을 그대로 둡니다"
 fi
 
-# ---- 8. 전환 뒤 확인: upstream이 그 슬롯이고, nginx를 거친 요청에 앱이 답한다(POST_SWITCH_EXPECT, 기본 401).
-#      nginx 자신의 404·503(@api_unavailable)·연결 실패는 통과하지 못한다
+# ---- 8. 전환 뒤 확인: upstream이 그 슬롯이고, nginx를 거친 요청에 그 슬롯의 앱이 답한다.
+#      응답 코드가 POST_SWITCH_EXPECT(기본 401)이고 nginx가 붙인 X-Homestamp-Upstream(127.0.0.1에서 온 요청에만, 앱이 보낸
+#      같은 이름은 nginx가 지움)이 정확히 한 줄로 그 슬롯 주소일 때만 통과한다. 이전 슬롯의 401, nginx 자신의 404·503,
+#      헤더 없음·여러 줄·다른 주소는 통과하지 못한다. 매번 새 연결(curl 새 실행)로 VERIFY_TIMEOUT초 안에서 다시 묻는다
 step=verify
 verify() { # <슬롯>
   [[ "$(read_active)" == "$1" ]] || return 1
-  local code args=(-sS -o /dev/null -w '%{http_code}' --max-time 5)
+  local want hdr code got n deadline=$((SECONDS + VERIFY_TIMEOUT))
+  local args=(-sS -o /dev/null -D - --max-time 5)
+  want="127.0.0.1:$(slot_port "$1")"
   [[ -z $POST_SWITCH_RESOLVE ]] || args+=(--resolve "$POST_SWITCH_RESOLVE")
-  for _ in 1 2 3; do
-    code="$(curl "${args[@]}" "$POST_SWITCH_URL" 2>/dev/null || true)"
-    [[ $code == "$POST_SWITCH_EXPECT" ]] && return 0
-    sleep 2
+  while :; do
+    hdr="$(curl "${args[@]}" "$POST_SWITCH_URL" 2>/dev/null | tr -d '\r' || true)"
+    code="$(awk 'NR==1{print $2}' <<<"$hdr")"
+    n="$(grep -ci '^x-homestamp-upstream:' <<<"$hdr" || true)"
+    got="$(grep -i '^x-homestamp-upstream:' <<<"$hdr" | head -n 1 | cut -d: -f2- | tr -d ' ' || true)"
+    [[ $code == "$POST_SWITCH_EXPECT" && $n == 1 && $got == "$want" ]] && return 0
+    if ((SECONDS >= deadline)); then
+      log "전환 뒤 확인 실패($1): 응답 ${code:-없음}, 답한 앱 ${got:-알 수 없음}(헤더 ${n:-0}줄), 기대 $POST_SWITCH_EXPECT·$want"
+      return 1
+    fi
+    sleep 1
   done
-  return 1
 }
 if ! verify "$target"; then
   log "전환 뒤 확인이 실패했습니다. 이 사이 새 앱이 받은 요청의 DB 변경은 그대로 남습니다"
