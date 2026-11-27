@@ -9,6 +9,7 @@ import com.chilsuitjo.back.action.dto.ActionEntry;
 import com.chilsuitjo.back.action.dto.ActionTarget;
 import com.chilsuitjo.back.action.rule.ActionType;
 import com.chilsuitjo.back.action.service.ActionReader;
+import com.chilsuitjo.back.correction.service.CorrectionReader;
 import com.chilsuitjo.back.download.dto.RoomDownload;
 import com.chilsuitjo.back.download.dto.RoomDownload.RecordPhoto;
 import com.chilsuitjo.back.global.common.PartySide;
@@ -43,7 +44,12 @@ class DownloadServiceTest {
   private final CounterpartReader parties = mock(CounterpartReader.class);
   private final ActionReader actions = mock(ActionReader.class);
   private final DownloadService service =
-      new DownloadService(access, parties, actions, Clock.fixed(T0, ZoneOffset.UTC));
+      new DownloadService(
+          access,
+          parties,
+          actions,
+          new PendingCorrections(mock(CorrectionReader.class)),
+          Clock.fixed(T0, ZoneOffset.UTC));
   private final List<ActionEntry> log = new ArrayList<>();
 
   @BeforeEach

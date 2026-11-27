@@ -58,6 +58,11 @@ public final class SoloRule {
 
   private SoloRule() {}
 
+  /** 기한이 지나 미확인이 되면 혼자 진행이 열리는 요청 종류인가(하자·종료·점검·정산 끝내기·거주 종료). */
+  public static boolean opensSolo(RequestKind kind) {
+    return SOLO_KINDS.contains(kind);
+  }
+
   /** 이 종류를 대신해 요청 없이 바로 혼자 진행할 수 있나. {@code parties}는 행동하는 측이 {@code mine}이다. */
   public static SoloCheck direct(RoomParties parties, RequestKind kind) {
     Objects.requireNonNull(parties, "parties");
