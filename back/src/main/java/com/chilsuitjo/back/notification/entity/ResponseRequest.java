@@ -168,15 +168,19 @@ public class ResponseRequest {
   }
 
   /**
-   * 제안을 낸 쪽이 자기 안을 바꿨다(05 {@code proposal} ②). 같은 요청이 다시 기다림이 되고 미확인 때 열린 혼자 진행 이유는 지운다.
+   * 같은 요청이 다시 기다림이 된다. 두 경우만이다: 제안을 낸 쪽이 자기 안을 바꿨다(05 {@code proposal} ②), 미확인이 된 고친 내용 확인에 같은 기록을
+   * 또 고쳤다(03 1-4 "미확인 뒤 다시 고침", decisions 2026-11-27, #104). 요청 ID·만든 시각·첫 통지 시각은 그대로이고, 미확인 때 열린
+   * 혼자 진행 이유는 지운다.
    *
-   * <p>기한을 "바꾼 시각부터 다시 센다"(03 E)는 기다림 타이머(d3)가 들어올 때 정한다. 지금은 기한을 정하는 코드가 없어 기한이 있으면 조용히 옛 기한을 남기지
-   * 않고 거절한다.
+   * <p>기한을 "그 시각부터 다시 센다"(03 1-4 "기한"·03 E)는 기다림 타이머(d3)가 들어올 때 정한다. 지금은 기한을 정하는 코드가 없어 기한이 있으면 조용히
+   * 옛 기한을 남기지 않고 거절한다(타이머가 만든 미확인은 기한이 있으므로 d3에서 이 경로를 함께 정한다).
    */
   public void rewait() {
     requireOpen();
-    if (kind != RequestKind.PROPOSAL) {
-      throw new IllegalStateException("다시 기다림은 제안 요청만이에요: " + kind);
+    boolean correctionAgain =
+        kind == RequestKind.CORRECTION_CONFIRM && status == RequestStatus.UNCONFIRMED;
+    if (kind != RequestKind.PROPOSAL && !correctionAgain) {
+      throw new IllegalStateException("다시 기다림은 제안 요청과 미확인 고친 내용 확인만이에요: " + kind);
     }
     requireNoDeadline();
     status = RequestStatus.WAITING;
