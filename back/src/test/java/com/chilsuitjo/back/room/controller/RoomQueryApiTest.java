@@ -34,7 +34,7 @@ import org.springframework.test.web.servlet.ResultActions;
 @ActiveProfiles("test")
 class RoomQueryApiTest {
 
-  private static final String REGION = "9999999998";
+  private static final String REGION = "9999999993";
 
   /** 호실 ID의 시각. 테스트마다 앞으로만 간다. */
   private static final AtomicLong CLOCK = new AtomicLong(System.currentTimeMillis());
