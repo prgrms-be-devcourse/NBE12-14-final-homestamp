@@ -39,8 +39,11 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
@@ -59,6 +62,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <p>"비밀번호가 바뀌었어요" 알림은 아직 없다(#261).
  */
 @Import(TestcontainersConfiguration.class)
+@ExtendWith(OutputCaptureExtension.class)
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
@@ -314,6 +318,55 @@ class PasswordControllerTest {
                 Boolean.class,
                 phone))
         .isTrue();
+  }
+
+  // 05 2-3 비밀번호 변경·재설정 내부 기록: 커밋된 뒤에만 회원 ID(앞 8자리)와 변경 사실, 값은 남기지 않는다(이름 변경과 같은 방식)
+
+  @Test
+  void 비밀번호를_바꾸면_회원_ID와_변경_사실만_로그에_남는다(CapturedOutput output) throws Exception {
+    UUID memberId = member(newEmail(), newPhone());
+    IssuedTokens here = tokens.issue(memberId);
+
+    change(here, OLD_PASSWORD, NEW_PASSWORD).andExpect(status().isNoContent());
+
+    assertThat(output.getOut())
+        .contains(passwordLog("변경", memberId))
+        .doesNotContain(memberId.toString())
+        .doesNotContain(OLD_PASSWORD)
+        .doesNotContain(NEW_PASSWORD);
+  }
+
+  @Test
+  void 비밀번호를_재설정하면_회원_ID와_재설정_사실만_로그에_남는다(CapturedOutput output) throws Exception {
+    String phone = newPhone();
+    UUID memberId = member(newEmail(), phone);
+
+    reset(ticket(phone, RESET), NEW_PASSWORD).andExpect(status().isNoContent());
+
+    assertThat(output.getOut())
+        .contains(passwordLog("재설정", memberId))
+        .doesNotContain(memberId.toString())
+        .doesNotContain(phone)
+        .doesNotContain(NEW_PASSWORD);
+  }
+
+  @Test
+  void 변경_재설정이_실패하면_로그가_없다(CapturedOutput output) throws Exception {
+    UUID memberId = member(newEmail(), newPhone());
+    IssuedTokens here = tokens.issue(memberId);
+
+    expectProblem(change(here, "wrong12345", NEW_PASSWORD), ErrorCode.PASSWORD_MISMATCH);
+    // 회원이 없는 번호(ACC-5c)
+    expectProblem(reset(ticket(newPhone(), RESET), NEW_PASSWORD), ErrorCode.CODE_EXPIRED);
+
+    assertThat(output.getOut())
+        .doesNotContain(passwordLog("변경", memberId))
+        .doesNotContain("비밀번호 재설정: 회원");
+  }
+
+  /** 04 11장 "로그": ID는 앞 8자리만. */
+  private static String passwordLog(String what, UUID memberId) {
+    return "비밀번호 " + what + ": 회원 " + memberId.toString().substring(0, 8);
   }
 
   @Test

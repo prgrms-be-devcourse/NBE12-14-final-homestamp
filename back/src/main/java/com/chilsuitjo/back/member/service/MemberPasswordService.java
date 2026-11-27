@@ -9,18 +9,24 @@ import com.chilsuitjo.back.member.rule.MemberStatus;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
- * 비밀번호 변경·재설정에서 회원 쪽 일(06 ACC-4a·5b). 토큰 폐기는 부르는 쪽(auth {@code PasswordService})이 같은 트랜잭션에서 한다.
- * 알림(문자·서비스 안 알림)은 보낼 길이 정해지면 더한다(#261).
+ * 비밀번호 변경·재설정에서 회원 쪽 일(06 ACC-4a·5b). 토큰 폐기는 부르는 쪽(auth {@code PasswordService})이 같은 트랜잭션에서 한다. 신원
+ * 칸이라 행동 기록을 남기지 않고, 바뀌었으면 커밋 뒤 내부 기록만 남긴다(05 0장·2-3). 알림(문자·서비스 안 알림)은 보낼 길이 정해지면 더한다(#261).
  */
 @Service
 @RequiredArgsConstructor
 public class MemberPasswordService {
+
+  private static final Logger log = LoggerFactory.getLogger(MemberPasswordService.class);
 
   private final MemberRepository members;
   private final PasswordEncoder passwordEncoder;
@@ -48,6 +54,7 @@ public class MemberPasswordService {
     }
     member.changePasswordHash(passwordEncoder.encode(newPassword));
     members.flush();
+    logAfterCommit("비밀번호 변경", memberId);
   }
 
   /**
@@ -63,6 +70,23 @@ public class MemberPasswordService {
         members.findByPhone(phone).filter(m -> m.getStatus() == MemberStatus.ACTIVE);
     member.ifPresent(m -> m.changePasswordHash(passwordHash));
     members.flush();
+    member.ifPresent(m -> logAfterCommit("비밀번호 재설정", m.getId()));
     return member.map(Member::getId);
+  }
+
+  /**
+   * 비밀번호 변경·재설정 내부 기록(05 2-3 "계정(호실 밖)"): 토큰 폐기까지 함께 커밋된 뒤에만 회원 ID(앞 8자리)와 바꾼 사실을 앱 로그에 남긴다.
+   * 비밀번호·해시·번호는 남기지 않는다(05 0장 신원 예외, 04 "개인정보 로그"). 롤백되면 남기지 않는다. 이름 변경({@code MeService})과 같은
+   * 방식이다.
+   */
+  private static void logAfterCommit(String what, UUID memberId) {
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCommit() {
+            // ID는 앞 8자리만(04 11장 "로그")
+            log.info("{}: 회원 {}", what, memberId.toString().substring(0, 8));
+          }
+        });
   }
 }
