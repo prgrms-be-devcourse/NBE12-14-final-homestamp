@@ -11,6 +11,10 @@ import com.chilsuitjo.back.action.service.ActionReader;
 import com.chilsuitjo.back.action.service.ActionRequestContext;
 import com.chilsuitjo.back.action.service.StateStore;
 import com.chilsuitjo.back.action.service.SupplementWriter;
+import com.chilsuitjo.back.correction.rule.CorrectionTargetKind;
+import com.chilsuitjo.back.correction.service.CorrectionCloser;
+import com.chilsuitjo.back.correction.service.CorrectionReader;
+import com.chilsuitjo.back.global.common.ClosedReason;
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.global.common.Uuids;
@@ -76,6 +80,8 @@ public class RepairStateStore {
   private final WaitService waits;
   private final SupplementWriter supplementWriter;
   private final RepairPhotos photos;
+  private final CorrectionCloser corrections;
+  private final CorrectionReader correctionReader;
 
   /**
    * 하자 등록(06 REP-1)의 저장 방법. 같은 키로 다시 온 요청이면 pipeline이 만든 수리 건을 {@code load}로 다시 읽는다.
@@ -184,7 +190,7 @@ public class RepairStateStore {
         row.getMoneyStatus(),
         row.getCreatedBySide(),
         contentNo,
-        lastAt(history, ActionType.SUPPLEMENT),
+        latest(lastAt(history, ActionType.SUPPLEMENT), lastResubmitAt(row)),
         row.getClosedBy(),
         closeRequestedBy(row, history),
         lastAt(history, ActionType.ASK_PROGRESS),
@@ -194,6 +200,30 @@ public class RepairStateStore {
         hiddenFromCounterpart(room, row),
         null,
         new SituationCheck(lastSituationCheckAt(history), null));
+  }
+
+  /**
+   * 이 수리 건의 마지막 다시 요청 시각: [보충하고 다시 확인 요청]·[상황이 바뀌었어요]·고친 내용의 [사진 더해서 다시 요청] 중 가장 최근(06 0-1 {@code
+   * rerequest.interval} "한 기록에", 같은 기록의 다시 요청끼리 함께 셈, #278). 없으면 null. 고친 내용 다시 요청의 7일에 쓴다 ({@code
+   * Correctable.lastRerequestAt}). 트랜잭션 안에서 부른다.
+   */
+  public Instant lastRerequestAt(RepairCase row) {
+    List<ActionEntry> history = actions.findByTarget(ActionTarget.repairCase(row.getId()));
+    return latest(
+        latest(lastAt(history, ActionType.SUPPLEMENT), lastSituationCheckAt(history)),
+        lastResubmitAt(row));
+  }
+
+  /** 고친 내용을 마지막으로 다시 보낸 시각. 없으면 null. */
+  private Instant lastResubmitAt(RepairCase row) {
+    return correctionReader.lastResubmitAt(CorrectionTargetKind.REPAIR_CASE, row.getId());
+  }
+
+  private static Instant latest(Instant a, Instant b) {
+    if (a == null) {
+      return b;
+    }
+    return b == null || a.isAfter(b) ? a : b;
   }
 
   /**
@@ -558,8 +588,13 @@ public class RepairStateStore {
                     RequestKind.CLOSE_CONFIRM,
                     closeRequest(command),
                     side));
-        case CONFIRM_CLOSE, NOT_YET ->
-            waits.answered(closeRequest(command), RequestKind.CLOSE_CONFIRM, side);
+        case CONFIRM_CLOSE -> {
+          waits.answered(closeRequest(command), RequestKind.CLOSE_CONFIRM, side);
+          // 처리 완료(양측 확인)가 되면 내용의 확인 전 고친 내용과 그 확인 요청을 닫는다(06 REP-7l). 지불 고친 내용은 그대로다
+          corrections.closeWaiting(
+              CorrectionTargetKind.REPAIR_CASE, command.target().id(), ClosedReason.CLOSED_BY_BOTH);
+        }
+        case NOT_YET -> waits.answered(closeRequest(command), RequestKind.CLOSE_CONFIRM, side);
         default -> {}
       }
       answerProgressCheck(command);

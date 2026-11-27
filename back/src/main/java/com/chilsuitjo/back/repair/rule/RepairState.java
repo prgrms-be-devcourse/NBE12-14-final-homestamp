@@ -205,6 +205,26 @@ public record RepairState(
         situationCheck);
   }
 
+  /** 내용의 새 판이 앞모습이 됐다(재계산에서 고치기 반영을 따라갈 때, {@code RepairTransitions}). */
+  public RepairState withNextContent() {
+    return new RepairState(
+        status,
+        defectAck,
+        moneyStatus,
+        registeredBy,
+        contentNo + 1,
+        lastRerequestAt,
+        closedBy,
+        closeRequestedBy,
+        lastProgressAskAt,
+        canOpenDefectConfirm,
+        canOpenCloseConfirm,
+        canOpenProgressCheck,
+        hiddenFromCounterpart,
+        canCloseAlone,
+        situationCheck);
+  }
+
   public RepairState withLastRerequestAt(Instant at) {
     return new RepairState(
         status,

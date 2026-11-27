@@ -1,11 +1,16 @@
 package com.chilsuitjo.back.correction.controller;
 
+import com.chilsuitjo.back.correction.dto.AcceptAllRequest;
+import com.chilsuitjo.back.correction.dto.AcceptAllResponse;
 import com.chilsuitjo.back.correction.dto.CorrectRequest;
 import com.chilsuitjo.back.correction.dto.CorrectResponse;
+import com.chilsuitjo.back.correction.dto.ResubmitResponse;
 import com.chilsuitjo.back.correction.service.CorrectionService;
+import com.chilsuitjo.back.correction.service.CorrectionService.BatchAnswered;
 import com.chilsuitjo.back.correction.service.CorrectionService.Corrected;
 import com.chilsuitjo.back.global.common.dto.AnswerResult;
 import com.chilsuitjo.back.global.common.dto.RespondRequest;
+import com.chilsuitjo.back.global.common.dto.SupplementRequest;
 import com.chilsuitjo.back.global.security.LoginMember;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -54,6 +59,36 @@ public class CorrectionController {
       response.header(REPLAYED, "true");
     }
     return response.body(result);
+  }
+
+  /** [모두 확인]. 한 기록의 확인 전 고친 내용을 모두 맞아요로 답한다. 200과 확인한 고친 내용 ID들. */
+  @PostMapping("/api/corrections/accept-all")
+  public ResponseEntity<AcceptAllResponse> acceptAll(
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey,
+      @RequestBody AcceptAllRequest request) {
+    BatchAnswered answered = corrections.acceptAll(memberId, idempotencyKey, request);
+    ResponseEntity.BodyBuilder response = ResponseEntity.ok();
+    if (answered.replayed()) {
+      response.header(REPLAYED, "true");
+    }
+    return response.body(answered.response());
+  }
+
+  /** [사진 더해서 다시 요청]. 같은 값에 근거(사진·설명)를 더해 새 고친 내용으로 다시 보낸다. 200과 새 고친 내용 ID. */
+  @PostMapping("/api/corrections/{id}/resubmit")
+  public ResponseEntity<ResubmitResponse> resubmit(
+      @PathVariable UUID id,
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey,
+      @RequestBody(required = false) SupplementRequest request) {
+    CorrectionService.Resubmitted resubmitted =
+        corrections.resubmit(id, memberId, idempotencyKey, request);
+    ResponseEntity.BodyBuilder response = ResponseEntity.ok();
+    if (resubmitted.replayed()) {
+      response.header(REPLAYED, "true");
+    }
+    return response.body(new ResubmitResponse(resubmitted.correctionId()));
   }
 
   /** 고친 내용 거두기. 204. */

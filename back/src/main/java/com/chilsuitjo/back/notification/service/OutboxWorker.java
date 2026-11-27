@@ -1,5 +1,6 @@
 package com.chilsuitjo.back.notification.service;
 
+import com.chilsuitjo.back.notification.dto.Recipient;
 import com.chilsuitjo.back.notification.dto.SmsMessage;
 import com.chilsuitjo.back.notification.dto.SmsSendResult;
 import com.chilsuitjo.back.notification.entity.Notice;
@@ -10,6 +11,7 @@ import com.chilsuitjo.back.notification.repository.SmsGateway;
 import com.chilsuitjo.back.notification.rule.DeliveryPollSchedule;
 import com.chilsuitjo.back.notification.rule.NoticeText;
 import com.chilsuitjo.back.notification.rule.OutboxStatus;
+import com.chilsuitjo.back.notification.rule.SmsMode;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -54,6 +56,7 @@ public class OutboxWorker {
   private final int batchSize;
   private final List<Duration> retryDelays;
   private final Duration giveUpAfter;
+  private final boolean sendingDisabled;
   private final DeliveryPollSchedule deliveryPollSchedule;
 
   public OutboxWorker(
@@ -67,7 +70,8 @@ public class OutboxWorker {
       @Value("${app.outbox.worker.batch-size:50}") int batchSize,
       @Value("${app.notice.send.retry:1m,5m,15m}") List<Duration> retryDelays,
       @Value("${app.delivery.unknown-after:3d}") Duration giveUpAfter,
-      DeliveryPollSchedule deliveryPollSchedule) {
+      DeliveryPollSchedule deliveryPollSchedule,
+      @Value("${" + SmsMode.PROPERTY + ":}") String smsMode) {
     if (retryDelays.isEmpty()) {
       throw new IllegalArgumentException("app.notice.send.retry가 비어 있어요");
     }
@@ -89,6 +93,11 @@ public class OutboxWorker {
     this.retryDelays = List.copyOf(retryDelays);
     this.giveUpAfter = giveUpAfter;
     this.deliveryPollSchedule = deliveryPollSchedule;
+    // 값 검사·조합 거절은 SmsModeGuard가 기동 전에 한다. 여기서는 모르는 값을 조용히 다른 방식으로 읽지 않게만 막는다
+    this.sendingDisabled =
+        SmsMode.parse(smsMode)
+                .orElseThrow(() -> new IllegalStateException("문자 방식(app.sms.mode)을 읽을 수 없어요"))
+            == SmsMode.DISABLED;
   }
 
   /** 한 번 돌고 처리한 줄 수를 돌려준다. 한 줄에서 예외가 나도 나머지 줄은 처리한다. */
@@ -127,7 +136,7 @@ public class OutboxWorker {
    */
   private void process(UUID outboxId) {
     Optional<Notice> notice;
-    Optional<String> phone;
+    Recipient recipient;
     try {
       Outbox row = outbox.findById(outboxId).orElse(null);
       if (row == null) {
@@ -152,12 +161,30 @@ public class OutboxWorker {
         cancelInvalidatedInvite(outboxId, notice.get().getId());
         return;
       }
-      phone = recipients.phoneOfRecipient(notice.get().getRecipientPartyId());
+      if (sendingDisabled) {
+        // disabled는 받는 사람을 읽지 않고 보내지 않은 채 끝낸다(decisions 2026-11-25·26 운영 문자 모드). 꺼진 동안의 문자가 켤 때
+        // 한꺼번에
+        // 나가지 않게 다시 시도하지 않고, 업체 실패가 아니라서 통지를 최종 실패로 두지도 않는다. 받는 사람 상태를 꾸며내지 않으려고 resolve를 부르지 않는다
+        skipWhileDisabled(outboxId, notice.get().getId());
+        return;
+      }
+      recipient = recipients.resolve(notice.get().getRecipientPartyId());
     } catch (RuntimeException e) {
       log.warn("보내기 전 단계 실패, 다시 시도: outbox={}, error={}", outboxId, e.getClass().getName());
       finish(outboxId, null, SmsSendResult.retry());
       return;
     }
+    // 번호가 있는 두 결과만 보낸다. 인증 풀림·번호 지움·받을 사람 없음은 phoneOfRecipient가 빈 값을 주던 경우와 같다(#242). 판정할 수 없으면
+    // resolve가
+    // 예외를 올려 위에서 다시 시도로 둔다(빈 값으로 바꾸지 않음). 수신 거부 확인은 아직 없다(SmsOptOuts 구현 뒤 여기서 본다, #163)
+    Optional<String> phone =
+        switch (recipient) {
+          case Recipient.VerifiedMember member -> Optional.of(member.phone());
+          case Recipient.Invitee invitee -> Optional.of(invitee.phone());
+          case Recipient.UnverifiedMember unverified -> Optional.empty();
+          case Recipient.InviteeWithoutPhone withoutPhone -> Optional.empty();
+          case Recipient.Unavailable unavailable -> Optional.empty();
+        };
     if (phone.isEmpty()) {
       skipWithoutPhone(outboxId, notice.get().getId());
       return;
@@ -200,6 +227,13 @@ public class OutboxWorker {
     transaction.executeWithoutResult(
         status -> outbox.findById(outboxId).ifPresent(Outbox::markFailed));
     log.warn("보낼 번호가 없어 문자를 보내지 않음: notice={}", noticeId);
+  }
+
+  /** disabled에서 보내지 않고 끝낸다. 번호가 없을 때와 같은 끝(줄만 끝내고 통지는 그대로)이고, 로그로 이유를 구분한다. */
+  private void skipWhileDisabled(UUID outboxId, UUID noticeId) {
+    transaction.executeWithoutResult(
+        status -> outbox.findById(outboxId).ifPresent(Outbox::markFailed));
+    log.warn("문자 발송이 꺼져 있어(app.sms.mode=disabled) 보내지 않음: notice={}", noticeId);
   }
 
   private SmsSendResult send(Notice notice, String phone) {

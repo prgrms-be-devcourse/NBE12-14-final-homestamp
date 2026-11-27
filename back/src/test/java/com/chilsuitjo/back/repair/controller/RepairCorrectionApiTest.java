@@ -2,7 +2,11 @@ package com.chilsuitjo.back.repair.controller;
 
 import static com.chilsuitjo.back.global.security.SecurityTestSupport.loginAs;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.not;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -12,6 +16,7 @@ import com.chilsuitjo.back.TestcontainersConfiguration;
 import com.chilsuitjo.back.action.dto.DigestField;
 import com.chilsuitjo.back.action.dto.DigestInput;
 import com.chilsuitjo.back.action.rule.ContentDigest;
+import com.chilsuitjo.back.global.common.ClosedReason;
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.notification.dto.RequestTarget;
@@ -328,6 +333,9 @@ class RepairCorrectionApiTest {
         .andExpect(jsonPath("$.code").value("REASON_REQUIRED"));
     respond(ids.get(0), landlord, "r1", "NEED_MORE", "사진이 더 필요해요", 1)
         .andExpect(jsonPath("$.state").value("NEED_MORE"));
+    // 이견도 사유가 없거나 공백뿐이면 거절한다(REP-9a)
+    respond(ids.get(1), landlord, "r2-blank", "DISPUTE", "  ", 1)
+        .andExpect(jsonPath("$.code").value("REASON_REQUIRED"));
     respond(ids.get(1), landlord, "r2", "DISPUTE", "물이 새지 않아요", 1)
         .andExpect(jsonPath("$.state").value("DISPUTE"));
 
@@ -366,6 +374,359 @@ class RepairCorrectionApiTest {
     correct(tenant, "c1", "{\"field\":\"title\",\"newValue\":\"천장 물샘\"}", "오타")
         .andExpect(status().isConflict())
         .andExpect(jsonPath("$.code").value("CLOSED_BY_BOTH"));
+  }
+
+  @Test
+  void 모두_확인하면_고친_내용이_모두_앞모습이_되고_확인_요청이_닫힌다() throws Exception {
+    stamp();
+    List<UUID> ids = twoCorrections();
+
+    acceptAll(landlord, "a1", 1, ids)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.correctionIds", hasSize(2)));
+
+    Map<String, Object> front = content((UUID) head().get("confirmed_content_id"));
+    assertThat(front)
+        .containsEntry("no", 3)
+        .containsEntry("title", "천장 물샘")
+        .containsEntry("description", "물이 새요");
+    assertThat(correction(ids.get(0))).containsEntry("status", "ACCEPTED");
+    assertThat(correction(ids.get(1))).containsEntry("status", "ACCEPTED");
+    assertThat(waits.statusOf(caseRequest(), RequestKind.CORRECTION_CONFIRM))
+        .contains(RequestStatus.ANSWERED);
+    // 고친 내용마다 응답 행동이 남고, 본 번호와 지문은 화면이 본 앞모습(#1)이다
+    for (UUID id : ids) {
+      Map<String, Object> action = correctionAction(id, "RESPOND_CORRECTION");
+      assertThat(action).containsEntry("seen_version_no", 1);
+      assertThat((byte[]) action.get("content_digest"))
+          .isEqualTo(ContentDigest.compute(digestOf(1)));
+    }
+
+    acceptAll(landlord, "a1", 1, ids)
+        .andExpect(status().isOk())
+        .andExpect(header().string(RepairController.REPLAYED, "true"));
+  }
+
+  @Test
+  void 모두_확인은_본_목록이나_본_번호가_다르면_아무것도_바꾸지_않는다() throws Exception {
+    stamp();
+    List<UUID> ids = twoCorrections();
+
+    // 화면이 하나만 봤다(그사이 하나 더 고침)
+    acceptAll(landlord, "a1", 1, List.of(ids.get(0)))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("VERSION_CONFLICT"));
+    acceptAll(landlord, "a2", 2, ids)
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("VERSION_CONFLICT"));
+    acceptAll(tenant, "a3", 1, ids).andExpect(jsonPath("$.code").value("NOT_COUNTERPART_SIDE"));
+    acceptAll(landlord, "a4", 1, List.of(ids.get(0), ids.get(0)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+
+    assertThat(correction(ids.get(0))).containsEntry("status", "WAITING");
+    assertThat(correction(ids.get(1))).containsEntry("status", "WAITING");
+    assertThat(contentCount()).isEqualTo(1);
+  }
+
+  // ---- 사진 더해서 다시 요청 ----
+
+  @Test
+  void 거절된_고친_내용에_근거를_더해_다시_보내면_새_고친_내용으로_확인을_요청한다() throws Exception {
+    stamp();
+    UUID first =
+        firstId(correct(tenant, "c1", "{\"field\":\"title\",\"newValue\":\"천장 물샘\"}", "오타"));
+    respond(first, landlord, "r1", "NEED_MORE", "사진이 더 필요해요", 1).andExpect(status().isOk());
+
+    UUID retry =
+        resubmitId(
+            resubmit(first, tenant, "s1", "물 자국 사진이에요", List.of(UUID.randomUUID().toString()))
+                .andExpect(status().isOk()));
+
+    assertThat(retry).isNotEqualTo(first);
+    assertThat(correction(first)).containsEntry("status", "REJECTED");
+    assertThat(correction(retry))
+        .containsEntry("status", "WAITING")
+        .containsEntry("retry_of_id", first)
+        .containsEntry("field", "title")
+        .containsEntry("reason", "물 자국 사진이에요")
+        .containsEntry("requested_by_side", "TENANT");
+    assertThat(correctionAction(retry, "RESUBMIT_CORRECTION"))
+        .containsEntry("actor_side", "TENANT");
+    assertThat(waits.statusOf(caseRequest(), RequestKind.CORRECTION_CONFIRM))
+        .contains(RequestStatus.WAITING);
+    // 상대 상세에서 새 고친 내용에 더한 근거 사진이 보인다(#296 리뷰)
+    detail(landlord)
+        .andExpect(jsonPath("$.corrections[0].photos", hasSize(0)))
+        .andExpect(jsonPath("$.corrections[1].id").value(retry.toString()))
+        .andExpect(jsonPath("$.corrections[1].photos", hasSize(1)))
+        .andExpect(jsonPath("$.corrections[1].photos[0].stage").value("BEFORE"))
+        .andExpect(jsonPath("$.corrections[1].photos[0].target.id").value(retry.toString()));
+
+    // 상대는 새 고친 내용에 답하고, 맞아요면 앞모습이 된다
+    respond(retry, landlord, "r2", "ACK", null, 1).andExpect(status().isOk());
+    assertThat(content((UUID) head().get("confirmed_content_id")))
+        .containsEntry("no", 2)
+        .containsEntry("title", "천장 물샘");
+    // 같은 키로 다시 오면 처음 결과
+    assertThat(
+            resubmitId(
+                resubmit(first, tenant, "s1", "물 자국 사진이에요", List.of())
+                    .andExpect(header().string(RepairController.REPLAYED, "true"))))
+        .isEqualTo(retry);
+  }
+
+  @Test
+  void 다시_요청은_고친_측만_거절된_마지막_고친_내용에만_근거와_함께_7일에_한_번_된다() throws Exception {
+    stamp();
+    UUID first =
+        firstId(correct(tenant, "c1", "{\"field\":\"title\",\"newValue\":\"천장 물샘\"}", "오타"));
+
+    // 아직 기다리는 중
+    resubmit(first, tenant, "s0", "근거", List.of())
+        .andExpect(jsonPath("$.code").value("INVALID_STATE"));
+    respond(first, landlord, "r1", "DISPUTE", "사실과 달라요", 1).andExpect(status().isOk());
+    resubmit(first, landlord, "s1", "근거", List.of())
+        .andExpect(jsonPath("$.code").value("NOT_COUNTERPART_SIDE"));
+    resubmit(first, tenant, "s2", null, List.of())
+        .andExpect(jsonPath("$.code").value("EVIDENCE_REQUIRED"));
+
+    UUID retry = resubmitId(resubmit(first, tenant, "s3", "근거", List.of()));
+    // 이미 다시 보낸 것은 다시 보낼 수 없다(그 칸의 마지막이 아님)
+    resubmit(first, tenant, "s4", "근거", List.of())
+        .andExpect(jsonPath("$.code").value("INVALID_STATE"));
+    respond(retry, landlord, "r2", "NEED_MORE", "아직 부족해요", 1).andExpect(status().isOk());
+    // 같은 수리 건의 다시 요청은 7일에 한 번
+    resubmit(retry, tenant, "s5", "근거 더", List.of())
+        .andExpect(jsonPath("$.code").value("ASKED_RECENTLY"));
+  }
+
+  @Test
+  void 그사이_숨긴_부위로는_다시_요청할_수_없다() throws Exception {
+    stamp();
+    UUID floor = part("바닥");
+    UUID first =
+        firstId(
+            correct(
+                tenant, "c1", "{\"field\":\"roomPartId\",\"newValue\":\"" + floor + "\"}", "부위"));
+    respond(first, landlord, "r1", "DISPUTE", "바닥이 아니에요", 1).andExpect(status().isOk());
+    jdbc.update("UPDATE state.room_part SET hidden_at = CURRENT_TIMESTAMP WHERE id = ?", floor);
+
+    resubmit(first, tenant, "s1", "바닥 사진이에요", List.of())
+        .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM state.correction_request WHERE retry_of_id = ?",
+                Integer.class,
+                first))
+        .isZero();
+    assertThat(correction(first)).containsEntry("status", "REJECTED");
+  }
+
+  @Test
+  void 상세에_다시_요청_버튼은_고친_측의_거절된_마지막_고친_내용에만_있다() throws Exception {
+    stamp();
+    UUID first =
+        firstId(correct(tenant, "c1", "{\"field\":\"title\",\"newValue\":\"천장 물샘\"}", "오타"));
+    respond(first, landlord, "r1", "NEED_MORE", "사진이 더 필요해요", 1).andExpect(status().isOk());
+
+    detail(tenant)
+        .andExpect(jsonPath("$.corrections[0].availableActions").value(contains("resubmit")));
+    detail(landlord)
+        .andExpect(jsonPath("$.corrections[0].availableActions", not(hasItem("resubmit"))));
+
+    resubmit(first, tenant, "s1", "근거", List.of()).andExpect(status().isOk());
+    detail(tenant)
+        .andExpect(jsonPath("$.corrections", hasSize(2)))
+        .andExpect(jsonPath("$.corrections[0].availableActions", hasSize(0)))
+        .andExpect(jsonPath("$.corrections[1].availableActions").value(contains("withdraw")));
+  }
+
+  // ---- 상세 ----
+
+  @Test
+  void 상세에_고친_내용과_측마다_누를_수_있는_버튼이_보인다() throws Exception {
+    stamp();
+    UUID other = part("벽");
+    List<UUID> ids =
+        ids(
+            correct(
+                tenant,
+                "c1",
+                "{\"field\":\"roomPartId\",\"newValue\":\""
+                    + other
+                    + "\"},"
+                    + "{\"field\":\"title\",\"newValue\":\"천장 물샘\"}",
+                "더 정확하게"));
+    respond(ids.get(1), landlord, "r1", "NEED_MORE", "사진이 더 필요해요", 1).andExpect(status().isOk());
+
+    // 앞모습은 그대로이고 고친 내용은 만든 순서로 온다
+    detail(landlord)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.content.no").value(1))
+        .andExpect(jsonPath("$.corrections", hasSize(2)))
+        .andExpect(jsonPath("$.corrections[0].field").value("roomPartId"))
+        .andExpect(jsonPath("$.corrections[0].newValue").value(other.toString()))
+        .andExpect(jsonPath("$.corrections[0].newPartName").value("벽"))
+        .andExpect(jsonPath("$.corrections[0].status").value("WAITING"))
+        .andExpect(jsonPath("$.corrections[0].answer").value("PENDING"))
+        .andExpect(jsonPath("$.corrections[0].requestedBy").value("TENANT"))
+        .andExpect(jsonPath("$.corrections[0].reason").value("더 정확하게"))
+        .andExpect(jsonPath("$.corrections[0].availableActions").value(contains("respond")))
+        .andExpect(jsonPath("$.corrections[1].status").value("REJECTED"))
+        .andExpect(jsonPath("$.corrections[1].answer").value("NEED_MORE"))
+        .andExpect(jsonPath("$.corrections[1].answerReason").value("사진이 더 필요해요"))
+        .andExpect(jsonPath("$.corrections[1].newPartName").doesNotExist())
+        // 보류는 맞아요로 바꿀 수 있다
+        .andExpect(jsonPath("$.corrections[1].availableActions").value(contains("respond")))
+        .andExpect(jsonPath("$.availableActions", hasItem("accept-all")));
+    detail(tenant)
+        .andExpect(jsonPath("$.corrections[0].availableActions").value(contains("withdraw")))
+        // 보류된 고친 내용은 고친 측이 근거를 더해 다시 보낼 수 있다
+        .andExpect(jsonPath("$.corrections[1].availableActions").value(contains("resubmit")))
+        .andExpect(jsonPath("$.availableActions", not(hasItem("accept-all"))));
+  }
+
+  @Test
+  void 공유를_그만둔_뒤에는_그_뒤_상대가_고친_것과_내_고친_것에_대한_상대_응답이_보이지_않는다() throws Exception {
+    stamp();
+    UUID mine =
+        firstId(correct(tenant, "c1", "{\"field\":\"title\",\"newValue\":\"천장 물샘\"}", "오타"));
+    // 세입자가 공유를 그만둠(그 시각 = 지금). 그 뒤 집주인이 세입자의 고친 내용에 답한다
+    jdbc.update(
+        "UPDATE state.party SET status = 'SHARING_STOPPED', sharing_stopped_at = ?"
+            + " WHERE room_record_id = ? AND side = 'TENANT'",
+        java.sql.Timestamp.from(java.time.Instant.now()),
+        room);
+    respond(mine, landlord, "r1", "NEED_MORE", "사진이 더 필요해요", 1).andExpect(status().isOk());
+
+    detail(tenant)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.corrections", hasSize(1)))
+        .andExpect(jsonPath("$.corrections[0].status").value("WAITING"))
+        .andExpect(jsonPath("$.corrections[0].answer").value("PENDING"))
+        .andExpect(jsonPath("$.corrections[0].answerReason").doesNotExist());
+    // 남은 쪽은 자기가 남긴 응답을 본다
+    detail(landlord)
+        .andExpect(jsonPath("$.corrections[0].answer").value("NEED_MORE"))
+        .andExpect(jsonPath("$.corrections[0].answerReason").value("사진이 더 필요해요"));
+  }
+
+  @Test
+  void 도장_전에_고친_수리_건도_공유를_그만둔_뒤_상세를_볼_수_있다() throws Exception {
+    correct(tenant, "c1", "{\"field\":\"title\",\"newValue\":\"천장 물샘\"}", null)
+        .andExpect(status().isOk());
+    jdbc.update(
+        "UPDATE state.party SET status = 'SHARING_STOPPED', sharing_stopped_at = ?"
+            + " WHERE room_record_id = ? AND side = 'TENANT'",
+        java.sql.Timestamp.from(java.time.Instant.now()),
+        room);
+
+    detail(tenant)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.content.no").value(2))
+        .andExpect(jsonPath("$.content.title").value("천장 물샘"));
+  }
+
+  @Test
+  void 공유를_그만둔_뒤의_앞모습은_그_시각까지_확인된_판이다() throws Exception {
+    stamp();
+    List<UUID> ids = twoCorrections();
+    respond(ids.get(0), landlord, "r1", "ACK", null, 1).andExpect(status().isOk());
+    jdbc.update(
+        "UPDATE state.party SET status = 'SHARING_STOPPED', sharing_stopped_at = ?"
+            + " WHERE room_record_id = ? AND side = 'TENANT'",
+        java.sql.Timestamp.from(java.time.Instant.now()),
+        room);
+    // 그 뒤 집주인이 남은 하나도 확인한다(판 #3)
+    respond(ids.get(1), landlord, "r2", "ACK", null, 2).andExpect(status().isOk());
+
+    detail(tenant)
+        .andExpect(jsonPath("$.content.no").value(2))
+        .andExpect(jsonPath("$.content.title").value("천장 물샘"))
+        .andExpect(jsonPath("$.content.description").doesNotExist());
+    detail(landlord).andExpect(jsonPath("$.content.no").value(3));
+  }
+
+  @Test
+  void REP_7l_양측_종료가_되면_확인_전_고친_내용과_그_확인_요청이_닫힌다() throws Exception {
+    stamp();
+    UUID id = firstId(correct(tenant, "c1", "{\"field\":\"title\",\"newValue\":\"천장 물샘\"}", "오타"));
+    progress(tenant, "start", null).andExpect(status().isOk());
+    progress(tenant, "request-close", null).andExpect(status().isOk());
+
+    progress(landlord, "confirm-close", null).andExpect(status().isOk());
+
+    assertThat(correction(id))
+        .containsEntry("status", "CLOSED")
+        .containsEntry("closed_reason", "CLOSED_BY_BOTH");
+    assertThat(correction(id).get("closed_at")).isNotNull();
+    assertThat(waits.closedReasonOf(caseRequest(), RequestKind.CORRECTION_CONFIRM))
+        .contains(ClosedReason.CLOSED_BY_BOTH);
+    // 앞모습은 그대로이고, 닫힌 고친 내용에 답하면 CLOSED_BY_BOTH
+    assertThat(content((UUID) head().get("confirmed_content_id"))).containsEntry("no", 1);
+    respond(id, landlord, "r1", "ACK", null, 1)
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("CLOSED_BY_BOTH"));
+  }
+
+  @Test
+  void 양측_종료_뒤에는_보류였던_고친_내용도_맞아요로_바꾸지_못한다() throws Exception {
+    stamp();
+    UUID id = firstId(correct(tenant, "c1", "{\"field\":\"title\",\"newValue\":\"천장 물샘\"}", "오타"));
+    respond(id, landlord, "r1", "NEED_MORE", "사진이 더 필요해요", 1).andExpect(status().isOk());
+    progress(tenant, "start", null).andExpect(status().isOk());
+    progress(tenant, "request-close", null).andExpect(status().isOk());
+    progress(landlord, "confirm-close", null).andExpect(status().isOk());
+
+    respond(id, landlord, "r2", "ACK", null, 1)
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("CLOSED_BY_BOTH"));
+    assertThat(correction(id)).containsEntry("status", "REJECTED");
+    assertThat(content((UUID) head().get("confirmed_content_id"))).containsEntry("no", 1);
+    detail(landlord).andExpect(jsonPath("$.corrections[0].availableActions", hasSize(0)));
+    // 고친 측도 근거를 더해 다시 보내지 못한다
+    resubmit(id, tenant, "s1", "근거", List.of())
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("CLOSED_BY_BOTH"));
+    detail(tenant).andExpect(jsonPath("$.corrections[0].availableActions", hasSize(0)));
+  }
+
+  @Test
+  void 공유를_그만두기_전의_보류는_그_뒤_맞아요로_바꿔도_그만둔_쪽에는_보류로_보인다() throws Exception {
+    stamp();
+    UUID id = firstId(correct(tenant, "c1", "{\"field\":\"title\",\"newValue\":\"천장 물샘\"}", "오타"));
+    respond(id, landlord, "r1", "NEED_MORE", "사진이 더 필요해요", 1).andExpect(status().isOk());
+    jdbc.update(
+        "UPDATE state.party SET status = 'SHARING_STOPPED', sharing_stopped_at = ?"
+            + " WHERE room_record_id = ? AND side = 'TENANT'",
+        java.sql.Timestamp.from(java.time.Instant.now()),
+        room);
+    respond(id, landlord, "r2", "ACK", null, 1).andExpect(status().isOk());
+
+    detail(tenant)
+        .andExpect(jsonPath("$.content.no").value(1))
+        .andExpect(jsonPath("$.corrections[0].status").value("REJECTED"))
+        .andExpect(jsonPath("$.corrections[0].answer").value("NEED_MORE"))
+        .andExpect(jsonPath("$.corrections[0].answerReason").value("사진이 더 필요해요"));
+    detail(landlord)
+        .andExpect(jsonPath("$.content.no").value(2))
+        .andExpect(jsonPath("$.corrections[0].status").value("ACCEPTED"))
+        .andExpect(jsonPath("$.corrections[0].answer").value("ACK"));
+  }
+
+  @Test
+  void 아직_안_됐어요면_고친_내용은_그대로_기다린다() throws Exception {
+    stamp();
+    UUID id = firstId(correct(tenant, "c1", "{\"field\":\"title\",\"newValue\":\"천장 물샘\"}", "오타"));
+    progress(tenant, "start", null).andExpect(status().isOk());
+    progress(tenant, "request-close", null).andExpect(status().isOk());
+
+    progress(landlord, "not-yet", "{\"reason\":\"아직 물이 떨어져요\"}").andExpect(status().isOk());
+
+    assertThat(correction(id)).containsEntry("status", "WAITING");
+    assertThat(waits.statusOf(caseRequest(), RequestKind.CORRECTION_CONFIRM))
+        .contains(RequestStatus.WAITING);
   }
 
   @Test
@@ -479,11 +840,80 @@ class RepairCorrectionApiTest {
             .content(json));
   }
 
+  private ResultActions resubmit(
+      UUID correctionId, UUID memberId, String key, String description, List<String> tickets)
+      throws Exception {
+    String list = String.join(",", tickets.stream().map(t -> "\"" + t + "\"").toList());
+    String json =
+        "{"
+            + (description == null ? "" : "\"description\":\"" + description + "\",")
+            + "\"uploadTickets\":["
+            + list
+            + "]}";
+    return mvc.perform(
+        post("/api/corrections/{id}/resubmit", correctionId)
+            .with(loginAs(memberId))
+            .header("Idempotency-Key", key + "-" + caseId)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(json));
+  }
+
+  private static UUID resubmitId(ResultActions result) throws Exception {
+    String body = result.andReturn().getResponse().getContentAsString();
+    return UUID.fromString(body.replaceAll(".*\"correctionId\":\"([^\"]+)\".*", "$1"));
+  }
+
   private ResultActions withdraw(UUID correctionId, UUID memberId, String key) throws Exception {
     return mvc.perform(
         post("/api/corrections/{id}/withdraw", correctionId)
             .with(loginAs(memberId))
             .header("Idempotency-Key", key + "-" + caseId));
+  }
+
+  /** 도장 뒤 제목·설명을 함께 고친다. 칸마다 고친 내용 하나. */
+  private List<UUID> twoCorrections() throws Exception {
+    return ids(
+        correct(
+            tenant,
+            "c1",
+            "{\"field\":\"title\",\"newValue\":\"천장 물샘\"},"
+                + "{\"field\":\"description\",\"newValue\":\"물이 새요\"}",
+            "더 정확하게"));
+  }
+
+  private ResultActions detail(UUID memberId) throws Exception {
+    return mvc.perform(get("/api/repair-cases/{id}", caseId).with(loginAs(memberId)));
+  }
+
+  private ResultActions acceptAll(UUID memberId, String key, int seen, List<UUID> ids)
+      throws Exception {
+    String list = String.join(",", ids.stream().map(id -> "\"" + id + "\"").toList());
+    String json =
+        "{\"targetKind\":\"REPAIR_CASE\",\"targetId\":\""
+            + caseId
+            + "\",\"seenVersionNo\":"
+            + seen
+            + ",\"correctionIds\":["
+            + list
+            + "]}";
+    return mvc.perform(
+        post("/api/corrections/accept-all")
+            .with(loginAs(memberId))
+            .header("Idempotency-Key", key + "-" + caseId)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(json));
+  }
+
+  /** 수리 진행 행동(시작·종료 요청·종료 확인·아직 안 됐어요). */
+  private ResultActions progress(UUID memberId, String action, String json) throws Exception {
+    var request =
+        post("/api/repair-cases/{id}/" + action, caseId)
+            .with(loginAs(memberId))
+            .header("Idempotency-Key", action + "-" + UUID.randomUUID());
+    if (json != null) {
+      request = request.contentType(MediaType.APPLICATION_JSON).content(json);
+    }
+    return mvc.perform(request);
   }
 
   private static List<UUID> ids(ResultActions result) throws Exception {

@@ -21,6 +21,8 @@ repositories {
 }
 
 dependencies {
+    implementation platform('software.amazon.awssdk:bom:2.57.0')
+    implementation 'software.amazon.awssdk:ssm'
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
     implementation 'org.springframework.boot:spring-boot-starter-flyway'
@@ -55,6 +57,8 @@ dependencies {
 
     implementation platform('software.amazon.awssdk:bom:2.58.0')
     implementation 'software.amazon.awssdk:s3'
+    // 사진 위치 정보(GPS 태그) 검사(04 5-1 "위치 정보 제거", Apache 2.0)
+    implementation 'com.drewnoakes:metadata-extractor:2.19.0'
 }
 
 // 로컬 실행(bootRun)은 기본으로 local 프로필로 띄운다. Swagger UI가 local·test에서만 켜지기 때문(docs/rules/04 API 문서). 운영 jar에는 영향 없음
@@ -74,6 +78,11 @@ tasks.register('localAccessToken', JavaExec) {
 
 tasks.named('test') {
     useJUnitPlatform()
+    // MigrationRunnerIntegrationTest가 운영 bootJar를 UID 10002 컨테이너에서 --migrate로 실행한다
+    dependsOn tasks.named('bootJar')
+    doFirst {
+        systemProperty 'migration.test.production-boot-jar', tasks.named('bootJar').get().archiveFile.get().asFile.absolutePath
+    }
     finalizedBy 'jacocoTestReport'
 }
 

@@ -2,6 +2,7 @@ package com.chilsuitjo.back;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.chilsuitjo.back.notification.dto.Recipient;
 import com.chilsuitjo.back.notification.dto.SmsNoticeCommand;
 import com.chilsuitjo.back.notification.repository.FakeSmsGateway;
 import com.chilsuitjo.back.notification.repository.NoticeRepository;
@@ -94,7 +95,7 @@ class DeliveryCheckDueSettingChangeTest {
         """,
         party,
         room);
-    recipients.seedParty(party, "01012345678");
+    recipients.seedRecipient(party, new Recipient.Invitee("01012345678"));
   }
 
   @AfterEach
@@ -168,7 +169,8 @@ class DeliveryCheckDueSettingChangeTest {
             50,
             List.of(Duration.ofMinutes(1)),
             giveUpAfter,
-            SCHEDULE)
+            SCHEDULE,
+            "fake")
         .runOnce();
     assertThat(status(id)).isEqualTo("SENT");
     return id;

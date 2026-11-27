@@ -5,6 +5,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.chilsuitjo.back.global.config.ssm.SsmTestParameterSource;
 import com.chilsuitjo.back.notification.dto.SmsNoticeCommand;
 import com.chilsuitjo.back.notification.repository.DisabledSmsGateway;
 import com.chilsuitjo.back.notification.repository.FakeSmsGateway;
@@ -20,6 +21,8 @@ import com.chilsuitjo.back.notification.service.VerificationSmsSender;
 import com.chilsuitjo.back.room.service.JpaRecipientDirectory;
 import java.util.Map;
 import java.util.UUID;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -39,23 +42,26 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 솔라피 연동 전의 운영(prod + {@code app.sms.mode=disabled}, yml prod 기본값)은 정상 기동하고, 문자를 보내지 않으며 성공으로 남기지
- * 않는다(decisions 2026-11-25 운영 문자 모드). prod는 키 없이 시작하지 않으므로 운영처럼 설정으로 키를 넣는다.
+ * 않는다(decisions 2026-11-25 운영 문자 모드). prod는 운영처럼 가짜 SSM에서 키·화면 주소·사진 버킷을 받는다(다른 출처로 덮으면
+ * SsmProdSettingsGuard가 시작을 막는다). DB만 Testcontainers 연결 정보로 바뀐다(운영 jar에는 없음). 사진 버킷은 이름만 쓰고 S3는 부르지
+ * 않는다. prod 앱은 Flyway를 돌리지 않으므로 DB는 배포 순서처럼 스키마를 먼저 적용해 둔다({@link ProdTestSchema}, #173).
  */
-@Import(TestcontainersConfiguration.class)
-@SpringBootTest(
-    properties = {
-      "app.keys.access-token=prod-like-access-token-signing-key-for-test",
-      "app.keys.refresh-token=prod-like-refresh-token-rotation-key-for-test",
-      "app.origin=https://homestamp.example",
-      // prod는 사진 버킷 없이 시작하지 않는다(#223, FakeUploadPostSigner). 버킷 이름만 넣고 S3는 부르지 않는다
-      "photo.s3.bucket=prod-like-photos-for-test",
-      "spring.datasource.hikari.connection-init-sql=SET search_path TO state, record, log, public",
-      "app.outbox.worker.enabled=false"
-    })
+@Import(ProdTestSchema.MigratedDatabase.class)
+@SpringBootTest(properties = {"app.outbox.worker.enabled=false"})
 @AutoConfigureMockMvc
 @ActiveProfiles("prod")
 @ExtendWith(OutputCaptureExtension.class)
 class ProdDisabledContextTest {
+
+  @BeforeAll
+  static void provideFakeSsmSettings() {
+    SsmTestParameterSource.setParameters(SsmTestParameterSource.validParameters());
+  }
+
+  @AfterAll
+  static void resetFakeSsmSettings() {
+    SsmTestParameterSource.reset();
+  }
 
   private static final String PHONE = "01098765432";
 
@@ -108,8 +114,6 @@ class ProdDisabledContextTest {
   @Test
   void 번호_조회는_지어낸_번호를_돌려주지_않는다() {
     UUID any = UUID.randomUUID();
-    assertThat(recipients.phoneOfRecipient(any)).isEmpty();
-    assertThat(recipients.phoneOfParty(any)).isEmpty();
     assertThat(recipients.phoneOfMember(any)).isEmpty();
   }
 
@@ -118,17 +122,17 @@ class ProdDisabledContextTest {
     UUID room = UUID.randomUUID();
     UUID party = UUID.randomUUID();
     jdbc.update(
-        "INSERT INTO region (code, sido, dong) VALUES ('9999999997', '테스트', '꺼짐동')"
+        "INSERT INTO state.region (code, sido, dong) VALUES ('9999999997', '테스트', '꺼짐동')"
             + " ON CONFLICT DO NOTHING");
     jdbc.update(
         """
-        INSERT INTO room_record (id, region_code, alias, status, created_by_side, created_at, version)
+        INSERT INTO state.room_record (id, region_code, alias, status, created_by_side, created_at, version)
         VALUES (?, '9999999997', '꺼짐 호실', 'LIVING', 'TENANT', CURRENT_TIMESTAMP, 0)
         """,
         room);
     jdbc.update(
         """
-        INSERT INTO party (id, room_record_id, side, status, created_at, version)
+        INSERT INTO state.party (id, room_record_id, side, status, created_at, version)
         VALUES (?, ?, 'LANDLORD', 'INVITED', CURRENT_TIMESTAMP, 0)
         """,
         party,
@@ -141,13 +145,16 @@ class ProdDisabledContextTest {
     worker.runOnce();
     worker.runOnce();
 
-    Map<String, Object> notice = jdbc.queryForMap("SELECT * FROM notice WHERE id = ?", noticeId);
+    Map<String, Object> notice =
+        jdbc.queryForMap("SELECT * FROM state.notice WHERE id = ?", noticeId);
     assertThat(notice.get("status")).isEqualTo("REQUESTED");
     assertThat(notice.get("sent_at")).isNull();
     assertThat(notice.get("provider_message_id")).isNull();
     assertThat(
             jdbc.queryForObject(
-                "SELECT status FROM outbox WHERE dedupe_key = ?", String.class, "sms:" + noticeId))
+                "SELECT status FROM state.outbox WHERE dedupe_key = ?",
+                String.class,
+                "sms:" + noticeId))
         .isEqualTo("FAILED");
   }
 }

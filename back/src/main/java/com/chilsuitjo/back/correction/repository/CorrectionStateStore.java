@@ -5,6 +5,7 @@ import com.chilsuitjo.back.action.dto.ActionEntry;
 import com.chilsuitjo.back.action.dto.ActionTarget;
 import com.chilsuitjo.back.action.dto.DigestField;
 import com.chilsuitjo.back.action.dto.DigestInput;
+import com.chilsuitjo.back.action.dto.PhotoDigest;
 import com.chilsuitjo.back.action.dto.SavedState;
 import com.chilsuitjo.back.action.rule.ActionType;
 import com.chilsuitjo.back.action.rule.AnswerPayload;
@@ -13,6 +14,7 @@ import com.chilsuitjo.back.action.service.ActionRequestContext;
 import com.chilsuitjo.back.action.service.StateStore;
 import com.chilsuitjo.back.correction.dto.AppliedVersion;
 import com.chilsuitjo.back.correction.dto.CorrectableSnapshot;
+import com.chilsuitjo.back.correction.dto.CorrectionView;
 import com.chilsuitjo.back.correction.entity.CorrectionRequest;
 import com.chilsuitjo.back.correction.rule.CorrectionState;
 import com.chilsuitjo.back.correction.rule.CorrectionStatus;
@@ -27,10 +29,14 @@ import com.chilsuitjo.back.notification.dto.OpenRequestCommand;
 import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.service.WaitService;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -89,12 +95,89 @@ public class CorrectionStateStore {
 
   /** 고친 내용 응답(REP-7e·7i·7m)의 저장 방법. */
   public StateStore<CorrectionState> responding(Correctable target) {
-    return new Responding(target);
+    return new Responding(target, null, null);
+  }
+
+  /**
+   * [모두 확인]의 저장 방법. 한 묶음의 모든 {@code RESPOND_CORRECTION} 단계가 이 하나를 함께 쓴다.
+   *
+   * <p>본 번호는 묶음을 시작할 때의 앞모습이다: 앞 단계의 맞아요가 도장 판을 하나씩 올리므로 그만큼 빼고 비교한다(호실 잠금 안이라 그사이 다른 행동은 끼지 않음). 첫
+   * 단계에서 화면이 본 고친 내용 목록과 지금 기다리는 목록이 다르면 {@code VERSION_CONFLICT}다(그사이 더 고쳤거나 거뒀음).
+   *
+   * @param targetKey 그 기록의 대상 글자. 다른 기록의 고친 내용이 섞이면 {@code VALIDATION_FAILED}
+   * @param seenIds 화면이 본 확인 전 고친 내용들
+   */
+  public StateStore<CorrectionState> acceptingAll(
+      Correctable target, String targetKey, Set<UUID> seenIds) {
+    return new Responding(target, targetKey, Set.copyOf(seenIds));
   }
 
   /** 고친 내용 거두기의 저장 방법. */
   public StateStore<CorrectionState> withdrawing() {
     return new Withdrawing();
+  }
+
+  /**
+   * [사진 더해서 다시 요청]의 저장 방법(06 4-6 {@code resubmit}). 새 기록을 만드는 행동이라 대상은 {@code save}가 만든 새 고친 내용이다.
+   *
+   * @param retryOfId 거절된 고친 내용
+   * @param description 더한 설명. 없으면 null(그때 새 고친 내용의 사유는 이전 사유를 그대로 쓴다)
+   * @param uploadTickets 더한 사진의 업로드 표
+   * @param memberId 다시 보내는 회원. 같은 값을 잠근 뒤 {@link Correctable#normalize}로 다시 확인할 때 쓴다
+   */
+  public StateStore<CorrectionState> resubmitting(
+      Correctable target,
+      UUID retryOfId,
+      String description,
+      List<String> uploadTickets,
+      UUID memberId) {
+    return new Resubmitting(target, retryOfId, description, uploadTickets, memberId);
+  }
+
+  /**
+   * 그 기록에서 고친 내용을 마지막으로 다시 보낸 시각(다시 보낸 고친 내용은 {@code retry_of_id}가 있고 만든 시각이 다시 요청 시각이다). 없으면 null.
+   * 대상 도메인이 자기 다시 요청과 함께 7일을 셀 때 쓴다(#278).
+   */
+  public Instant lastResubmitAt(String targetKey) {
+    return corrections.findLastResubmitAt(targetKey);
+  }
+
+  /** 그 기록의 고친 내용 ID 모두. 사진 한도를 셀 때처럼 응답까지 읽을 필요가 없을 때 쓴다. */
+  public List<UUID> ids(String targetKey) {
+    return corrections.findIdsByTargetKey(targetKey);
+  }
+
+  /** 지금 호실 단계에서 고친 내용 확인 요청을 열 수 있나(03 K). 상세에서 고친 내용마다 다시 묻지 않게 한 번 읽는다. */
+  public boolean canOpenConfirm(UUID roomRecordId) {
+    return waits.canOpen(roomRecordId, RequestKind.CORRECTION_CONFIRM);
+  }
+
+  private CorrectionState resubmitState(
+      CorrectionRequest row,
+      Instant lastRerequestAt,
+      boolean recordClosedByBoth,
+      boolean sameValue) {
+    return CorrectionState.forResubmitting(
+        row.getRequestedBySide(),
+        row.getStatus(),
+        row.getClosedReason() == ClosedReason.CLOSED_BY_BOTH || recordClosedByBoth,
+        answerOf(row),
+        latestOfField(row),
+        canOpenConfirm(row.getRoomRecordId()),
+        lastRerequestAt,
+        sameValue);
+  }
+
+  /** 그 칸의 마지막 고친 내용인가(그 뒤 같은 칸을 다시 고쳤거나 다시 보낸 것이 없음). */
+  private boolean latestOfField(CorrectionRequest row) {
+    CorrectionRequest last = null;
+    for (CorrectionRequest each :
+        corrections.findByTargetKeyOrderByCreatedAtAscIdAsc(row.getTargetKey())) {
+      if (each.getField().equals(row.getField())) {
+        last = each;
+      }
+    }
+    return last != null && last.getId().equals(row.getId());
   }
 
   /** 고친 내용. 없으면 {@code NOT_FOUND}. 잠그기 전에 호실·대상을 알아낼 때 쓴다. */
@@ -275,43 +358,125 @@ public class CorrectionStateStore {
    * decisions 2026-11-16: 처리 상태는 {@code REJECTED} 하나이고 구분은 행동 기록에 있음).
    */
   private AckState answerOf(CorrectionRequest row) {
+    return answerOf(row, lastResponse(row));
+  }
+
+  private static AckState answerOf(CorrectionRequest row, ActionEntry last) {
     return switch (row.getStatus()) {
       case ACCEPTED -> AckState.ACK;
       case REJECTED -> {
-        Answer last = null;
-        for (ActionEntry entry :
-            actions.findByTarget(ActionTarget.correctionRequest(row.getId()))) {
-          if (entry.type() == ActionType.RESPOND_CORRECTION) {
-            last = entry.payloadAs(AnswerPayload.class).answer();
-          }
-        }
-        if (last == null || last == Answer.ACK) {
+        Answer answer = last == null ? null : last.payloadAs(AnswerPayload.class).answer();
+        if (answer == null || answer == Answer.ACK) {
           throw new IllegalStateException("거절된 고친 내용에 보류·이견 응답이 없어요: " + row.getId());
         }
-        yield AckState.valueOf(last.name());
+        yield AckState.valueOf(answer.name());
       }
       default -> AckState.PENDING;
     };
+  }
+
+  /** 고친 내용의 마지막 응답 행동. 없으면 null. */
+  private ActionEntry lastResponse(CorrectionRequest row) {
+    ActionEntry last = null;
+    for (ActionEntry entry : actions.findByTarget(ActionTarget.correctionRequest(row.getId()))) {
+      if (entry.type() == ActionType.RESPOND_CORRECTION) {
+        last = entry;
+      }
+    }
+    return last;
+  }
+
+  /**
+   * 그 기록의 고친 내용 모두(만든 순서). 응답 종류·사유는 마지막 응답 행동에서 읽는다(사유는 보류·이견일 때만 보인다, decisions 2026-11-16).
+   *
+   * @param targetKey 기록의 대상 글자({@code CorrectionTargetKind.targetKey})
+   */
+  public List<CorrectionView> views(String targetKey) {
+    List<CorrectionView> result = new ArrayList<>();
+    for (CorrectionRequest row : corrections.findByTargetKeyOrderByCreatedAtAscIdAsc(targetKey)) {
+      List<CorrectionView.Response> responses = new ArrayList<>();
+      ActionEntry last = null;
+      for (ActionEntry entry : actions.findByTarget(ActionTarget.correctionRequest(row.getId()))) {
+        if (entry.type() == ActionType.RESPOND_CORRECTION) {
+          Answer given = entry.payloadAs(AnswerPayload.class).answer();
+          responses.add(
+              new CorrectionView.Response(
+                  AckState.valueOf(given.name()),
+                  given == Answer.ACK ? null : entry.reason(),
+                  entry.actorSide(),
+                  entry.createdAt()));
+          last = entry;
+        }
+      }
+      AckState answer = answerOf(row, last);
+      boolean objected = answer == AckState.NEED_MORE || answer == AckState.DISPUTE;
+      result.add(
+          new CorrectionView(
+              row.getId(),
+              row.getField(),
+              valueOf(row),
+              row.getRequestedBySide(),
+              row.getReason(),
+              row.getStatus(),
+              answer,
+              objected ? last.reason() : null,
+              last == null ? null : last.createdAt(),
+              row.getClosedReason(),
+              row.getCreatedAt(),
+              responses));
+    }
+    return List.copyOf(result);
   }
 
   private final class Responding implements StateStore<CorrectionState> {
 
     private final Correctable target;
 
-    private Responding(Correctable target) {
+    /** [모두 확인]일 때만: 그 기록의 대상 글자와 화면이 본 고친 내용들. 하나씩 응답이면 null. */
+    private final String targetKey;
+
+    private final Set<UUID> seenIds;
+
+    /** 이 묶음에서 앞 단계가 맞아요로 올린 도장 판 수. */
+    private int merged;
+
+    private Responding(Correctable target, String targetKey, Set<UUID> seenIds) {
       this.target = target;
+      this.targetKey = targetKey;
+      this.seenIds = seenIds;
     }
 
     @Override
     public CorrectionState load(ActionCommand command) {
       CorrectionRequest row = row(command);
+      if (targetKey != null) {
+        checkSeen(row);
+      }
       CorrectableSnapshot snapshot = snapshot(target, row.targetId(), command);
+      Integer startNo = snapshot.confirmedNo() == null ? null : snapshot.confirmedNo() - merged;
+      // 처리 완료(양측)된 기록이면 보류·이견이던 고친 내용도 맞아요로 바꾸지 못한다(앞모습이 바뀌므로, REP-7k·7l, #287 리뷰)
       return CorrectionState.forAnswering(
           row.getRequestedBySide(),
           row.getStatus(),
-          row.getClosedReason() == ClosedReason.CLOSED_BY_BOTH,
+          row.getClosedReason() == ClosedReason.CLOSED_BY_BOTH || snapshot.closedByBoth(),
           answerOf(row),
-          snapshot.confirmedNo());
+          startNo);
+    }
+
+    private void checkSeen(CorrectionRequest row) {
+      if (!row.getTargetKey().equals(targetKey)) {
+        throw new BusinessException(ErrorCode.VALIDATION_FAILED);
+      }
+      if (merged > 0) {
+        return;
+      }
+      Set<UUID> waiting = new HashSet<>();
+      corrections
+          .findByTargetKeyAndStatus(targetKey, CorrectionStatus.WAITING)
+          .forEach(waitingRow -> waiting.add(waitingRow.getId()));
+      if (!waiting.equals(seenIds)) {
+        throw new BusinessException(ErrorCode.VERSION_CONFLICT);
+      }
     }
 
     /**
@@ -325,6 +490,7 @@ public class CorrectionStateStore {
       if (next.answer() == AckState.ACK) {
         target.mergeConfirmed(row.targetId(), row.getBaseVersionId(), row.getField(), valueOf(row));
         row.accept();
+        merged++;
       } else {
         row.reject();
       }
@@ -336,6 +502,92 @@ public class CorrectionStateStore {
             command.actor().side());
       }
       return SavedState.unchanged();
+    }
+  }
+
+  private final class Resubmitting implements StateStore<CorrectionState> {
+
+    private final Correctable target;
+    private final UUID retryOfId;
+    private final String description;
+    private final List<String> uploadTickets;
+    private final UUID memberId;
+    private CorrectableSnapshot snapshot;
+    private Object normalized;
+
+    private Resubmitting(
+        Correctable target,
+        UUID retryOfId,
+        String description,
+        List<String> uploadTickets,
+        UUID memberId) {
+      this.target = target;
+      this.retryOfId = retryOfId;
+      this.description = description;
+      this.uploadTickets = uploadTickets;
+      this.memberId = memberId;
+    }
+
+    private CorrectionRequest earlier(ActionCommand command) {
+      return corrections
+          .findByIdAndRoomRecordId(retryOfId, command.roomRecordId())
+          .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
+    }
+
+    /**
+     * 같은 값을 처음 고칠 때({@code Requesting})처럼 다시 확인한다: 그사이 부위를 숨겼거나 가전을 껐으면 {@link
+     * Correctable#normalize}가 거절하고, 앞모습과 같아졌으면 {@code SAME_VALUE}다(#296 리뷰). 거절되지 않으면 맞아요 때 확정 내용에
+     * 그대로 들어가기 때문이다.
+     */
+    @Override
+    public CorrectionState load(ActionCommand command) {
+      CorrectionRequest row = earlier(command);
+      snapshot = snapshot(target, row.targetId(), command);
+      Map<String, Object> one = new HashMap<>();
+      one.put(row.getField(), valueOf(row));
+      Map<String, Object> checked = target.normalize(row.targetId(), one, memberId);
+      normalized = checked.get(row.getField());
+      return resubmitState(
+          row,
+          target.lastRerequestAt(row.targetId()),
+          snapshot.closedByBoth(),
+          anySame(snapshot, checked));
+    }
+
+    /**
+     * 같은 칸·같은 값(잠근 뒤 다시 확인한 모양)으로 새 고친 내용을 만든다({@code retry_of_id} = 거절된 것, 05 2-5). 거절된 것은 그대로 이력에
+     * 남는다. 기준 판은 지금 도장 판이고, 사유는 더한 설명(없으면 이전 사유)이다. 더한 사진은 새 고친 내용에 붙는다(대상 도메인이 붙임). 고친 내용 확인 요청은
+     * 기록당 하나로 다시 묶는다. 행동의 대상은 새 고친 내용이고 지문은 그 행과 사진이다.
+     */
+    @Override
+    public SavedState save(ActionCommand command, CorrectionState next) {
+      CorrectionRequest row = earlier(command);
+      CorrectionRequest retry =
+          corrections.saveAndFlush(
+              new CorrectionRequest(
+                  command.roomRecordId(),
+                  row.getField(),
+                  JSON.writeValueAsString(normalized),
+                  snapshot.confirmedVersionId(),
+                  row.getRepairCaseId(),
+                  row.getPaymentId(),
+                  row.getInspectionItemId(),
+                  row.getSettlementTransferId(),
+                  row.getTargetKey(),
+                  row.getId(),
+                  command.actor().side(),
+                  description == null ? row.getReason() : description,
+                  requestContext.at()));
+      waits.restart(
+          new OpenRequestCommand(
+              command.roomRecordId(),
+              RequestKind.CORRECTION_CONFIRM,
+              recordRequest(row.targetKind(), row.targetId()),
+              command.actor().side()));
+      List<PhotoDigest> photos =
+          target.attachEvidence(command, row.targetId(), retry.getId(), uploadTickets);
+      return new SavedState(ActionTarget.correctionRequest(retry.getId()), digest(retry))
+          .withPhotos(photos);
     }
   }
 

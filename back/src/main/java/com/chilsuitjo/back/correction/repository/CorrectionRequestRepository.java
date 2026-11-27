@@ -2,10 +2,13 @@ package com.chilsuitjo.back.correction.repository;
 
 import com.chilsuitjo.back.correction.entity.CorrectionRequest;
 import com.chilsuitjo.back.correction.rule.CorrectionStatus;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 /** 고친 내용({@code state.correction_request}). correction 안에서만 쓴다. */
 public interface CorrectionRequestRepository extends JpaRepository<CorrectionRequest, UUID> {
@@ -22,4 +25,20 @@ public interface CorrectionRequestRepository extends JpaRepository<CorrectionReq
 
   /** 이 호실에서 수리 건이 대상인 고친 내용 모두(상태와 상관없이). */
   List<CorrectionRequest> findByRoomRecordIdAndRepairCaseIdNotNull(UUID roomRecordId);
+
+  /** 그 기록에서 이 상태인 고친 내용 모두(처리 완료 등으로 닫을 때). */
+  List<CorrectionRequest> findByTargetKeyAndStatus(String targetKey, CorrectionStatus status);
+
+  /** 그 기록의 고친 내용 모두(만든 순서, 같은 시각이면 ID 순). */
+  List<CorrectionRequest> findByTargetKeyOrderByCreatedAtAscIdAsc(String targetKey);
+
+  /** 그 기록의 고친 내용 ID 모두(사진 한도를 셀 때처럼 ID만 필요할 때). */
+  @Query("SELECT c.id FROM CorrectionRequest c WHERE c.targetKey = :targetKey")
+  List<UUID> findIdsByTargetKey(@Param("targetKey") String targetKey);
+
+  /** 그 기록에서 고친 내용을 마지막으로 다시 보낸 시각({@code retry_of_id}가 있는 행의 만든 시각 중 가장 늦은 것). 없으면 null. */
+  @Query(
+      "SELECT MAX(c.createdAt) FROM CorrectionRequest c"
+          + " WHERE c.targetKey = :targetKey AND c.retryOfId IS NOT NULL")
+  Instant findLastResubmitAt(@Param("targetKey") String targetKey);
 }

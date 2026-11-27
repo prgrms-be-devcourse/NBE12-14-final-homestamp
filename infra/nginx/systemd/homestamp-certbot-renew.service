@@ -1,0 +1,9 @@
+[Unit]
+Description=HomeStamp Let's Encrypt renew (certbot webroot, nginx reload on change)
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/homestamp/nginx/renew.sh /opt/homestamp/nginx/homestamp.env
