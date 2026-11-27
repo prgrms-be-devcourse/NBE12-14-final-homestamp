@@ -24,7 +24,12 @@ import type { Page } from "@/lib/router"
 import { myTurn } from "@/lib/turn"
 import { cn } from "cn"
 import { plainText } from "@/lib/plain-words"
-import { daysSince, lastActivity, moneyLabel } from "@/lib/activity"
+import {
+  daysSince,
+  lastActivity,
+  moneyLabel,
+  staleReason,
+} from "@/lib/activity"
 import { sideName } from "@/lib/words"
 import { connectionText } from "@/lib/workflows"
 
@@ -238,10 +243,7 @@ export interface HomeDashboardProps {
 export function HomeDashboard(p: HomeDashboardProps) {
   const { role, room, rooms, repairs, events, notices, moneyLeft } = p
   const toAnswer = notices.filter((n) => !n.read)
-  const stale = repairs.filter(
-    (r) =>
-      r.status === "처리 중" && (daysSince(lastActivity(r, events)) ?? 0) > 14,
-  )
+  const stale = repairs.filter((r) => staleReason(r, events))
   const open = repairs.filter((r) => r.status !== "처리 완료")
   // '내가 답할 것'은 맨 위 강조 카드에 이미 있으므로 요약 칸에는 수리·돈 2개만 둬요
   const stats = [
@@ -367,7 +369,7 @@ export function HomeDashboard(p: HomeDashboardProps) {
                     role={role}
                     onOpen={() => p.onOpenRepair(r.id)}
                     extra={
-                      <Status>{`처리 중 · ${daysSince(lastActivity(r, events))}일째`}</Status>
+                      <Status>{`${staleReason(r, events)} · ${daysSince(lastActivity(r, events))}일째`}</Status>
                     }
                   />
                 ))}

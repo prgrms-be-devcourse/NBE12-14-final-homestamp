@@ -1,4 +1,4 @@
-package com.chilsuitjo.back.member.dto;
+package com.chilsuitjo.back.global.common;
 
 import jakarta.validation.Constraint;
 import jakarta.validation.ConstraintValidator;
@@ -17,7 +17,12 @@ import java.nio.charset.StandardCharsets;
  */
 @Documented
 @Constraint(validatedBy = MaxUtf8Bytes.Validator.class)
-@Target({ElementType.FIELD, ElementType.PARAMETER, ElementType.RECORD_COMPONENT})
+@Target({
+  ElementType.FIELD,
+  ElementType.PARAMETER,
+  ElementType.RECORD_COMPONENT,
+  ElementType.ANNOTATION_TYPE
+})
 @Retention(RetentionPolicy.RUNTIME)
 public @interface MaxUtf8Bytes {
 
