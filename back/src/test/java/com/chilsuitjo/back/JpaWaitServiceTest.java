@@ -311,6 +311,27 @@ class JpaWaitServiceTest extends SchemaTestSupport {
   }
 
   @Test
+  void 탈퇴로_닫힌_요청은_늦게_온_전달_증거로_다시_열리지_않는다() {
+    UUID room = room();
+    RequestHandle request =
+        open(room, RequestKind.DEFECT_CONFIRM, repairCase(room), PartySide.TENANT);
+    Instant delivered = LATER.minusSeconds(600);
+    started(request.requestId(), delivered);
+
+    closeAll(room, ClosedReason.COUNTERPART_WITHDRAWN, EnumSet.allOf(RequestKind.class));
+    started(request.requestId(), delivered.minusSeconds(300)); // 더 이른 증거가 닫힌 뒤 도착
+
+    Map<String, Object> row = row(request.requestId());
+    assertThat(row)
+        .containsEntry("status", "CLOSED")
+        .containsEntry("closed_reason", "COUNTERPART_WITHDRAWN");
+    assertThat(((java.sql.Timestamp) row.get("first_notified_at")).toInstant())
+        .isEqualTo(delivered);
+    assertThat(((java.sql.Timestamp) row.get("renotify_due_at")).toInstant())
+        .isEqualTo(delivered.plusSeconds(48 * 3600));
+  }
+
+  @Test
   void 탈퇴는_그_호실의_열린_요청을_양방향_모두_닫는다() {
     UUID room = room();
     UUID otherRoom = room();
