@@ -1,21 +1,47 @@
 import type { RepairCasesApi } from "./repair-cases"
 import { notConnected } from "./connected"
 import { endpoints } from "./endpoints"
+import { ApiError } from "./errors"
 import type { HttpRequest } from "./http-client"
 import {
   causeBasisCode,
+  photoIdsOf,
   repairFromDetail,
   repairFromListItem,
   type RepairCaseDetailBody,
   type RepairCasePageBody,
 } from "./http-repair-view"
+import { createHttpPhotoUploads, type PhotoUploadsApi } from "./photo-uploads"
 import type { Repair } from "@/data/demo"
 
 // 수리 건 API의 HTTP 구현(06 4-6). 상태를 바꾸는 요청은 http-client가 Idempotency-Key를 붙여요.
 // 응답은 http-repair-view가 서버 모양(RepairCaseDetail)을 화면 모델로 바꿔요.
-// 사진은 업로드 표(upload-tickets, PHO-1·C)를 아직 받지 못해서, 사진을 고른 요청은 서버로 보내지 않고 "연결 전"으로 안내해요.
-const noPhotosYet = (photos: readonly unknown[] | undefined) => {
-  if (photos?.length) throw notConnected()
+// 사진을 고른 행동은 먼저 사진을 올려 업로드 표를 받고(photo-uploads, PHO-1) 그 표를 본문에 넣어요(#366).
+
+// 한 번에 받는 사진 주소(06 0-1 photo.url.batch.max)
+const PHOTO_URL_BATCH = 50
+// 사진 썸네일 주소를 받아요(06 4-5 view-urls, 조회라 멱등 키 없음). 받지 못해도 상세는 보여요(사진만 "불러오지 못함")
+async function thumbUrls(
+  request: HttpRequest,
+  ids: readonly string[],
+): Promise<Map<string, string>> {
+  const urls = new Map<string, string>()
+  for (let i = 0; i < ids.length; i += PHOTO_URL_BATCH) {
+    const photoIds = ids.slice(i, i + PHOTO_URL_BATCH)
+    try {
+      const { items } = await request<{
+        items: { photoId: string; url: string | null }[]
+      }>("POST", endpoints.photoViewUrls, {
+        body: { photoIds, variant: "THUMB" },
+        idempotent: false,
+      })
+      for (const it of items) if (it.url) urls.set(it.photoId, it.url)
+    } catch (e) {
+      // 로그인이 풀린 것(재발급까지 실패한 401)은 상세 오류로 알려요. 그 밖의 실패는 그 사진만 "불러오지 못함"으로 두고 다음 묶음을 받아요(#371 리뷰)
+      if (e instanceof ApiError && e.status === 401) throw e
+    }
+  }
+  return urls
 }
 
 // 호실의 수리 건 목록(GET /api/rooms/{id}/repair-cases, 06 4-6)을 끝까지 받아 화면 모델로 바꿔요. 새것부터예요.
@@ -51,11 +77,30 @@ export async function listAllRepairs(
   return { asOf: asOf ?? null, items }
 }
 
-export function createHttpRepairCases(request: HttpRequest): RepairCasesApi {
-  const detail = async (id: string) =>
-    repairFromDetail(
-      await request<RepairCaseDetailBody>("GET", endpoints.repairCase(id)),
+export function createHttpRepairCases(
+  request: HttpRequest,
+  photoUploads: PhotoUploadsApi = createHttpPhotoUploads(request),
+): RepairCasesApi {
+  // 수리 건 → 호실. 업로드 표는 호실마다 받아서(06 4-5) 상세를 받을 때 기억해 둬요
+  const roomOf = new Map<string, string>()
+  const body = async (id: string) => {
+    const b = await request<RepairCaseDetailBody>(
+      "GET",
+      endpoints.repairCase(id),
     )
+    roomOf.set(id, b.roomRecordId)
+    return b
+  }
+  const detail = async (id: string) => {
+    const b = await body(id)
+    return repairFromDetail(b, await thumbUrls(request, photoIdsOf(b)))
+  }
+  // 고른 사진을 올리고 업로드 표를 돌려줘요. 사진이 없으면 빈 목록
+  const ticketsOf = async (id: string, photos: readonly string[] = []) => {
+    if (!photos.length) return []
+    const roomId = roomOf.get(id) ?? (await body(id)).roomRecordId
+    return photoUploads.upload(roomId, photos)
+  }
   const act = async (
     id: string,
     action: Parameters<typeof endpoints.repairAction>[1],
@@ -69,10 +114,11 @@ export function createHttpRepairCases(request: HttpRequest): RepairCasesApi {
     get: (_s, id) => detail(id),
     respond: (_s, id, b) => act(id, "respond", b),
     // 06 4-6 보충: {description, uploadTickets}
-    supplement: async (_s, id, b) => {
-      noPhotosYet(b.photos)
-      return act(id, "supplement", { description: b.text, uploadTickets: [] })
-    },
+    supplement: async (_s, id, b) =>
+      act(id, "supplement", {
+        description: b.text,
+        uploadTickets: await ticketsOf(id, b.photos),
+      }),
     start: (_s, id) => act(id, "start"),
     requestClose: (_s, id) => act(id, "request-close"),
     // 하자 "맞아요"를 함께 남길 때만 본 판 번호(seenVersionNo)를 보내요(06 REP-3a)
@@ -94,14 +140,14 @@ export function createHttpRepairCases(request: HttpRequest): RepairCasesApi {
     addPhotos: (_s, id, b) => act(id, "photos", b),
     // 06 4-6 원인 설명: {text, basis, expertName, previousId, uploadTickets}. 업체 이름은 EXPERT일 때만 보내요
     addCauseNote: async (_s, id, b) => {
-      noPhotosYet(b.photos)
       const basis = causeBasisCode(b.basis)
+      const uploadTickets = await ticketsOf(id, b.photos)
       return act(id, "cause-notes", {
         text: b.text,
         basis,
         expertName: basis === "EXPERT" ? (b.company ?? null) : null,
         previousId: b.previousId ?? null,
-        uploadTickets: [],
+        uploadTickets,
       })
     },
     // 06 4-6 진행 상황: 묻기는 본문 없음, 남기기는 {text, uploadTickets, asksCheck}, 답은 진행 상황에 {answer, reason}

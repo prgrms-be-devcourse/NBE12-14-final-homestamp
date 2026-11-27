@@ -32,6 +32,8 @@ export const CONNECTED_APIS: readonly {
   // 호실 기록 내려받기 목록과 사진 주소 받기(06 4장·4-5, DL-1·S-19, #321)
   { method: "GET", path: /^\/api\/rooms\/[^/]+\/download$/ },
   { method: "POST", path: /^\/api\/photos\/view-urls$/ },
+  // 사진 올리기: 업로드 표 받기(06 4-5, PHO-1, #365). S3에는 화면이 presigned POST로 직접 올려요
+  { method: "POST", path: /^\/api\/rooms\/[^/]+\/upload-tickets$/ },
   // 법정동 찾기·단계 선택(06 4-3, ROOM-1, #193)
   { method: "GET", path: /^\/api\/regions\/search$/ },
   { method: "GET", path: /^\/api\/regions$/ },
