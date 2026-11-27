@@ -13,6 +13,7 @@ import com.chilsuitjo.back.action.service.StateStore;
 import com.chilsuitjo.back.action.service.SupplementWriter;
 import com.chilsuitjo.back.correction.rule.CorrectionTargetKind;
 import com.chilsuitjo.back.correction.service.CorrectionCloser;
+import com.chilsuitjo.back.correction.service.CorrectionReader;
 import com.chilsuitjo.back.global.common.ClosedReason;
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.common.TargetKind;
@@ -32,6 +33,7 @@ import com.chilsuitjo.back.repair.entity.CauseNote;
 import com.chilsuitjo.back.repair.entity.ProgressNote;
 import com.chilsuitjo.back.repair.entity.RepairCase;
 import com.chilsuitjo.back.repair.entity.RepairContent;
+import com.chilsuitjo.back.repair.rule.RepairSight;
 import com.chilsuitjo.back.repair.rule.RepairState;
 import com.chilsuitjo.back.repair.rule.RepairStatus;
 import com.chilsuitjo.back.repair.rule.RepairTransitions;
@@ -80,6 +82,7 @@ public class RepairStateStore {
   private final SupplementWriter supplementWriter;
   private final RepairPhotos photos;
   private final CorrectionCloser corrections;
+  private final CorrectionReader correctionReader;
 
   /**
    * 하자 등록(06 REP-1)의 저장 방법. 같은 키로 다시 온 요청이면 pipeline이 만든 수리 건을 {@code load}로 다시 읽는다.
@@ -188,7 +191,7 @@ public class RepairStateStore {
         row.getMoneyStatus(),
         row.getCreatedBySide(),
         contentNo,
-        lastAt(history, ActionType.SUPPLEMENT),
+        latest(lastAt(history, ActionType.SUPPLEMENT), lastResubmitAt(row)),
         row.getClosedBy(),
         closeRequestedBy(row, history),
         lastAt(history, ActionType.ASK_PROGRESS),
@@ -198,6 +201,30 @@ public class RepairStateStore {
         hiddenFromCounterpart(room, row),
         null,
         new SituationCheck(lastSituationCheckAt(history), null));
+  }
+
+  /**
+   * 이 수리 건의 마지막 다시 요청 시각: [보충하고 다시 확인 요청]·[상황이 바뀌었어요]·고친 내용의 [사진 더해서 다시 요청] 중 가장 최근(06 0-1 {@code
+   * rerequest.interval} "한 기록에", 같은 기록의 다시 요청끼리 함께 셈, #278). 없으면 null. 고친 내용 다시 요청의 7일에 쓴다 ({@code
+   * Correctable.lastRerequestAt}). 트랜잭션 안에서 부른다.
+   */
+  public Instant lastRerequestAt(RepairCase row) {
+    List<ActionEntry> history = actions.findByTarget(ActionTarget.repairCase(row.getId()));
+    return latest(
+        latest(lastAt(history, ActionType.SUPPLEMENT), lastSituationCheckAt(history)),
+        lastResubmitAt(row));
+  }
+
+  /** 고친 내용을 마지막으로 다시 보낸 시각. 없으면 null. */
+  private Instant lastResubmitAt(RepairCase row) {
+    return correctionReader.lastResubmitAt(CorrectionTargetKind.REPAIR_CASE, row.getId());
+  }
+
+  private static Instant latest(Instant a, Instant b) {
+    if (a == null) {
+      return b;
+    }
+    return b == null || a.isAfter(b) ? a : b;
   }
 
   /**
@@ -263,7 +290,7 @@ public class RepairStateStore {
     if (check.since() == null) {
       return true;
     }
-    Instant cutoff = sharingCutoff(row, side).orElse(null);
+    RepairSight sight = sightFor(row, side);
     List<ActionEntry> history =
         new ArrayList<>(actions.findByTarget(ActionTarget.repairCase(row.getId())));
     for (CauseNote note : causeNotes.findByRepairCaseIdOrderByCreatedAtAscIdAsc(row.getId())) {
@@ -274,7 +301,7 @@ public class RepairStateStore {
             entry.actorSide() != null
                 && entry.actorSide() != side
                 && entry.createdAt().isAfter(check.since())
-                && (cutoff == null || !entry.createdAt().isAfter(cutoff)));
+                && sight.sees(entry.actorSide(), entry.createdAt()));
   }
 
   /** 이 종류의 마지막 행동 시각(행동 기록이 원본, 안내서 8-1). 없으면 null. */
@@ -324,29 +351,22 @@ public class RepairStateStore {
   }
 
   /**
-   * 이 호실에서 보이는 범위를 고정하는 시각(03 6-6 9번 "그만둔 시각 기준으로 고정", 3-1 "모든 줄에 같게"). 제한이 살아 있는 공유 중단 시각 중 이른
-   * 것이고, 없으면 비어 있다. 공유 중단은 양방향이라 어느 쪽이 그만뒀든 같다. 상대가 탈퇴해 풀린 공유 중단은 보지 않는다({@code RoomParties}, 06
-   * CONS-3p·3q). 이 시각보다 뒤에 남은 상대 측 행동은 보는 사람에게 보이지 않는다(불변식 18).
-   *
-   * <p>탈퇴로 풀리는지는 <b>보는 사람 기준</b>이다({@code RoomParties}가 "내 측"에서 판단): 보는 사람의 상대가 탈퇴했으면 두 측의 중단 모두 보지
-   * 않는다(#175).
+   * 보는 사람에게 이 호실 수리 기록이 어디까지 보이나({@link RepairSight}, 03 6-6 9번 "그만둔 시각 기준으로 고정", 3-1 "모든 줄에 같게",
+   * 6-4). 탈퇴로 풀리는지는 <b>보는 사람 기준</b>이다({@code RoomParties}가 "내 측"에서 판단, #175). 상대가 탈퇴했으면 남아 있는 공유 중단
+   * 시각 뒤의 그 측 기록은 계속 보이지 않는다(#288).
    *
    * @param viewer 보는 사람의 측
    */
-  public Optional<Instant> sharingCutoff(RepairCase row, PartySide viewer) {
-    return Optional.ofNullable(sharingCutoff(parties.read(row.getRoomRecordId(), viewer)));
+  public RepairSight sightFor(RepairCase row, PartySide viewer) {
+    return RepairSight.of(parties.read(row.getRoomRecordId(), viewer), viewer);
   }
 
+  /**
+   * 제한이 살아 있는 공유 중단 시각 중 이른 것({@link RepairSight#shared}). 지금 할 수 있는 일(요청 열기)과 상대가 볼 수 있는지를 정한다.
+   * 상대가 탈퇴해 풀린 공유 중단은 보지 않는다(06 CONS-3p·3q).
+   */
   private static Instant sharingCutoff(RoomParties room) {
-    Instant stopped = null;
-    if (room.mySharingStoppedApplies()) {
-      stopped = room.mine().sharingStoppedAt();
-    }
-    if (room.counterpartSharingStoppedApplies()) {
-      Instant theirs = room.counterpart().sharingStoppedAt();
-      stopped = stopped == null || theirs.isBefore(stopped) ? theirs : stopped;
-    }
-    return stopped;
+    return RepairSight.of(room, null).shared();
   }
 
   private RepairCase row(ActionCommand command) {

@@ -78,8 +78,9 @@ class InspectionAnswerApiTest {
     jdbc.update(
         """
         INSERT INTO state.room_part
-          (id, room_record_id, zone, name, sort_order, created_at, version)
-        VALUES (?, ?, '안방', '천장', 0, CURRENT_TIMESTAMP, 0)
+          (id, room_record_id, template_id, zone, name, sort_order, created_at, version)
+        SELECT ?, ?, (SELECT id FROM state.part_template ORDER BY sort_order LIMIT 1), '안방', '천장', 0,
+               CURRENT_TIMESTAMP, 0
         """,
         part,
         room);
@@ -195,7 +196,7 @@ class InspectionAnswerApiTest {
     confirmAll(landlord, inspection, "hidden-all", "[]")
         .andExpect(jsonPath("$.code").value("INVALID_STATE"));
     detail(landlord, inspection)
-        .andExpect(jsonPath("$.items").doesNotExist())
+        .andExpect(jsonPath("$.items").isEmpty())
         .andExpect(jsonPath("$.availableActions", not(hasItem("confirm-all"))));
   }
 
@@ -406,6 +407,174 @@ class InspectionAnswerApiTest {
     assertThat(actions(item, "RESPOND_ITEM") + actions(item, "SUPPLEMENT_ITEM")).isZero();
   }
 
+  // ---- 빠뜨린 하자 더하기(INSP-1d·1e, #286) ----
+
+  @Test
+  void INSP_1d_작성_중_상대가_더하면_그_방향_요청이_열리고_기준_측이_바로_답한다() throws Exception {
+    UUID inspection = created(start());
+    UUID mine = created(addItem(inspection, "mine"));
+
+    UUID theirs = created(addItemAs(landlord, inspection, "other", "[]"));
+
+    // 요청한 측 = 더한 측. 세입자(기준 측)의 작성 중 항목은 확인 요청 때 함께라 그 방향 요청은 아직 없다
+    assertThat(confirmRequest(inspection, PartySide.LANDLORD)).contains(RequestStatus.WAITING);
+    assertThat(confirmRequest(inspection)).isEmpty();
+    detail(tenant, inspection)
+        .andExpect(jsonPath("$.status").value("DRAFT"))
+        .andExpect(
+            jsonPath("$.items[?(@.id == '" + theirs + "')].availableActions[0]").value("respond"));
+    // 상대에게 기준 측 작성 중 항목은 보이지 않아 답할 수 없다
+    respond(landlord, mine, "hidden", "ACK", null, 1)
+        .andExpect(jsonPath("$.code").value("INVALID_STATE"));
+
+    respond(tenant, theirs, "a1", "ACK", null, 1).andExpect(status().isOk());
+    assertThat(itemRow(theirs)).containsEntry("status", "ACK");
+    assertThat(confirmRequest(inspection, PartySide.LANDLORD)).contains(RequestStatus.ANSWERED);
+    assertThat(inspectionRow(inspection)).containsEntry("status", "DRAFT");
+  }
+
+  @Test
+  void 두_방향_확인_요청은_따로_열리고_한쪽이_답해도_다른_쪽은_남는다() throws Exception {
+    UUID inspection = created(start());
+    UUID theirs = created(addItemAs(landlord, inspection, "other", "[]"));
+    UUID mine = created(addItem(inspection, "mine"));
+    requestConfirm(inspection);
+
+    // 점검 × 방향마다 하나(불변식 21): 상대가 더한 쪽과 기준 측 확인 요청이 함께 기다린다
+    assertThat(confirmRequest(inspection, PartySide.LANDLORD)).contains(RequestStatus.WAITING);
+    assertThat(confirmRequest(inspection, PartySide.TENANT)).contains(RequestStatus.WAITING);
+
+    respond(landlord, mine, "a-mine", "ACK", null, 1).andExpect(status().isOk());
+    assertThat(confirmRequest(inspection, PartySide.TENANT)).contains(RequestStatus.ANSWERED);
+    assertThat(confirmRequest(inspection, PartySide.LANDLORD)).contains(RequestStatus.WAITING);
+
+    respond(tenant, theirs, "a-theirs", "ACK", null, 1).andExpect(status().isOk());
+    assertThat(confirmRequest(inspection, PartySide.LANDLORD)).contains(RequestStatus.ANSWERED);
+  }
+
+  @Test
+  void 작성_중_모두_확인은_상대_항목만이고_하자_기록_없음은_확인_요청_뒤에만() throws Exception {
+    UUID inspection = created(start());
+    confirmAll(landlord, inspection, "none-draft", "[]")
+        .andExpect(jsonPath("$.code").value("INVALID_STATE"));
+    detail(landlord, inspection)
+        .andExpect(jsonPath("$.availableActions", not(hasItem("confirm-all"))));
+
+    UUID theirs = created(addItemAs(landlord, inspection, "other", "[]"));
+    detail(tenant, inspection).andExpect(jsonPath("$.availableActions", hasItem("confirm-all")));
+    // 상대는 답할 기준 측 항목이 없고(작성 중이라 가려짐) 자기 항목에는 답하지 않는다
+    detail(landlord, inspection)
+        .andExpect(jsonPath("$.availableActions", not(hasItem("confirm-all"))));
+    confirmAll(landlord, inspection, "own", "[]")
+        .andExpect(jsonPath("$.code").value("INVALID_STATE"));
+
+    confirmAll(tenant, inspection, "all", seen(theirs)).andExpect(status().isOk());
+    assertThat(itemRow(theirs)).containsEntry("status", "ACK");
+    assertThat(confirmRequest(inspection, PartySide.LANDLORD)).contains(RequestStatus.ANSWERED);
+  }
+
+  @Test
+  void 상대가_더한_항목만_있으면_상대가_하자_기록_없음으로_기준_측_요청을_닫는다() throws Exception {
+    // #291 리뷰: 기준 측 항목 0개에 상대만 더한 점검. 상대 자신의 항목은 "하자 기록 없음" 판단에 세지 않는다
+    UUID inspection = created(start());
+    UUID theirs = created(addItemAs(landlord, inspection, "other", "[]"));
+    respond(tenant, theirs, "a1", "ACK", null, 1).andExpect(status().isOk());
+    requestConfirm(inspection);
+    assertThat(confirmRequest(inspection, PartySide.TENANT)).contains(RequestStatus.WAITING);
+
+    detail(landlord, inspection).andExpect(jsonPath("$.availableActions", hasItem("confirm-all")));
+    confirmAll(landlord, inspection, "none", "[]").andExpect(status().isOk());
+    assertThat(confirmRequest(inspection, PartySide.TENANT)).contains(RequestStatus.ANSWERED);
+  }
+
+  @Test
+  void 확인_요청_중_상대가_먼저_더해도_하자_기록_없음을_확인할_수_있다() throws Exception {
+    UUID inspection = created(start());
+    requestConfirm(inspection);
+    UUID theirs = created(addItemAs(landlord, inspection, "other", "[]"));
+    assertThat(confirmRequest(inspection, PartySide.LANDLORD)).contains(RequestStatus.WAITING);
+
+    confirmAll(landlord, inspection, "none", "[]").andExpect(status().isOk());
+    assertThat(confirmRequest(inspection, PartySide.TENANT)).contains(RequestStatus.ANSWERED);
+    // 상대가 더한 쪽 요청은 기준 측이 답할 때까지 남는다
+    assertThat(confirmRequest(inspection, PartySide.LANDLORD)).contains(RequestStatus.WAITING);
+    // 기준 측 항목이 있으면 그대로 "하자 기록 없음"이 아니다(기준 측은 상대 항목에 답해야 한다)
+    confirmAll(tenant, inspection, "tenant-none", "[]")
+        .andExpect(jsonPath("$.code").value("VERSION_CONFLICT"));
+    confirmAll(tenant, inspection, "tenant-all", seen(theirs)).andExpect(status().isOk());
+    assertThat(confirmRequest(inspection, PartySide.LANDLORD)).contains(RequestStatus.ANSWERED);
+  }
+
+  @Test
+  void INSP_1e_잠긴_뒤_추가는_표시가_남고_잠금과_보충_제한은_그대로다() throws Exception {
+    UUID inspection = requestedWith(1);
+    lock(inspection);
+
+    UUID late = created(addItemAs(landlord, inspection, "late", "[]"));
+
+    assertThat(itemRow(late))
+        .containsEntry("added_after_lock", true)
+        .containsEntry("added_after_end", false);
+    assertThat(inspectionRow(inspection)).containsEntry("status", "LOCKED");
+    assertThat(confirmRequest(inspection, PartySide.LANDLORD)).contains(RequestStatus.WAITING);
+    detail(tenant, inspection)
+        .andExpect(jsonPath("$.items[?(@.id == '" + late + "')].addedAfterLock").value(true));
+
+    respond(tenant, late, "need", "NEED_MORE", "사진이 흐려요", 1).andExpect(status().isOk());
+    assertThat(inspectionRow(inspection)).containsEntry("status", "LOCKED");
+    // 잠긴 뒤 보충은 그대로 막힌다(#272)
+    supplement(landlord, late, "s1", "{\"description\":\"보충\"}")
+        .andExpect(jsonPath("$.code").value("INVALID_STATE"));
+  }
+
+  @Test
+  void 거주_종료_뒤_추가는_표시가_남고_사진도_붙고_요청이_열린다() throws Exception {
+    UUID inspection = requestedWith(1);
+    jdbc.update(
+        "UPDATE state.room_record SET status = 'ENDED', ended_at = CURRENT_TIMESTAMP WHERE id = ?",
+        room);
+
+    UUID after = created(addItemAs(landlord, inspection, "after-end", tickets(1)));
+
+    assertThat(itemRow(after)).containsEntry("added_after_end", true);
+    detail(landlord, inspection)
+        .andExpect(jsonPath("$.items[?(@.id == '" + after + "')].addedAfterEnd").value(true))
+        .andExpect(jsonPath("$.items[?(@.id == '" + after + "')].photos.length()").value(1));
+    assertThat(confirmRequest(inspection, PartySide.LANDLORD)).contains(RequestStatus.WAITING);
+  }
+
+  @Test
+  void 꺼_둔_설비_가전에는_항목을_더할_수_없다() throws Exception {
+    UUID inspection = requestedWith(1);
+    jdbc.update("UPDATE state.room_part SET enabled = false WHERE id = ?", part);
+
+    // 켜고 끔은 이 집에 그 설비가 있나라서 새 기록을 받지 않는다(decisions 2026-11-26 #182, 점검 항목 쪽은 A)
+    addItemAs(landlord, inspection, "off", "[]")
+        .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    assertThat(confirmRequest(inspection, PartySide.LANDLORD)).isEmpty();
+  }
+
+  @Test
+  void 공유_중단과_정산_완료에서의_항목_더하기() throws Exception {
+    UUID inspection = requestedWith(1);
+    // 기준 측(세입자)이 그만뒀으면 상대가 더한 항목은 요청을 열지 않고 그만둔 사람에게 보이지 않는다(불변식 18)
+    stopSharing(PartySide.TENANT, Instant.now());
+    clock.advance(Duration.ofSeconds(1));
+    UUID unseen = created(addItemAs(landlord, inspection, "after-stop", "[]"));
+    assertThat(confirmRequest(inspection, PartySide.LANDLORD)).isEmpty();
+    detail(tenant, inspection)
+        .andExpect(jsonPath("$.items[?(@.id == '" + unseen + "')]").isEmpty());
+    // 그만둔 본인은 더할 수 없다(4-10)
+    addItemAs(tenant, inspection, "own-stop", "[]")
+        .andExpect(jsonPath("$.code").value("SHARING_STOPPED"));
+
+    jdbc.update(
+        "UPDATE state.room_record SET status = 'SETTLED', ended_at = CURRENT_TIMESTAMP,"
+            + " settled_at = CURRENT_TIMESTAMP WHERE id = ?",
+        room);
+    addItemAs(landlord, inspection, "settled", "[]").andExpect(jsonPath("$.code").value("SETTLED"));
+  }
+
   // ---- 도우미 ----
 
   /** 세입자가 항목 {@code count}개를 쓰고 확인 요청을 보낸 점검. */
@@ -456,6 +625,41 @@ class InspectionAnswerApiTest {
                 "{\"roomPartId\":\""
                     + part
                     + "\",\"description\":\"벽지 찢어짐\",\"uploadTickets\":[]}"));
+  }
+
+  private ResultActions addItemAs(UUID member, UUID inspection, String key, String tickets)
+      throws Exception {
+    return mvc.perform(
+        post("/api/inspections/{id}/items", inspection)
+            .with(loginAs(member))
+            .header("Idempotency-Key", key)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(
+                "{\"roomPartId\":\""
+                    + part
+                    + "\",\"description\":\"방충망 찢어짐\",\"uploadTickets\":"
+                    + tickets
+                    + "}"));
+  }
+
+  private static String tickets(int count) {
+    StringBuilder json = new StringBuilder("[");
+    for (int i = 0; i < count; i++) {
+      json.append(i == 0 ? "" : ",").append('"').append(UUID.randomUUID()).append('"');
+    }
+    return json.append(']').toString();
+  }
+
+  /** 잠금 기능(INSP-1b~e)이 아직 없어 행으로 잠근다(#272와 같음). */
+  private void lock(UUID inspection) {
+    jdbc.update(
+        "UPDATE state.inspection SET status = 'LOCKED', locked_at = now(),"
+            + " lock_reason = 'ALL_RESOLVED' WHERE id = ?",
+        inspection);
+  }
+
+  private Map<String, Object> inspectionRow(UUID inspection) {
+    return jdbc.queryForMap("SELECT * FROM state.inspection WHERE id = ?", inspection);
   }
 
   private void requestConfirm(UUID inspection) throws Exception {
@@ -510,7 +714,12 @@ class InspectionAnswerApiTest {
   }
 
   private Optional<RequestStatus> confirmRequest(UUID inspection) {
-    return waits.statusOf(target(inspection), RequestKind.INSPECTION_CONFIRM, PartySide.TENANT);
+    return confirmRequest(inspection, PartySide.TENANT);
+  }
+
+  /** 그 방향(요청한 측)의 점검 확인 요청 상태. */
+  private Optional<RequestStatus> confirmRequest(UUID inspection, PartySide requestedBy) {
+    return waits.statusOf(target(inspection), RequestKind.INSPECTION_CONFIRM, requestedBy);
   }
 
   private static RequestTarget target(UUID inspection) {
