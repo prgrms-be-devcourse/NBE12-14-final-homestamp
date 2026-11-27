@@ -78,6 +78,19 @@ describe("재발 등록의 이전 부위", () => {
     },
   )
 
+  // 목록을 받기 전에는 부위 칸이 비어 있어요(불러오는 중). 이전 부위 ID만으로 보내지 않아요(#402)
+  test.each(["hidden", "disabled", "missing", "available"] as const)(
+    "%s 이전 부위도 목록을 받기 전에 보내면 부위를 고르지 않은 것으로 봐요",
+    async (state) => {
+      const { create, submit } = setup(state)
+      expect(screen.getByText("부위 목록을 불러오는 중이에요.")).toBeTruthy()
+      submit()
+      expect(screen.getByRole("alert").textContent).toBe(ZONE_PART_ERROR)
+      expect(create).not.toHaveBeenCalled()
+      await screen.findByRole("combobox", { name: "부위" })
+    },
+  )
+
   test("사용 가능한 이전 부위 ID가 있으면 같은 이름이 있어도 원래 부위를 유지해요", async () => {
     const { submit } = setup("available")
     const field = await screen.findByRole("combobox", { name: "부위" })
