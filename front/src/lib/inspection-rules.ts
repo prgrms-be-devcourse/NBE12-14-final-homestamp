@@ -578,6 +578,41 @@ export function addsMissingDefect(
   if (status === "확인 요청") return http || !mine
   return http && status === "작성 중" && !mine
 }
+// 더한 항목(·확인 요청)에 답할 상대가 있는지. 백엔드 InspectionSight.reachable과 같은 기준이에요:
+// 공유 중단이 없고(어느 쪽이든) 상대가 연결됨(connected)이거나 초대됨(invited)일 때만 확인 요청이 열려요.
+// 상대 없음·거절·탈퇴·공유 중단이면 none(06 4-7 items·request-confirm "받을 상대가 없으면 열지 않음", 03 1-4 ⑥).
+// 서버 값(room.server)이 없는 목업은 화면 연결 상태로 봐요
+export type ConfirmReach = "connected" | "invited" | "none"
+export function confirmReach(room: Room): ConfirmReach {
+  const s = room.server
+  if (
+    room.counterpartLeft ||
+    s?.myStatus === "SHARING_STOPPED" ||
+    s?.counterpartStatus === "SHARING_STOPPED"
+  )
+    return "none"
+  if (s)
+    return s.counterpartStatus === "CONNECTED"
+      ? "connected"
+      : s.counterpartStatus === "INVITED"
+        ? "invited"
+        : "none"
+  return room.connection === "연결됨"
+    ? "connected"
+    : room.connection === "초대됨"
+      ? "invited"
+      : "none"
+}
+// 더한 하자에 누가 언제 답하는지 한 문장(HTTP 안내). 받을 상대가 없으면 오지 않을 답을 기다리지 않게 사실만 적어요(03 1-4 ⑦)
+export function addedItemAnswerText(reach: ConfirmReach) {
+  if (reach === "connected")
+    return "더한 하자는 상대에게 바로 보이고, 상대가 맞아요·보류·이견으로 답해요."
+  // 초대된 상대는 연결 전에도 기록 링크로 볼 수 있어요(06 ROOM-4c). 답은 연결한 뒤에 해요
+  if (reach === "invited")
+    return "초대한 상대는 연결 전에도 기록 링크로 볼 수 있고, 연결한 뒤에 맞아요·보류·이견으로 답할 수 있어요."
+  // 지금 상태만 말해요. 앞서 보낸 확인 요청이 갔는지는 지금 상태로 알 수 없어요(공유 중단 전에 갔을 수 있음)
+  return "지금은 확인을 받을 상대가 없어, 지금 더하는 하자에는 확인 요청이 가지 않아요. 기록은 그대로 남아요."
+}
 // 잠김: 확인 요청 뒤 모든 하자 항목이 확인·이견·상대 미확인으로 정리되거나, 하자 없이 요청해 '하자 기록 없음'으로 잠긴 경우
 export function inspectionStatus(
   room: Room,

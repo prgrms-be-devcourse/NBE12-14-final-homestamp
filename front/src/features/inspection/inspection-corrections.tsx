@@ -32,10 +32,12 @@ import { readPhotos } from "@/lib/photos"
 import { pendingValue } from "@/lib/corrections"
 import {
   acceptAllItem,
+  addedItemAnswerText,
   addItemPhotos,
   answer,
   confirmAll,
   confirmableItems,
+  confirmReach,
   isItemStamped,
   requestAdd,
   requestItemEdits,
@@ -577,8 +579,8 @@ export function MissingDefectDialog({
       title="빠진 하자 추가"
       description={
         http
-          ? // 서버: 더하면 바로 항목이 되고 상대(더하지 않은 쪽)가 답해요. 점검 상태·잠금은 그대로예요(06 4-7 INSP-1d·1e)
-            "빠뜨린 하자를 새 항목으로 더해요. 더한 항목은 바로 남고 상대가 맞아요·보류·이견으로 답해요. 점검이 잠긴 뒤에 더해도 잠금은 그대로예요."
+          ? // 서버: 더하면 바로 항목이 되고, 받을 상대가 있을 때만 상대(더하지 않은 쪽)에게 확인 요청이 가요. 점검 상태·잠금은 그대로예요(06 4-7 INSP-1d·1e)
+            `빠뜨린 하자를 새 항목으로 더해요. ${addedItemAnswerText(confirmReach(room))} 점검이 잠긴 뒤에 더해도 잠금은 그대로예요.`
           : "점검을 고치는 일이라 기준 기록을 쓴 쪽이 확인해야 반영돼요. 빠진 하자 추가도 상대 쪽이 확인해야 항목이 돼요(응답이 없어도 혼자 반영되지 않아요). 기존 항목의 고치기·사진 추가는 각 항목 카드에서 할 수 있어요."
       }
       submitLabel={http ? "하자 더하기" : "추가 요청"}

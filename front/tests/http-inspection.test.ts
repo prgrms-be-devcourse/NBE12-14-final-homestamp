@@ -20,12 +20,19 @@ import {
   type RecordChange,
 } from "../src/api/records"
 import {
+  addedItemAnswerText,
   addsMissingDefect,
   confirmAll,
   confirmableItems,
+  confirmReach,
   inspectionStatus,
 } from "../src/lib/inspection-rules"
-import { emptyState, type Room } from "../src/data/demo"
+import {
+  emptyState,
+  type PartyStatus,
+  type Room,
+  type RoomServerState,
+} from "../src/data/demo"
 
 // 입주 점검 API 연결(06 4-7, #357): 서버 점검 → 화면 모델, 점검 ID 찾기, 요청 주소·모양
 const s = { accountId: "dev-tenant" }
@@ -531,6 +538,42 @@ test("사진이 없으면 빈 업로드 표를 보내고, 연결 전 주소면 �
     path: `/api/inspections/${INSPECTION}/part-photos`,
     body: { roomPartId: "part-1" },
   })
+})
+
+test("더한 하자에 답할 상대는 서버와 같은 기준이다: 연결됨·초대됨만, 공유 중단·상대 없음·거절·탈퇴는 없음(06 4-7)", () => {
+  const withStatus = (
+    counterpartStatus: PartyStatus,
+    myStatus: PartyStatus = "CONNECTED",
+  ) =>
+    ({
+      server: { counterpartStatus, myStatus } as RoomServerState,
+    }) as Room
+  expect(confirmReach(withStatus("CONNECTED"))).toBe("connected")
+  expect(confirmReach(withStatus("INVITED"))).toBe("invited")
+  for (const s of [
+    "EMPTY",
+    "NUMBER_ONLY",
+    "REJECTED",
+    "WITHDRAWN",
+    "SHARING_STOPPED",
+  ] as const)
+    expect(confirmReach(withStatus(s))).toBe("none")
+  // 내가 공유를 그만뒀어도 확인 요청은 열리지 않아요
+  expect(confirmReach(withStatus("CONNECTED", "SHARING_STOPPED"))).toBe("none")
+
+  // 받을 상대가 없으면 "상대가 답해요"라고 쓰지 않아요(03 1-4 ⑦)
+  expect(addedItemAnswerText("connected")).toMatch(/상대가 맞아요·보류·이견/)
+  // 초대된 상대는 연결 전에도 링크로 보고, 답은 연결한 뒤에 해요
+  expect(addedItemAnswerText("invited")).toMatch(
+    /연결 전에도 기록 링크로 볼 수 있고/,
+  )
+  expect(addedItemAnswerText("invited")).toMatch(/연결한 뒤에/)
+  expect(addedItemAnswerText("none")).not.toMatch(/답해요/)
+  // 지금 더하는 하자만 말하고, 앞서 보낸 확인 요청은 단정하지 않아요
+  expect(addedItemAnswerText("none")).toMatch(
+    /지금 더하는 하자에는 확인 요청이 가지 않아요/,
+  )
+  expect(addedItemAnswerText("none")).not.toMatch(/않았어요/)
 })
 
 test("HTTP에서는 작성 중 기준 측만 기록 창을 쓰고, 작성 중 상대·확인 요청 뒤 양쪽은 빠뜨린 하자 창을 연다(INSP-1d)", () => {
