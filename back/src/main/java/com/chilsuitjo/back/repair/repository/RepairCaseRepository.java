@@ -25,6 +25,12 @@ public interface RepairCaseRepository extends JpaRepository<RepairCase, UUID> {
   @Query("select c.roomRecordId from RepairCase c where c.id = :id")
   Optional<UUID> findRoomRecordIdById(@Param("id") UUID id);
 
+  /** 그 호실의 수리 건 ID(등록 순). 보이는지는 부르는 쪽이 상세와 같은 판단으로 거른다. */
+  @Query(
+      "select c.id from RepairCase c where c.roomRecordId = :roomRecordId"
+          + " order by c.createdAt, c.id")
+  List<UUID> findIdsByRoomRecordId(@Param("roomRecordId") UUID roomRecordId);
+
   /**
    * 호실의 수리 건 목록 첫 쪽(06 4-6), 새것부터(등록 시각, 같으면 ID). 보는 사람 측이 등록한 건은 모두, 상대 측이 등록한 건은 {@code
    * hiddenAfter} 이전 것만이다(그 뒤 것은 보는 사람이 볼 수 없는 기록, 03 불변식 18).
