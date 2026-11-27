@@ -44,6 +44,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -167,15 +168,40 @@ public class InspectionItemStateStore {
         versions
             .findById(row.getCurrentVersionId())
             .orElseThrow(() -> new IllegalStateException("지금 판이 없어요: " + row.getId()));
+    return current(
+        parent,
+        row,
+        seen,
+        version.getNo(),
+        lastSupplementAt(row.getId()),
+        sight.canOpenConfirm(row.getRoomRecordId(), row.getAddedBySide()));
+  }
+
+  /**
+   * {@link #current(Inspection, InspectionItem, PartySide, InspectionSight.Sight)}와 같은 값을 이미 읽은 값으로
+   * 만든다. 상세 조회가 항목마다 판·행동 기록·요청 상태를 읽지 않게 한다(#396).
+   *
+   * @param seen 이 사람의 보이는 범위. 행동하는 측을 모르면 null
+   * @param versionNo 지금 판 번호
+   * @param lastSupplementAt 기록된 마지막 보충 시각. 없으면 null
+   * @param canOpenConfirm 항목을 더한 측이 지금 점검 확인 요청을 열 수 있나({@link InspectionSight#canOpenConfirm})
+   */
+  public InspectionItemState current(
+      Inspection parent,
+      InspectionItem row,
+      InspectionSight.Sight seen,
+      int versionNo,
+      Instant lastSupplementAt,
+      boolean canOpenConfirm) {
     Boolean hidden = seen == null ? null : !seen.sees(row);
     return new InspectionItemState(
         parent.getStatus(),
         parent.getAuthorSide(),
         row.getStatus(),
         row.getAddedBySide(),
-        version.getNo(),
-        lastSupplementAt(row.getId()),
-        sight.canOpenConfirm(row.getRoomRecordId(), row.getAddedBySide()),
+        versionNo,
+        lastSupplementAt,
+        canOpenConfirm,
         hidden);
   }
 
@@ -193,12 +219,25 @@ public class InspectionItemStateStore {
    */
   public ConfirmAllState confirmAll(Inspection row, PartySide actor, InspectionSight.Sight seen) {
     List<InspectionItem> all = items.findByInspectionIdOrderByIdAsc(row.getId());
-    List<InspectionItem> shown = all.stream().filter(seen::sees).toList();
+    List<InspectionItem> targets =
+        all.stream()
+            .filter(seen::sees)
+            .filter(item -> item.getAddedBySide() != actor)
+            .filter(item -> UNANSWERED.contains(item.getStatus()))
+            .toList();
+    // 판은 한 번에 읽는다(항목마다 읽지 않기, #396)
+    Map<UUID, Integer> noByVersion =
+        versions
+            .findAllById(targets.stream().map(InspectionItem::getCurrentVersionId).toList())
+            .stream()
+            .collect(Collectors.toMap(InspectionItemVersion::getId, InspectionItemVersion::getNo));
     Map<UUID, Integer> unanswered = new LinkedHashMap<>();
-    for (InspectionItem item : shown) {
-      if (item.getAddedBySide() != actor && UNANSWERED.contains(item.getStatus())) {
-        unanswered.put(item.getId(), versionNo(item));
+    for (InspectionItem item : targets) {
+      Integer no = noByVersion.get(item.getCurrentVersionId());
+      if (no == null) {
+        throw new IllegalStateException("지금 판이 없어요: " + item.getId());
       }
+      unanswered.put(item.getId(), no);
     }
     boolean confirmedNoItems =
         actions.findByTarget(ActionTarget.inspection(row.getId())).stream()
@@ -211,13 +250,6 @@ public class InspectionItemStateStore {
         othersItems,
         seen.draftHidden(),
         confirmedNoItems);
-  }
-
-  private int versionNo(InspectionItem item) {
-    return versions
-        .findById(item.getCurrentVersionId())
-        .orElseThrow(() -> new IllegalStateException("지금 판이 없어요: " + item.getId()))
-        .getNo();
   }
 
   /** 마지막 보충 시각(행동 기록이 원본, 안내서 8-1). 없으면 null. */
