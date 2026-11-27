@@ -1,12 +1,15 @@
 import { describe, expect, test } from "vitest"
 import { isConnected } from "../src/api/connected"
 import { endpoints } from "../src/api/endpoints"
+import { ApiError } from "../src/api/errors"
 import type { HttpRequest } from "../src/api/http-client"
 import { createHttpRepairCases } from "../src/api/http-repair-cases"
 import {
   repairFromDetail,
+  type ServerPhotoCard,
   type RepairCaseDetailBody,
 } from "../src/api/http-repair-view"
+import { ERASED_PHOTO, UNAVAILABLE_PHOTO } from "../src/lib/photos"
 
 // 수리 건 상세(06 4-6 GET /api/repair-cases/{id})의 서버 모양 → 화면 모델(#179)
 const body = (
@@ -247,20 +250,189 @@ describe("수리 건 행동은 06 4-6 본문 모양으로 보내고 상세를 �
     })
   })
 
-  test("사진을 고른 보충·원인 설명은 업로드 표 연결 전이라 서버로 보내지 않아요", async () => {
+  test("사진을 고른 보충·원인 설명은 상세에서 본 호실로 사진을 올리고 그 업로드 표를 보내요(#366)", async () => {
     const { request, sent } = fakeRequest()
-    const api = createHttpRepairCases(request)
+    const uploads: { roomId: string; photos: readonly string[] }[] = []
+    const api = createHttpRepairCases(request, {
+      upload: async (roomId, photos) => {
+        uploads.push({ roomId, photos })
+        return photos.map((_, i) => `t${i}`)
+      },
+    })
+    await api.supplement(session, "c1", {
+      text: "",
+      photos: ["data:a", "data:b"],
+    })
+    await api.addCauseNote(session, "c1", {
+      basis: "내 추측",
+      text: "글",
+      photos: ["data:c"],
+    })
+    expect(uploads).toEqual([
+      { roomId: "r1", photos: ["data:a", "data:b"] },
+      { roomId: "r1", photos: ["data:c"] },
+    ])
+    const posts = sent.filter((x) => x.method === "POST")
+    expect(posts[0].body).toEqual({
+      description: "",
+      uploadTickets: ["t0", "t1"],
+    })
+    expect(posts[1].body).toMatchObject({ uploadTickets: ["t0"] })
+  })
+
+  test("사진을 올리지 못하면 행동을 보내지 않아요", async () => {
+    const { request, sent } = fakeRequest()
+    const api = createHttpRepairCases(request, {
+      upload: async () => {
+        throw new ApiError({ status: 429, code: "UPLOAD_LIMIT" })
+      },
+    })
     await expect(
-      api.supplement(session, "c1", { text: "", photos: ["data:image/x"] }),
-    ).rejects.toMatchObject({ code: "NOT_CONNECTED" })
-    await expect(
-      api.addCauseNote(session, "c1", {
-        basis: "내 추측",
-        text: "글",
-        photos: ["data:image/x"],
+      api.supplement(session, "c1", { text: "", photos: ["data:a"] }),
+    ).rejects.toMatchObject({ code: "UPLOAD_LIMIT" })
+    expect(sent.filter((x) => x.method === "POST")).toEqual([])
+  })
+})
+
+describe("수리 건 사진(06 4-5 PhotoCard + view-urls, #366)", () => {
+  const card = (patch: Partial<ServerPhotoCard>): ServerPhotoCard => ({
+    id: "p1",
+    stage: "BEFORE",
+    uploadedBy: "TENANT",
+    sortOrder: 0,
+    createdAt: "2026-11-25T16:30:00Z",
+    erased: null,
+    ...patch,
+  })
+
+  test("수리 전 칸에는 등록·보충 사진을 순서대로, 수리 후 칸에는 AFTER를, 지운 사진·주소 없는 사진은 정해진 표시로", () => {
+    const { repair } = repairFromDetail(
+      body({
+        photos: [
+          card({ id: "e", stage: "EVIDENCE", sortOrder: 2 }),
+          card({ id: "b", sortOrder: 0 }),
+          card({
+            id: "x",
+            sortOrder: 1,
+            erased: {
+              side: "TENANT",
+              at: "2026-11-26T00:00:00Z",
+              reason: "PRIVACY",
+            },
+          }),
+          card({ id: "a", stage: "AFTER" }),
+          card({ id: "n", stage: "AFTER", sortOrder: 1 }),
+        ],
       }),
-    ).rejects.toMatchObject({ code: "NOT_CONNECTED" })
-    expect(sent).toEqual([])
+      new Map([
+        ["b", "https://s3/b"],
+        ["e", "https://s3/e"],
+        ["a", "https://s3/a"],
+      ]),
+    )
+    expect(repair.photos).toEqual([
+      "https://s3/b",
+      ERASED_PHOTO,
+      "https://s3/e",
+    ])
+    expect(repair.afterPhotos).toEqual(["https://s3/a", UNAVAILABLE_PHOTO])
+  })
+
+  test("같은 사진이 여러 곳에 보여도 주소는 한 번만 요청하고, 로그인이 풀린 401은 상세 오류로 알려요(#371 리뷰)", async () => {
+    const shared = card({ id: "s", stage: "BASIS" })
+    const cause = {
+      id: "n2",
+      side: "TENANT",
+      text: "새 설명",
+      basis: "GUESS",
+      expertName: null,
+      previousId: "n1",
+      createdAt: "2026-11-26T00:00:00Z",
+      response: null,
+      photos: [shared],
+      canRespond: false,
+      previous: [
+        {
+          id: "n1",
+          side: "TENANT",
+          text: "옛 설명",
+          basis: "GUESS",
+          expertName: null,
+          previousId: null,
+          createdAt: "2026-11-25T00:00:00Z",
+          response: null,
+          photos: [shared],
+          canRespond: false,
+          previous: [],
+        },
+      ],
+    } as unknown as RepairCaseDetailBody["causeNotes"][number]
+    const sent: unknown[] = []
+    let status = 200
+    const request = (async (
+      method: string,
+      _p: string,
+      o?: { body?: unknown },
+    ) => {
+      if (method === "GET")
+        return body({ photos: [card({ id: "s" })], causeNotes: [cause] })
+      sent.push(o?.body)
+      if (status === 401)
+        throw new ApiError({ status: 401, code: "LOGIN_REQUIRED" })
+      return { items: [] }
+    }) as unknown as HttpRequest
+    const api = createHttpRepairCases(request)
+    await api.get(session, "c1")
+    expect(sent).toEqual([{ photoIds: ["s"], variant: "THUMB" }])
+    status = 401
+    await expect(api.get(session, "c1")).rejects.toMatchObject({ status: 401 })
+  })
+
+  test("상세를 받으면 지우지 않은 사진의 썸네일 주소를 받고, 주소 받기가 실패해도 상세는 보여요", async () => {
+    const sent: { path: string; body?: unknown }[] = []
+    let fail = false
+    const request = (async (
+      method: string,
+      path: string,
+      o?: { body?: unknown },
+    ) => {
+      sent.push({ path, body: o?.body })
+      if (method === "GET")
+        return body({
+          photos: [
+            card({ id: "b" }),
+            card({
+              id: "x",
+              sortOrder: 1,
+              erased: {
+                side: null,
+                at: "2026-11-26T00:00:00Z",
+                reason: "THIRD_PARTY",
+              },
+            }),
+          ],
+        })
+      if (fail) throw new ApiError({ status: 500, code: "INTERNAL_ERROR" })
+      return {
+        items: [
+          { photoId: "b", url: "https://s3/b", expiresAt: null, erased: null },
+        ],
+      }
+    }) as unknown as HttpRequest
+    const api = createHttpRepairCases(request)
+    expect((await api.get(session, "c1")).repair.photos).toEqual([
+      "https://s3/b",
+      ERASED_PHOTO,
+    ])
+    expect(sent[1]).toEqual({
+      path: endpoints.photoViewUrls,
+      body: { photoIds: ["b"], variant: "THUMB" },
+    })
+    fail = true
+    expect((await api.get(session, "c1")).repair.photos).toEqual([
+      UNAVAILABLE_PHOTO,
+      ERASED_PHOTO,
+    ])
   })
 })
 

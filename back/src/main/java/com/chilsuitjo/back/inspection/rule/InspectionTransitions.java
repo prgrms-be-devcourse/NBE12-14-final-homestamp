@@ -21,15 +21,15 @@ import org.springframework.stereotype.Component;
  *
  * <p>정산 완료·합류 전 기록·내 공유 중단은 pipeline이 먼저 막는다(09 3-1 순서 3).
  *
- * <p>지금은 입주·퇴거 점검 시작(INSP-1a·2·3)과 확인 요청(INSP-1f)만 있다. 잠금(INSP-1b~e)과 퇴거 점검 마침({@code
- * FINISH_INSPECTION})은 그 기능을 만들 때 더하고, 그 전까지 다른 행동은 {@code INVALID_STATE}다.
+ * <p>지금은 입주·퇴거 점검 시작(INSP-1a·2·3), 확인 요청(INSP-1f), 서버 잠금({@code LOCK}, INSP-1b·1c·1d)만 있다. 퇴거 점검
+ * 마침({@code FINISH_INSPECTION})은 그 기능을 만들 때 더하고, 그 전까지 다른 행동은 {@code INVALID_STATE}다.
  */
 @Component
 public class InspectionTransitions implements Transitions<InspectionState> {
 
   /** 점검 상태를 바꾸는 행동. 보이는 범위를 다시 계산할 때({@code Replay.fold}) 이 행동만 넣는다. */
   public static final Set<ActionType> CHANGES =
-      Set.of(ActionType.START_INSPECTION, ActionType.REQUEST_INSPECTION_CONFIRM);
+      Set.of(ActionType.START_INSPECTION, ActionType.REQUEST_INSPECTION_CONFIRM, ActionType.LOCK);
 
   /** 작성 중이 이만큼 지나면 상대도 확인 요청을 보낼 수 있다({@code inspection.draft.stale-after}, 06 0-1). */
   private final Duration draftStaleAfter;
@@ -54,6 +54,7 @@ public class InspectionTransitions implements Transitions<InspectionState> {
     return switch (action.type()) {
       case START_INSPECTION -> start(now, action);
       case REQUEST_INSPECTION_CONFIRM -> requestConfirm(now, action);
+      case LOCK -> lock(now);
       default -> throw new BusinessException(ErrorCode.INVALID_STATE);
     };
   }
@@ -176,6 +177,18 @@ public class InspectionTransitions implements Transitions<InspectionState> {
       throw new BusinessException(ErrorCode.INVALID_STATE);
     }
     return now.withStatus(InspectionStatus.REQUESTED);
+  }
+
+  /**
+   * 서버 잠금({@code LOCK}, 03 H "잠기는 조건"): 확인 요청 → 잠김. 잠글지는 항목 응답을 남기는 {@code save}가 {@link
+   * InspectionLock}으로 정하고 딸린 서버 행동으로 남긴다. 여기서는 그 기록을 다시 계산할 때({@code Replay.fold}) 상태만 옮긴다. 확인 요청이
+   * 아니면 {@code INVALID_STATE}다(잠금은 한 번만, 작성 중에는 잠기지 않음).
+   */
+  private static InspectionState lock(InspectionState now) {
+    if (now.status() != InspectionStatus.REQUESTED) {
+      throw new BusinessException(ErrorCode.INVALID_STATE);
+    }
+    return now.withStatus(InspectionStatus.LOCKED);
   }
 
   /**
