@@ -236,16 +236,22 @@ function HomeStampApp({
   // 같은 호실 안에서는 수리 건 목록·홈에 들어갈 때만 다시 받아, 상세에서 행동한 뒤 돌아오면 바뀐 상태가 보여요.
   // 수리 상세·돈·점검 화면은 자기 데이터를 따로 받거나 아직 목록을 쓰지 않아 다시 받지 않아요(#293 리뷰). 목업은 할 일이 없어요
   const listing = page === "repairs" || page === "home"
+  const inRoom = page !== "rooms" && page !== "notifications"
   const loadedRoom = useRef("")
   useEffect(() => {
-    if (!accountId || !route.roomId) return
+    // 호실 밖(내 호실 목록·알림)으로 나가면 비워, 같은 호실에 다시 들어올 때(상세로 바로 들어와도) 새로 받아요.
+    // 라우터는 호실 밖 화면에서도 앞서 본 roomId를 이어 두므로(지금 보는 호실) roomId만으로는 알 수 없어요
+    if (!accountId || !route.roomId || !inRoom) {
+      loadedRoom.current = ""
+      return
+    }
     const key = `${accountId}:${route.roomId}`
     if (loadedRoom.current === key && !listing) return
     loadedRoom.current = key
     api.records
       .loadRoom({ accountId }, route.roomId)
       .catch((e) => toast(errorMessage(e)))
-  }, [api, accountId, route.roomId, listing])
+  }, [api, accountId, route.roomId, listing, inRoom])
   // 내 호실: 내가 만들었거나 연결을 수락한 호실. 호실마다 내 측(임차인/임대인)은 연결로 정해져요.
   const myRooms = db.rooms.filter((r) => {
     const s = sideOf(r, accountId)
