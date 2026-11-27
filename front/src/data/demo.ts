@@ -201,6 +201,10 @@ export interface Repair {
   linkViews?: number
   confirmRequested?: boolean
   inspectionRefs?: string[]
+  // 서버가 준 마지막 당사자 행동 시각(ISO, 06 4-6 lastActionAt). "N일째"·오래 멈춘 건을 이 값으로 세요. 목업은 경과 기록으로 셉니다
+  lastActionAt?: string
+  // 서버가 준 등록 시각(ISO). 여러 번 받은 수리 건을 서버와 같은 순서(새것부터)로 두는 데 써요. 목업은 없음
+  createdAt?: string
   id: string
   roomId: string
   title: string
@@ -442,6 +446,8 @@ export interface DemoState {
   settlements: Settlement[]
   events: Event[]
   notices: Notice[]
+  // 호실별 수리 건 목록의 기준 시각(06 4-6 목록 asOf, 호실 ID → ISO 또는 null). HTTP만 채워요(목업은 없음)
+  repairListAsOf?: Record<string, string | null>
 }
 export const uid = () => crypto.randomUUID()
 export const won = formatWon

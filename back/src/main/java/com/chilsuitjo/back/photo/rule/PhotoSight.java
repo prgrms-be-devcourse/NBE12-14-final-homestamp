@@ -8,7 +8,7 @@ import java.time.Instant;
  * 보인다. {@code PhotoCountRepository.countVisible}의 SQL 조건과 같다.
  *
  * <p><b>보지 않는 것</b>: 사진이 붙은 대상이 가려졌는지(상대의 작성 중 점검, 03 3-1 "작성 중 점검"). 그 사진의 ID를 내주는 쪽({@code
- * cards}, 내려받기 #274)이 빼 준다는 전제다. 대상까지 보려면 대상 도메인이 판단을 주어야 해서 {@code cards}를 만들 때 다시 본다.
+ * cards}에는 보이는 대상만 넘기고, 내려받기 #274는 보이는 기록만 고른다)이 빼 준다는 전제다. 상대의 작성 중 점검 사진은 #295에서 공개 상태 칸으로 가린다.
  */
 public final class PhotoSight {
 

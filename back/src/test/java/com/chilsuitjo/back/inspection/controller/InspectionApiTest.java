@@ -252,6 +252,80 @@ class InspectionApiTest {
         .andExpect(jsonPath("$.late").value(false));
   }
 
+  // ---- 나란히 보기(INSP-3b) ----
+
+  @Test
+  void INSP_3b_퇴거_점검은_같은_부위의_입주_항목_수리_건_퇴거_항목을_나란히_보이고_입주_기존_하자를_붙인다() throws Exception {
+    UUID moveIn = created(start(tenant, "in", "MOVE_IN", null));
+    UUID inItem = created(addItem(tenant, moveIn, "in-item", "타일 금", tickets(1)));
+    UUID repair = created(registerRepair(tenant, "rep"));
+    UUID moveOut = created(start(tenant, "out", "MOVE_OUT", null));
+    UUID outItem = created(addItem(tenant, moveOut, "out-item", "타일 금 커짐", tickets(1)));
+
+    detail(tenant, moveOut)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.sideBySide.moveIn.id").value(moveIn.toString()))
+        .andExpect(jsonPath("$.sideBySide.moveIn.status").value("DRAFT"))
+        .andExpect(jsonPath("$.sideBySide.parts.length()").value(1))
+        .andExpect(jsonPath("$.sideBySide.parts[0].roomPartId").value(part.toString()))
+        .andExpect(jsonPath("$.sideBySide.parts[0].partName").value("천장"))
+        .andExpect(jsonPath("$.sideBySide.parts[0].mark").value("PREEXISTING"))
+        .andExpect(jsonPath("$.sideBySide.parts[0].moveInItems[0].id").value(inItem.toString()))
+        .andExpect(
+            jsonPath("$.sideBySide.parts[0].moveInItems[0].version.description").value("타일 금"))
+        .andExpect(jsonPath("$.sideBySide.parts[0].moveInItems[0].photos.length()").value(1))
+        .andExpect(jsonPath("$.sideBySide.parts[0].repairCases[0].id").value(repair.toString()))
+        .andExpect(jsonPath("$.sideBySide.parts[0].repairCases[0].title").value("천장 누수"))
+        .andExpect(jsonPath("$.sideBySide.parts[0].repairCases[0].photos.length()").value(1))
+        .andExpect(jsonPath("$.sideBySide.parts[0].moveOutItemIds[0]").value(outItem.toString()));
+  }
+
+  @Test
+  void INSP_3b_입주_점검이_없고_수리_건만_있으면_거주_중_하자다() throws Exception {
+    created(registerRepair(tenant, "rep"));
+    UUID moveOut = created(start(landlord, "out", "MOVE_OUT", null));
+
+    detail(landlord, moveOut)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.sideBySide.moveIn").doesNotExist())
+        .andExpect(jsonPath("$.sideBySide.parts[0].mark").value("DURING_STAY"))
+        .andExpect(jsonPath("$.sideBySide.parts[0].moveInItems.length()").value(0))
+        .andExpect(jsonPath("$.sideBySide.parts[0].moveOutItemIds.length()").value(0));
+  }
+
+  @Test
+  void INSP_3b_퇴거_항목만_있는_부위는_표시하지_않고_기록이_없으면_부위도_없다() throws Exception {
+    UUID moveOut = created(start(tenant, "out", "MOVE_OUT", null));
+    detail(tenant, moveOut)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.sideBySide.parts.length()").value(0));
+
+    created(addItem(tenant, moveOut, "out-item", "벽지 얼룩", tickets(0)));
+    detail(tenant, moveOut)
+        .andExpect(jsonPath("$.sideBySide.parts.length()").value(1))
+        .andExpect(jsonPath("$.sideBySide.parts[0].mark").doesNotExist());
+  }
+
+  @Test
+  void INSP_3b_입주_점검_상세에는_나란히_보기가_없다() throws Exception {
+    UUID moveIn = created(start(tenant, "in", "MOVE_IN", null));
+    detail(tenant, moveIn)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.sideBySide").doesNotExist());
+  }
+
+  @Test
+  void INSP_3b_나란히_보기의_입주_항목은_입주_점검_상세와_같이_작성_중이면_상대에게_가린다() throws Exception {
+    UUID moveIn = created(start(tenant, "in", "MOVE_IN", null));
+    created(addItem(tenant, moveIn, "in-item", "타일 금", tickets(0)));
+    UUID moveOut = created(start(landlord, "out", "MOVE_OUT", null));
+
+    detail(landlord, moveOut)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.sideBySide.moveIn.status").value("DRAFT"))
+        .andExpect(jsonPath("$.sideBySide.parts.length()").value(0));
+  }
+
   @Test
   void INSP_3a_거주_종료_뒤에도_퇴거_점검을_시작하고_확인_요청을_보낸다() throws Exception {
     jdbc.update(
@@ -894,6 +968,20 @@ class InspectionApiTest {
                     + description
                     + "\",\"uploadTickets\":"
                     + ticketsJson
+                    + "}"));
+  }
+
+  private ResultActions registerRepair(UUID member, String key) throws Exception {
+    return mvc.perform(
+        post("/api/rooms/{id}/repair-cases", room)
+            .with(loginAs(member))
+            .header("Idempotency-Key", key)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(
+                "{\"roomPartId\":\""
+                    + part
+                    + "\",\"title\":\"천장 누수\",\"uploadTickets\":"
+                    + tickets(1)
                     + "}"));
   }
 
