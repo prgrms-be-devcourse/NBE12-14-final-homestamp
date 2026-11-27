@@ -36,11 +36,6 @@ export type Send = (
   options: ActionOptions,
 ) => Promise<{ id?: string } | false>
 
-// 구역·부위 칸 값(기타면 직접 입력한 이름). 비어 있으면 null
-export function readZonePart(zone: string, part: string, text: FieldText) {
-  const z = zone === "기타" ? text("customZone") : zone
-  const p = part === "기타" ? text("customPart") : part
-  return !z || z === "구역 선택" || !p ? null : { zone: z, part: p }
-}
+// 구역·부위 칸(PartField)에서 부위를 고르지 않았을 때
 export const ZONE_PART_ERROR =
-  "구역과 부위를 선택하고, 기타는 이름을 직접 입력해 주세요."
+  "구역과 부위를 선택해 주세요. 맞는 부위가 없으면 기타(직접 입력)로 더해 주세요."

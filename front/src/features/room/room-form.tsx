@@ -10,6 +10,7 @@ import type { Account } from "@/api/auth"
 import { uid, type Role } from "@/data/demo"
 import { RegionPicker } from "@/features/room/region-picker"
 import { todayKey } from "@/lib/workflows"
+import { copyDefaultParts } from "@/lib/room-parts"
 import { type Send } from "@/lib/record-commands"
 import {
   isMobilePhone,
@@ -94,6 +95,8 @@ export function RoomForm({
               members: { [side]: me },
               phone: phone || undefined,
             })
+            // 서버처럼 기본 부위 29개를 이 호실의 부위로 복사해요(ROOM-1a). 호실마다 새 부위 ID예요
+            d.roomParts = { ...d.roomParts, [id]: copyDefaultParts() }
           },
           { roomId: id, notify: false },
         ).then((done) => {
