@@ -163,6 +163,20 @@ export function createHttpRepairCases(
         uploadTickets,
       })
     },
+    // 06 4-6 진행 상황: 묻기는 본문 없음, 남기기는 {text, uploadTickets, asksCheck}, 답은 진행 상황에 {answer, reason}
+    askProgress: (_s, id) => act(id, "ask-progress"),
+    addProgressNote: async (_s, id, b) =>
+      act(id, "progress-notes", {
+        text: b.text.trim(),
+        uploadTickets: await ticketsOf(id, b.photos),
+        asksCheck: b.asksCheck,
+      }),
+    respondProgressNote: async (_s, id, noteId, b) => {
+      await request("POST", endpoints.progressNoteRespond(noteId), {
+        body: b.answer === "ACK" ? { answer: b.answer } : b,
+      })
+      return detail(id)
+    },
     respondCauseNote: async (_s, id, causeId, b) => {
       await request("POST", endpoints.causeNoteRespond(causeId), { body: b })
       return detail(id)

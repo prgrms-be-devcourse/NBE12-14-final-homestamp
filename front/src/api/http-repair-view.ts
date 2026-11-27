@@ -1,4 +1,11 @@
-import type { Ack, CauseClaim, Repair, RepairStatus, Role } from "@/data/demo"
+import type {
+  Ack,
+  CauseClaim,
+  ProgressNote,
+  Repair,
+  RepairStatus,
+  Role,
+} from "@/data/demo"
 import type { RepairAction } from "./actions"
 import type { RepairCaseView } from "./repair-cases"
 import { seoulDate } from "./http-rooms"
@@ -24,6 +31,18 @@ interface ServerCauseNote {
   previous: ServerCauseNote[]
 }
 
+// 진행 상황(06 4-6 progressNotes, REP-6)
+interface ServerProgressNote {
+  id: string
+  side: ServerSide
+  text: string
+  asksCheck: boolean
+  createdAt: string
+  photos: ServerPhotoCard[]
+  response: { answer: AckState; reason: string | null; at: string } | null
+  canRespond: boolean
+}
+
 export interface RepairCaseDetailBody {
   id: string
   roomRecordId: string
@@ -47,6 +66,7 @@ export interface RepairCaseDetailBody {
   money: { status: string }
   photos: ServerPhotoCard[]
   causeNotes: ServerCauseNote[]
+  progressNotes: ServerProgressNote[]
   availableActions: string[]
 }
 
@@ -82,6 +102,7 @@ export const photoIdsOf = (b: RepairCaseDetailBody) => [
       ...b.causeNotes.flatMap(function all(n): ServerPhotoCard[] {
         return [...n.photos, ...n.previous.flatMap(all)]
       }),
+      ...(b.progressNotes ?? []).flatMap((n) => n.photos),
     ]
       .filter((c) => !c.erased)
       .map((c) => c.id),
@@ -184,6 +205,38 @@ function causesOf(
   return notes.flatMap((n) => [one(n), ...n.previous.map((p) => one(p, n.id))])
 }
 
+const PROGRESS_ANSWER: Partial<
+  Record<AckState, NonNullable<ProgressNote["response"]>["answer"]>
+> = { ACK: "맞아요", NEED_MORE: "보류", DISPUTE: "이견" }
+// 진행 상황: 남긴 순서. 답은 진행 상황을 남긴 측의 상대가 해요
+function progressNotesOf(
+  notes: readonly ServerProgressNote[] = [],
+  urls: PhotoUrls = new Map(),
+) {
+  return notes.map((n): ProgressNote => {
+    const answer = n.response ? PROGRESS_ANSWER[n.response.answer] : undefined
+    return {
+      id: n.id,
+      by: toRole(n.side),
+      text: n.text,
+      asksCheck: n.asksCheck,
+      at: n.createdAt,
+      photos: [...n.photos].sort(bySort).map((c) => photoSrc(c, urls)),
+      ...(n.response && answer
+        ? {
+            response: {
+              by: otherRole(n.side),
+              answer,
+              reason: n.response.reason ?? "",
+              at: n.response.at,
+            },
+          }
+        : {}),
+      canRespond: n.canRespond,
+    }
+  })
+}
+
 // 서버가 주는 행동 이름은 API 끝 단어와 같아요(06 4-0). 화면에 그 행동이 없는 것(진행 상황 묻기·남기기 등)은 아직 버튼이 없어 빼요.
 const SCREEN_ACTIONS: readonly RepairAction[] = [
   "respond",
@@ -194,6 +247,8 @@ const SCREEN_ACTIONS: readonly RepairAction[] = [
   "not-yet",
   "close-alone",
   "cause-notes",
+  "ask-progress",
+  "progress-notes",
 ]
 
 // 서버에서만 받는 수리 건을 상세로 열 때, 응답이 오기 전 화면에 넘기는 빈 값(화면은 응답 전에는 그리지 않아요)
@@ -266,6 +321,7 @@ export function repairFromDetail(
     zone: partLabelOf(parts, b.content.roomPartId, b.content.partName),
     description: b.content.description ?? "",
     causes: causesOf(b.causeNotes, urls),
+    progressNotes: progressNotesOf(b.progressNotes, urls),
     photos: photos.before,
     ...(photos.after.length ? { afterPhotos: photos.after } : {}),
     ...(b.closeObjection

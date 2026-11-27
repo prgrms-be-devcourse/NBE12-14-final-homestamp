@@ -34,7 +34,7 @@ run() { # 이름 기대코드 send seq... (DIGEST·INSTANCE_ID는 환경으로 �
   rm -f "$W/calls" "$W/polls" "$W/summary"; printf '%s\n' "$@" >"$W/seq"
   PATH="$W/bin:$PATH" MOCK_DIR="$W" MOCK_SEND="$send" DIGEST="${T_DIGEST-$D}" INSTANCE_ID="${T_INSTANCE:-i-0123456789abcdef0}" \
     DOCUMENT_NAME=homestamp-deploy AWS_REGION=ap-northeast-2 POLL_INTERVAL=0.2 POLL_LIMIT="${T_LIMIT:-5}" \
-    GITHUB_STEP_SUMMARY="$W/summary" GITHUB_RUN_ID=777 MOCK_RESULT="${T_RESULT:-}" \
+    GITHUB_STEP_SUMMARY="$W/summary" GITHUB_RUN_ID=777 MOCK_RESULT="${T_RESULT:-}" COMPONENT="${T_COMPONENT:-}" \
     bash "$target" >"$W/out" 2>&1
   local rc=$?
   if [[ $rc == "$want" ]]; then ok "$name ($rc)"; else bad "$name (기대 $want, 실제 $rc)"; cat "$W/out"; fi
@@ -83,6 +83,31 @@ for p in "$D;id" "$D\$(id)" "$D\`id\`" "$D"$'\n'"id" "sha256:${D#sha256:}0" "SHA
   [[ -e $W/calls ]] && bad "거절된 digest로 aws를 부름" || ok "aws 호출 없음"
 done
 T_INSTANCE='i-123;id' run "인스턴스 ID 거절" 2 ok "Success${tab}0"
+
+# 서버 출력의 "::" 줄은 Actions 명령으로 읽히지 않게
+T_RESULT=$'::add-mask::secret\n  ::warning::x\n끝: result=success exit=0 active=releases/x' run "서버 출력의 :: 줄" 0 ok "Success${tab}0"
+! grep -qE '^::(add-mask|warning)::(secret|x)' "$W/out" && ok ":: 줄 무력화" || bad ":: 줄이 그대로"
+
+# 화면(component=front): 같은 호출 경로, 안내와 문서 실행 제한만 다름
+T_COMPONENT=front run "화면 성공" 0 ok "Success${tab}0"
+grep -q '### 배포(front)' "$W/summary" && grep -q 'homestamp deploy front run 777' "$W/calls" && ok "요약·명령 메모에 front" || bad "front 표시"
+T_COMPONENT=front T_RESULT='끝: result=noop exit=0 active=releases/x' run "화면 noop" 0 ok "Success${tab}0"
+T_COMPONENT=front run "화면 되돌림 확인(16)" 16 ok "Failed${tab}16"
+grep -q '되돌렸고 실제 응답으로 확인' "$W/out" && ok "16 화면 안내" || bad "16 화면 안내"
+T_COMPONENT=front run "화면 되돌리기 확인 실패(17)" 17 ok "Failed${tab}17"
+grep -q '운영자 확인 필요' "$W/summary" && grep -q '화면 되돌리기 실패' "$W/out" && ok "17 화면 운영자 안내" || bad "17 화면 안내"
+T_COMPONENT=front run "화면 상태 확정 못 함(4)" 4 ok "Failed${tab}4"
+grep -q '상태를 확정할 수 없음' "$W/out" && ok "4 화면 안내" || bad "4 화면 안내"
+for c in 22 23 24 15 3; do T_COMPONENT=front run "화면 코드 $c 전파" "$c" ok "Failed${tab}$c"; done
+grep -q '바뀐 것 없음\|진행 중' "$W/out" && ok "화면 실패 안내" || bad "화면 실패 안내"
+T_COMPONENT=front run "화면 실행 시간 초과(40)" 40 ok "TimedOut${tab}-1"
+grep -q '600초' "$W/out" && grep -q 'deploy-front.sh --status' "$W/out" && ok "40: 600초·deploy-front.sh --status 안내" || bad "40 화면 안내"
+T_COMPONENT=front T_LIMIT=1 run "화면 기다림 끝(43, 다시 보내지 않음)" 43 ok "InProgress${tab}-1"
+[[ $(grep -c 'send-command' "$W/calls") == 1 ]] && ok "43: send-command 한 번" || bad "43 재전송"
+T_COMPONENT=both run "모르는 COMPONENT 거절" 2 ok "Success${tab}0"
+[[ -e $W/calls ]] && bad "aws 호출됨" || ok "aws 호출 없음"
+run "COMPONENT 없으면 백엔드(기존 안내)" 17 ok "Failed${tab}17"
+grep -q '손으로 되돌리기' "$W/out" && ok "백엔드 17 안내 그대로" || bad "백엔드 17 안내"
 
 # 워크플로 취소(SIGTERM) → 서버 명령은 취소하지 않음
 rm -f "$W/calls" "$W/polls"; printf 'InProgress\t-1\n' >"$W/seq"

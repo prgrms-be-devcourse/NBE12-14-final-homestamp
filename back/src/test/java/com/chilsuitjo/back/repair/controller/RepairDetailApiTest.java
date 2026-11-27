@@ -84,7 +84,8 @@ class RepairDetailApiTest {
         .andExpect(jsonPath("$.asOf").doesNotExist())
         .andExpect(
             jsonPath("$.availableActions")
-                .value(contains("start", "ask-progress", "progress-notes", "cause-notes")));
+                .value(
+                    contains("start", "ask-progress", "progress-notes", "cause-notes", "photos")));
   }
 
   @Test
@@ -357,7 +358,13 @@ class RepairDetailApiTest {
         .andExpect(
             jsonPath("$.availableActions")
                 .value(
-                    contains("respond", "start", "ask-progress", "progress-notes", "cause-notes")));
+                    contains(
+                        "respond",
+                        "start",
+                        "ask-progress",
+                        "progress-notes",
+                        "cause-notes",
+                        "photos")));
   }
 
   @Test
@@ -371,12 +378,23 @@ class RepairDetailApiTest {
             jsonPath("$.availableActions")
                 .value(
                     contains(
-                        "supplement", "start", "ask-progress", "progress-notes", "cause-notes")));
+                        "supplement",
+                        "start",
+                        "ask-progress",
+                        "progress-notes",
+                        "cause-notes",
+                        "photos")));
     detail(caseId, landlord)
         .andExpect(
             jsonPath("$.availableActions")
                 .value(
-                    contains("respond", "start", "ask-progress", "progress-notes", "cause-notes")));
+                    contains(
+                        "respond",
+                        "start",
+                        "ask-progress",
+                        "progress-notes",
+                        "cause-notes",
+                        "photos")));
   }
 
   @Test
@@ -388,11 +406,13 @@ class RepairDetailApiTest {
         .andExpect(jsonPath("$.defect.ack").value("ACK"))
         .andExpect(
             jsonPath("$.availableActions")
-                .value(contains("start", "ask-progress", "progress-notes", "cause-notes")));
+                .value(
+                    contains("start", "ask-progress", "progress-notes", "cause-notes", "photos")));
     detail(caseId, tenant)
         .andExpect(
             jsonPath("$.availableActions")
-                .value(contains("start", "ask-progress", "progress-notes", "cause-notes")));
+                .value(
+                    contains("start", "ask-progress", "progress-notes", "cause-notes", "photos")));
   }
 
   @Test
@@ -416,7 +436,8 @@ class RepairDetailApiTest {
                 .value(supplementedAt.plus(Duration.ofDays(7)).toString()))
         .andExpect(
             jsonPath("$.availableActions")
-                .value(contains("start", "ask-progress", "progress-notes", "cause-notes")));
+                .value(
+                    contains("start", "ask-progress", "progress-notes", "cause-notes", "photos")));
     // 실제 요청도 같은 판단으로 거절된다
     supplement(caseId, tenant, "한 번 더 찍었어요").andExpect(jsonPath("$.code").value("ASKED_RECENTLY"));
   }

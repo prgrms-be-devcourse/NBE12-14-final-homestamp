@@ -9,6 +9,7 @@ on:
       - .github/scripts/**
       - infra/terraform/deploy.tf
       - infra/terraform/ssm/**
+      - infra/deploy/deploy-front.sh
 
 permissions:
   contents: read
@@ -31,3 +32,7 @@ jobs:
         run: bash .github/scripts/test/ssm-deploy-test.sh
       - name: SSM 문서 명령(가짜 deploy.sh, 주입·변조·권한)
         run: bash .github/scripts/test/deploy-command-test.sh
+      - name: 화면 SSM 문서 명령·배포 역할 IAM(가짜 deploy-front.sh)
+        run: bash .github/scripts/test/deploy-front-command-test.sh
+      - name: 화면 파일 계약(check-front.sh와 deploy-front.sh가 같은 판단)
+        run: bash .github/scripts/test/front-contract-test.sh
