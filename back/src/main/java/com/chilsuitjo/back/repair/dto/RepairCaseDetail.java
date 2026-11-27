@@ -81,7 +81,10 @@ public record RepairCaseDetail(
    * @param answerReason 보류·이견의 사유. 그 밖에는 null
    * @param answeredAt 마지막 응답 시각. 없으면 null
    * @param closedReason 닫혔으면 이유(예: {@code CLOSED_BY_BOTH} "처리 완료로 닫힘")
-   * @param availableActions 이 고친 내용에 지금 누를 수 있는 행동({@code respond}·{@code withdraw})
+   * @param photos 다시 보낼 때 더한 근거 사진(대상 {@code CORRECTION_REQUEST}, 단계 {@code BEFORE}). 처음 고친 내용이면 빈
+   *     목록
+   * @param availableActions 이 고친 내용에 지금 누를 수 있는 행동({@code respond}·{@code withdraw}·{@code
+   *     resubmit})
    */
   public record Correction(
       UUID id,
@@ -96,6 +99,7 @@ public record RepairCaseDetail(
       Instant answeredAt,
       ClosedReason closedReason,
       Instant createdAt,
+      List<PhotoCard> photos,
       List<String> availableActions) {}
 
   /**
