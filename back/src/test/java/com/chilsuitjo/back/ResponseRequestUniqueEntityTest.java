@@ -83,7 +83,13 @@ class ResponseRequestUniqueEntityTest extends SchemaTestSupport {
             PartySide.TENANT,
             NOW));
 
-    assertThat(requests.count()).isEqualTo(2);
+    // 테스트 DB는 다른 테스트와 같이 쓰므로(#319) 이 호실의 요청만 센다
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM state.response_request WHERE room_record_id = ?",
+                Long.class,
+                room))
+        .isEqualTo(2);
   }
 
   private static ResponseRequest endRequest(UUID room, PartySide side) {

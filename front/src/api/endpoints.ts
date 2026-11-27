@@ -28,6 +28,8 @@ export const endpoints = {
     `/api/rooms?size=${size}${cursor ? `&cursor=${id(cursor)}` : ""}`,
   room: (rid: string) => `/api/rooms/${id(rid)}`,
   timeline: (rid: string) => `/api/rooms/${id(rid)}/timeline`,
+  // 내려받기 목록(기록.json 내용 + 사진 묶음, DL-1)
+  roomDownload: (rid: string) => `/api/rooms/${id(rid)}/download`,
   invite: (rid: string) => `/api/rooms/${id(rid)}/invite`,
   invitations: "/api/invitations",
   connect: (pid: string) => `/api/invitations/${id(pid)}/connect`,
@@ -41,6 +43,8 @@ export const endpoints = {
   moveOutAnswer: (rid: string, answer: "confirm" | "reject") =>
     `/api/rooms/${id(rid)}/move-out/${answer}`,
   // 4-5 사진
+  // 사진 주소 받기(1~50장, variant THUMB·ORIGINAL)
+  photoViewUrls: "/api/photos/view-urls",
   uploadTickets: (rid: string) => `/api/rooms/${id(rid)}/upload-tickets`,
   photoAction: (
     pid: string,
@@ -49,6 +53,9 @@ export const endpoints = {
   ) => `/api/photos/${id(pid)}/${action}`,
   // 4-6 수리·돈
   repairCases: (rid: string) => `/api/rooms/${id(rid)}/repair-cases`,
+  // 수리 건 목록 한 쪽(06 4-6, 커서 방식)
+  repairCasePage: (rid: string, size: number, cursor?: string) =>
+    `/api/rooms/${id(rid)}/repair-cases?size=${size}${cursor ? `&cursor=${id(cursor)}` : ""}`,
   repairCase: (cid: string) => `/api/repair-cases/${id(cid)}`,
   // 원인 설명 응답(06 4장 POST /api/cause-notes/{id}/respond)
   causeNoteRespond: (nid: string) => `/api/cause-notes/${id(nid)}/respond`,

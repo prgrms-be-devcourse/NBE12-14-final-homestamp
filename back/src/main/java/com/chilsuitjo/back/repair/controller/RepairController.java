@@ -18,8 +18,10 @@ import com.chilsuitjo.back.repair.dto.ProgressNoteRequest;
 import com.chilsuitjo.back.repair.dto.RegisterRepairRequest;
 import com.chilsuitjo.back.repair.dto.RepairCaseCreated;
 import com.chilsuitjo.back.repair.dto.RepairCaseDetail;
+import com.chilsuitjo.back.repair.dto.RepairCaseList;
 import com.chilsuitjo.back.repair.dto.RepairProgressChanged;
 import com.chilsuitjo.back.repair.dto.RepairProgressResponse;
+import com.chilsuitjo.back.repair.service.RepairListService;
 import com.chilsuitjo.back.repair.service.RepairQueryService;
 import com.chilsuitjo.back.repair.service.RepairService;
 import jakarta.validation.Valid;
@@ -32,6 +34,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /** 수리 건 API(06 4-6). */
@@ -44,6 +47,7 @@ public class RepairController {
 
   private final RepairService repairs;
   private final RepairQueryService queries;
+  private final RepairListService lists;
 
   /**
    * 하자 등록(REP-1). 처음 성공과 다시 온 요청 모두 201과 만든 ID를 돌려준다. 다시 온 요청이면 {@code Idempotent-Replayed: true}를
@@ -65,6 +69,20 @@ public class RepairController {
       response.header(REPLAYED, "true");
     }
     return response.body(new CreatedResponse(created.id()));
+  }
+
+  /**
+   * 호실의 수리 건 목록(REP-1~5, S-06 수리 탭). 커서 방식, 새것부터(06 4-0 "목록"). 남의 호실은 {@code NOT_FOUND}다.
+   *
+   * <p><b>아직 06과 다르다</b>: 줄의 열린 응답 요청({@code waiting})은 응답 요청 조회 포트(#266)가 들어오기 전이라 늘 빈 목록이다(#283).
+   */
+  @GetMapping("/api/rooms/{roomId}/repair-cases")
+  public RepairCaseList list(
+      @PathVariable UUID roomId,
+      @LoginMember UUID memberId,
+      @RequestParam(required = false) String cursor,
+      @RequestParam(defaultValue = "" + RepairListService.DEFAULT_SIZE) int size) {
+    return lists.list(roomId, memberId, cursor, size);
   }
 
   /**

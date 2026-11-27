@@ -1,8 +1,12 @@
 package com.chilsuitjo.back.repair.repository;
 
+import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.repair.entity.RepairCase;
+import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.data.domain.Limit;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -20,4 +24,34 @@ public interface RepairCaseRepository extends JpaRepository<RepairCase, UUID> {
    */
   @Query("select c.roomRecordId from RepairCase c where c.id = :id")
   Optional<UUID> findRoomRecordIdById(@Param("id") UUID id);
+
+  /**
+   * 호실의 수리 건 목록 첫 쪽(06 4-6), 새것부터(등록 시각, 같으면 ID). 보는 사람 측이 등록한 건은 모두, 상대 측이 등록한 건은 {@code
+   * hiddenAfter} 이전 것만이다(그 뒤 것은 보는 사람이 볼 수 없는 기록, 03 불변식 18).
+   *
+   * @param hiddenAfter 상대 측 등록 기록이 보는 사람에게 숨는 시각. 숨는 기록이 없으면 아주 먼 시각을 넘긴다
+   */
+  @Query(
+      "select c from RepairCase c where c.roomRecordId = :room"
+          + " and (c.createdBySide = :viewer or c.createdAt <= :hiddenAfter)"
+          + " order by c.createdAt desc, c.id desc")
+  List<RepairCase> findVisible(
+      @Param("room") UUID roomRecordId,
+      @Param("viewer") PartySide viewer,
+      @Param("hiddenAfter") Instant hiddenAfter,
+      Limit limit);
+
+  /** {@link #findVisible}의 다음 쪽. 커서 건({@code at}, {@code id})보다 뒤에 오는 것. */
+  @Query(
+      "select c from RepairCase c where c.roomRecordId = :room"
+          + " and (c.createdBySide = :viewer or c.createdAt <= :hiddenAfter)"
+          + " and (c.createdAt < :at or (c.createdAt = :at and c.id < :id))"
+          + " order by c.createdAt desc, c.id desc")
+  List<RepairCase> findVisibleAfter(
+      @Param("room") UUID roomRecordId,
+      @Param("viewer") PartySide viewer,
+      @Param("hiddenAfter") Instant hiddenAfter,
+      @Param("at") Instant cursorCreatedAt,
+      @Param("id") UUID cursorId,
+      Limit limit);
 }
