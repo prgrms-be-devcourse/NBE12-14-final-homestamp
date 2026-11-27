@@ -193,6 +193,22 @@ class JpaWaitServiceTest extends SchemaTestSupport {
   }
 
   @Test
+  void 미확인_고친_내용_확인에_또_고치면_같은_요청이_다시_기다림이다() {
+    UUID room = room();
+    RequestTarget repair = repairCase(room);
+    RequestHandle first = open(room, RequestKind.CORRECTION_CONFIRM, repair, PartySide.TENANT);
+    setStatus(first.requestId(), "UNCONFIRMED");
+
+    // 03 1-4 "미확인 뒤 다시 고침", decisions 2026-11-27(#104): 새 요청을 열지 않는다
+    RequestHandle again = restart(room, RequestKind.CORRECTION_CONFIRM, repair, PartySide.TENANT);
+
+    assertThat(again.created()).isFalse();
+    assertThat(again.requestId()).isEqualTo(first.requestId());
+    assertThat(status(first)).isEqualTo("WAITING");
+    assertThat(count(room)).isEqualTo(1);
+  }
+
+  @Test
   void 열리는_요청은_미확인이어도_묶기만_하고_상태를_그대로_둔다() {
     UUID room = room();
     RequestTarget repair = repairCase(room);

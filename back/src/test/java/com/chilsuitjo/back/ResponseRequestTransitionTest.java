@@ -129,7 +129,38 @@ class ResponseRequestTransitionTest extends SchemaTestSupport {
   }
 
   @Test
-  void 다시_기다림은_제안만이고_기한이_있으면_타이머_전이라_거절한다() {
+  void 미확인_고친_내용_확인을_또_고치면_같은_요청이_다시_기다림이고_첫_통지_시각은_그대로다() {
+    UUID room = room();
+    ResponseRequest correction = save(room, RequestKind.CORRECTION_CONFIRM, repairCase(room));
+    jdbc.update(
+        "UPDATE state.response_request SET status = 'UNCONFIRMED', first_notified_at = ?"
+            + " WHERE id = ?",
+        Timestamp.from(CREATED),
+        correction.getId());
+    entityManager.clear();
+
+    // 03 1-4 "미확인 뒤 다시 고침", decisions 2026-11-27(#104)
+    ResponseRequest unconfirmed = requests.findById(correction.getId()).orElseThrow();
+    unconfirmed.rewait();
+    entityManager.flush();
+    entityManager.clear();
+
+    ResponseRequest again = requests.findById(correction.getId()).orElseThrow();
+    assertThat(again.getStatus()).isEqualTo(RequestStatus.WAITING);
+    assertThat(again.getCreatedAt()).isEqualTo(CREATED);
+    assertThat(again.getFirstNotifiedAt()).isEqualTo(CREATED);
+  }
+
+  @Test
+  void 기다리는_고친_내용_확인은_다시_기다림이_아니라_묶기다() {
+    UUID room = room();
+    ResponseRequest waiting = save(room, RequestKind.CORRECTION_CONFIRM, repairCase(room));
+
+    assertThatThrownBy(waiting::rewait).isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
+  void 다시_기다림은_제안과_미확인_고친_내용만이고_기한이_있으면_타이머_전이라_거절한다() {
     UUID room = room();
     ResponseRequest defect = save(room, RequestKind.DEFECT_CONFIRM, repairCase(room));
     assertThatThrownBy(defect::rewait).isInstanceOf(IllegalStateException.class);
