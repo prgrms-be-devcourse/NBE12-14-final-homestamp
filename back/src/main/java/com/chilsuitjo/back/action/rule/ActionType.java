@@ -158,10 +158,11 @@ public enum ActionType {
 
   /**
    * 거주가 끝난 호실에서 할 수 없는 행동: 새 수리 건 등록(03 불변식 9, 06 REP-1c), 수리 시작과 혼자 종료(03 A "상태별로 할 수 있는 일": 거주 종료
-   * 뒤 수리 상태는 "거주 종료 시점"으로 멈춤, 혼자 종료는 ✕). 모두 {@code ROOM_ENDED}. 종료 요청은 종료 확인 요청을 열 수 없어 수리 규칙이 막는다.
-   * 종료 확인·아직 안 됐어요는 요청이 닫혀도, 혼자 끝낸 건에도 정산 완료 전까지 받는다(늦은 답, decisions 2026-11-24·11-25).
+   * 뒤 수리 상태는 "거주 종료 시점"으로 멈춤, 혼자 종료는 ✕), 수리 건 사진 추가(06 REP-7g, 거주 종료 뒤에는 받지 않기로 함, decisions
+   * 2026-11-27). 모두 {@code ROOM_ENDED}. 종료 요청은 종료 확인 요청을 열 수 없어 수리 규칙이 막는다. 종료 확인·아직 안 됐어요는 요청이
+   * 닫혀도, 혼자 끝낸 건에도 정산 완료 전까지 받는다(늦은 답, decisions 2026-11-24·11-25).
    */
   public boolean blockedAfterEnded() {
-    return this == REGISTER || this == START_REPAIR || this == CLOSE_ALONE;
+    return this == REGISTER || this == START_REPAIR || this == CLOSE_ALONE || this == ADD_PHOTO;
   }
 }

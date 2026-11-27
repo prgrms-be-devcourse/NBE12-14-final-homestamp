@@ -72,6 +72,8 @@ export interface RepairDetailProps {
   money?: ReactNode
   payments?: ReactNode
   causes?: ReactNode
+  // 진행 상황(REP-6, 08 5-2). 원인 설명 다음, 경과 앞(06 S-12 상세 영역 순서)
+  progress?: ReactNode
   sameZone?: ReactNode
   notices?: ReactNode
   extra?: ReactNode
@@ -416,6 +418,7 @@ export function RepairDetail(p: RepairDetailProps) {
           {side("money", p.money, "max-lg:order-3")}
           {side("payments", p.payments, "max-lg:order-4")}
           {side("causes", p.causes, "max-lg:order-5")}
+          {side("progress", p.progress, "max-lg:order-5")}
           {side("extra", p.extra, "max-lg:order-6")}
         </div>
       </div>
