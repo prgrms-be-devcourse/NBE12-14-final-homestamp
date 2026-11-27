@@ -139,3 +139,51 @@ describe("사진 올리기", () => {
     expect(isConnected("POST", "/api/rooms/r1/upload-tickets")).toBe(true)
   })
 })
+
+describe("사진 올리기 실패와 폼 모양(#371 리뷰)", () => {
+  test("원본만 실패해도 올리기 전체가 실패하고 표를 돌려주지 않는다", async () => {
+    const request = (async () => ({
+      slots: [
+        {
+          index: 0,
+          ticket: "t0",
+          ticketExpiresAt: "2026-11-27T17:00:00Z",
+          original: post("https://s3/original"),
+          thumb: post("https://s3/thumb"),
+        },
+      ],
+    })) as unknown as HttpRequest
+    const api = createHttpPhotoUploads(request, {
+      prepare: async () => prepared(0),
+      send: async (p) => {
+        if (p.url.includes("original"))
+          throw new ApiError({ status: 0, code: "PHOTO_UPLOAD_FAILED" })
+      },
+    })
+    await expect(api.upload("r1", ["data:0"])).rejects.toMatchObject({
+      code: "PHOTO_UPLOAD_FAILED",
+    })
+  })
+
+  test("presigned POST는 받은 필드를 먼저, 파일은 맨 끝 file 키로 보낸다", async () => {
+    let form: FormData | undefined
+    const realFetch = globalThis.fetch
+    globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+      form = init?.body as FormData
+      return new Response(null, { status: 204 })
+    }) as typeof fetch
+    try {
+      await postToStorage(
+        {
+          url: "https://s3.example/",
+          fields: { key: "pending/a", "x-amz-checksum-sha256": "abc" },
+          expiresAt: "",
+        },
+        new Blob(["x"]),
+      )
+    } finally {
+      globalThis.fetch = realFetch
+    }
+    expect([...form!.keys()]).toEqual(["key", "x-amz-checksum-sha256", "file"])
+  })
+})

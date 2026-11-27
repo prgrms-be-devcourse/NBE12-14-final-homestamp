@@ -338,6 +338,56 @@ describe("수리 건 사진(06 4-5 PhotoCard + view-urls, #366)", () => {
     expect(repair.afterPhotos).toEqual(["https://s3/a", UNAVAILABLE_PHOTO])
   })
 
+  test("같은 사진이 여러 곳에 보여도 주소는 한 번만 요청하고, 로그인이 풀린 401은 상세 오류로 알려요(#371 리뷰)", async () => {
+    const shared = card({ id: "s", stage: "BASIS" })
+    const cause = {
+      id: "n2",
+      side: "TENANT",
+      text: "새 설명",
+      basis: "GUESS",
+      expertName: null,
+      previousId: "n1",
+      createdAt: "2026-11-26T00:00:00Z",
+      response: null,
+      photos: [shared],
+      canRespond: false,
+      previous: [
+        {
+          id: "n1",
+          side: "TENANT",
+          text: "옛 설명",
+          basis: "GUESS",
+          expertName: null,
+          previousId: null,
+          createdAt: "2026-11-25T00:00:00Z",
+          response: null,
+          photos: [shared],
+          canRespond: false,
+          previous: [],
+        },
+      ],
+    } as unknown as RepairCaseDetailBody["causeNotes"][number]
+    const sent: unknown[] = []
+    let status = 200
+    const request = (async (
+      method: string,
+      _p: string,
+      o?: { body?: unknown },
+    ) => {
+      if (method === "GET")
+        return body({ photos: [card({ id: "s" })], causeNotes: [cause] })
+      sent.push(o?.body)
+      if (status === 401)
+        throw new ApiError({ status: 401, code: "LOGIN_REQUIRED" })
+      return { items: [] }
+    }) as unknown as HttpRequest
+    const api = createHttpRepairCases(request)
+    await api.get(session, "c1")
+    expect(sent).toEqual([{ photoIds: ["s"], variant: "THUMB" }])
+    status = 401
+    await expect(api.get(session, "c1")).rejects.toMatchObject({ status: 401 })
+  })
+
   test("상세를 받으면 지우지 않은 사진의 썸네일 주소를 받고, 주소 받기가 실패해도 상세는 보여요", async () => {
     const sent: { path: string; body?: unknown }[] = []
     let fail = false

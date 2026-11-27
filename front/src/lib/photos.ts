@@ -5,13 +5,16 @@ import { exifTakenAt } from "./photo-taken-at"
 const TAKEN_AT_KEEP = 50
 const takenAt = new Map<string, string>()
 const rememberTakenAt = (dataUrl: string, at: string | null) => {
-  if (!at) return
+  // 못 읽었으면 같은 그림의 이전 값도 지워요. 남아 있으면 다른 사진의 촬영 시각으로 보내질 수 있어요(#371 리뷰)
   takenAt.delete(dataUrl)
+  if (!at) return
   takenAt.set(dataUrl, at)
   while (takenAt.size > TAKEN_AT_KEEP)
     takenAt.delete(takenAt.keys().next().value!)
 }
 export const takenAtOf = (dataUrl: string) => takenAt.get(dataUrl) ?? null
+// 계정이 바뀌면 비워요(앞 계정이 고른 사진의 촬영 시각이 남지 않게, #371 리뷰)
+export const clearTakenAt = () => takenAt.clear()
 
 // 사진 읽기: JPEG·PNG·WebP 10장, 장당 10MB. 브라우저에서 다시 그려(긴 변 2048px) 위치 정보(EXIF)를 없앱니다.
 // 촬영 시각만 다시 그리기 전에 읽어 둬요(04 "사진" 올리기 ①)

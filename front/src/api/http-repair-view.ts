@@ -73,16 +73,19 @@ function photosOf(cards: readonly ServerPhotoCard[], urls: PhotoUrls) {
       .map((c) => photoSrc(c, urls))
   return { before: of("BEFORE", "EVIDENCE"), after: of("AFTER") }
 }
-// 상세 응답에서 주소를 받을 사진 ID(지운 사진은 주소를 받지 않아요)
-export const photoIdsOf = (b: RepairCaseDetailBody) =>
-  [
-    ...b.photos,
-    ...b.causeNotes.flatMap(function all(n): ServerPhotoCard[] {
-      return [...n.photos, ...n.previous.flatMap(all)]
-    }),
-  ]
-    .filter((c) => !c.erased)
-    .map((c) => c.id)
+// 상세 응답에서 주소를 받을 사진 ID(지운 사진은 주소를 받지 않아요). 같은 사진이 여러 곳에 보여도 한 번만 보내요(view-urls는 같은 ID를 거절, #371 리뷰)
+export const photoIdsOf = (b: RepairCaseDetailBody) => [
+  ...new Set(
+    [
+      ...b.photos,
+      ...b.causeNotes.flatMap(function all(n): ServerPhotoCard[] {
+        return [...n.photos, ...n.previous.flatMap(all)]
+      }),
+    ]
+      .filter((c) => !c.erased)
+      .map((c) => c.id),
+  ),
+]
 
 const toRole = (s: ServerSide): Role => (s === "TENANT" ? "임차인" : "임대인")
 const otherRole = (s: ServerSide): Role =>

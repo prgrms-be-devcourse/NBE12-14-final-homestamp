@@ -1,6 +1,7 @@
 import type { RepairCasesApi } from "./repair-cases"
 import { notConnected } from "./connected"
 import { endpoints } from "./endpoints"
+import { ApiError } from "./errors"
 import type { HttpRequest } from "./http-client"
 import {
   causeBasisCode,
@@ -35,8 +36,9 @@ async function thumbUrls(
         idempotent: false,
       })
       for (const it of items) if (it.url) urls.set(it.photoId, it.url)
-    } catch {
-      // 다음 묶음은 계속 받아요
+    } catch (e) {
+      // 로그인이 풀린 것(재발급까지 실패한 401)은 상세 오류로 알려요. 그 밖의 실패는 그 사진만 "불러오지 못함"으로 두고 다음 묶음을 받아요(#371 리뷰)
+      if (e instanceof ApiError && e.status === 401) throw e
     }
   }
   return urls
