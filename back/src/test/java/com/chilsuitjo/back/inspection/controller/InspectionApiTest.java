@@ -2,6 +2,8 @@ package com.chilsuitjo.back.inspection.controller;
 
 import static com.chilsuitjo.back.global.security.SecurityTestSupport.loginAs;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.hasItem;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doCallRealMethod;
 import static org.mockito.Mockito.doThrow;
@@ -312,13 +314,23 @@ class InspectionApiTest {
   }
 
   @Test
-  void 현재_구현_범위의_한계로_작성_중에는_상대가_항목을_더할_수_없다() throws Exception {
+  void INSP_1d_상대가_작성_중에_더한_항목은_상대_본인에게만_보이고_기준_측_항목은_가린다() throws Exception {
     UUID inspection = created(start(tenant, "s", "MOVE_IN", null));
+    created(addItem(tenant, inspection, "mine", "벽지 찢어짐", "[]"));
 
-    addItem(landlord, inspection, "other", "방충망 찢어짐", "[]")
-        .andExpect(status().isConflict())
-        .andExpect(jsonPath("$.code").value("INVALID_STATE"));
-    assertThat(count("state.inspection_item")).isZero();
+    UUID theirs = created(addItem(landlord, inspection, "other", "방충망 찢어짐", "[]"));
+
+    assertThat(jdbc.queryForMap("SELECT * FROM state.inspection_item WHERE id = ?", theirs))
+        .containsEntry("added_by_side", "LANDLORD")
+        .containsEntry("added_after_lock", false)
+        .containsEntry("added_after_end", false);
+    assertThat(inspectionRow(inspection)).containsEntry("status", "DRAFT");
+    // 상대에게는 "작성 중"과 자기가 더한 항목만(06 INSP-1a, #286)
+    detail(landlord, inspection)
+        .andExpect(jsonPath("$.status").value("DRAFT"))
+        .andExpect(jsonPath("$.items.length()").value(1))
+        .andExpect(jsonPath("$.items[0].id").value(theirs.toString()));
+    detail(tenant, inspection).andExpect(jsonPath("$.items.length()").value(2));
   }
 
   @Test
@@ -355,8 +367,9 @@ class InspectionApiTest {
         .andExpect(jsonPath("$.status").value("DRAFT"))
         .andExpect(jsonPath("$.authorSide").value("TENANT"))
         .andExpect(jsonPath("$.mySide").value("LANDLORD"))
-        .andExpect(jsonPath("$.items").doesNotExist())
-        .andExpect(jsonPath("$.availableActions").isEmpty());
+        .andExpect(jsonPath("$.items").isEmpty())
+        // 상대도 작성 중에 빠뜨린 하자를 더할 수 있다(#286)
+        .andExpect(jsonPath("$.availableActions", contains("items")));
   }
 
   @Test
@@ -421,7 +434,7 @@ class InspectionApiTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("DRAFT"))
         .andExpect(jsonPath("$.asOf").exists())
-        .andExpect(jsonPath("$.items").doesNotExist());
+        .andExpect(jsonPath("$.items").isEmpty());
   }
 
   // ---- 확인 요청(INSP-1f, #218) ----
@@ -488,7 +501,7 @@ class InspectionApiTest {
 
     detail(landlord, inspection)
         .andExpect(jsonPath("$.counterpartCanRequestAt").exists())
-        .andExpect(jsonPath("$.availableActions").isEmpty());
+        .andExpect(jsonPath("$.availableActions", contains("items")));
     requestConfirm(landlord, inspection, "early")
         .andExpect(status().isConflict())
         .andExpect(jsonPath("$.code").value("INVALID_STATE"));
@@ -502,7 +515,7 @@ class InspectionApiTest {
     daysPass(8);
 
     detail(landlord, inspection)
-        .andExpect(jsonPath("$.availableActions[0]").value("request-confirm"));
+        .andExpect(jsonPath("$.availableActions", hasItem("request-confirm")));
     requestConfirm(landlord, inspection, "stale")
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("REQUESTED"));
@@ -536,7 +549,7 @@ class InspectionApiTest {
     detail(landlord, inspection)
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("DRAFT"))
-        .andExpect(jsonPath("$.items").doesNotExist());
+        .andExpect(jsonPath("$.items").isEmpty());
     // 남은 사람(기준 측)은 지금 상태를 본다
     detail(tenant, inspection)
         .andExpect(jsonPath("$.status").value("REQUESTED"))
@@ -557,7 +570,7 @@ class InspectionApiTest {
     // 보낸 상대에게는 자기 행동이라 상태는 확인 요청이지만, 기준 측이 그만둘 때 작성 중이던 항목은 드러나지 않는다(#218 리뷰)
     detail(landlord, inspection)
         .andExpect(jsonPath("$.status").value("REQUESTED"))
-        .andExpect(jsonPath("$.items").doesNotExist());
+        .andExpect(jsonPath("$.items").isEmpty());
   }
 
   @Test
@@ -595,7 +608,7 @@ class InspectionApiTest {
     stopSharing(PartySide.LANDLORD, requestedAt.minus(Duration.ofNanos(1_000)));
     detail(landlord, inspection)
         .andExpect(jsonPath("$.status").value("DRAFT"))
-        .andExpect(jsonPath("$.items").doesNotExist());
+        .andExpect(jsonPath("$.items").isEmpty());
   }
 
   @Test
@@ -910,8 +923,9 @@ class InspectionApiTest {
     jdbc.update(
         """
         INSERT INTO state.room_part
-          (id, room_record_id, zone, name, sort_order, created_at, version)
-        VALUES (?, ?, '안방', '천장', 0, CURRENT_TIMESTAMP, 0)
+          (id, room_record_id, template_id, zone, name, sort_order, created_at, version)
+        SELECT ?, ?, (SELECT id FROM state.part_template ORDER BY sort_order LIMIT 1), '안방', '천장', 0,
+               CURRENT_TIMESTAMP, 0
         """,
         id,
         room);
