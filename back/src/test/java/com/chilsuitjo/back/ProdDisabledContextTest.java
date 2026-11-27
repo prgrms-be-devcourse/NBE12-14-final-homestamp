@@ -44,9 +44,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 솔라피 연동 전의 운영(prod + {@code app.sms.mode=disabled}, yml prod 기본값)은 정상 기동하고, 문자를 보내지 않으며 성공으로 남기지
  * 않는다(decisions 2026-11-25 운영 문자 모드). prod는 운영처럼 가짜 SSM에서 키·화면 주소·사진 버킷을 받는다(다른 출처로 덮으면
  * SsmProdSettingsGuard가 시작을 막는다). DB만 Testcontainers 연결 정보로 바뀐다(운영 jar에는 없음). 사진 버킷은 이름만 쓰고 S3는 부르지
- * 않는다.
+ * 않는다. prod 앱은 Flyway를 돌리지 않으므로 DB는 배포 순서처럼 스키마를 먼저 적용해 둔다({@link ProdTestSchema}, #173).
  */
-@Import(TestcontainersConfiguration.class)
+@Import(ProdTestSchema.MigratedDatabase.class)
 @SpringBootTest(properties = {"app.outbox.worker.enabled=false"})
 @AutoConfigureMockMvc
 @ActiveProfiles("prod")

@@ -175,7 +175,8 @@ class SsmConfigDataIntegrationTest {
       var environment = context.getEnvironment();
       assertArrayEquals(new String[] {"prod"}, environment.getActiveProfiles());
       assertNull(environment.getProperty("spring.profiles.include"));
-      assertNull(environment.getProperty("spring.flyway.enabled"));
+      // SSM의 true는 적용되지 않고 yml prod 기본값(Flyway 끔, #173)이 남는다
+      assertEquals("false", environment.getProperty("spring.flyway.enabled"));
       assertNull(environment.getProperty("spring.main.web-application-type"));
       // yml prod 기본값(#216)이 남고 SSM의 fake는 적용되지 않는다
       assertEquals("disabled", environment.getProperty("app.sms.mode"));
