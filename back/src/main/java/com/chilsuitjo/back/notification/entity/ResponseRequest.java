@@ -15,6 +15,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
@@ -168,21 +169,74 @@ public class ResponseRequest {
   }
 
   /**
+   * 통지가 상대에게 닿았다(문자 전달됨·링크 열람·알림 열람, 03 1-1 "타이머 시작점"). 첫 증거면 기다림을 시작해 {@code first_notified_at}과
+   * {@code renotify_due_at}(= 그 시각 + {@code wait.renotify}, 05 4장 "전달 결과 조회")을 적는다.
+   *
+   * <ul>
+   *   <li>끝난 요청(답함·거둠·닫힘)은 바꾸지 않는다. 늦게 온 전달은 버린다
+   *   <li>이미 시작했으면 기한은 그대로다. 같은 증거가 다시 오거나 다른 채널에서 뒤에 와도 기한을 늘리지 않는다
+   *   <li>처리 순서가 뒤바뀌어 더 이른 증거가 늦게 오면 {@code first_notified_at}만 이른 쪽으로 고친다(정의가 min). 이미 적은 기한은 당기지
+   *       않는다: 저장한 기한은 바꾸지 않고(06 0-1), 받는 쪽에 불리하게 앞당기지 않는다
+   * </ul>
+   *
+   * @return 기다림을 이번에 시작했으면 true
+   */
+  public boolean startWaiting(Instant notifiedAt, Duration renotifyAfter) {
+    Objects.requireNonNull(notifiedAt, "notifiedAt");
+    Objects.requireNonNull(renotifyAfter, "renotifyAfter");
+    if (!isOpen()) {
+      return false;
+    }
+    if (firstNotifiedAt != null) {
+      if (notifiedAt.isBefore(firstNotifiedAt)) {
+        firstNotifiedAt = notifiedAt;
+      }
+      return false;
+    }
+    firstNotifiedAt = notifiedAt;
+    renotifyDueAt = notifiedAt.plus(renotifyAfter);
+    return true;
+  }
+
+  /**
+   * 같은 요청에 더해 기한을 "마지막으로 더한 시각부터 다시 센다"(03 1-4 "기한", 03 E 제안 바꾸기). 혼자 진행이 열리는 종류는 부르지 않는다(기한이 보낸 뒤
+   * 고정).
+   *
+   * <ul>
+   *   <li>기다림 시작 전(첫 통지가 아직 닿지 않음): 바꿀 기한이 없다. 시작은 그 통지가 닿은 시각부터 센다(더하기는 문자 없이 묶기만 해서 기준은 받은 통지다).
+   *       작업자가 전달을 확인한 뒤 적기 전에 더하면 기한이 더한 시각 + 48시간보다 조금 이를 수 있다
+   *   <li>재통지 전: {@code renotify_due_at}을 이 시각 + {@code wait.renotify}로 다시 정한다
+   *   <li>재통지 뒤({@code unconfirmed_due_at}이 있음): 재통지와 미확인 타이머(d3)가 아직 없어 "미확인 72시간을 다시 정함"을 어떻게
+   *       저장할지 정하지 않았다. 조용히 옛 기한을 남기지 않고 {@code IllegalStateException}
+   * </ul>
+   */
+  public void recount(Instant at, Duration renotifyAfter) {
+    Objects.requireNonNull(at, "at");
+    Objects.requireNonNull(renotifyAfter, "renotifyAfter");
+    requireOpen();
+    if (unconfirmedDueAt != null) {
+      throw new IllegalStateException("재통지 뒤 기한 다시 세기는 기다림 타이머(d3)에서 정해요");
+    }
+    if (firstNotifiedAt == null) {
+      return;
+    }
+    renotifyDueAt = at.plus(renotifyAfter);
+  }
+
+  /**
    * 같은 요청이 다시 기다림이 된다. 두 경우만이다: 제안을 낸 쪽이 자기 안을 바꿨다(05 {@code proposal} ②), 미확인이 된 고친 내용 확인에 같은 기록을
    * 또 고쳤다(03 1-4 "미확인 뒤 다시 고침", decisions 2026-11-27, #104). 요청 ID·만든 시각·첫 통지 시각은 그대로이고, 미확인 때 열린
-   * 혼자 진행 이유는 지운다.
-   *
-   * <p>기한을 "그 시각부터 다시 센다"(03 1-4 "기한"·03 E)는 기다림 타이머(d3)가 들어올 때 정한다. 지금은 기한을 정하는 코드가 없어 기한이 있으면 조용히
-   * 옛 기한을 남기지 않고 거절한다(타이머가 만든 미확인은 기한이 있으므로 d3에서 이 경로를 함께 정한다).
+   * 혼자 진행 이유는 지운다. 기한은 그 시각부터 다시 센다({@link #recount}, 03 1-4 "기한"·03 E). 타이머가 만든 미확인은 {@code
+   * unconfirmed_due_at}이 있어 {@link #recount}가 거절한다(재통지 뒤 다시 세기는 d3에서 정함).
    */
-  public void rewait() {
+  public void rewait(Instant at, Duration renotifyAfter) {
     requireOpen();
     boolean correctionAgain =
         kind == RequestKind.CORRECTION_CONFIRM && status == RequestStatus.UNCONFIRMED;
     if (kind != RequestKind.PROPOSAL && !correctionAgain) {
       throw new IllegalStateException("다시 기다림은 제안 요청과 미확인 고친 내용 확인만이에요: " + kind);
     }
-    requireNoDeadline();
+    recount(at, renotifyAfter);
     status = RequestStatus.WAITING;
     soloReason = null;
   }
@@ -190,13 +244,6 @@ public class ResponseRequest {
   /** 기한이 이미 정해졌나(재통지·미확인 중 하나라도). */
   public boolean hasDeadline() {
     return renotifyDueAt != null || unconfirmedDueAt != null;
-  }
-
-  /** 기한 다시 세기가 필요한 전이에서 부른다. 기한이 있으면 기다림 타이머(d3) 전이라 거절한다. */
-  public void requireNoDeadline() {
-    if (hasDeadline()) {
-      throw new IllegalStateException("기한 다시 세기는 기다림 타이머(d3)에서 정해요");
-    }
   }
 
   private void requireOpen() {

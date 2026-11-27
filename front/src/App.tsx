@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react"
+import { clearTakenAt } from "@/lib/photos"
 import { Plus, ShieldCheck } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -258,6 +259,8 @@ function HomeStampApp({
 }) {
   const query = new URLSearchParams(window.location.search)
   const accountId = account?.id
+  // 계정이 바뀌면 앞 계정이 고른 사진의 촬영 시각을 비워요(lib/photos, #371 리뷰)
+  useEffect(() => clearTakenAt(), [accountId])
   const api = useApi()
   // 공용 입력 창이 수리 건을 바꾸면 상세 화면이 다시 불러오게 올리는 번호
   const [repairTick, setRepairTick] = useState(0)
@@ -1258,7 +1261,12 @@ function HomeStampApp({
                       )}
                     </>
                   )}
-                  {page === "timeline" && <TimelinePage events={events} />}
+                  {page === "timeline" && (
+                    <TimelinePage
+                      events={events}
+                      asOf={db.timelineAsOf?.[room.id]}
+                    />
+                  )}
                   {page === "notifications" && (
                     <NotificationsPage
                       accountId={accountId ?? ""}

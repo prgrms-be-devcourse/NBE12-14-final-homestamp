@@ -17,6 +17,10 @@ export interface Event {
   by: string
   at: string
   privateTo?: Role
+  // 대상 이름(수리 건 제목 등). 있으면 text에는 행동부터 들어 있어요(서버 경과, http-timeline). 목업은 text 첫 토막이 대상이에요
+  subject?: string
+  // 서버 경과의 원래 대상(06 4장 timeline target). 원인 설명·고친 내용 응답처럼 수리 건이 아닌 대상을 그 수리 건 경과에 붙일 때 써요
+  ref?: { kind: string; id: string }
 }
 export interface AmountOffer {
   id: string
@@ -227,6 +231,8 @@ export interface Repair {
   afterRecords?: AfterRecord[]
   closeBy?: Role
   soloClosed?: Role
+  // 혼자 끝낸 처리 완료에 상대가 남긴 이견(마지막 [아직 안 됐어요], 06 REP-5f). 양측 확인이 되면 없어요
+  closeObjection?: { by: Role; reason: string; at: string }
   afterPhotos?: string[]
   hidden?: boolean
   notes?: { text: string; by: Role; kind: string; at?: string }[]
@@ -459,6 +465,8 @@ export interface DemoState {
   repairListAsOf?: Record<string, string | null>
   // 호실별 부위 목록(호실 ID → 부위). 목업만 채워요. 호실을 만들 때 기본 목록을 복사해요(lib/room-parts)
   roomParts?: Record<string, RoomPart[]>
+  // 호실마다 경과 기준 시각(06 4장 timeline asOf). 공유를 그만둔 뒤면 그 시각, 아니면 null. 목업은 비워 둬요
+  timelineAsOf?: Record<string, string | null>
 }
 export const uid = () => crypto.randomUUID()
 export const won = formatWon

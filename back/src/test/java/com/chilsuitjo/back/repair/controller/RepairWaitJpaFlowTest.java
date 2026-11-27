@@ -2,7 +2,14 @@ package com.chilsuitjo.back.repair.controller;
 
 import static com.chilsuitjo.back.global.security.SecurityTestSupport.loginAs;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsInAnyOrder;
+import static org.hamcrest.Matchers.everyItem;
+import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.chilsuitjo.back.TestcontainersConfiguration;
@@ -20,7 +27,9 @@ import com.chilsuitjo.back.notification.service.WaitQuery;
 import com.chilsuitjo.back.notification.service.WaitService;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -120,6 +129,82 @@ class RepairWaitJpaFlowTest {
   }
 
   @Test
+  void 수리_목록_waiting과_상세_closeRequest가_실제_DB_요청으로_채워진다() throws Exception {
+    // 가짜가 아니라 JpaWaitService가 주는 값이 repair 응답까지 오는지(#339, #344 리뷰)
+    UUID caseId = register();
+    act(caseId, tenant, "start", null).andExpect(status().isOk());
+    act(caseId, tenant, "request-close", null).andExpect(status().isOk());
+
+    mvc.perform(get("/api/rooms/{id}/repair-cases", room).with(loginAs(landlord)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.items[0].waiting.length()").value(2))
+        .andExpect(
+            jsonPath("$.items[0].waiting[*].kind")
+                .value(containsInAnyOrder("DEFECT_CONFIRM", "CLOSE_CONFIRM")))
+        .andExpect(
+            jsonPath("$.items[0].waiting[*].answeringSide").value(everyItem(is("LANDLORD"))));
+    mvc.perform(get("/api/repair-cases/{id}", caseId).with(loginAs(tenant)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.closeRequest.status").value("WAITING"))
+        .andExpect(jsonPath("$.closeRequest.openedAt").isNotEmpty());
+
+    act(caseId, landlord, "confirm-close", null).andExpect(status().isOk());
+
+    mvc.perform(get("/api/repair-cases/{id}", caseId).with(loginAs(tenant)))
+        .andExpect(jsonPath("$.closeRequest.status").value("ANSWERED"));
+    mvc.perform(get("/api/rooms/{id}/repair-cases", room).with(loginAs(landlord)))
+        .andExpect(jsonPath("$.items[0].waiting[*].kind").value(not(hasItem("CLOSE_CONFIRM"))));
+  }
+
+  // ---- 공유를 그만둔 뒤 상세 closeRequest(#382) ----
+
+  @Test
+  void 공유_중단_때_닫힌_종료_확인은_그만둔_사람에게도_닫힌_그대로_보인다() throws Exception {
+    // asOf나 그 전에 닫힌 요청은 그 시각에도 닫혀 있었다. 공유 중단 closeAll과 같은 닫기를 직접 넣는다(03 B)
+    UUID caseId = requestedClose();
+    Timestamp stoppedAt = Timestamp.from(Instant.now().truncatedTo(ChronoUnit.MICROS));
+    stopSharing(PartySide.TENANT, stoppedAt);
+    closeCloseRequest(caseId, stoppedAt);
+
+    mvc.perform(get("/api/repair-cases/{id}", caseId).with(loginAs(tenant)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.asOf").value(stoppedAt.toInstant().toString()))
+        .andExpect(jsonPath("$.status").value("CLOSE_WAIT"))
+        .andExpect(jsonPath("$.closeRequest.status").value("CLOSED"))
+        .andExpect(jsonPath("$.closeRequest.closedReason").value("SHARING_STOPPED"))
+        .andExpect(jsonPath("$.closeRequest.closedAt").value(stoppedAt.toInstant().toString()));
+  }
+
+  @Test
+  void 공유_중단_뒤에_닫힌_종료_확인은_그만둔_사람에게_열린_모습으로_보인다() throws Exception {
+    UUID caseId = requestedClose();
+    Instant stoppedAt = Instant.now();
+    stopSharing(PartySide.TENANT, Timestamp.from(stoppedAt));
+    closeCloseRequest(caseId, Timestamp.from(stoppedAt.plusSeconds(60)));
+
+    mvc.perform(get("/api/repair-cases/{id}", caseId).with(loginAs(tenant)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("CLOSE_WAIT"))
+        .andExpect(jsonPath("$.closeRequest.status").value("WAITING"))
+        .andExpect(jsonPath("$.closeRequest.closedReason").doesNotExist())
+        .andExpect(jsonPath("$.closeRequest.closedAt").doesNotExist());
+  }
+
+  @Test
+  void 공유_중단_뒤_상대가_답한_종료_확인은_닫힌_시각이_없어도_열린_모습으로_보인다() throws Exception {
+    // 답함은 closed_at이 없다(V1 CHECK). 그래도 상대의 중단 뒤 확인이 드러나지 않는다(불변식 18)
+    UUID caseId = requestedClose();
+    stopSharing(PartySide.TENANT, Timestamp.from(Instant.now()));
+    act(caseId, landlord, "confirm-close", null).andExpect(status().isOk());
+    assertThat(requests(caseId, "CLOSE_CONFIRM").getFirst()).containsEntry("status", "ANSWERED");
+
+    mvc.perform(get("/api/repair-cases/{id}", caseId).with(loginAs(tenant)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("CLOSE_WAIT"))
+        .andExpect(jsonPath("$.closeRequest.status").value("WAITING"));
+  }
+
+  @Test
   void 상황이_바뀌었어요는_새_진행_상황을_가리키는_요청을_DB에_연다() throws Exception {
     UUID caseId = register();
     // 하자를 둘 다 확인한 건에만 켤 수 있다(REP-6d)
@@ -177,6 +262,34 @@ class RepairWaitJpaFlowTest {
             + " FROM state.response_request WHERE repair_case_id = ? AND kind = ?",
         caseId,
         kind);
+  }
+
+  /** 세입자가 시작하고 종료를 요청해 둔 수리 건. */
+  private UUID requestedClose() throws Exception {
+    UUID caseId = register();
+    act(caseId, tenant, "start", null).andExpect(status().isOk());
+    act(caseId, tenant, "request-close", null).andExpect(status().isOk());
+    return caseId;
+  }
+
+  private void stopSharing(PartySide side, Timestamp at) {
+    jdbc.update(
+        "UPDATE state.party SET status = 'SHARING_STOPPED', sharing_stopped_at = ?"
+            + " WHERE room_record_id = ? AND side = ?",
+        at,
+        room,
+        side.name());
+  }
+
+  /** 공유 중단 {@code closeAll}이 할 닫기를 직접 넣는다(아직 구현 전, #370 A-6). */
+  private void closeCloseRequest(UUID caseId, Timestamp at) {
+    int updated =
+        jdbc.update(
+            "UPDATE state.response_request SET status = 'CLOSED', closed_reason = 'SHARING_STOPPED',"
+                + " closed_at = ? WHERE kind = 'CLOSE_CONFIRM' AND repair_case_id = ?",
+            at,
+            caseId);
+    assertThat(updated).isEqualTo(1);
   }
 
   private Object actionAt(UUID caseId, String type) {
