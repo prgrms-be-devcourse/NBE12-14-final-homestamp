@@ -11,8 +11,16 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.chilsuitjo.back.TestcontainersConfiguration;
+import com.chilsuitjo.back.action.dto.ActionEntry;
+import com.chilsuitjo.back.action.dto.ActionTarget;
+import com.chilsuitjo.back.action.rule.ActionType;
+import com.chilsuitjo.back.action.rule.Replay;
+import com.chilsuitjo.back.action.service.ActionReader;
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.common.TargetKind;
+import com.chilsuitjo.back.inspection.rule.InspectionState;
+import com.chilsuitjo.back.inspection.rule.InspectionStatus;
+import com.chilsuitjo.back.inspection.rule.InspectionTransitions;
 import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.rule.RequestStatus;
@@ -20,6 +28,7 @@ import com.chilsuitjo.back.notification.service.FakeWaitService;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -34,6 +43,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 06 4-7 점검 항목 응답·남은 항목 모두 확인·보충(#235)을 보안·pipeline·진짜 행동 기록 저장(PostgreSQL)까지 띄워 본다. 세입자가 기준 측으로
@@ -46,6 +56,9 @@ import org.springframework.test.web.servlet.ResultActions;
 class InspectionAnswerApiTest {
 
   @Autowired private MockMvc mvc;
+  @Autowired private ActionReader actions;
+  @Autowired private InspectionTransitions inspectionRules;
+  @Autowired private TransactionTemplate transactions;
   @Autowired private JdbcTemplate jdbc;
   @Autowired private FakeWaitService waits;
   @Autowired private InspectionApiTest.MutableClock clock;
@@ -297,6 +310,59 @@ class InspectionAnswerApiTest {
   }
 
   // ---- 잠금(INSP-1b·1c·1d, #326) ----
+
+  @Test
+  void 실제_응답으로_잠근_행과_저장된_행동의_재계산_상태가_같다() throws Exception {
+    UUID inspection = requestedWith(2);
+    UUID[] items = items(inspection);
+
+    respond(landlord, items[0], "replay-ack", "ACK", null, 1).andExpect(status().isOk());
+    respond(landlord, items[1], "replay-dispute", "DISPUTE", "사실과 달라요", 1)
+        .andExpect(status().isOk());
+
+    assertReplayedLock(inspection);
+  }
+
+  @Test
+  void 실제_모두_확인으로_잠근_행과_저장된_행동의_재계산_상태가_같다() throws Exception {
+    UUID inspection = requestedWith(2);
+
+    confirmAll(landlord, inspection, "replay-all", seen(items(inspection)))
+        .andExpect(status().isOk());
+
+    assertReplayedLock(inspection);
+  }
+
+  @Test
+  void 실제_하자_기록_없음_확인으로_잠근_행과_저장된_행동의_재계산_상태가_같다() throws Exception {
+    UUID inspection = requestedWith(0);
+
+    confirmAll(landlord, inspection, "replay-empty", "[]").andExpect(status().isOk());
+
+    assertReplayedLock(inspection);
+  }
+
+  private void assertReplayedLock(UUID inspection) {
+    // 호실의 실제 행동을 room_seq 순서로 읽고, 이 점검의 상태를 옮기는 행동만 접는다.
+    // ActionReader는 MANDATORY이므로 읽기도 트랜잭션 안에서 한다.
+    List<ActionEntry> history =
+        transactions.execute(ignored ->
+            actions.findByRoom(room).stream()
+                .filter(action -> ActionTarget.inspection(inspection).equals(action.target()))
+                .filter(action -> InspectionTransitions.CHANGES.contains(action.type()))
+                .toList());
+    assertThat(history).isNotNull();
+    assertThat(history)
+        .extracting(ActionEntry::type)
+        .containsExactly(
+            ActionType.START_INSPECTION, ActionType.REQUEST_INSPECTION_CONFIRM, ActionType.LOCK);
+    ActionEntry lock = history.getLast();
+    assertThat(lock.actorKey()).isEqualTo("server");
+    assertThat(lock.actorSide()).isNull();
+    InspectionState replayed = Replay.fold(inspectionRules, history);
+    assertThat(replayed.status()).isEqualTo(InspectionStatus.LOCKED);
+    assertThat(inspectionRow(inspection)).containsEntry("status", replayed.status().name());
+  }
 
   @Test
   void INSP_1b_모든_항목이_정리되면_잠긴다() throws Exception {

@@ -25,7 +25,8 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
  * 사진 주소 받기({@code POST /api/photos/view-urls}, 06 4-5·PHO-2·5·7). 가짜 서명기라 주소에 서명 시각·만료·캐시가 그대로 적힌다.
  * 시계는 {@link #NOW}(03:00:00.123456)로 고정이다.
  *
- * <p>공유 중단 경계는 내려받기 묶음(#274 {@code RecordVisibility})과 같아야 한다. 묶음 ID가 여기서 거절되면 내려받기가 실패한다(#246).
+ * <p>공유 중단 경계는 내려받기 묶음(#274, 지금은 {@code ActionVisibility})과 같아야 한다. 묶음 ID가 여기서 거절되면 내려받기가
+ * 실패한다(#246).
  */
 @AutoConfigureMockMvc
 class PhotoViewUrlsApiTest extends PhotoAttachTestSupport {

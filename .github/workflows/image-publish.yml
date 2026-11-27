@@ -1,18 +1,14 @@
 # 백엔드 이미지 빌드·검사·발행(04 9-2 "이미지 빌드 → 검사 → GHCR", 런북 docs/runbooks/이미지-발행.md).
 # 운영 배포는 하지 않는다(deploy.yml이 digest를 받아 따로, 승인 뒤).
 #
-#   PR(back/ 바뀜)   : linux/amd64 빌드 → Trivy 검사 → 결과 보관. 발행 없음, packages 권한 없음
+#   PR               : 여기서 돌지 않는다. 빌드·Trivy 검사는 ci.yml back-image가 한다(필수 검사 ci-result 안에서 한 번만,
+#                      같은 이미지를 두 번 빌드하면 Maven Central 429가 잦아서, #350)
 #   main push·수동   : 백엔드 검증(spotless·테스트) → 빌드 → 검사 → [발행 허용일 때만] GHCR Push → digest
 # 발행 허용 = main + push/수동 + 저장소 변수 IMAGE_PUBLISH_ENABLED=true + IMAGE_REPOSITORY(gate.sh).
 # 저장소가 공개라 첫 Push가 공개 패키지가 될 수 있고, 공개는 되돌릴 수 없다. 그래서 공개 승인 전에는 변수를 켜지 않는다.
 name: image-publish
 
 on:
-  pull_request:
-    paths:
-      - back/**
-      - .github/workflows/image-publish.yml
-      - .github/scripts/image/**
   push:
     branches: [main]
     paths:

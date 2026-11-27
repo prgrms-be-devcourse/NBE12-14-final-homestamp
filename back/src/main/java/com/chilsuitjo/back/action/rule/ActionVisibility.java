@@ -24,7 +24,8 @@ import java.util.stream.Collectors;
  *       6-4). 거주 종료 행동과 정산 완료는 예외로 넣는다(3-1 "예외로 거주 종료 행동(이사했어요, 거주 종료 요청과 답)과 정산 완료는 양쪽에 보인다")
  *   <li>상대의 나만 보는 행동({@code CONFIRM_LIVING})과 통지 상태(3-1 "보낸 측만")는 뺀다
  *   <li>확인 요청 전인 점검(작성 중)에서 그 점검 기준 측이 남긴 점검 행동은 기준 측이 아닌 사람에게 뺀다(3-1 "작성 중 점검 → 상대 측은 '작성 중'만", 06
- *       INSP-1a). 기준 측이 아닌 측이 작성 중에 더한 항목은 기준 측도 보고 답하므로 넣는다(#286, 화면의 {@code InspectionSight}와 같음)
+ *       INSP-1a). 공유 중단 기준 시각 뒤의 확인 요청은 누가 보냈든 확인 요청으로 세지 않는다(06 INSP-1f, #352). 기준 측이 아닌 측이 작성 중에
+ *       더한 항목은 기준 측도 보고 답하므로 넣는다(#286, 화면의 {@code InspectionSight}와 같음)
  * </ul>
  */
 public final class ActionVisibility {
@@ -129,15 +130,18 @@ public final class ActionVisibility {
   }
 
   /**
-   * 보이는 행동만 {@link #ORDER} 순으로. 확인 요청이 기준 시각 뒤의 상대 행동이라 빠졌으면 보는 사람은 그 점검을 작성 중으로만 봤으므로 초안도 뺀다. 점검의
-   * 기준 측은 그 점검 시작({@code START_INSPECTION})을 남긴 측이다. 시작 행동은 공유 중단 기준으로 빠졌어도 기준 측을 아는 데만 쓰므로 전체 행동에서
-   * 찾는다.
+   * 보이는 행동만 {@link #ORDER} 순으로. 기준 시각 뒤의 확인 요청은 누가 보냈든 초안을 드러내지 않는다: 보는 사람은 그 점검을 기준 시각까지 작성 중으로만
+   * 봤으므로 초안도 뺀다(점검 상세 {@code InspectionSight}와 같은 경계, 기준 시각과 같은 때 보낸 것은 드러냄, #352). 그 확인 요청 행동 자체는
+   * 보낸 사람에게 지금처럼 보인다. 점검의 기준 측은 그 점검 시작({@code START_INSPECTION})을 남긴 측이다. 시작 행동은 공유 중단 기준으로 빠졌어도
+   * 기준 측을 아는 데만 쓰므로 전체 행동에서 찾는다.
    */
   public static List<ActionEntry> select(List<ActionEntry> all, PartySide viewer, Cutoff cutoff) {
     List<ActionEntry> passed = all.stream().filter(e -> visible(e, viewer, cutoff)).toList();
     Set<UUID> requested =
         passed.stream()
             .filter(e -> e.type() == ActionType.REQUEST_INSPECTION_CONFIRM)
+            // 기준 시각 뒤의 확인 요청은 누가 보냈든 초안을 드러내지 않는다(보낸 사람 자신의 행동이라 passed에 있어도, #352)
+            .filter(e -> !after(e, cutoff.shared()))
             .map(ActionVisibility::inspectionOf)
             .filter(Objects::nonNull)
             .collect(Collectors.toSet());
