@@ -154,6 +154,16 @@ expect "다른 저장소 이미지 거절" "$(deploy "ghcr.io/other/app@sha256:$
 cp "$W/deploy.env" "$W/deploy.env.bak"
 grep -v '^MIGRATION_UID=' "$W/deploy.env.bak" >"$W/deploy.env"
 expect "MIGRATION_UID 없으면 거절" "$(deploy "$IMG_v1")" 2
+for bad in 'POST_SWITCH_URL=https://homestamp.cloud/api/' \
+  'POST_SWITCH_URL=https://homestamp.cloud/api/
+POST_SWITCH_RESOLVE=homestamp.cloud:443:10.0.0.5' \
+  'POST_SWITCH_URL=https://homestamp.cloud/api/
+POST_SWITCH_RESOLVE=other.cloud:443:127.0.0.1' \
+  'POST_SWITCH_URL=https://homestamp.cloud/api/
+POST_SWITCH_RESOLVE=homestamp.cloud:8443:127.0.0.1'; do
+  { grep -v '^POST_SWITCH_URL=' "$W/deploy.env.bak"; printf '%s\n' "$bad"; } >"$W/deploy.env"
+  expect "확인 요청이 127.0.0.1로 가지 않는 설정 거절($(tr '\n' ' ' <<<"$bad"))" "$(deploy "$IMG_v1")" 2
+done
 mv "$W/deploy.env.bak" "$W/deploy.env"
 expect "입력 거절은 기록·잠금 전에 끝남" "$([ -e "$W/state/history.jsonl" ] && echo yes || echo no)" no
 
@@ -194,6 +204,35 @@ check_last "기록: noop" '"result":"noop","exit_code":0'
 expect "blue 그대로" "$(docker container inspect -f '{{.Id}}' $T-app-blue)" "$blue_id"
 expect "green 그대로 멈춤" "$(state green)" exited
 if grep -q -- '--migrate' "$(lastout)"; then bad "noop은 Migration을 돌리지 않음"; else ok "noop은 Migration을 돌리지 않음"; fi
+
+wait_up() { for _ in $(seq 1 30); do runner curl -fsS --max-time 2 "http://127.0.0.1:$1/actuator/health" >/dev/null 2>&1 && return 0; sleep 1; done; return 1; }
+echo "== 14b. 같은 이미지, 전환 뒤 확인 전에 멈춘 배포(두 앱 실행 중) → 확인 통과 뒤 noop, 남은 이전 앱 멈춤"
+docker start $T-app-green >/dev/null && wait_up 18082
+runner bash "$W/bin/switch" 127.0.0.1:18082 >/dev/null 2>&1 # 전환까지 하고 배포가 죽은 상태(green=v2)
+green_id="$(docker container inspect -f '{{.Id}}' $T-app-green)"
+expect "종료 0" "$(deploy "$IMG_v2")" 0
+check_last "기록: noop" '"result":"noop","exit_code":0'
+expect "green 그대로(같은 컨테이너)" "$(docker container inspect -f '{{.Id}}' $T-app-green)" "$green_id"
+expect "남아 있던 blue는 멈춤(지우지 않음)" "$(state blue)" exited
+if grep -q '멈춘 배포가 남긴 이전 슬롯' "$(lastout)"; then ok "출력: 중단된 배포의 마무리를 밝힘"; else bad "출력: 마무리 안내"; fi
+
+echo "== 14c. 같은 이미지지만 활성 슬롯이 확인을 통과하지 못함 → noop 아님(4), 아무것도 바꾸지 않음"
+expect "404 이미지 → 되돌림 16(blue에 멈춰 남음)" "$(deploy "$IMG_api404")" 16
+docker start $T-app-blue >/dev/null && wait_up 18081
+runner bash "$W/bin/switch" 127.0.0.1:18081 >/dev/null 2>&1 # 확인을 통과한 적 없는 blue로 전환된 채 멈춘 상태
+blue_id="$(docker container inspect -f '{{.Id}}' $T-app-blue)"
+expect "종료 4(noop 아님)" "$(deploy "$IMG_api404")" 4
+check_last "기록: noop-check에서 4" '"exit_code":4,"failed_step":"noop-check"'
+if grep -q 'noop으로 보지 않고' "$(lastout)"; then ok "출력: noop으로 보지 않음"; else bad "출력: noop 거절 안내"; fi
+expect "upstream 그대로 blue" "$(active)" 127.0.0.1:18081
+expect "두 앱 그대로 실행, blue 같은 컨테이너" "$(state blue) $(state green) $(docker container inspect -f '{{.Id}}' $T-app-blue)" "running running $blue_id"
+if grep -q -- '--migrate' "$(lastout)"; then bad "noop 확인 실패는 Migration을 돌리지 않음"; else ok "noop 확인 실패는 Migration을 돌리지 않음"; fi
+# 런북처럼 손으로 확인된 green으로 돌리고, 다음 시험의 기준(blue=v3 활성, green 멈춤)으로 다시 배포
+runner bash "$W/bin/switch" 127.0.0.1:18082 >/dev/null 2>&1
+docker stop -t 5 $T-app-blue >/dev/null
+expect "다시 v3 배포 → 0" "$(deploy "$IMG_v3")" 0
+expect "기준 복구: upstream=blue" "$(active)" 127.0.0.1:18081
+expect "기준 복구: green 멈춤" "$(state green)" exited
 
 after_fail() { # 실패 뒤 공통: 활성 그대로 blue(v3), nginx 응답 v3
   expect "$1: upstream 그대로 blue" "$(active)" 127.0.0.1:18081
