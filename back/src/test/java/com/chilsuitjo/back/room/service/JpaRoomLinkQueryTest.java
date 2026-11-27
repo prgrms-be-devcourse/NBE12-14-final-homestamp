@@ -13,6 +13,8 @@ import java.time.Instant;
 import java.util.Arrays;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
 
 /** 링크용 호실 조회(#303, #337). 진짜 {@code room_record}·{@code party}·{@code region}을 읽는다. */
@@ -90,6 +92,25 @@ class JpaRoomLinkQueryTest extends RoomReadersTestSupport {
         room);
 
     assertThat(query.forLink(room, seat).orElseThrow().joinedAway()).isTrue();
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = PartyStatus.class,
+      names = {"REJECTED", "WITHDRAWN", "SHARING_STOPPED"})
+  void 링크로_열면_안_되는_자리_상태도_빈_값이_아니라_상태_그대로_준다(PartyStatus status) {
+    // 막을지는 링크 종류를 아는 link가 recipientStatus로 정한다(#303). room이 빈 값으로 숨기지 않는다
+    UUID room = room("LIVING");
+    party(room, "TENANT", member(true), "CONNECTED", null);
+    UUID seat =
+        party(
+            room,
+            "LANDLORD",
+            status == PartyStatus.SHARING_STOPPED ? member(true) : null,
+            status.name(),
+            status == PartyStatus.SHARING_STOPPED ? Instant.now() : null);
+
+    assertThat(query.forLink(room, seat).orElseThrow().recipientStatus()).isEqualTo(status);
   }
 
   @Test
