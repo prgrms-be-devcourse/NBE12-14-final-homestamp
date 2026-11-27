@@ -11,19 +11,23 @@ import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
-/** 점검·점검 항목 규칙(03 H, 06 INSP-1a·2b). 순수 함수라 pipeline 없이 부른다(안내서 5-1). */
+/** 점검·점검 항목 규칙(03 H, 06 INSP-1a·2·3). 순수 함수라 pipeline 없이 부른다(안내서 5-1). */
 class InspectionTransitionsTest {
 
   private static final Instant NOW = Instant.parse("2026-11-25T00:00:00Z");
 
   private static final Duration STALE = Duration.ofDays(7);
 
-  private final InspectionTransitions rules = new InspectionTransitions(STALE);
+  private static final ZoneId SEOUL = ZoneId.of("Asia/Seoul");
+
+  private final InspectionTransitions rules = new InspectionTransitions(STALE, SEOUL);
   private final InspectionItemTransitions itemRules = new InspectionItemTransitions(STALE);
 
   // ---- 점검 시작 ----
@@ -120,7 +124,7 @@ class InspectionTransitionsTest {
     Instant eighthDay = NOW.plus(Duration.ofDays(8));
     List<ActionEntry> history =
         List.of(start(PartySide.LANDLORD, "MOVE_IN", null), request(PartySide.TENANT, eighthDay));
-    InspectionTransitions longer = new InspectionTransitions(Duration.ofDays(10));
+    InspectionTransitions longer = new InspectionTransitions(Duration.ofDays(10), SEOUL);
 
     assertThat(Replay.fold(rules, history).status()).isEqualTo(InspectionStatus.REQUESTED);
     assertThat(Replay.fold(longer, history).status()).isEqualTo(InspectionStatus.REQUESTED);
@@ -164,14 +168,113 @@ class InspectionTransitionsTest {
         .hasMessage(ErrorCode.VALIDATION_FAILED.name());
   }
 
+  // ---- 늦은 입주 점검(INSP-2a) ----
+
   @Test
-  void 현재_구현_범위의_한계로_퇴거_점검은_INVALID_STATE() {
-    // 규칙이 아니라 구현 전이라서다(INSP-3, B 담당). 퇴거 점검을 만들 때 이 테스트를 바꾼다
-    assertThatThrownBy(() ->
-            rules.apply(
-                InspectionState.notStarted(false, false),
-                start(PartySide.TENANT, "MOVE_OUT", null)))
-        .hasMessage(ErrorCode.INVALID_STATE.name());
+  void INSP_2a_입주일보다_뒤에_시작한_입주_점검은_늦었다() {
+    InspectionState next =
+        rules.apply(
+            InspectionState.notStarted(LocalDate.parse("2026-03-01"), false),
+            start(PartySide.LANDLORD, "MOVE_IN", null));
+
+    assertThat(next.late()).isTrue();
+  }
+
+  @Test
+  void INSP_2a_입주일_당일이나_그_전에_시작하면_늦지_않다() {
+    // NOW는 서울 날짜로 2026-11-25다
+    for (String date : List.of("2026-11-25", "2026-12-01")) {
+      InspectionState next =
+          rules.apply(
+              InspectionState.notStarted(LocalDate.parse(date), false),
+              start(PartySide.TENANT, "MOVE_IN", null));
+
+      assertThat(next.late()).as(date).isFalse();
+    }
+  }
+
+  @Test
+  void INSP_2a_날짜는_서울_달력으로_센다() {
+    // 2026-11-25T15:30Z는 서울 날짜로 11월 26일이다. UTC 날짜(25일)로 세면 늦지 않은 것으로 잘못 나온다
+    Instant seoulNextDay = Instant.parse("2026-11-25T15:30:00Z");
+    InspectionState next =
+        rules.apply(
+            InspectionState.notStarted(LocalDate.parse("2026-11-25"), false),
+            entry(
+                ActionType.START_INSPECTION,
+                PartySide.TENANT,
+                Map.of("kind", "MOVE_IN"),
+                seoulNextDay));
+
+    assertThat(next.late()).isTrue();
+  }
+
+  @Test
+  void INSP_2a_INSP_2b_시작하며_채운_입주일로_늦었는지_정한다() {
+    InspectionState late =
+        rules.apply(
+            InspectionState.notStarted(null, false),
+            start(PartySide.TENANT, "MOVE_IN", "2026-03-01"));
+    InspectionState onTime =
+        rules.apply(
+            InspectionState.notStarted(null, false),
+            start(PartySide.TENANT, "MOVE_IN", "2026-11-25"));
+
+    assertThat(late.late()).isTrue();
+    assertThat(onTime.late()).isFalse();
+  }
+
+  // ---- 퇴거 점검(INSP-3) ----
+
+  @Test
+  void INSP_3_퇴거_점검은_먼저_시작한_측이_기준이고_늦은_표시가_없다() {
+    InspectionState next =
+        rules.apply(
+            InspectionState.notStarted(LocalDate.parse("2026-03-01"), false),
+            start(PartySide.LANDLORD, "MOVE_OUT", null));
+
+    assertThat(next.kind()).isEqualTo(InspectionKind.MOVE_OUT);
+    assertThat(next.status()).isEqualTo(InspectionStatus.DRAFT);
+    assertThat(next.authorSide()).isEqualTo(PartySide.LANDLORD);
+    assertThat(next.late()).isFalse();
+  }
+
+  @Test
+  void INSP_3a_거주_종료_뒤에도_퇴거_점검을_시작한다() {
+    InspectionState next =
+        rules.apply(
+            InspectionState.notStarted(LocalDate.parse("2026-03-01"), true),
+            start(PartySide.TENANT, "MOVE_OUT", null));
+
+    assertThat(next.status()).isEqualTo(InspectionStatus.DRAFT);
+  }
+
+  @Test
+  void 퇴거_점검은_입주일이_비어도_묻지_않고_보내면_VALIDATION_FAILED() {
+    InspectionState empty = InspectionState.notStarted(null, false);
+
+    assertThat(rules.apply(empty, start(PartySide.TENANT, "MOVE_OUT", null)).status())
+        .isEqualTo(InspectionStatus.DRAFT);
+    assertThatThrownBy(() -> rules.apply(empty, start(PartySide.TENANT, "MOVE_OUT", "2026-03-01")))
+        .hasMessage(ErrorCode.VALIDATION_FAILED.name());
+  }
+
+  @Test
+  void 퇴거_점검이_이미_있으면_INSPECTION_EXISTS() {
+    InspectionState existing =
+        new InspectionState(
+            InspectionKind.MOVE_OUT,
+            InspectionStatus.DRAFT,
+            PartySide.TENANT,
+            NOW,
+            null,
+            null,
+            true,
+            null,
+            false);
+
+    assertThatThrownBy(() -> rules.apply(existing, start(PartySide.LANDLORD, "MOVE_OUT", null)))
+        .hasMessage(ErrorCode.INSPECTION_EXISTS.name());
   }
 
   @Test
@@ -214,28 +317,51 @@ class InspectionTransitionsTest {
   }
 
   @Test
-  void 현재_구현_범위의_한계로_작성_중에는_상대가_항목을_더할_수_없다() {
-    assertThatThrownBy(() ->
-            itemRules.apply(
-                InspectionItemState.newIn(InspectionStatus.DRAFT, PartySide.TENANT),
-                entry(ActionType.ADD_ITEM, PartySide.LANDLORD, Map.of())))
-        .hasMessage(ErrorCode.INVALID_STATE.name());
-    assertThat(
-            InspectionItemTransitions.canAdd(
-                InspectionStatus.DRAFT, PartySide.TENANT, PartySide.LANDLORD))
-        .isFalse();
+  void INSP_1d_상대도_작성_중에_항목을_더하고_기준_측이_작성_중에도_답한다() {
+    InspectionItemState added =
+        itemRules.apply(
+            InspectionItemState.newIn(InspectionStatus.DRAFT, PartySide.TENANT),
+            entry(ActionType.ADD_ITEM, PartySide.LANDLORD, Map.of()));
+
+    assertThat(added.status()).isEqualTo(AckState.PENDING);
+    assertThat(added.addedBy()).isEqualTo(PartySide.LANDLORD);
+    assertThat(InspectionItemTransitions.canAdd(InspectionStatus.DRAFT, PartySide.LANDLORD))
+        .isTrue();
+    // 상대가 더한 항목은 기준 측이 작성 중에도 답한다(03 H, 6-6 2번, #286)
+    assertThat(InspectionItemTransitions.canRespond(added, PartySide.TENANT)).isTrue();
+    assertThat(InspectionItemTransitions.canRespond(added, PartySide.LANDLORD)).isFalse();
   }
 
   @Test
-  void 확인_요청_뒤의_항목_더하기는_아직_INVALID_STATE() {
-    // 상대가 더하기·잠긴 뒤 추가는 후속 작업(INSP-1d·1e)
+  void 작성_중_기준_측이_쓴_항목은_확인_요청_전에는_답할_수_없다() {
+    InspectionItemState own =
+        new InspectionItemState(
+            InspectionStatus.DRAFT,
+            PartySide.TENANT,
+            AckState.PENDING,
+            PartySide.TENANT,
+            1,
+            null,
+            null,
+            false);
+
+    assertThat(InspectionItemTransitions.canRespond(own, PartySide.LANDLORD)).isFalse();
+  }
+
+  @Test
+  void INSP_1e_확인_요청_뒤와_잠긴_뒤에도_누구든_더한다() {
     for (InspectionStatus status : List.of(InspectionStatus.REQUESTED, InspectionStatus.LOCKED)) {
-      assertThatThrownBy(() ->
-              itemRules.apply(
-                  InspectionItemState.newIn(status, PartySide.TENANT),
-                  entry(ActionType.ADD_ITEM, PartySide.TENANT, Map.of())))
-          .hasMessage(ErrorCode.INVALID_STATE.name());
+      for (PartySide side : PartySide.values()) {
+        InspectionItemState added =
+            itemRules.apply(
+                InspectionItemState.newIn(status, PartySide.TENANT),
+                entry(ActionType.ADD_ITEM, side, Map.of()));
+        assertThat(added.status()).isEqualTo(AckState.PENDING);
+        // 점검 상태는 바뀌지 않는다(잠긴 뒤 추가여도 잠금 그대로)
+        assertThat(added.inspectionStatus()).isEqualTo(status);
+      }
     }
+    assertThat(InspectionItemTransitions.canAdd(null, PartySide.TENANT)).isFalse();
   }
 
   @Test
@@ -258,7 +384,15 @@ class InspectionTransitionsTest {
 
   private static InspectionState draft(PartySide author, Instant startedAt, Boolean canOpen) {
     return new InspectionState(
-        InspectionKind.MOVE_IN, InspectionStatus.DRAFT, author, startedAt, null, null, canOpen);
+        InspectionKind.MOVE_IN,
+        InspectionStatus.DRAFT,
+        author,
+        startedAt,
+        null,
+        null,
+        canOpen,
+        null,
+        false);
   }
 
   private static ActionEntry request(PartySide side, Instant at) {

@@ -316,6 +316,30 @@ class CauseNoteApiTest {
   }
 
   @Test
+  void 내가_공유를_그만둔_동안_상대가_고친_설명은_탈퇴_뒤에도_안_보이고_보이는_옛_판은_닫혀_있다() throws Exception {
+    // 03 6-4 "중단 동안 탈퇴자가 남긴 기록"은 고친 설명도 숨긴다. 보이는 옛 판은 지금 설명이 아니라 답할 수 없다(#294 리뷰)
+    UUID first = created(note(landlord, "n1", "{\"text\":\"배관 노후\",\"basis\":\"GUESS\"}"));
+    stopSharing(PartySide.TENANT, Instant.now());
+    UUID second =
+        created(
+            note(
+                landlord,
+                "n2",
+                "{\"text\":\"윗집 배관\",\"basis\":\"GUESS\",\"previousId\":\"" + first + "\"}"));
+    jdbc.update(
+        "UPDATE state.party SET status = 'WITHDRAWN' WHERE room_record_id = ? AND side = 'LANDLORD'",
+        room);
+
+    detail(tenant)
+        .andExpect(jsonPath("$.causeNotes", hasSize(1)))
+        .andExpect(jsonPath("$.causeNotes[0].id").value(first.toString()))
+        .andExpect(jsonPath("$.causeNotes[0].text").value("배관 노후"))
+        .andExpect(jsonPath("$.causeNotes[0].canRespond").value(false));
+    respond(first, tenant, "r1", "ACK", null).andExpect(status().is4xxClientError());
+    respond(second, tenant, "r2", "ACK", null).andExpect(status().isNotFound());
+  }
+
+  @Test
   void 공유를_그만둔_사람에게는_그_뒤_상대가_남긴_설명과_응답이_보이지_않는다() throws Exception {
     UUID mine = created(note(tenant, "n1", "{\"text\":\"윗집 배관\",\"basis\":\"GUESS\"}"));
     // 수리 건·내 설명보다 뒤, 상대의 설명·응답보다 앞

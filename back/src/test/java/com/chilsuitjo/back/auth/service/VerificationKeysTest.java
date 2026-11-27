@@ -83,6 +83,14 @@ class VerificationKeysTest {
   }
 
   @Test
+  void 번호_HMAC은_번호마다_같은_소문자_hex_64자다() {
+    assertThat(keys.phoneHmac("01012345678"))
+        .isEqualTo(keys.phoneHmac("01012345678"))
+        .isNotEqualTo(keys.phoneHmac("01012345679"))
+        .matches("[0-9a-f]{64}");
+  }
+
+  @Test
   void 번호_잠금_키는_번호마다_같고_번호가_다르면_다르다() {
     assertThat(keys.phoneLockKey("01012345678")).isEqualTo(keys.phoneLockKey("01012345678"));
     assertThat(keys.phoneLockKey("01012345678")).isNotEqualTo(keys.phoneLockKey("01012345679"));

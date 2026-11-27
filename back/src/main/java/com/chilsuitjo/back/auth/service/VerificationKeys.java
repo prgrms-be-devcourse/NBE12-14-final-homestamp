@@ -61,9 +61,20 @@ class VerificationKeys {
         a.getBytes(StandardCharsets.UTF_8), b.getBytes(StandardCharsets.UTF_8));
   }
 
-  /** 번호 잠금 키(05 {@code pg_advisory_xact_lock}, 번호 HMAC으로 만든 키, 목적과 상관없음). */
+  /**
+   * 번호 잠금 키(05 {@code pg_advisory_xact_lock}, 번호 HMAC으로 만든 키, 목적과 상관없음). {@link #phoneHmac}와 같은
+   * HMAC의 앞 8바이트다. 정규화한 번호를 받는다.
+   */
   long phoneLockKey(String phone) {
     return ByteBuffer.wrap(hmac(phoneKey, phone)).getLong();
+  }
+
+  /**
+   * 저장용 번호 HMAC({@code PhoneHmacs}, decisions 2026-11-26). 번호 HMAC 키로 HMAC-SHA256 한 32바이트 전체를 소문자
+   * hex 64자로 낸다. 정규화한 번호를 받는다(정규화는 부르는 쪽, {@link PhoneHmacService}).
+   */
+  String phoneHmac(String phone) {
+    return HexFormat.of().formatHex(hmac(phoneKey, phone));
   }
 
   /** 인증 표: 행 ID + "." + 행 ID의 서명. 행 ID는 verify 주소에 드러나므로 서명 없이는 표로 쓸 수 없다. */

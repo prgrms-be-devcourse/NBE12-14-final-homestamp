@@ -2,6 +2,8 @@ package com.chilsuitjo.back.repair.controller;
 
 import static com.chilsuitjo.back.global.security.SecurityTestSupport.loginAs;
 import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -98,7 +100,7 @@ class RepairDetailApiTest {
         stoppedAt,
         room);
     respond(caseId, landlord, "ACK", null).andExpect(status().isOk());
-    // 부담 상태를 바꾸는 행동은 아직 없어 행만 바꿔 둔다. 보이는 상태는 행동으로 다시 계산하므로 드러나지 않아야 한다
+    // 행만 바꿔 둔다. 보이는 부담은 제안 행동으로 다시 계산하므로(제안이 없으면 미정) 드러나지 않아야 한다
     jdbc.update("UPDATE state.repair_case SET money_status = 'NO_COST' WHERE id = ?", caseId);
 
     detail(caseId, tenant)
@@ -117,15 +119,32 @@ class RepairDetailApiTest {
   }
 
   @Test
-  void 상대가_탈퇴해_풀린_공유_중단은_고정하지_않는다() throws Exception {
-    // 탈퇴하면 남은 공유 중단 시각을 보지 않는다(06 CONS-3q)
+  void 공유를_그만두기_전_합의된_부담은_보이고_그_뒤_상대가_동의한_부담은_보이지_않는다() throws Exception {
+    // #289 리뷰: 다시 계산한 부담이 늘 미정이던 경우. 부담 제안 행동은 제안이 대상이라 돈 안건 장치가 다시 계산한다(03 3-1 "돈 포함")
+    UUID agreedBefore = register();
+    agree(propose(agreedBefore, tenant, "{\"lines\":[],\"noCost\":true}"), landlord);
+    UUID answeredAfter = register();
+    UUID waiting = propose(answeredAfter, tenant, "{\"lines\":[],\"noCost\":true}");
+    stopSharing(PartySide.TENANT, Timestamp.from(Instant.now()));
+    agree(waiting, landlord);
+
+    detail(agreedBefore, tenant).andExpect(jsonPath("$.money.status").value("NO_COST"));
+    detail(answeredAfter, tenant)
+        .andExpect(jsonPath("$.asOf").isNotEmpty())
+        .andExpect(jsonPath("$.money.status").value("PENDING"));
+    // 내가 남긴 동의는 나에게 보인다
+    detail(answeredAfter, landlord).andExpect(jsonPath("$.money.status").value("NO_COST"));
+  }
+
+  @Test
+  void 상대가_탈퇴하면_남은_공유_중단이_있어도_상태는_지금_값이고_asOf는_없다() throws Exception {
+    // 남은 사람은 제한이 풀려(06 CONS-3p) 실제 상태에서 행동한다. 그래서 상태는 다시 계산하지 않는다(호실 상세와 같음, #294 리뷰)
     UUID caseId = register();
     respond(caseId, landlord, "ACK", null).andExpect(status().isOk());
     jdbc.update(
-        "UPDATE state.party SET status = 'WITHDRAWN', sharing_stopped_at ="
-            + " (SELECT created_at FROM state.repair_case WHERE id = ?)"
+        "UPDATE state.party SET status = 'WITHDRAWN', sharing_stopped_at = ?"
             + " WHERE room_record_id = ? AND side = 'LANDLORD'",
-        caseId,
+        caseCreatedAt(caseId),
         room);
 
     detail(caseId, tenant)
@@ -134,14 +153,50 @@ class RepairDetailApiTest {
   }
 
   @Test
-  void 탈퇴로_풀리는지는_보는_사람_기준이다() throws Exception {
-    // 집주인이 공유를 그만뒀고 등록한 세입자가 탈퇴했다. 집주인에게는 상대가 탈퇴했으니 제한이 풀린다(06 CONS-3p, #175)
+  void 내가_공유를_그만둔_동안_상대가_수리를_시작하고_종료를_요청한_뒤_탈퇴하면_상태와_버튼이_같다() throws Exception {
+    // #294 리뷰 2: 상태는 다시 계산하고 버튼은 실제 상태라 어긋나던 경우. 둘 다 지금 상태다(탈퇴 처리 전까지의 알려진 한계, decisions
+    // 2026-11-27)
     UUID caseId = register();
+    stopSharing(PartySide.TENANT, caseCreatedAt(caseId));
+    act(caseId, landlord, "start").andExpect(status().isOk());
+    act(caseId, landlord, "request-close").andExpect(status().isOk());
+    withdraw(PartySide.LANDLORD);
+
+    detail(caseId, tenant)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.asOf").doesNotExist())
+        .andExpect(jsonPath("$.status").value("CLOSE_WAIT"))
+        .andExpect(jsonPath("$.closeRequestedBy").value("LANDLORD"))
+        .andExpect(jsonPath("$.availableActions", hasItem("confirm-close")))
+        .andExpect(jsonPath("$.availableActions", not(hasItem("start"))));
+  }
+
+  @Test
+  void 탈퇴_뒤_남은_사람이_행동해도_상세가_열린다() throws Exception {
+    // #294 리뷰 1: 줄어든 이력([등록, 종료 요청]) 위에 남은 사람의 행동을 다시 쌓으면 시작 전에서 종료 요청이라 INVALID_STATE가 나
+    // 상세가 열리지 않던 경우. 리뷰 예시의 혼자 종료는 상대 탈퇴로는 아직 열리지 않아(SoloRule) 종료 요청으로 본다
+    UUID caseId = register();
+    stopSharing(PartySide.TENANT, caseCreatedAt(caseId));
+    act(caseId, landlord, "start").andExpect(status().isOk());
+    withdraw(PartySide.LANDLORD);
+    act(caseId, tenant, "request-close").andExpect(status().isOk());
+
+    detail(caseId, tenant)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("CLOSE_WAIT"))
+        .andExpect(jsonPath("$.closeRequestedBy").value("TENANT"));
+  }
+
+  @Test
+  void 탈퇴로_풀리는지는_보는_사람_기준이다() throws Exception {
+    // 집주인이 공유를 그만뒀고 등록한 세입자가 탈퇴했다. 집주인에게는 상대가 탈퇴했으니 할 수 있는 일의 제한이 풀린다(06 CONS-3p, #175).
+    // 상태도 지금 값이라 asOf는 없다(#294 리뷰)
+    UUID caseId = register();
+    Timestamp stoppedAt = caseCreatedAt(caseId);
     jdbc.update(
-        "UPDATE state.party SET status = 'SHARING_STOPPED', sharing_stopped_at ="
-            + " (SELECT created_at FROM state.repair_case WHERE id = ?)"
+        "UPDATE state.party SET status = 'SHARING_STOPPED', sharing_stopped_at = ?"
             + " WHERE room_record_id = ? AND side = 'LANDLORD'",
-        caseId,
+        stoppedAt,
         room);
     jdbc.update(
         "UPDATE state.party SET status = 'WITHDRAWN' WHERE room_record_id = ? AND side = 'TENANT'",
@@ -149,7 +204,61 @@ class RepairDetailApiTest {
 
     detail(caseId, landlord)
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.asOf").doesNotExist());
+        .andExpect(jsonPath("$.asOf").doesNotExist())
+        .andExpect(jsonPath("$.availableActions").value(hasItem("start")));
+  }
+
+  private Timestamp caseCreatedAt(UUID caseId) {
+    return jdbc.queryForObject(
+        "SELECT created_at FROM state.repair_case WHERE id = ?", Timestamp.class, caseId);
+  }
+
+  private void stopSharing(PartySide side, Timestamp at) {
+    jdbc.update(
+        "UPDATE state.party SET status = 'SHARING_STOPPED', sharing_stopped_at = ?"
+            + " WHERE room_record_id = ? AND side = ?",
+        at,
+        room,
+        side.name());
+  }
+
+  /** 탈퇴 처리는 {@code sharing_stopped_at}을 지우지 않는다(decisions 2026-11-26). */
+  private void withdraw(PartySide side) {
+    jdbc.update(
+        "UPDATE state.party SET status = 'WITHDRAWN' WHERE room_record_id = ? AND side = ?",
+        room,
+        side.name());
+  }
+
+  /** 부담 제안을 내고 제안 ID를 돌려준다. */
+  private UUID propose(UUID caseId, UUID memberId, String body) throws Exception {
+    String response =
+        mvc.perform(
+                post("/api/repair-cases/{id}/proposals", caseId)
+                    .with(loginAs(memberId))
+                    .header("Idempotency-Key", "pro-" + UUID.randomUUID())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(body))
+            .andExpect(status().isCreated())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    return UUID.fromString(response.replaceAll(".*\"id\":\"([^\"]+)\".*", "$1"));
+  }
+
+  private void agree(UUID proposalId, UUID memberId) throws Exception {
+    mvc.perform(
+            post("/api/proposals/{id}/agree", proposalId)
+                .with(loginAs(memberId))
+                .header("Idempotency-Key", "agr-" + UUID.randomUUID()))
+        .andExpect(status().isOk());
+  }
+
+  private ResultActions act(UUID caseId, UUID memberId, String action) throws Exception {
+    return mvc.perform(
+        post("/api/repair-cases/{id}/" + action, caseId)
+            .with(loginAs(memberId))
+            .header("Idempotency-Key", action + "-" + UUID.randomUUID()));
   }
 
   // ---- 사진(#175) ----
