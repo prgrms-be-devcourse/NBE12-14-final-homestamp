@@ -1,6 +1,7 @@
 package com.chilsuitjo.back.repair.repository;
 
 import com.chilsuitjo.back.repair.entity.CauseNote;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -11,8 +12,8 @@ public interface CauseNoteRepository extends JpaRepository<CauseNote, UUID> {
 
   Optional<CauseNote> findByIdAndRoomRecordId(UUID id, UUID roomRecordId);
 
-  /** 한 호실의 설명 모두. 목록에서 설명 대상 행동이 어느 수리 건의 것인지 찾는다(06 4-6 {@code lastActionAt}). */
-  List<CauseNote> findByRoomRecordId(UUID roomRecordId);
+  /** 이 수리 건들의 설명 모두. 목록 한 쪽에서 설명 대상 행동을 찾는다(06 4-6 {@code lastActionAt}). */
+  List<CauseNote> findByRepairCaseIdIn(Collection<UUID> repairCaseIds);
 
   /** 한 수리 건의 설명 모두(이전 설명 포함), 남긴 순서. */
   List<CauseNote> findByRepairCaseIdOrderByCreatedAtAscIdAsc(UUID repairCaseId);

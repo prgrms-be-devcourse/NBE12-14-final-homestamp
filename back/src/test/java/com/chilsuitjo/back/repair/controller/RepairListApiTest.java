@@ -250,7 +250,122 @@ class RepairListApiTest {
         .andExpect(jsonPath("$.code").value("LOGIN_REQUIRED"));
   }
 
+  // ---- #289 리뷰: 상세와 같은 보이는 범위 ----
+
+  @Test
+  void 도장_전에_고친_수리_건도_공유_중단_뒤_목록에_보인다() throws Exception {
+    // 도장 전 고치기는 수리 건 대상 CORRECT로 남고 바로 새 판이 된다. 다시 쌓을 때 INVALID_STATE가 나지 않아야 한다(#287)
+    UUID caseId = register(tenant, "천장 누수");
+    correct(caseId, tenant, "천장 물샘").andExpect(status().is2xxSuccessful());
+    stopSharing(PartySide.TENANT);
+
+    list(tenant)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.items[0].content.no").value(2))
+        .andExpect(jsonPath("$.items[0].content.title").value("천장 물샘"));
+  }
+
+  @Test
+  void 공유_중단_전에_맞아요한_고친_내용의_판_번호가_상세와_같다() throws Exception {
+    // 고친 내용 맞아요(대상이 고친 내용)가 새 판을 만든다. 빼고 쌓으면 판 번호가 뒤처진다(cheeerry0 1번)
+    UUID caseId = register(tenant, "천장 누수");
+    respond(caseId, landlord, "ACK").andExpect(status().isOk());
+    UUID correctionId = correctionIdOf(correct(caseId, tenant, "천장 물샘"));
+    mvc.perform(
+            withKey(post("/api/corrections/{id}/respond", correctionId), landlord)
+                .content("{\"answer\":\"ACK\",\"seenVersionNo\":1}"))
+        .andExpect(status().isOk());
+    stopSharing(PartySide.TENANT);
+
+    list(tenant)
+        .andExpect(jsonPath("$.asOf").isNotEmpty())
+        .andExpect(jsonPath("$.items[0].content.no").value(2))
+        .andExpect(jsonPath("$.items[0].content.title").value("천장 물샘"));
+    mvc.perform(get("/api/repair-cases/{id}", caseId).with(loginAs(tenant)))
+        .andExpect(jsonPath("$.content.no").value(2));
+  }
+
+  @Test
+  void 공유_중단_전에_합의된_부담은_목록에도_그대로_보인다() throws Exception {
+    // 부담 제안 행동은 대상이 제안이라 돈 안건 장치가 다시 계산한다(ProposalService.statusAsSeen, 상세와 같음)
+    UUID agreed = register(tenant, "천장 누수");
+    UUID proposal = proposalIdOf(propose(agreed, tenant, "{\"lines\":[],\"noCost\":true}"));
+    mvc.perform(withKey(post("/api/proposals/{id}/agree", proposal), landlord))
+        .andExpect(status().isOk());
+    stopSharing(PartySide.TENANT);
+
+    list(tenant)
+        .andExpect(jsonPath("$.asOf").isNotEmpty())
+        .andExpect(jsonPath("$.items[0].money.status").value("NO_COST"));
+  }
+
+  @Test
+  void 보이지_않는_수리_건을_커서로_주면_틀린_커서와_같다() throws Exception {
+    // 공유를 그만둔 뒤 상대가 등록한 건은 상세가 404라 커서로도 쓸 수 없다(cheeerry0 2번)
+    register(tenant, "천장 누수");
+    stopSharing(PartySide.TENANT);
+    UUID hidden = register(landlord, "보일러 고장");
+
+    list(tenant, hidden.toString(), null)
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    // 등록한 쪽에게는 보이는 건이라 커서로 쓸 수 있다
+    list(landlord, hidden.toString(), null).andExpect(status().isOk());
+  }
+
+  @Test
+  void 공유를_그만둔_동안_상대가_시작하고_탈퇴하면_asOf는_없고_그_행동은_멈춘_기간에_세지_않는다() throws Exception {
+    // 상세와 같은 탈퇴 기준(decisions 2026-11-27): 상태는 지금 값, 탈퇴자가 중단 동안 남긴 행동은 보이지 않는다(#294)
+    UUID caseId = register(tenant, "천장 누수");
+    stopSharing(PartySide.TENANT);
+    action(caseId, landlord, "start").andExpect(status().isOk());
+    jdbc.update(
+        "UPDATE state.party SET status = 'WITHDRAWN' WHERE room_record_id = ? AND side = 'LANDLORD'",
+        room);
+
+    list(tenant)
+        .andExpect(jsonPath("$.asOf").doesNotExist())
+        .andExpect(jsonPath("$.items[0].status").value("IN_PROGRESS"))
+        .andExpect(jsonPath("$.items[0].lastActionAt").value(createdAt(caseId)));
+  }
+
   // ---- 준비물 ----
+
+  /** 이 측이 지금 공유를 그만둔다. 앞에서 남긴 기록은 모두 이 시각 전이다. */
+  private void stopSharing(PartySide side) {
+    jdbc.update(
+        "UPDATE state.party SET status = 'SHARING_STOPPED', sharing_stopped_at = clock_timestamp()"
+            + " WHERE room_record_id = ? AND side = ?",
+        room,
+        side.name());
+  }
+
+  private ResultActions correct(UUID caseId, UUID who, String title) throws Exception {
+    return mvc.perform(
+        withKey(post("/api/corrections"), who)
+            .content(
+                "{\"targetKind\":\"REPAIR_CASE\",\"targetId\":\""
+                    + caseId
+                    + "\",\"changes\":[{\"field\":\"title\",\"newValue\":\""
+                    + title
+                    + "\"}],\"reason\":\"오타\"}"));
+  }
+
+  private static UUID correctionIdOf(ResultActions result) throws Exception {
+    String body = result.andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+    return UUID.fromString(body.replaceAll(".*\"correctionIds\":\\[\"([^\"]+)\".*", "$1"));
+  }
+
+  private ResultActions propose(UUID caseId, UUID who, String body) throws Exception {
+    return mvc.perform(
+        withKey(post("/api/repair-cases/{id}/proposals", caseId), who).content(body));
+  }
+
+  private static UUID proposalIdOf(ResultActions result) throws Exception {
+    String body =
+        result.andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+    return UUID.fromString(body.replaceAll(".*\"id\":\"([^\"]+)\".*", "$1"));
+  }
 
   private ResultActions list(UUID memberId) throws Exception {
     return list(memberId, null, null);

@@ -4,6 +4,7 @@ import com.chilsuitjo.back.action.dto.ActionEntry;
 import com.chilsuitjo.back.action.dto.ActionTarget;
 import com.chilsuitjo.back.action.dto.Actor;
 import com.chilsuitjo.back.action.dto.RoomGate;
+import com.chilsuitjo.back.action.rule.ActionType;
 import com.chilsuitjo.back.action.rule.Replay;
 import com.chilsuitjo.back.action.rule.RoomGateReader;
 import com.chilsuitjo.back.action.service.ActionReader;
@@ -12,6 +13,9 @@ import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
+import com.chilsuitjo.back.proposal.dto.AgendaRef;
+import com.chilsuitjo.back.proposal.rule.AgendaKind;
+import com.chilsuitjo.back.proposal.service.ProposalService;
 import com.chilsuitjo.back.repair.dto.RepairCaseList;
 import com.chilsuitjo.back.repair.entity.CauseNote;
 import com.chilsuitjo.back.repair.entity.ProgressNote;
@@ -19,17 +23,21 @@ import com.chilsuitjo.back.repair.entity.RepairCase;
 import com.chilsuitjo.back.repair.entity.RepairContent;
 import com.chilsuitjo.back.repair.repository.CauseNoteRepository;
 import com.chilsuitjo.back.repair.repository.ProgressNoteRepository;
+import com.chilsuitjo.back.repair.repository.RepairAgendaHeadStore;
 import com.chilsuitjo.back.repair.repository.RepairCaseRepository;
 import com.chilsuitjo.back.repair.repository.RepairContentRepository;
 import com.chilsuitjo.back.repair.repository.RepairStateStore;
+import com.chilsuitjo.back.repair.rule.RepairSight;
 import com.chilsuitjo.back.repair.rule.RepairState;
 import com.chilsuitjo.back.repair.rule.RepairTransitions;
 import com.chilsuitjo.back.room.service.RoomQueryService;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Limit;
@@ -63,16 +71,21 @@ public class RepairListService {
   private final RoomQueryService rooms;
   private final ActionReader actionReader;
   private final CorrectionQueryService corrections;
+  private final ProposalService proposalService;
 
   /**
    * 이 호실의 수리 건, 새것부터 {@code size}개. 남의 호실은 {@code NOT_FOUND}(ROOM-2a), 틀린 커서·크기는 {@code
-   * VALIDATION_FAILED}다.
+   * VALIDATION_FAILED}다. 보는 사람에게 보이지 않는 수리 건(상세가 {@code NOT_FOUND}인 건)의 ID를 커서로 줘도 틀린 커서와 같은 {@code
+   * VALIDATION_FAILED}다(있는지 드러나지 않게, #289 리뷰).
    *
-   * <p><b>보이는 범위는 상세와 같다</b>(03 6-6 9번, 불변식 18). 공유를 그만둔 뒤(어느 쪽이든, 제한이 살아 있을 때)에는 그 시각을 {@code
-   * asOf}로 주고, 줄의 상태는 그 시각까지의 행동과 보는 사람 자신의 행동으로 다시 계산한다({@code Replay.fold}). 상세가 {@code
-   * NOT_FOUND}인 건(공유 중단 뒤 상대가 등록)은 쿼리에서 빼서 쪽 크기가 줄지 않는다. 꺼 둔 설비·가전의 건은 그대로 보인다.
+   * <p><b>보이는 범위는 상세와 같다</b>(03 6-6 9번, 불변식 18, {@link RepairSight}). 공유를 그만둔 뒤(어느 쪽이든, 제한이 살아 있을
+   * 때)에는 그 시각을 {@code asOf}로 주고, 줄의 상태는 그 시각까지의 행동과 보는 사람 자신의 행동으로 다시 계산한다({@code Replay.fold}, 고친
+   * 내용 응답 포함). 부담 상태는 돈 안건 장치가 같은 범위로 다시 계산한다({@code ProposalService.statusAsSeen}), 부위 이름은 부위 목록과
+   * 같은 규칙이다({@code findPartAsSeenBy}). 상대가 탈퇴했으면 상세처럼 다시 계산하지 않고({@code asOf} null) 탈퇴자가 중단 동안 남긴
+   * 행동만 {@code lastActionAt}에서 뺀다. 상세가 {@code NOT_FOUND}인 건(공유 중단 뒤 상대가 등록)은 쿼리에서 빼서 쪽 크기가 줄지 않는다.
+   * 꺼 둔 설비·가전의 건은 그대로 보인다.
    *
-   * <p>행동은 호실 단위로 한 번 읽어 건마다 나눈다(건마다 읽으면 쪽 크기만큼 쿼리가 늘어난다).
+   * <p>행동은 이 쪽의 수리 건과 그 진행 상황·원인 설명·고친 내용이 대상인 것만 한 번에 읽는다(#289 리뷰: 호실 전체를 읽지 않음).
    */
   @Transactional(readOnly = true)
   public RepairCaseList list(UUID roomRecordId, UUID memberId, String cursor, int size) {
@@ -81,7 +94,8 @@ public class RepairListService {
     }
     RoomGate gate = gates.read(roomRecordId, Actor.member(memberId));
     PartySide viewer = gate.side();
-    Instant asOf = store.sharingCutoff(roomRecordId, viewer).orElse(null);
+    RepairSight sight = store.sightFor(roomRecordId, viewer);
+    Instant asOf = sight.asOf();
     Instant hiddenAfter =
         store.hiddenAfter(roomRecordId, counterpartOf(viewer)).orElse(NOTHING_HIDDEN);
 
@@ -96,7 +110,8 @@ public class RepairListService {
       return new RepairCaseList(asOf, viewer, List.of(), null);
     }
 
-    Map<UUID, List<ActionEntry>> historyByCase = historyByCase(roomRecordId);
+    Map<UUID, List<ActionEntry>> historyByCase =
+        historyByCase(roomRecordId, shown.stream().map(RepairCase::getId).toList());
     Map<UUID, Map<Integer, RepairContent>> contentsByCase = new HashMap<>();
     for (RepairContent content :
         contents.findByRepairCaseIdIn(shown.stream().map(RepairCase::getId).toList())) {
@@ -110,9 +125,9 @@ public class RepairListService {
     for (RepairCase row : shown) {
       List<ActionEntry> visible =
           historyByCase.getOrDefault(row.getId(), List.of()).stream()
-              .filter(entry -> visibleTo(entry, viewer, asOf))
+              .filter(entry -> sight.sees(entry.actorSide(), entry.createdAt()))
               .toList();
-      items.add(item(row, visible, asOf, contentsByCase.get(row.getId()), partNames));
+      items.add(item(row, visible, sight, memberId, contentsByCase.get(row.getId()), partNames));
     }
     return new RepairCaseList(
         asOf, viewer, List.copyOf(items), more ? shown.getLast().getId().toString() : null);
@@ -121,13 +136,24 @@ public class RepairListService {
   private RepairCaseList.Item item(
       RepairCase row,
       List<ActionEntry> visible,
-      Instant asOf,
+      RepairSight sight,
+      UUID memberId,
       Map<Integer, RepairContent> contentsOfCase,
       Map<UUID, String> partNames) {
     List<ActionEntry> caseActions =
         visible.stream().filter(entry -> isRepairCaseTarget(entry, row.getId())).toList();
-    // 고정되지 않았으면 상세처럼 상태 행이 원본이고, 고정됐으면 보이는 행동으로 다시 계산한다
-    RepairState replayed = asOf == null ? null : Replay.fold(rules, caseActions);
+    // 고정되지 않았으면 상세처럼 상태 행이 원본이고, 고정됐으면 보이는 행동으로 다시 계산한다.
+    // 고친 내용 맞아요(대상이 고친 내용)가 내용의 새 판을 만들어서 함께 쌓는다(상세 visibleActions와 같음, #287·#289 리뷰)
+    RepairState replayed =
+        sight.asOf() == null
+            ? null
+            : Replay.fold(
+                rules,
+                visible.stream()
+                    .filter(entry ->
+                        isRepairCaseTarget(entry, row.getId())
+                            || entry.type() == ActionType.RESPOND_CORRECTION)
+                    .toList());
     int contentNo = replayed == null ? currentNo(row, contentsOfCase) : replayed.contentNo();
     RepairContent content = contentsOfCase == null ? null : contentsOfCase.get(contentNo);
     if (content == null) {
@@ -136,7 +162,7 @@ public class RepairListService {
     String partName =
         partNames.computeIfAbsent(
             content.getRoomPartId(),
-            partId -> rooms.findPart(row.getRoomRecordId(), partId).name());
+            partId -> rooms.findPartAsSeenBy(row.getRoomRecordId(), partId, memberId).name());
     Instant lastActionAt =
         visible.stream()
             .filter(entry -> entry.actorSide() != null)
@@ -155,7 +181,14 @@ public class RepairListService {
             : replayed.closeRequestedBy(),
         replayed == null ? row.getClosedBy() : replayed.closedBy(),
         new RepairCaseList.Defect(replayed == null ? row.getDefectAck() : replayed.defectAck()),
-        new RepairCaseList.Money(replayed == null ? row.getMoneyStatus() : replayed.moneyStatus()),
+        new RepairCaseList.Money(
+            replayed == null
+                ? row.getMoneyStatus()
+                : RepairAgendaHeadStore.toMoneyStatus(
+                    proposalService.statusAsSeen(
+                        row.getRoomRecordId(),
+                        new AgendaRef(AgendaKind.REPAIR_BURDEN, row.getId()),
+                        sight::sees))),
         List.of());
   }
 
@@ -163,17 +196,32 @@ public class RepairListService {
    * 호실 행동을 수리 건마다 나눈다({@code room_seq} 순 그대로). 이 건의 행동은 수리 건이 대상인 행동과, 그 건의 진행 상황·원인 설명·고친 내용이 대상인
    * 행동이다({@code lastActionAt}, 03 G "멈춘 기간", decisions 2026-11-26). 수리비(제안·지불)는 돈 쪽 행동이라 넣지 않는다.
    */
-  private Map<UUID, List<ActionEntry>> historyByCase(UUID roomRecordId) {
-    // 고친 내용 응답·거두기는 대상이 고친 내용이다(고치기 자체는 대상이 수리 건)
-    Map<UUID, UUID> caseOfNote = new HashMap<>(corrections.repairCaseIdsByCorrection(roomRecordId));
-    for (CauseNote note : causeNotes.findByRoomRecordId(roomRecordId)) {
-      caseOfNote.put(note.getId(), note.getRepairCaseId());
+  private Map<UUID, List<ActionEntry>> historyByCase(UUID roomRecordId, List<UUID> caseIds) {
+    Set<UUID> pageCases = new HashSet<>(caseIds);
+    List<ActionTarget> targets = new ArrayList<>();
+    Map<UUID, UUID> caseOfNote = new HashMap<>();
+    for (UUID caseId : caseIds) {
+      targets.add(ActionTarget.repairCase(caseId));
     }
-    for (ProgressNote note : progressNotes.findByRoomRecordId(roomRecordId)) {
+    // 고친 내용 응답·거두기는 대상이 고친 내용이다(고치기 자체는 대상이 수리 건)
+    corrections
+        .repairCaseIdsByCorrection(roomRecordId)
+        .forEach((correctionId, caseId) -> {
+          if (pageCases.contains(caseId)) {
+            caseOfNote.put(correctionId, caseId);
+            targets.add(ActionTarget.correctionRequest(correctionId));
+          }
+        });
+    for (CauseNote note : causeNotes.findByRepairCaseIdIn(caseIds)) {
       caseOfNote.put(note.getId(), note.getRepairCaseId());
+      targets.add(ActionTarget.of(TargetKind.CAUSE_NOTE, note.getId()));
+    }
+    for (ProgressNote note : progressNotes.findByRepairCaseIdIn(caseIds)) {
+      caseOfNote.put(note.getId(), note.getRepairCaseId());
+      targets.add(ActionTarget.of(TargetKind.PROGRESS_NOTE, note.getId()));
     }
     Map<UUID, List<ActionEntry>> byCase = new HashMap<>();
-    for (ActionEntry entry : actionReader.findByRoom(roomRecordId)) {
+    for (ActionEntry entry : actionReader.findByTargets(roomRecordId, targets)) {
       ActionTarget target = entry.target();
       if (target == null) {
         continue;
@@ -196,14 +244,12 @@ public class RepairListService {
     RepairCase last =
         cases
             .findByIdAndRoomRecordId(parseCursor(cursor), roomRecordId)
+            // 목록 쿼리와 같은 숨김: 보는 사람에게 보이지 않는 건이면 없는 커서와 같게 거절한다(#289 리뷰)
+            .filter(
+                row -> row.getCreatedBySide() == viewer || !row.getCreatedAt().isAfter(hiddenAfter))
             .orElseThrow(() -> new BusinessException(ErrorCode.VALIDATION_FAILED));
     return cases.findVisibleAfter(
         roomRecordId, viewer, hiddenAfter, last.getCreatedAt(), last.getId(), limit);
-  }
-
-  /** 상세의 {@code visibleActions}와 같은 규칙: 고정 시각까지의 행동과 보는 사람 측의 행동. */
-  private static boolean visibleTo(ActionEntry entry, PartySide viewer, Instant asOf) {
-    return asOf == null || !entry.createdAt().isAfter(asOf) || entry.actorSide() == viewer;
   }
 
   private static boolean isRepairCaseTarget(ActionEntry entry, UUID repairCaseId) {
