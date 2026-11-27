@@ -122,11 +122,10 @@ public class RepairStateStore {
   /**
    * 사진 추가(06 REP-7g)의 저장 방법. 덧붙이기라 상태 행·판은 그대로 두고 사진만 수리 건에 붙인다.
    *
-   * @param stage 사진 단계({@code BEFORE}·{@code AFTER}, 서비스가 먼저 본다)
    * @param uploadTickets 붙일 사진의 업로드 표 1~10개(장수는 서비스가 먼저 본다)
    */
-  public StateStore<RepairState> addingPhotos(PhotoStage stage, List<String> uploadTickets) {
-    return new AddingPhotos(Objects.requireNonNull(stage, "stage"), List.copyOf(uploadTickets));
+  public StateStore<RepairState> addingPhotos(List<String> uploadTickets) {
+    return new AddingPhotos(List.copyOf(uploadTickets));
   }
 
   /**
@@ -702,11 +701,9 @@ public class RepairStateStore {
 
   private final class AddingPhotos implements StateStore<RepairState> {
 
-    private final PhotoStage stage;
     private final List<String> uploadTickets;
 
-    private AddingPhotos(PhotoStage stage, List<String> uploadTickets) {
-      this.stage = stage;
+    private AddingPhotos(List<String> uploadTickets) {
       this.uploadTickets = uploadTickets;
     }
 
@@ -728,7 +725,12 @@ public class RepairStateStore {
       if (!canAddPhotos(room, row, side)) {
         throw new BusinessException(ErrorCode.SHARING_STOPPED);
       }
+      // 사진 단계는 서버가 정한다(05 2-8): 수리를 시작하기 전이면 수리 전, 시작한 뒤면 수리 후
+      PhotoStage stage =
+          next.status() == RepairStatus.NOT_STARTED ? PhotoStage.BEFORE : PhotoStage.AFTER;
       List<PhotoDigest> added = photos.attach(command, row.getId(), stage, uploadTickets);
+      // 그 건에 상대가 남긴 행동은 진행 상황 물음의 답이다(06 REP-6c, 03 D)
+      answerProgressCheck(command);
       PartyFacts counterpart = room.counterpart();
       if (counterpart.presence() == PartyPresence.CONNECTED
           && counterpart.memberId() != null

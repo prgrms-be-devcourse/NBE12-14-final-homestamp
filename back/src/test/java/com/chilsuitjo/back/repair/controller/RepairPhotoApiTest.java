@@ -14,6 +14,7 @@ import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.notification.dto.InfoCommand;
 import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.rule.RequestKind;
+import com.chilsuitjo.back.notification.rule.RequestStatus;
 import com.chilsuitjo.back.notification.service.FakeInAppNotifier;
 import com.chilsuitjo.back.notification.service.FakeWaitService;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -39,7 +40,7 @@ import org.springframework.test.web.servlet.ResultActions;
  * 06 REP-7g "덧붙이기는 도장이 필요 없다"와 4-6 {@code POST /api/repair-cases/{id}/photos}(사진 추가)를
  * 보안·pipeline·진짜 행동 기록 저장(PostgreSQL)까지 띄워 본다(#377). 요청은 JSON 문자열로 보낸다. 사진은 가짜 사진 창구가 받는다.
  *
- * <p>근거: 06 4-6 해당 줄(요청 {@code {uploadTickets, stage}}·{@code Idempotency-Key}·응답 {@code
+ * <p>근거: 06 4-6 해당 줄(요청 {@code {uploadTickets}}·{@code Idempotency-Key}·응답 {@code
  * {photoIds}}·{@code ADD_PHOTO}·오류 코드), 4-5 상세 {@code defect.ackAt}, decisions 2026-11-27 마지막 줄.
  *
  * <p>pipeline이 바깥 트랜잭션을 거절해서 {@code @Transactional}로 되돌리지 않는다. 테스트마다 새 호실을 만들어 섞이지 않게 한다.
@@ -81,7 +82,7 @@ class RepairPhotoApiTest {
   void REP_7g_같이_확인한_건에_사진을_더해도_판_번호와_하자_인정과_상태가_그대로다() throws Exception {
     UUID caseId = acked();
 
-    JsonNode res = body(add(caseId, tenant, "a1", tickets(1), "AFTER").andExpect(status().isOk()));
+    JsonNode res = body(add(caseId, tenant, "a1", tickets(1)).andExpect(status().isOk()));
 
     assertThat(res.get("photoIds")).hasSize(1);
     String photoId = res.get("photoIds").get(0).asText();
@@ -93,7 +94,7 @@ class RepairPhotoApiTest {
     assertThat(detail.at("/content/no").asInt()).isEqualTo(1);
     assertThat(detail.at("/defect/ack").asText()).isEqualTo("ACK");
     assertThat(detail.get("status").asText()).isEqualTo("NOT_STARTED");
-    assertThat(photoOf(detail, photoId).get("stage").asText()).isEqualTo("AFTER");
+    assertThat(photoOf(detail, photoId).get("stage").asText()).isEqualTo("BEFORE");
     assertThat(caseRow(caseId))
         .containsEntry("defect_ack", "ACK")
         .containsEntry("status", "NOT_STARTED");
@@ -105,7 +106,7 @@ class RepairPhotoApiTest {
     assertThat(detail(caseId, tenant).at("/defect/ackAt").isNull()).isTrue();
     respond(caseId, landlord, "r1", "ACK");
     String photoId =
-        body(add(caseId, tenant, "a1", tickets(1), "BEFORE").andExpect(status().isOk()))
+        body(add(caseId, tenant, "a1", tickets(1)).andExpect(status().isOk()))
             .get("photoIds")
             .get(0)
             .asText();
@@ -120,7 +121,7 @@ class RepairPhotoApiTest {
   void REP_7g_여러_장을_더하면_photoIds가_업로드_표_순서이고_상세에_모두_보인다() throws Exception {
     UUID caseId = acked();
 
-    JsonNode res = body(add(caseId, tenant, "a1", tickets(3), "BEFORE").andExpect(status().isOk()));
+    JsonNode res = body(add(caseId, tenant, "a1", tickets(3)).andExpect(status().isOk()));
 
     assertThat(res.get("photoIds")).hasSize(3);
     List<String> ids = new ArrayList<>();
@@ -134,12 +135,11 @@ class RepairPhotoApiTest {
   void REP_7g_같은_키로_다시_보내면_같은_photoIds와_Replayed_헤더이고_더_생기지_않는다() throws Exception {
     UUID caseId = acked();
     String tickets = tickets(2);
-    JsonNode first =
-        body(add(caseId, tenant, "same", tickets, "BEFORE").andExpect(status().isOk()));
+    JsonNode first = body(add(caseId, tenant, "same", tickets).andExpect(status().isOk()));
     int photosBefore = detail(caseId, tenant).get("photos").size();
 
     ResultActions again =
-        add(caseId, tenant, "same", tickets, "BEFORE")
+        add(caseId, tenant, "same", tickets)
             .andExpect(status().isOk())
             .andExpect(header().string("Idempotent-Replayed", "true"));
 
@@ -156,7 +156,7 @@ class RepairPhotoApiTest {
         waits.statusOf(
             RequestTarget.of(TargetKind.REPAIR_CASE, caseId), RequestKind.DEFECT_CONFIRM);
 
-    add(caseId, tenant, "a1", tickets(1), "BEFORE").andExpect(status().isOk());
+    add(caseId, tenant, "a1", tickets(1)).andExpect(status().isOk());
 
     assertThat(notifier.sent()).hasSize(sentBefore + 1);
     List<InfoCommand> toLandlord = sentTo(landlord);
@@ -177,17 +177,17 @@ class RepairPhotoApiTest {
     UUID caseId = acked();
     int photos = detail(caseId, tenant).get("photos").size();
 
-    addRaw(caseId, tenant, "v1", "{\"uploadTickets\":[],\"stage\":\"BEFORE\"}")
+    addRaw(caseId, tenant, "v1", "{\"uploadTickets\":[]}")
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
-    add(caseId, tenant, "v2", tickets(11), "BEFORE")
+    add(caseId, tenant, "v2", tickets(11))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
-    addRaw(caseId, tenant, "v3", "{\"uploadTickets\":[\"\"],\"stage\":\"BEFORE\"}")
+    addRaw(caseId, tenant, "v3", "{\"uploadTickets\":[\"\"]}")
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
     // 업로드 표 칸이 아예 없어도 0개와 같다
-    addRaw(caseId, tenant, "v4", "{\"stage\":\"BEFORE\"}")
+    addRaw(caseId, tenant, "v4", "{}")
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
 
@@ -196,17 +196,88 @@ class RepairPhotoApiTest {
   }
 
   @Test
-  void REP_7g_단계가_없거나_BEFORE_AFTER가_아니면_VALIDATION_FAILED() throws Exception {
+  void REP_7g_사진_단계는_서버가_수리_진행으로_정한다_시작_전은_BEFORE_시작_뒤는_AFTER() throws Exception {
     UUID caseId = acked();
-    String t = tickets(1);
+    String before =
+        body(add(caseId, tenant, "s1", tickets(1)).andExpect(status().isOk()))
+            .get("photoIds")
+            .get(0)
+            .asText();
+    act(caseId, tenant, "start").andExpect(status().isOk());
+    // 화면이 단계를 보내도 받지 않는다(05 2-8 "서버가 정하고 화면은 보내지 않는다")
+    String after =
+        body(addRaw(
+                    caseId,
+                    tenant,
+                    "s2",
+                    "{\"uploadTickets\":" + tickets(1) + ",\"stage\":\"MOVE_IN\"}")
+                .andExpect(status().isOk()))
+            .get("photoIds")
+            .get(0)
+            .asText();
 
-    addRaw(caseId, tenant, "s1", "{\"uploadTickets\":" + t + "}")
-        .andExpect(status().isBadRequest())
-        .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
-    addRaw(caseId, tenant, "s2", "{\"uploadTickets\":" + t + ",\"stage\":\"MOVE_IN\"}")
-        .andExpect(status().isBadRequest())
-        .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    JsonNode detail = detail(caseId, tenant);
+    assertThat(photoOf(detail, before).get("stage").asText()).isEqualTo("BEFORE");
+    assertThat(photoOf(detail, after).get("stage").asText()).isEqualTo("AFTER");
+  }
 
+  // ---- 진행 상황 물음·알림 ----
+
+  @Test
+  void REP_6c_물은_뒤_상대가_사진을_더하면_진행_상황_묻기_요청이_닫힌다() throws Exception {
+    UUID caseId = acked();
+    RequestTarget target = RequestTarget.of(TargetKind.REPAIR_CASE, caseId);
+    act(caseId, landlord, "ask-progress").andExpect(status().isOk());
+
+    // 물은 사람이 더한 것은 답이 아니다
+    add(caseId, landlord, "p1", tickets(1)).andExpect(status().isOk());
+    assertThat(waits.statusOf(target, RequestKind.PROGRESS_CHECK)).contains(RequestStatus.WAITING);
+
+    add(caseId, tenant, "p2", tickets(1)).andExpect(status().isOk());
+    assertThat(waits.statusOf(target, RequestKind.PROGRESS_CHECK)).contains(RequestStatus.ANSWERED);
+  }
+
+  @Test
+  void REP_7g_집주인이_더해도_세입자에게_서비스_안_알림이_간다() throws Exception {
+    UUID caseId = acked();
+
+    add(caseId, landlord, "l1", tickets(1)).andExpect(status().isOk());
+
+    assertThat(sentTo(tenant))
+        .singleElement()
+        .satisfies(s ->
+            assertThat(s.target()).isEqualTo(RequestTarget.of(TargetKind.REPAIR_CASE, caseId)));
+    assertThat(action(caseId, "ADD_PHOTO").get("actor_side")).isEqualTo("LANDLORD");
+  }
+
+  @Test
+  void REP_7g_상대가_공유를_그만뒀으면_사진은_남지만_알림은_가지_않는다() throws Exception {
+    UUID caseId = acked();
+    jdbc.update(
+        "UPDATE state.party SET status = 'SHARING_STOPPED', sharing_stopped_at = CURRENT_TIMESTAMP"
+            + " WHERE room_record_id = ? AND side = 'LANDLORD'",
+        room);
+
+    add(caseId, tenant, "n1", tickets(1)).andExpect(status().isOk());
+
+    assertThat(countActions(caseId, "ADD_PHOTO")).isEqualTo(1);
+    // 그만둔 뒤 남긴 기록은 상대에게 보이지 않으므로(불변식 18) 알리지 않는다
+    assertThat(sentTo(landlord)).isEmpty();
+  }
+
+  @Test
+  void REP_7g_상대가_볼_수_없는_수리_건에_더하면_INVALID_STATE() throws Exception {
+    jdbc.update(
+        "UPDATE state.party SET status = 'SHARING_STOPPED',"
+            + " sharing_stopped_at = CURRENT_TIMESTAMP - interval '1 hour'"
+            + " WHERE room_record_id = ? AND side = 'TENANT'",
+        room);
+    // 세입자가 그만둔 동안 등록한 건이라 집주인은 볼 수 없다
+    UUID caseId = register();
+
+    add(caseId, landlord, "h1", tickets(1))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("INVALID_STATE"));
     assertThat(countActions(caseId, "ADD_PHOTO")).isZero();
   }
 
@@ -220,8 +291,7 @@ class RepairPhotoApiTest {
         "UPDATE state.room_record SET status = 'ENDED', ended_at = CURRENT_TIMESTAMP WHERE id = ?",
         room);
 
-    add(caseId, tenant, "a1", tickets(1), "BEFORE")
-        .andExpect(jsonPath("$.code").value("ROOM_ENDED"));
+    add(caseId, tenant, "a1", tickets(1)).andExpect(jsonPath("$.code").value("ROOM_ENDED"));
     assertThat(countActions(caseId, "ADD_PHOTO")).isZero();
     // 버튼도 실제 요청과 같은 판단이라 거주 종료 뒤에는 없다(06 4-0)
     assertThat(detail(caseId, tenant).get("availableActions").toString())
@@ -236,7 +306,7 @@ class RepairPhotoApiTest {
             + " settled_at = CURRENT_TIMESTAMP WHERE id = ?",
         room);
 
-    add(caseId, tenant, "a1", tickets(1), "BEFORE").andExpect(jsonPath("$.code").value("SETTLED"));
+    add(caseId, tenant, "a1", tickets(1)).andExpect(jsonPath("$.code").value("SETTLED"));
     assertThat(countActions(caseId, "ADD_PHOTO")).isZero();
   }
 
@@ -250,8 +320,7 @@ class RepairPhotoApiTest {
         caseId,
         room);
 
-    add(caseId, tenant, "a1", tickets(1), "BEFORE")
-        .andExpect(jsonPath("$.code").value("SHARING_STOPPED"));
+    add(caseId, tenant, "a1", tickets(1)).andExpect(jsonPath("$.code").value("SHARING_STOPPED"));
     assertThat(countActions(caseId, "ADD_PHOTO")).isZero();
     assertThat(detail(caseId, tenant).get("availableActions").toString())
         .doesNotContain("\"photos\"");
@@ -267,7 +336,7 @@ class RepairPhotoApiTest {
     UUID caseId = register();
     assertThat(detail(caseId, tenant).get("availableActions").toString()).contains("\"photos\"");
 
-    add(caseId, tenant, "a1", tickets(1), "BEFORE")
+    add(caseId, tenant, "a1", tickets(1))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.photoIds.length()").value(1));
     assertThat(countActions(caseId, "ADD_PHOTO")).isEqualTo(1);
@@ -277,10 +346,10 @@ class RepairPhotoApiTest {
   void REP_7g_남의_호실이거나_없는_수리_건이면_NOT_FOUND() throws Exception {
     UUID caseId = acked();
 
-    add(caseId, member(), "a1", tickets(1), "BEFORE")
+    add(caseId, member(), "a1", tickets(1))
         .andExpect(status().isNotFound())
         .andExpect(jsonPath("$.code").value("NOT_FOUND"));
-    add(UUID.randomUUID(), tenant, "a2", tickets(1), "BEFORE")
+    add(UUID.randomUUID(), tenant, "a2", tickets(1))
         .andExpect(status().isNotFound())
         .andExpect(jsonPath("$.code").value("NOT_FOUND"));
     assertThat(countActions(caseId, "ADD_PHOTO")).isZero();
@@ -288,10 +357,16 @@ class RepairPhotoApiTest {
 
   // ---- 준비물 ----
 
-  private ResultActions add(UUID caseId, UUID memberId, String key, String tickets, String stage)
+  private ResultActions add(UUID caseId, UUID memberId, String key, String tickets)
       throws Exception {
-    return addRaw(
-        caseId, memberId, key, "{\"uploadTickets\":" + tickets + ",\"stage\":\"" + stage + "\"}");
+    return addRaw(caseId, memberId, key, "{\"uploadTickets\":" + tickets + "}");
+  }
+
+  private ResultActions act(UUID caseId, UUID memberId, String action) throws Exception {
+    return mvc.perform(
+        post("/api/repair-cases/{id}/" + action, caseId)
+            .with(loginAs(memberId))
+            .header("Idempotency-Key", action + "-" + UUID.randomUUID()));
   }
 
   private ResultActions addRaw(UUID caseId, UUID memberId, String key, String json)

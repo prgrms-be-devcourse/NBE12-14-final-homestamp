@@ -21,7 +21,6 @@ import com.chilsuitjo.back.global.common.dto.RespondRequest;
 import com.chilsuitjo.back.global.common.dto.SupplementRequest;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
-import com.chilsuitjo.back.photo.rule.PhotoStage;
 import com.chilsuitjo.back.proposal.dto.AgendaRef;
 import com.chilsuitjo.back.proposal.dto.ProposalCommand;
 import com.chilsuitjo.back.proposal.dto.ProposalRequest;
@@ -44,9 +43,7 @@ import com.chilsuitjo.back.repair.repository.RepairCaseRepository;
 import com.chilsuitjo.back.repair.repository.RepairStateStore;
 import com.chilsuitjo.back.repair.rule.RepairState;
 import com.chilsuitjo.back.repair.rule.RepairTransitions;
-import java.util.EnumSet;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -64,9 +61,6 @@ public class RepairService {
 
   /** 한 번에 붙이는 사진(업로드 표 1~10개, 06 4-0 업로드). 하자 등록은 요청 본문의 검증 표시가 같은 값으로 막는다. */
   static final int MAX_PHOTOS = 10;
-
-  /** 사진 추가로 고를 수 있는 단계(수리 전·수리 후, 06 REP-7g). 다른 단계는 하자 등록·진행 상황·원인 설명 등 각 행동이 정한다. */
-  static final Set<PhotoStage> ADDABLE_STAGES = EnumSet.of(PhotoStage.BEFORE, PhotoStage.AFTER);
 
   private final ActionPipeline pipeline;
   private final RepairStateStore store;
@@ -200,8 +194,7 @@ public class RepairService {
     if (request == null
         || request.uploadTickets().isEmpty()
         || request.uploadTickets().size() > MAX_PHOTOS
-        || request.uploadTickets().stream().anyMatch(t -> t == null || t.isBlank())
-        || !ADDABLE_STAGES.contains(request.stage())) {
+        || request.uploadTickets().stream().anyMatch(t -> t == null || t.isBlank())) {
       throw new BusinessException(ErrorCode.VALIDATION_FAILED);
     }
     UUID roomRecordId = roomOf(repairCaseId);
@@ -217,7 +210,7 @@ public class RepairService {
                 null,
                 null,
                 Map.of()),
-            store.addingPhotos(request.stage(), request.uploadTickets()),
+            store.addingPhotos(request.uploadTickets()),
             rules);
     return new PhotosAdded(
         queries.addedPhotoIds(repairCaseId, result.action().actionId()),
