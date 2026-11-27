@@ -36,7 +36,7 @@ cleanup
 echo "== 워크플로 경로: 화면·백엔드 따로, 공통 스크립트는 둘 다"
 paths() { awk '/^  (pull_request|push):/{on=1; next} /^  [a-z_]+:/{on=0} on && /^      - /{print $2}' "$ROOT/.github/workflows/$1" | sort -u | tr '\n' ' '; }
 expect "front-image-publish 트리거" "$(paths front-image-publish.yml)" ".github/scripts/image/** .github/workflows/front-image-publish.yml front/** "
-expect "image-publish(백엔드) 트리거는 그대로(front/ 없음)" "$(paths image-publish.yml)" ".github/scripts/image/** .github/workflows/image-publish.yml back/** "
+expect "image-publish(백엔드) 트리거는 그대로(front/ 없음)" "$(paths image-publish.yml)" ".github/gradle/** .github/scripts/image/** .github/workflows/image-publish.yml back/** "
 grep -q 'vars.FRONT_IMAGE_PUBLISH_ENABLED' "$ROOT/.github/workflows/front-image-publish.yml" && ! grep -q 'vars.IMAGE_PUBLISH_ENABLED' "$ROOT/.github/workflows/front-image-publish.yml" &&
   ok "화면은 화면 발행 변수만 읽음" || bad "화면 발행 변수"
 grep -q 'vars.FRONT_IMAGE' "$ROOT/.github/workflows/image-publish.yml" && bad "백엔드가 화면 변수를 읽음" || ok "백엔드는 화면 변수를 읽지 않음"
