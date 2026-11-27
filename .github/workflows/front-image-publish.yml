@@ -1,0 +1,165 @@
+# 화면(React) 이미지 빌드·검사·발행(04 9-2, 런북 docs/runbooks/이미지-발행.md "화면 이미지").
+# 백엔드(image-publish.yml)와 따로 돈다: front/만 바뀌면 이것만, back/만 바뀌면 백엔드만, 공통 스크립트가 바뀌면 둘 다.
+# 운영 배포는 하지 않는다(front-deploy가 digest를 받아 따로, 승인 뒤).
+#
+#   PR(front/ 바뀜)  : 의존성 검사 → linux/amd64 빌드 → 내용 확인 → 이미지 비밀값 검사 → 결과 보관. 발행 없음, packages 권한 없음
+#   main push·수동   : 화면 검증(lint·format) → 위와 같음 → [발행 허용일 때만] GHCR Push → digest
+# 발행 허용 = main + push/수동 + 저장소 변수 FRONT_IMAGE_PUBLISH_ENABLED=true + FRONT_IMAGE_REPOSITORY(gate.sh).
+# 백엔드 변수(IMAGE_PUBLISH_ENABLED·IMAGE_REPOSITORY)와 따로 켠다. 공개는 되돌릴 수 없어 공개 승인 전에는 켜지 않는다.
+name: front-image-publish
+
+on:
+  pull_request:
+    paths:
+      - front/**
+      - .github/workflows/front-image-publish.yml
+      - .github/scripts/image/**
+  push:
+    branches: [main]
+    paths:
+      - front/**
+      - .github/workflows/front-image-publish.yml
+      - .github/scripts/image/**
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: front-image-publish-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      publish: ${{ steps.gate.outputs.publish }}
+      image_id: ${{ steps.build.outputs.image_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: 발행 허용 판단
+        id: gate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          PUBLISH_ENABLED: ${{ vars.FRONT_IMAGE_PUBLISH_ENABLED }}
+          IMAGE_REPOSITORY: ${{ vars.FRONT_IMAGE_REPOSITORY }}
+          PUBLISH_VAR: FRONT_IMAGE_PUBLISH_ENABLED
+          REPOSITORY_VAR: FRONT_IMAGE_REPOSITORY
+        run: |
+          .github/scripts/image/gate.sh | tee -a "$GITHUB_OUTPUT"
+
+      # PR은 CI(ci.yml front)가 같은 검사를 한다. 발행 경로에서는 그 커밋을 여기서 다시 검증한다
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: github.event_name != 'pull_request'
+        with:
+          node-version: '22'
+      - name: 화면 검증(lint·format)
+        if: github.event_name != 'pull_request'
+        working-directory: front
+        run: |
+          npm ci --no-audit --no-fund
+          npm run lint
+          npm run format:check
+
+      - name: 이미지 빌드(linux/amd64)
+        id: build
+        env:
+          REVISION: ${{ github.sha }}
+          SOURCE: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          docker build --platform linux/amd64 \
+            --build-arg "REVISION=$REVISION" \
+            --label "org.opencontainers.image.revision=$REVISION" \
+            --label "org.opencontainers.image.source=$SOURCE" \
+            --tag homestamp-front:candidate --file front/Dockerfile front
+          echo "image_id=$(docker image inspect -f '{{.Id}}' homestamp-front:candidate)" >>"$GITHUB_OUTPUT"
+
+      - name: 이미지 내용 확인(/site·version.json·소스맵 없음)
+        env:
+          REVISION: ${{ github.sha }}
+        run: .github/scripts/image/check-front.sh homestamp-front:candidate "$REVISION"
+
+      - name: 보안 검사(Trivy, npm 의존성 + 이미지 비밀값)
+        run: .github/scripts/image/scan-front.sh front homestamp-front:candidate trivy-report
+
+      - name: 검사 결과 보관
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: front-trivy-report-${{ github.sha }}
+          path: |
+            trivy-report/*.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: 발행할 이미지 넘기기
+        if: steps.gate.outputs.publish == 'true'
+        run: docker save homestamp-front:candidate -o image.tar
+      - if: steps.gate.outputs.publish == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: front-image-${{ github.sha }}
+          path: image.tar
+          retention-days: 1
+
+  publish:
+    needs: build
+    if: needs.build.outputs.publish == 'true' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: front-image-${{ github.sha }}
+
+      - name: 검사한 그 이미지인지
+        env:
+          IMAGE_ID: ${{ needs.build.outputs.image_id }}
+        run: |
+          docker load -i image.tar
+          [[ "$(docker image inspect -f '{{.Id}}' homestamp-front:candidate)" == "$IMAGE_ID" ]] \
+            || { echo "::error::검사한 이미지와 다릅니다"; exit 1; }
+
+      - name: GHCR 로그인(GITHUB_TOKEN)
+        env:
+          TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}
+        run: printf '%s' "$TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+
+      - name: 발행과 digest 확인
+        id: publish
+        env:
+          IMAGE_REPOSITORY: ${{ vars.FRONT_IMAGE_REPOSITORY }}
+          LOCAL_IMAGE: homestamp-front:candidate
+          REVISION: ${{ github.sha }}
+        run: .github/scripts/image/publish.sh
+
+      - name: 배포 담당에게 넘길 값
+        env:
+          DIGEST: ${{ steps.publish.outputs.digest }}
+          IMAGE: ${{ steps.publish.outputs.image }}
+          REVISION: ${{ github.sha }}
+        run: |
+          {
+            echo "### 발행한 화면 이미지"
+            echo "- 커밋: \`$REVISION\`"
+            echo "- 이미지: \`$IMAGE\`"
+            echo "- front-deploy 입력 digest: \`$DIGEST\`"
+            echo "- 운영 배포는 front-deploy에서 따로 승인받아 실행한다"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: 로그아웃
+        if: always()
+        run: docker logout ghcr.io
