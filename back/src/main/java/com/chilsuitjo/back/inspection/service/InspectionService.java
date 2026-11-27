@@ -95,8 +95,9 @@ public class InspectionService {
 
   /**
    * 점검 항목 더하기(06 4-7, 03 H "항목"). 설명에 주민등록번호 형태가 있으면 {@code RESIDENT_ID_BLOCKED}(pipeline 전, 03
-   * 6-1). 없는 점검·당사자가 아니면 {@code NOT_FOUND}, 작성 중 기준 측이 아니면 {@code INVALID_STATE}, 정산 완료면 {@code
-   * SETTLED}(pipeline)다. 내용 지문은 {@code save}가 만든 판 #1로, 사진 지문은 행동 payload {@code photos}로 남는다.
+   * 6-1). 없는 점검·당사자가 아니면 {@code NOT_FOUND}, 숨긴 부위·꺼 둔 설비·가전이면 {@code VALIDATION_FAILED}, 정산 완료면
+   * {@code SETTLED}(pipeline)다. 누구든 점검이 있는 동안 더한다(INSP-1d·1e, #286). 내용 지문은 {@code save}가 만든 판 #1로,
+   * 사진 지문은 행동 payload {@code photos}로 남는다.
    */
   public InspectionCreated addItem(
       UUID inspectionId, UUID memberId, String idempotencyKey, AddInspectionItemRequest request) {
@@ -153,9 +154,9 @@ public class InspectionService {
 
   /**
    * 항목 응답(06 4-7 {@code respond}). 답이 없으면 {@code VALIDATION_FAILED}, 사유에 주민등록번호 형태가 있으면 {@code
-   * RESIDENT_ID_BLOCKED}(pipeline 전, 03 6-1). 없는 항목·당사자가 아니면 {@code NOT_FOUND}, 작성 중이거나 답하는 사람에게
-   * 보이지 않는 항목이면 {@code INVALID_STATE}, 그 뒤는 {@code AnswerSupport.answer} 순서다. 내용 지문은 본 판이다(안내서
-   * 3-3).
+   * RESIDENT_ID_BLOCKED}(pipeline 전, 03 6-1). 없는 항목·당사자가 아니면 {@code NOT_FOUND}, 작성 중인 기준 측
+   * 항목이거나(상대가 더한 항목은 작성 중에도 답함, #286) 답하는 사람에게 보이지 않는 항목이면 {@code INVALID_STATE}, 그 뒤는 {@code
+   * AnswerSupport.answer} 순서다. 내용 지문은 본 판이다(안내서 3-3).
    */
   public AnswerResult respond(
       UUID itemId, UUID memberId, String idempotencyKey, RespondRequest request) {

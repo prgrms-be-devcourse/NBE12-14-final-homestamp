@@ -11,6 +11,8 @@
 !src/
 !src/main/
 !src/main/**
+# 공개 RDS 인증서 묶음 하나만(폴더째 열지 않는다: 키가 섞여도 들어오지 않게)
+!certs/rds-ca-ap-northeast-2.crt
 
 # Secrets stay out even if someone places them below src/main.
 **/.env
