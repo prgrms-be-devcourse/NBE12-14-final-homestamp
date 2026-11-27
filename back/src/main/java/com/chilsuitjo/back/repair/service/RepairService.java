@@ -27,8 +27,10 @@ import com.chilsuitjo.back.proposal.dto.ProposalRequest;
 import com.chilsuitjo.back.proposal.dto.ProposalResult;
 import com.chilsuitjo.back.proposal.rule.AgendaKind;
 import com.chilsuitjo.back.proposal.service.ProposalService;
+import com.chilsuitjo.back.repair.dto.AddPhotosRequest;
 import com.chilsuitjo.back.repair.dto.ConfirmCloseRequest;
 import com.chilsuitjo.back.repair.dto.DefectAckChanged;
+import com.chilsuitjo.back.repair.dto.PhotosAdded;
 import com.chilsuitjo.back.repair.dto.ProgressAsked;
 import com.chilsuitjo.back.repair.dto.ProgressNoteCreated;
 import com.chilsuitjo.back.repair.dto.ProgressNoteRequest;
@@ -67,6 +69,7 @@ public class RepairService {
   private final ProposalService proposals;
   private final RoomGateReader gates;
   private final ProgressNoteRepository notes;
+  private final RepairQueryService queries;
 
   /**
    * 하자 등록(06 REP-1). pipeline 전에 사진이 없으면 {@code PHOTO_REQUIRED}(REP-1d), 제목·설명에 주민등록번호 형태가 있으면
@@ -177,6 +180,41 @@ public class RepairService {
             rules);
     return new DefectAckChanged(
         repairCaseId, result.state().defectAck(), result.action().replayed());
+  }
+
+  /**
+   * 사진 추가(06 REP-7g, 4-6 {@code POST /api/repair-cases/{id}/photos}). pipeline 전에 업로드 표가 0개·10개
+   * 초과·빈 표이거나 단계가 {@code BEFORE}·{@code AFTER}가 아니면 {@code VALIDATION_FAILED}. 덧붙이기라 같이 확인한 판·하자
+   * 인정·수리 진행은 그대로다. 거주 종료 뒤면 {@code ROOM_ENDED}, 정산 완료 뒤면 {@code SETTLED}(pipeline), 공유를 그만둔 사람이
+   * 그만두기 전 수리 건에 더하면 {@code SHARING_STOPPED}(저장 방법), 사진 검사에 실패하면 {@code PHOTO_CHECK_FAILED}·{@code
+   * UPLOAD_TICKET_*}(사진 번호와 함께, 아무것도 남지 않음)다. 같은 키로 다시 온 요청이면 처음 붙인 사진을 행동 기록에서 다시 읽는다.
+   */
+  public PhotosAdded addPhotos(
+      UUID repairCaseId, UUID memberId, String idempotencyKey, AddPhotosRequest request) {
+    if (request == null
+        || request.uploadTickets().isEmpty()
+        || request.uploadTickets().size() > MAX_PHOTOS
+        || request.uploadTickets().stream().anyMatch(t -> t == null || t.isBlank())) {
+      throw new BusinessException(ErrorCode.VALIDATION_FAILED);
+    }
+    UUID roomRecordId = roomOf(repairCaseId);
+    PipelineResult<RepairState> result =
+        pipeline.execute(
+            new ActionCommand(
+                roomRecordId,
+                Actor.member(memberId),
+                ActionType.ADD_PHOTO,
+                idempotencyKey,
+                ActionTarget.repairCase(repairCaseId),
+                null,
+                null,
+                null,
+                Map.of()),
+            store.addingPhotos(request.uploadTickets()),
+            rules);
+    return new PhotosAdded(
+        queries.addedPhotoIds(repairCaseId, result.action().actionId()),
+        result.action().replayed());
   }
 
   /**

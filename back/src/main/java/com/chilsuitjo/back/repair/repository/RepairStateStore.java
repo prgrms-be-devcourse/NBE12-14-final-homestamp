@@ -5,6 +5,7 @@ import com.chilsuitjo.back.action.dto.ActionEntry;
 import com.chilsuitjo.back.action.dto.ActionTarget;
 import com.chilsuitjo.back.action.dto.DigestField;
 import com.chilsuitjo.back.action.dto.DigestInput;
+import com.chilsuitjo.back.action.dto.PhotoDigest;
 import com.chilsuitjo.back.action.dto.SavedState;
 import com.chilsuitjo.back.action.rule.ActionType;
 import com.chilsuitjo.back.action.service.ActionReader;
@@ -20,7 +21,9 @@ import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.global.common.Uuids;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
+import com.chilsuitjo.back.notification.dto.InfoCommand;
 import com.chilsuitjo.back.notification.dto.OpenRequestCommand;
+import com.chilsuitjo.back.notification.dto.PartyFacts;
 import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.dto.RoomParties;
 import com.chilsuitjo.back.notification.dto.SoloCheck;
@@ -28,7 +31,9 @@ import com.chilsuitjo.back.notification.dto.SoloQuery;
 import com.chilsuitjo.back.notification.rule.PartyPresence;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.service.CounterpartReader;
+import com.chilsuitjo.back.notification.service.InAppNotifier;
 import com.chilsuitjo.back.notification.service.WaitService;
+import com.chilsuitjo.back.photo.rule.PhotoStage;
 import com.chilsuitjo.back.repair.entity.CauseNote;
 import com.chilsuitjo.back.repair.entity.ProgressNote;
 import com.chilsuitjo.back.repair.entity.RepairCase;
@@ -83,6 +88,7 @@ public class RepairStateStore {
   private final RepairPhotos photos;
   private final CorrectionCloser corrections;
   private final CorrectionReader correctionReader;
+  private final InAppNotifier inApp;
 
   /**
    * 하자 등록(06 REP-1)의 저장 방법. 같은 키로 다시 온 요청이면 pipeline이 만든 수리 건을 {@code load}로 다시 읽는다.
@@ -111,6 +117,15 @@ public class RepairStateStore {
    */
   public StateStore<RepairState> supplementing(String description, List<String> uploadTickets) {
     return new Supplementing(description, List.copyOf(uploadTickets));
+  }
+
+  /**
+   * 사진 추가(06 REP-7g)의 저장 방법. 덧붙이기라 상태 행·판은 그대로 두고 사진만 수리 건에 붙인다.
+   *
+   * @param uploadTickets 붙일 사진의 업로드 표 1~10개(장수는 서비스가 먼저 본다)
+   */
+  public StateStore<RepairState> addingPhotos(List<String> uploadTickets) {
+    return new AddingPhotos(List.copyOf(uploadTickets));
   }
 
   /**
@@ -666,6 +681,69 @@ public class RepairStateStore {
       answerProgressCheck(command);
       return new SavedState(null, content)
           .withPhotos(photos.attach(command, command.target().id(), uploadTickets));
+    }
+  }
+
+  /**
+   * 이 측이 이 수리 건에 사진을 더할 수 있나(06 REP-7g). 공유를 그만둔 사람은 그만둔 동안 자기가 등록한 새 수리 건에만 붙인다(03 B "사진은 진행 상황과
+   * 그만둔 동안 내가 만든 새 수리 건에만"). 상대가 탈퇴해 제한이 풀렸으면 막지 않는다. 상세의 {@code availableActions}와 실제 저장이 같이 쓴다.
+   * 호실 단위 거절(거주 종료·정산 완료)은 {@code RoomGate}가 본다.
+   */
+  public boolean canAddPhotos(RepairCase row, PartySide side) {
+    return canAddPhotos(parties.read(row.getRoomRecordId(), side), row, side);
+  }
+
+  private static boolean canAddPhotos(RoomParties room, RepairCase row, PartySide side) {
+    return !room.mySharingStoppedApplies()
+        || (row.getCreatedBySide() == side
+            && row.getCreatedAt().isAfter(room.mine().sharingStoppedAt()));
+  }
+
+  private final class AddingPhotos implements StateStore<RepairState> {
+
+    private final List<String> uploadTickets;
+
+    private AddingPhotos(List<String> uploadTickets) {
+      this.uploadTickets = uploadTickets;
+    }
+
+    @Override
+    public RepairState load(ActionCommand command) {
+      return RepairStateStore.this.load(command);
+    }
+
+    /**
+     * 사진을 수리 건에 붙이고(지문은 행동 payload {@code photos}) 상대에게 서비스 안 알림만 남긴다(03 "덧붙이기": 확인 요청·문자 없음). 공유를
+     * 그만둔 사람은 그만둔 동안 자기가 등록한 새 수리 건에만 붙인다(03 B "사진은 진행 상황과 그만둔 동안 내가 만든 새 수리 건에만"). 어느 쪽이든 공유 중단
+     * 제한이 살아 있으면 상대는 이 사진을 볼 수 없어 알리지 않는다(불변식 18). 판을 보지 않는 행동이라 내용 지문은 없다(안내서 3-3).
+     */
+    @Override
+    public SavedState save(ActionCommand command, RepairState next) {
+      RepairCase row = row(command);
+      PartySide side = command.actor().side();
+      RoomParties room = parties.read(command.roomRecordId(), side);
+      if (!canAddPhotos(room, row, side)) {
+        throw new BusinessException(ErrorCode.SHARING_STOPPED);
+      }
+      // 사진 단계는 서버가 정한다(05 2-8): 수리를 시작하기 전이면 수리 전, 시작한 뒤면 수리 후
+      PhotoStage stage =
+          next.status() == RepairStatus.NOT_STARTED ? PhotoStage.BEFORE : PhotoStage.AFTER;
+      List<PhotoDigest> added = photos.attach(command, row.getId(), stage, uploadTickets);
+      // 그 건에 상대가 남긴 행동은 진행 상황 물음의 답이다(06 REP-6c, 03 D)
+      answerProgressCheck(command);
+      PartyFacts counterpart = room.counterpart();
+      if (counterpart.presence() == PartyPresence.CONNECTED
+          && counterpart.memberId() != null
+          && !room.mySharingStoppedApplies()
+          && !room.counterpartSharingStoppedApplies()) {
+        inApp.notify(
+            new InfoCommand(
+                counterpart.memberId(),
+                command.roomRecordId(),
+                RequestTarget.of(TargetKind.REPAIR_CASE, row.getId()),
+                null));
+      }
+      return SavedState.unchanged().withPhotos(added);
     }
   }
 

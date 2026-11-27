@@ -3,7 +3,9 @@ package com.chilsuitjo.back.repair.service;
 import com.chilsuitjo.back.action.dto.ActionEntry;
 import com.chilsuitjo.back.action.dto.ActionTarget;
 import com.chilsuitjo.back.action.dto.Actor;
+import com.chilsuitjo.back.action.dto.PhotoDigest;
 import com.chilsuitjo.back.action.dto.RoomGate;
+import com.chilsuitjo.back.action.rule.ActionPhotos;
 import com.chilsuitjo.back.action.rule.ActionType;
 import com.chilsuitjo.back.action.rule.AnswerPayload;
 import com.chilsuitjo.back.action.rule.Replay;
@@ -15,6 +17,7 @@ import com.chilsuitjo.back.correction.rule.CorrectionTargetKind;
 import com.chilsuitjo.back.correction.rule.CorrectionTransitions;
 import com.chilsuitjo.back.correction.service.CorrectionReader;
 import com.chilsuitjo.back.global.common.AckState;
+import com.chilsuitjo.back.global.common.Answer;
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.global.error.BusinessException;
@@ -96,6 +99,11 @@ public class RepairQueryService {
   /** 원인 설명 남기기·고치기의 {@code availableActions} 이름(06 4-6 {@code cause-notes}). */
   static final String CAUSE_NOTES = "cause-notes";
 
+  /**
+   * 사진 추가의 {@code availableActions} 이름(06 4-6 {@code POST /api/repair-cases/{id}/photos}, REP-7g).
+   */
+  static final String PHOTOS = "photos";
+
   /** 고친 내용의 버튼 이름(06 4-6 {@code corrections/{id}/respond}·{@code withdraw}·{@code accept-all}). */
   static final String RESPOND = "respond";
 
@@ -122,6 +130,22 @@ public class RepairQueryService {
   private final ProposalService proposalService;
   private final WaitQuery waits;
   private final Clock clock;
+
+  /**
+   * 사진 추가 행동이 붙인 사진(06 REP-7g 응답 {@code photoIds}, 업로드 표 순서). 처음 요청과 같은 키로 다시 온 요청 모두 행동 기록에서
+   * 읽는다(사진 지문은 행동 payload {@code photos}).
+   */
+  @Transactional(readOnly = true)
+  public List<UUID> addedPhotoIds(UUID repairCaseId, UUID actionId) {
+    return actionReader.findByTarget(ActionTarget.repairCase(repairCaseId)).stream()
+        .filter(entry -> entry.id().equals(actionId))
+        .findFirst()
+        .map(ActionPhotos::attached)
+        .orElseThrow(() -> new IllegalStateException("사진 추가 행동이 없어요: " + actionId))
+        .stream()
+        .map(PhotoDigest::photoId)
+        .toList();
+  }
 
   /**
    * 수리 건 상세(06 4-6, S-12). 없는 ID, 그 호실 당사자가 아님, 상대가 볼 수 없는 기록(공유를 그만둔 뒤 등록, 03 불변식 18)은 모두 {@code
@@ -187,6 +211,12 @@ public class RepairQueryService {
     if (gate.side() != null && gate.rejection(ActionType.NOTE_CAUSE).isEmpty()) {
       actions.add(CAUSE_NOTES);
     }
+    // 사진 추가는 덧붙이기라 수리 진행과 따로다. 호실 단위 거절(거주 종료·정산 완료)과 공유를 그만둔 사람의 수리 건 제한(03 B)을 실제 요청과 같게 본다
+    if (gate.side() != null
+        && gate.rejection(ActionType.ADD_PHOTO).isEmpty()
+        && store.canAddPhotos(row, gate.side())) {
+      actions.add(PHOTOS);
+    }
     RoomAccess viewer = access.require(roomRecordId, memberId);
     List<RepairCaseDetail.Correction> corrections =
         correctionsOf(row, gate, memberId, sight, viewer);
@@ -215,7 +245,8 @@ public class RepairQueryService {
             partName,
             content.getTitle(),
             content.getDescription()),
-        new RepairCaseDetail.Defect(shown.defectAck(), rules.nextRerequestAt(shown)),
+        new RepairCaseDetail.Defect(
+            shown.defectAck(), rules.nextRerequestAt(shown), ackAt(shown, visible)),
         new RepairCaseDetail.Money(moneyAsSeen(row, sight, shown)),
         photoCards,
         causeNotesOf(row, gate, viewer),
@@ -553,6 +584,22 @@ public class RepairQueryService {
         .filter(entry -> sight.sees(entry.actorSide(), entry.createdAt()))
         .sorted(Comparator.comparingLong(ActionEntry::roomSeq))
         .toList();
+  }
+
+  /**
+   * 같이 확인한 시각(06 REP-7g "확인 뒤 추가"의 기준): 보이는 하자 응답 중 맞아요가 처음 남은 시각. 맞아요는 뒤집지 않으므로(03 A) 처음 것이 그때다.
+   * 보이는 하자 인정이 맞아요가 아니면 null이다.
+   */
+  private static Instant ackAt(RepairState shown, List<ActionEntry> visible) {
+    if (shown.defectAck() != AckState.ACK) {
+      return null;
+    }
+    return visible.stream()
+        .filter(entry -> entry.type() == ActionType.RESPOND_DEFECT)
+        .filter(entry -> entry.payloadAs(AnswerPayload.class).answer() == Answer.ACK)
+        .map(ActionEntry::createdAt)
+        .min(Comparator.naturalOrder())
+        .orElse(null);
   }
 
   /**
