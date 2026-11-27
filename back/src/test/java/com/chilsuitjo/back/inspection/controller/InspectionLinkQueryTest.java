@@ -28,6 +28,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -140,6 +141,43 @@ class InspectionLinkQueryTest {
         .extracting(InspectionForLink.History::type)
         .endsWith(ActionType.RESPOND_ITEM, ActionType.LOCK);
     assertThat(seen.history().getLast().side()).isNull();
+  }
+
+  /**
+   * 링크를 받는 사람은 보통 아직 연결 전이다(#397 리뷰). 임대인 자리가 초대 중·초대 전({@code EMPTY})이거나, 읽는 쪽이 빈 자리로 보는 행 없음이어도 두
+   * 측 모두 같은 공개 범위로 본다: 확인 요청한 점검은 보이고 고정 시각이 없으며, 작성 중 점검은 빈 값이다. 호실을 만들 때 두 자리를 함께 만들어 행 없음은 실제로
+   * 생기지 않으므로({@code RoomSeats.counterpartOf}), 점검을 만든 뒤 행을 지워 본다.
+   */
+  @ParameterizedTest
+  @CsvSource({
+    "INVITED, TENANT", "INVITED, LANDLORD",
+    "EMPTY, TENANT", "EMPTY, LANDLORD",
+    "ABSENT, TENANT", "ABSENT, LANDLORD"
+  })
+  void 연결_전_자리여도_확인_요청한_점검은_보이고_작성_중은_빈_값이다(String seatState, PartySide viewer) throws Exception {
+    jdbc.update(
+        "UPDATE state.party SET status = ?, member_id = NULL, connected_at = NULL"
+            + " WHERE room_record_id = ? AND side = 'LANDLORD'",
+        seatState.equals("INVITED") ? "INVITED" : "EMPTY",
+        room);
+    UUID inspection = requestedWith(1);
+    UUID draft = created(start("MOVE_OUT"));
+    created(addItem(draft, "d0"));
+    if (seatState.equals("ABSENT")) {
+      jdbc.update("DELETE FROM state.party WHERE room_record_id = ? AND side = 'LANDLORD'", room);
+    }
+
+    InspectionForLink seen = query.forLink(room, inspection, viewer).orElseThrow();
+
+    assertThat(seen.status()).isEqualTo(InspectionStatus.REQUESTED);
+    assertThat(seen.asOf()).isNull();
+    assertThat(seen.items())
+        .singleElement()
+        .satisfies(shown -> {
+          assertThat(shown.status()).isEqualTo(AckState.PENDING);
+          assertThat(shown.partName()).isEqualTo("천장");
+        });
+    assertThat(query.forLink(room, draft, viewer)).isEmpty();
   }
 
   @ParameterizedTest
