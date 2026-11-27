@@ -29,6 +29,8 @@ export const endpoints = {
   roomPage: (size: number, cursor?: string) =>
     `/api/rooms?size=${size}${cursor ? `&cursor=${id(cursor)}` : ""}`,
   room: (rid: string) => `/api/rooms/${id(rid)}`,
+  // 부위 목록·부위 더하기(ROOM-3)
+  roomParts: (rid: string) => `/api/rooms/${id(rid)}/parts`,
   timeline: (rid: string) => `/api/rooms/${id(rid)}/timeline`,
   // 내려받기 목록(기록.json 내용 + 사진 묶음, DL-1)
   roomDownload: (rid: string) => `/api/rooms/${id(rid)}/download`,
