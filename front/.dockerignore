@@ -1,0 +1,24 @@
+# 화면 이미지의 빌드 입력만 들어온다(로컬 node_modules·dist·.env·테스트는 들어오지 않음)
+**
+!package.json
+!package-lock.json
+!index.html
+!vite.config.ts
+!tsconfig.json
+!tsconfig.app.json
+!tsconfig.node.json
+!src/
+!src/**
+
+# src 아래에 두더라도 비밀값·로컬 설정은 들어오지 않는다
+**/.env
+**/.env.*
+**/*.local
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/credentials
+**/credentials.*
+**/.aws/**
+**/*.log
