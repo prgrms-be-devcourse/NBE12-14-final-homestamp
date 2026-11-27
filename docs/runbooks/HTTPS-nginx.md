@@ -124,7 +124,7 @@ nginx가 죽어도 앱 컨테이너는 그대로다. `docker compose --env-file 
 - `switch-upstream.sh` 계약: 인자 `<host:port>` 하나(`--write-only`는 첫 설치용), 종료 0 성공·1 검사나 reload 실패(이전 주소로 되돌림, 처음이라 이전 파일이 없으면 되돌릴 것 없이 1)·2 주소 형식 오류(파일을 바꾸지 않음, 인자가 없으면 1). 지금 앱은 `run/upstream/upstream.conf`의 `server` 줄로 판단한다. 헬스는 다시 보지 않는다
 - 화면(React)은 `deploy-front.sh`(`docs/runbooks/배포-화면.md`)가 `/srv/homestamp/front`에 설치하고 `current` 링크만 바꾼다. nginx reload는 하지 않는다(`open_file_cache`를 쓰지 않아 다음 요청부터 새 판). 자리:
   - `root /srv/homestamp/front/current`: `index.html`(`no-cache`)·SPA·해시 없는 공개 파일
-  - `location /assets/` → 공용 `/srv/homestamp/front/assets/`(모든 릴리스가 같이 쓰는 해시 이름 파일, 없으면 404, 긴 캐시). 릴리스 폴더 안의 `assets`는 보지 않는다. 그래서 배포 뒤에도 이전 판을 연 브라우저가 옛 JS·CSS를 받는다
+  - `location /assets/` → 공용 `/srv/homestamp/front/assets/`(모든 릴리스가 같이 쓰는 해시 이름 파일. 200·304만 긴 캐시이고 없으면 404에 `no-store`: immutable 404가 남지 않게. 보안 헤더는 location마다 snippet을 넣어 그대로). 릴리스 폴더 안의 `assets`는 보지 않는다. 그래서 배포 뒤에도 이전 판을 연 브라우저가 옛 JS·CSS를 받는다
   - `location = /version.json` → `current/version.json`, `Cache-Control: no-store` 하나(없으면 404). 배포 확인이 지금 나가는 커밋을 이것으로 본다
   - `/api/`·블루/그린 전환은 그대로
 - 요청 제한(04 3-2 `limit_req`: 로그인·인증 문자·링크 조회)은 이 PR에 넣지 않았다. 경로와 기준을 정하는 후속 작업으로 둔다. 로그인·인증 문자의 횟수 제한은 앱이 따로 한다(`RATE_LIMITED`·`DAILY_LIMIT`). 링크 조회의 IP 제한이 비어 있다
@@ -147,4 +147,4 @@ nginx가 죽어도 앱 컨테이너는 그대로다. `docker compose --env-file 
 ```sh
 mkdir -p /tmp/hs-nginx-work && infra/nginx/test/local-test.sh /tmp/hs-nginx-work   # 빈 폴더를 준다
 ```
-운영과 같은 nginx 이미지·설정·컨테이너 보안 옵션으로, 시험용 자체 CA 인증서를 써서 확인한다(62개): HTTP 전용 모드·ACME·모르는 Host 끊기, HTTPS 체인·이름·TLS 1.2/1.3·1.1 거절·모르는 SNI 거절, 화면·SPA·캐시·공용 `/assets/`(릴리스 안 assets 404)·`/version.json`(`no-store`, 없으면 404)·reload 없는 `current` 전환, Actuator·점 파일 막기, 보안 헤더·HSTS 기본 꺼짐·`/api/`에서 앱 헤더 중복 없음(가짜 앱이 Spring Security 기본 헤더를 낸다)·503에도 보안 헤더, API 경로·가짜 X-Forwarded-* 덮어쓰기·413, 블루/그린 전환·실패 시 유지, 앱 꺼짐 503. 실제 Let's Encrypt·DNS·EC2·systemd는 시험하지 않는다.
+운영과 같은 nginx 이미지·설정·컨테이너 보안 옵션으로, 시험용 자체 CA 인증서를 써서 확인한다(63개): HTTP 전용 모드·ACME·모르는 Host 끊기, HTTPS 체인·이름·TLS 1.2/1.3·1.1 거절·모르는 SNI 거절, 화면·SPA·캐시·공용 `/assets/`(릴리스 안 assets 404)·`/version.json`(`no-store`, 없으면 404)·reload 없는 `current` 전환, Actuator·점 파일 막기, 보안 헤더·HSTS 기본 꺼짐·`/api/`에서 앱 헤더 중복 없음(가짜 앱이 Spring Security 기본 헤더를 낸다)·503에도 보안 헤더, API 경로·가짜 X-Forwarded-* 덮어쓰기·413, 블루/그린 전환·실패 시 유지, 앱 꺼짐 503. 실제 Let's Encrypt·DNS·EC2·systemd는 시험하지 않는다.
