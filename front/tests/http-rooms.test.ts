@@ -614,6 +614,7 @@ describe("호실 경과(06 4장 timeline, #359)", () => {
         id: "a1",
         roomId: "r1",
         text: "아직 안 됐어요 · 아직 물이 새요",
+        subject: "수리 건",
         by: "임차인",
         at: "2026-11-27T05:00:00Z",
         target: { kind: "repair", id: "c1" },
@@ -635,5 +636,78 @@ describe("호실 경과(06 4장 timeline, #359)", () => {
     await records.loadRoom({ accountId: "me" }, "r1")
     expect(records.getSnapshot().events.map((e) => e.id)).toEqual(["a1"])
     expect(records.getSnapshot().rooms.map((r) => r.id)).toEqual(["r1"])
+  })
+
+  test("경과에 모양이 다른 줄이 있으면 경과만 앞서 받은 것을 두고, 호실 반영은 막지 않는다(#368 리뷰)", async () => {
+    let broken = false
+    let actions = ["repair-cases"]
+    const records = createHttpRecords((async (_m: string, path: string) => {
+      if (path.startsWith(`${endpoints.rooms}?`))
+        return { items: [summary()], nextCursor: null }
+      if (isRepairPage(path)) return emptyRepairs
+      if (path.endsWith("/timeline"))
+        return { ...emptyTimeline, items: broken ? [notYet, null] : [notYet] }
+      if (path.startsWith(`${endpoints.rooms}/`))
+        return detail({ availableActions: actions })
+      return []
+    }) as HttpRequest)
+    await records.load({ accountId: "me" })
+    broken = true
+    actions = ["new"]
+    await records.load({ accountId: "me" })
+    expect(records.getSnapshot().events.map((e) => e.id)).toEqual(["a1"])
+    expect(records.getSnapshot().rooms[0].server?.availableActions).toEqual([
+      "new",
+    ])
+  })
+
+  test("다른 계정으로 받으면 앞 계정의 경과·호실을 비우고, 경과가 실패해도 앞 계정 경과를 보이지 않는다(#368 리뷰)", async () => {
+    let fail = false
+    const records = createHttpRecords(
+      server(() => {
+        if (fail) throw new ApiError({ status: 500, code: "INTERNAL_ERROR" })
+        return { ...emptyTimeline, items: [notYet] }
+      }),
+    )
+    await records.load({ accountId: "landlord" })
+    expect(records.getSnapshot().events).toHaveLength(1)
+    fail = true
+    await records.load({ accountId: "tenant" })
+    expect(records.getSnapshot().events).toEqual([])
+    expect(records.getSnapshot().rooms.map((r) => r.id)).toEqual(["r1"])
+  })
+
+  test("계정이 바뀌는 사이 끝난 앞 계정의 받기는 반영하지 않는다", async () => {
+    let release: () => void = () => {}
+    let first = true
+    const records = createHttpRecords(
+      server(() => {
+        if (!first) return { ...emptyTimeline, items: [] }
+        first = false
+        return new Promise(
+          (r) => (release = () => r({ ...emptyTimeline, items: [notYet] })),
+        )
+      }),
+    )
+    const slow = records.load({ accountId: "landlord" })
+    await vi.waitFor(() => expect(first).toBe(false))
+    await records.load({ accountId: "tenant" })
+    release()
+    await slow
+    expect(records.getSnapshot().events).toEqual([])
+  })
+
+  test("공유를 그만둔 뒤면 경과 기준 시각(asOf)을 호실별로 둔다", async () => {
+    const records = createHttpRecords(
+      server(() => ({
+        ...emptyTimeline,
+        asOf: "2026-11-20T03:00:00Z",
+        items: [notYet],
+      })),
+    )
+    await records.load({ accountId: "me" })
+    expect(records.getSnapshot().timelineAsOf).toEqual({
+      r1: "2026-11-20T03:00:00Z",
+    })
   })
 })

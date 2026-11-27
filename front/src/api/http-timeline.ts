@@ -117,16 +117,53 @@ const ANSWER_LABEL: Record<string, string> = {
 
 const toRole = (s: ServerSide): Role => (s === "TENANT" ? "임차인" : "임대인")
 
+// 남긴 측이 없는(side null) 행동은 서버 행동이거나 운영 행동이에요(RoomTimeline.Item.side).
+// 사진 숨김·지움 등 사진 행동은 측 없이 남으면 운영이 한 것이라(06 PHO-7) "운영"으로, 나머지는 "서버 자동"으로 보여요
+const OPERATOR_TYPES = new Set([
+  "HIDE_PHOTO",
+  "SHOW_PHOTO",
+  "MARK_PHOTO_WRONG",
+  "UNMARK_PHOTO_WRONG",
+  "ERASE_PHOTO",
+])
+const byOf = (it: TimelineItemBody) =>
+  it.side ? toRole(it.side) : OPERATOR_TYPES.has(it.type) ? "운영" : "서버 자동"
+
+// 이 모양이 아닌 줄은 경과 전체를 버려요(부른 쪽이 앞서 받은 경과를 둬요)
+const isItem = (it: unknown): it is TimelineItemBody => {
+  if (!it || typeof it !== "object") return false
+  const x = it as Record<string, unknown>
+  const target = x.target as Record<string, unknown> | null | undefined
+  return (
+    typeof x.id === "string" &&
+    typeof x.at === "string" &&
+    typeof x.type === "string" &&
+    (x.side === null || x.side === "TENANT" || x.side === "LANDLORD") &&
+    (target === null ||
+      (typeof target === "object" &&
+        typeof target.kind === "string" &&
+        typeof target.id === "string")) &&
+    (x.reason === null ||
+      x.reason === undefined ||
+      typeof x.reason === "string")
+  )
+}
+// 수리 건 제목을 못 찾았을 때(수리 건 목록만 실패한 첫 받기 등)의 대상 이름
+const REPAIR_SUBJECT = "수리 건"
+
 export const actionLabel = (type: string) => ACTION_LABEL[type] ?? "기록"
 
-// 경과 한 줄 → 화면 줄(Event). 글자는 "수리 건 제목 · 행동 · 응답 · 사유" 모양이라
-// 수리 건 상세는 제목을 떼고(Timeline stripTitle), 호실 활동 이력은 제목을 대상으로 보여요.
+// 경과 한 줄 → 화면 줄(Event). 글자는 "행동 · 응답 · 사유", 대상 이름(수리 건 제목)은 subject에 따로 둬요.
+// 호실 활동 이력은 subject를 대상으로 보이고, 수리 건 상세는 보이지 않아요(Timeline stripTitle).
+// 모양이 다른 줄이 있으면 던져요(#368 리뷰)
 export function eventsFromTimeline(
   roomId: string,
   body: RoomTimelineBody,
   repairs: readonly Pick<Repair, "id" | "title">[],
 ): Event[] {
   const titles = new Map(repairs.map((r) => [r.id, r.title]))
+  if (!Array.isArray(body.items) || !body.items.every(isItem))
+    throw new Error("경과 응답 모양이 달라요.")
   return body.items.map((it) => {
     const repairId =
       it.target?.kind === "REPAIR_CASE" ? it.target.id : undefined
@@ -134,18 +171,20 @@ export function eventsFromTimeline(
       typeof it.payload?.answer === "string"
         ? ANSWER_LABEL[it.payload.answer]
         : undefined
-    const title = repairId ? titles.get(repairId) : undefined
-    const text = [title, actionLabel(it.type), answer, it.reason?.trim()]
+    const text = [actionLabel(it.type), answer, it.reason?.trim()]
       .filter(Boolean)
       .join(" · ")
     return {
       id: it.id,
       roomId,
       text,
-      by: it.side ? toRole(it.side) : "서버 자동",
+      by: byOf(it),
       at: it.at,
       ...(repairId
-        ? { target: { kind: "repair" as const, id: repairId } }
+        ? {
+            subject: titles.get(repairId) || REPAIR_SUBJECT,
+            target: { kind: "repair" as const, id: repairId },
+          }
         : {}),
       ...(it.target ? { ref: { kind: it.target.kind, id: it.target.id } } : {}),
     }

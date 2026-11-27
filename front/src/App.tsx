@@ -1216,7 +1216,12 @@ function HomeStampApp({
                       )}
                     </>
                   )}
-                  {page === "timeline" && <TimelinePage events={events} />}
+                  {page === "timeline" && (
+                    <TimelinePage
+                      events={events}
+                      asOf={db.timelineAsOf?.[room.id]}
+                    />
+                  )}
                   {page === "notifications" && (
                     <NotificationsPage
                       accountId={accountId ?? ""}
