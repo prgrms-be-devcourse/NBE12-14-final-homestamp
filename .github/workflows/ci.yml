@@ -181,7 +181,7 @@ jobs:
           cache: gradle
       # Gradle을 한 번만 띄운다(따로 돌리면 JVM·설정 읽기를 두 번 함, #335)
       - name: 서식·테스트·커버리지 (Spotless, Testcontainers postgres:18.6, JaCoCo)
-        run: ./gradlew spotlessCheck build --no-daemon -PtestForks=2
+        run: ./gradlew spotlessCheck build --no-daemon
       - name: 커버리지 보고서
         if: always()
         uses: actions/upload-artifact@v7
