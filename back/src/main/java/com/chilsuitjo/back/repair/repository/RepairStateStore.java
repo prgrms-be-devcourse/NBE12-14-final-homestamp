@@ -203,10 +203,6 @@ public class RepairStateStore {
   }
 
   /**
-   * 마지막으로 [상황이 바뀌었어요]를 켜서 진행 상황을 남긴 시각(행동 기록이 원본: {@code NOTE_PROGRESS}의 payload {@code
-   * asksCheck}). 누가 켰든 한 건에 센다(06 REP-6d). 없으면 null.
-   */
-  /**
    * 이 수리 건의 마지막 다시 요청 시각: [보충하고 다시 확인 요청]·[상황이 바뀌었어요]·고친 내용의 [사진 더해서 다시 요청] 중 가장 최근(06 0-1 {@code
    * rerequest.interval} "한 기록에", 같은 기록의 다시 요청끼리 함께 셈, #278). 없으면 null. 고친 내용 다시 요청의 7일에 쓴다 ({@code
    * Correctable.lastRerequestAt}). 트랜잭션 안에서 부른다.
@@ -230,6 +226,10 @@ public class RepairStateStore {
     return b == null || a.isAfter(b) ? a : b;
   }
 
+  /**
+   * 마지막으로 [상황이 바뀌었어요]를 켜서 진행 상황을 남긴 시각(행동 기록이 원본: {@code NOTE_PROGRESS}의 payload {@code
+   * asksCheck}). 누가 켰든 한 건에 센다(06 REP-6d). 없으면 null.
+   */
   private static Instant lastSituationCheckAt(List<ActionEntry> history) {
     return history.stream()
         .filter(entry ->

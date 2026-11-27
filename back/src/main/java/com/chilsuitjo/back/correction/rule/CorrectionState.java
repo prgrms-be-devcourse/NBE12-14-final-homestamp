@@ -14,7 +14,7 @@ import java.time.Instant;
  * @param owner 고치기면 원래 기록한 측(이 측만 고침), 응답·거두기·다시 요청이면 고친 측(그 반대 측이 답하고, 이 측이 거두고 다시 보냄)
  * @param stamped 고치기: 지금 기록에 도장이 있나
  * @param stampChanged 고치기: 서비스가 잠그기 전에 본 도장 여부와 지금이 다름(그사이 상대가 확인함). 요청 모양이 달라져 다시 불러야 한다
- * @param sameValue 고치기: 새 값 중 앞모습과 같은 칸이 있음
+ * @param sameValue 고치기·다시 요청: 새 값 중 앞모습과 같은 칸이 있음
  * @param closedByBoth 고치기: 처리 완료(양측)된 수리 건. 응답·다시 요청: 그 이유로 닫힌 고친 내용이거나 기록이 처리 완료(양측)
  * @param status 응답·거두기·다시 요청: 고친 내용의 지금 상태
  * @param answer 응답·다시 요청: 지금 응답 값(기다림·미확인이면 {@code PENDING}, 거절됐으면 마지막 보류·이견)
@@ -86,12 +86,13 @@ public record CorrectionState(
       AckState answer,
       boolean latestOfField,
       boolean canOpenRequest,
-      Instant lastRerequestAt) {
+      Instant lastRerequestAt,
+      boolean sameValue) {
     return new CorrectionState(
         requestedBy,
         false,
         false,
-        false,
+        sameValue,
         closedByBoth,
         status,
         answer,

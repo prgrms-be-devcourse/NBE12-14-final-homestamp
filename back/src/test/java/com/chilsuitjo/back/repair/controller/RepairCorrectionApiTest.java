@@ -452,6 +452,13 @@ class RepairCorrectionApiTest {
         .containsEntry("actor_side", "TENANT");
     assertThat(waits.statusOf(caseRequest(), RequestKind.CORRECTION_CONFIRM))
         .contains(RequestStatus.WAITING);
+    // 상대 상세에서 새 고친 내용에 더한 근거 사진이 보인다(#296 리뷰)
+    detail(landlord)
+        .andExpect(jsonPath("$.corrections[0].photos", hasSize(0)))
+        .andExpect(jsonPath("$.corrections[1].id").value(retry.toString()))
+        .andExpect(jsonPath("$.corrections[1].photos", hasSize(1)))
+        .andExpect(jsonPath("$.corrections[1].photos[0].stage").value("BEFORE"))
+        .andExpect(jsonPath("$.corrections[1].photos[0].target.id").value(retry.toString()));
 
     // 상대는 새 고친 내용에 답하고, 맞아요면 앞모습이 된다
     respond(retry, landlord, "r2", "ACK", null, 1).andExpect(status().isOk());
@@ -489,6 +496,28 @@ class RepairCorrectionApiTest {
     // 같은 수리 건의 다시 요청은 7일에 한 번
     resubmit(retry, tenant, "s5", "근거 더", List.of())
         .andExpect(jsonPath("$.code").value("ASKED_RECENTLY"));
+  }
+
+  @Test
+  void 그사이_숨긴_부위로는_다시_요청할_수_없다() throws Exception {
+    stamp();
+    UUID floor = part("바닥");
+    UUID first =
+        firstId(
+            correct(
+                tenant, "c1", "{\"field\":\"roomPartId\",\"newValue\":\"" + floor + "\"}", "부위"));
+    respond(first, landlord, "r1", "DISPUTE", "바닥이 아니에요", 1).andExpect(status().isOk());
+    jdbc.update("UPDATE state.room_part SET hidden_at = CURRENT_TIMESTAMP WHERE id = ?", floor);
+
+    resubmit(first, tenant, "s1", "바닥 사진이에요", List.of())
+        .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM state.correction_request WHERE retry_of_id = ?",
+                Integer.class,
+                first))
+        .isZero();
+    assertThat(correction(first)).containsEntry("status", "REJECTED");
   }
 
   @Test

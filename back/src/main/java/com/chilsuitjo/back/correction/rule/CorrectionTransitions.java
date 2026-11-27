@@ -28,8 +28,9 @@ import org.springframework.stereotype.Component;
  *       AnswerSupport.answer}(본 번호, 맞아요는 끝, 보류·이견에서는 맞아요로만, 사유)
  *   <li>거두기({@code WITHDRAW_CORRECTION}): 고친 측 → 기다리는 고친 내용만({@code INVALID_STATE})
  *   <li>[사진 더해서 다시 요청]({@code RESUBMIT_CORRECTION}): 고친 측 → 처리 완료로 닫혔으면 {@code CLOSED_BY_BOTH} → 그
- *       칸의 마지막 고친 내용만({@code INVALID_STATE}) → 그 뒤는 {@code AnswerSupport.rerequest}(보류·이견이고 요청을 열 수
- *       있을 때, 같은 기록의 다시 요청끼리 7일에 한 번). 근거(사진·설명)는 서비스가 pipeline 전에 본다
+ *       칸의 마지막 고친 내용만({@code INVALID_STATE}) → 앞모습과 같아졌으면 {@code SAME_VALUE} → 그 뒤는 {@code
+ *       AnswerSupport.rerequest}(보류·이견이고 요청을 열 수 있을 때, 같은 기록의 다시 요청끼리 7일에 한 번). 근거(사진·설명)는 서비스가
+ *       pipeline 전에 본다
  * </ul>
  */
 @Component
@@ -100,6 +101,9 @@ public class CorrectionTransitions implements Transitions<CorrectionState> {
     }
     if (now.status() != CorrectionStatus.REJECTED || !now.latestOfField()) {
       throw new BusinessException(ErrorCode.INVALID_STATE);
+    }
+    if (now.sameValue()) {
+      throw new BusinessException(ErrorCode.SAME_VALUE);
     }
     AnswerSupport.Rerequested result =
         AnswerSupport.rerequest(

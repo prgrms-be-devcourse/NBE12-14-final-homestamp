@@ -156,13 +156,13 @@ public class RepairQueryService {
     if (gate.side() != null && gate.rejection(ActionType.NOTE_CAUSE).isEmpty()) {
       actions.add(CAUSE_NOTES);
     }
-    List<RepairCaseDetail.Correction> corrections = correctionsOf(row, gate, asOf);
+    RoomAccess viewer = access.require(roomRecordId, memberId);
+    List<RepairCaseDetail.Correction> corrections = correctionsOf(row, gate, asOf, viewer);
     if (corrections.stream()
         .anyMatch(c ->
             c.status() == CorrectionStatus.WAITING && c.availableActions().contains(RESPOND))) {
       actions.add(ACCEPT_ALL);
     }
-    RoomAccess viewer = access.require(roomRecordId, memberId);
     PhotoTarget photoTarget = new PhotoTarget.Ref(PhotoTargetType.REPAIR_CASE, row.getId());
     List<PhotoCard> photoCards = photos.cards(viewer, List.of(photoTarget)).get(photoTarget);
     return new RepairCaseDetail(
@@ -196,11 +196,14 @@ public class RepairQueryService {
    * CorrectionTransitions.canRespond}·{@code canWithdraw}이고 지금 상태로 계산한다(상세의 {@code
    * availableActions}와 같음). 처리 완료(양측)된 수리 건이면 보류·이견이던 것도 맞아요로 바꾸지 못해 응답 버튼이 없다(REP-7k, #287 리뷰).
    *
+   * <p>다시 보낼 때 더한 근거 사진은 그 고친 내용({@code CORRECTION_REQUEST})에 붙어 있어 고친 내용마다 {@code photos}로 준다(원인
+   * 설명과 같이 한 번에 부름, #296 리뷰).
+   *
    * <p>공유를 그만둔 뒤({@code asOf})에는 그 시각까지 고친 것과 보는 사람 자신이 고친 것만 보이고, 응답도 그 시각까지의 응답과 보는 사람 자신의 응답 중
    * 마지막으로 보여 준다(03 6-6 9번, 불변식 18). 그래서 그만두기 전에 보류·이견이었고 그 뒤 상대가 맞아요로 바꿨으면 보류·이견과 그 사유가 그대로 보인다.
    */
   private List<RepairCaseDetail.Correction> correctionsOf(
-      RepairCase row, RoomGate gate, Instant asOf) {
+      RepairCase row, RoomGate gate, Instant asOf, RoomAccess access) {
     PartySide viewer = gate.side();
     boolean closedByBoth =
         row.getStatus() == RepairStatus.DONE && row.getClosedBy() == ClosedBy.BOTH;
@@ -208,14 +211,29 @@ public class RepairQueryService {
     boolean withdrawable = gate.rejection(ActionType.WITHDRAW_CORRECTION).isEmpty();
     boolean resubmittable =
         !closedByBoth && gate.rejection(ActionType.RESUBMIT_CORRECTION).isEmpty();
-    Instant lastRerequestAt = store.lastRerequestAt(row);
-    Instant now = clock.instant();
+    List<CorrectionView> all =
+        correctionReader.findByRecord(CorrectionTargetKind.REPAIR_CASE, row.getId());
+    Set<UUID> canResubmit =
+        resubmittable && all.stream().anyMatch(v -> v.status() == CorrectionStatus.REJECTED)
+            ? correctionReader.resubmittable(
+                row.getRoomRecordId(), all, viewer, store.lastRerequestAt(row), clock.instant())
+            : Set.of();
+    List<CorrectionView> visible =
+        all.stream()
+            .filter(view ->
+                asOf == null || !view.createdAt().isAfter(asOf) || view.requestedBySide() == viewer)
+            .toList();
+    if (visible.isEmpty()) {
+      return List.of();
+    }
+    List<PhotoTarget> targets =
+        visible.stream()
+            .<PhotoTarget>map(
+                view -> new PhotoTarget.Ref(PhotoTargetType.CORRECTION_REQUEST, view.id()))
+            .toList();
+    Map<PhotoTarget, List<PhotoCard>> cards = photos.cards(access, targets);
     List<RepairCaseDetail.Correction> result = new ArrayList<>();
-    for (CorrectionView view :
-        correctionReader.findByRecord(CorrectionTargetKind.REPAIR_CASE, row.getId())) {
-      if (asOf != null && view.createdAt().isAfter(asOf) && view.requestedBySide() != viewer) {
-        continue;
-      }
+    for (CorrectionView view : visible) {
       Shown shown = shownAnswer(view, viewer, asOf);
       List<String> buttons = new ArrayList<>();
       if (respondable
@@ -226,7 +244,7 @@ public class RepairQueryService {
           && CorrectionTransitions.canWithdraw(view.status(), view.requestedBySide(), viewer)) {
         buttons.add(WITHDRAW);
       }
-      if (resubmittable && correctionReader.canResubmit(view.id(), viewer, lastRerequestAt, now)) {
+      if (canResubmit.contains(view.id())) {
         buttons.add(RESUBMIT);
       }
       String newPartName =
@@ -249,6 +267,8 @@ public class RepairQueryService {
               shown.at(),
               view.closedReason(),
               view.createdAt(),
+              cards.getOrDefault(
+                  new PhotoTarget.Ref(PhotoTargetType.CORRECTION_REQUEST, view.id()), List.of()),
               List.copyOf(buttons)));
     }
     return List.copyOf(result);

@@ -3,7 +3,6 @@ package com.chilsuitjo.back.repair.repository;
 import com.chilsuitjo.back.action.dto.ActionCommand;
 import com.chilsuitjo.back.action.dto.PhotoDigest;
 import com.chilsuitjo.back.action.service.ActionRequestContext;
-import com.chilsuitjo.back.correction.dto.CorrectionView;
 import com.chilsuitjo.back.correction.rule.CorrectionTargetKind;
 import com.chilsuitjo.back.correction.service.CorrectionReader;
 import com.chilsuitjo.back.photo.dto.PhotoAttachCommand;
@@ -147,9 +146,9 @@ public class RepairPhotos {
     for (CauseNote note : causeNotes.findByRepairCaseIdOrderByCreatedAtAscIdAsc(repairCaseId)) {
       counted.add(new PhotoTarget.Ref(PhotoTargetType.CAUSE_NOTE, note.getId()));
     }
-    for (CorrectionView correction :
-        corrections.findByRecord(CorrectionTargetKind.REPAIR_CASE, repairCaseId)) {
-      counted.add(new PhotoTarget.Ref(PhotoTargetType.CORRECTION_REQUEST, correction.id()));
+    for (UUID correctionId :
+        corrections.idsByRecord(CorrectionTargetKind.REPAIR_CASE, repairCaseId)) {
+      counted.add(new PhotoTarget.Ref(PhotoTargetType.CORRECTION_REQUEST, correctionId));
     }
     return new PhotoQuota(maxRepair, List.copyOf(counted));
   }

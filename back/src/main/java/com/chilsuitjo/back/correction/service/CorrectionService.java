@@ -252,7 +252,8 @@ public class CorrectionService {
    *
    * <p>pipeline 전에 입력을 본다: 사진이 10장을 넘거나 빈 표가 있거나 설명이 2,000자를 넘으면 {@code VALIDATION_FAILED}, 주민등록번호
    * 형태면 {@code RESIDENT_ID_BLOCKED}, 사진도 설명도 없으면 {@code EVIDENCE_REQUIRED}. 잠근 뒤는 {@code
-   * CorrectionTransitions} 순서다(고친 측 → 처리 완료로 닫힘 → 그 칸의 마지막·보류·이견 → 같은 기록의 다시 요청끼리 7일).
+   * CorrectionTransitions} 순서다(고친 측 → 처리 완료로 닫힘 → 그 칸의 마지막·보류·이견 → 앞모습과 같은 값 → 같은 기록의 다시 요청끼리 7일).
+   * 값은 잠근 뒤 처음 고칠 때처럼 {@code Correctable.normalize}로 다시 확인한다(숨긴 부위 등).
    */
   public Resubmitted resubmit(
       UUID correctionId, UUID memberId, String idempotencyKey, SupplementRequest request) {
@@ -273,7 +274,8 @@ public class CorrectionService {
         ActionBatch.of(row.getRoomRecordId(), Actor.member(memberId), idempotencyKey)
             .creating(
                 ActionType.RESUBMIT_CORRECTION,
-                store.resubmitting(target, correctionId, description, request.uploadTickets()),
+                store.resubmitting(
+                    target, correctionId, description, request.uploadTickets(), memberId),
                 rules);
     BatchResult result = pipeline.executeAll(batch);
     return new Resubmitted(result.actions().getFirst().target().id(), result.replayed());
