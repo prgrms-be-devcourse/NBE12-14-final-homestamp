@@ -3,6 +3,7 @@ package com.chilsuitjo.back.notification.repository;
 import com.chilsuitjo.back.notification.entity.Notice;
 import com.chilsuitjo.back.notification.rule.NoticeChannel;
 import com.chilsuitjo.back.notification.rule.NoticeKind;
+import com.chilsuitjo.back.notification.rule.NoticeStatus;
 import jakarta.persistence.LockModeType;
 import java.time.Instant;
 import java.util.Collection;
@@ -91,4 +92,15 @@ public interface NoticeRepository extends JpaRepository<Notice, UUID> {
       @Param("roomRecordId") UUID roomRecordId,
       @Param("linkIds") Collection<UUID> linkIds,
       @Param("channel") NoticeChannel channel);
+
+  /**
+   * 이 요청에 걸린 통지 중 상태가 {@code statuses}인 것의 링크 ID(아직 닿지 않은 통지가 쓸 수 있는 문자인지 볼 때). 링크가 없는 통지는 {@code
+   * null}로 들어간다.
+   */
+  @Query(
+      "select n.linkId from Notice n where n.responseRequestId = :requestId"
+          + " and n.status in :statuses")
+  List<UUID> findLinkIdsByRequestAndStatusIn(
+      @Param("requestId") UUID responseRequestId,
+      @Param("statuses") Collection<NoticeStatus> statuses);
 }
