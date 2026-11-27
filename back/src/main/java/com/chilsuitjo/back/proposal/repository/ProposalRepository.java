@@ -1,6 +1,7 @@
 package com.chilsuitjo.back.proposal.repository;
 
 import com.chilsuitjo.back.proposal.entity.Proposal;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -23,4 +24,8 @@ public interface ProposalRepository extends JpaRepository<Proposal, UUID> {
           + " where p.repairCaseId = :repairCaseId and p.roomRecordId = :roomRecordId")
   int maxRoundOfRepairCase(
       @Param("roomRecordId") UUID roomRecordId, @Param("repairCaseId") UUID repairCaseId);
+
+  /** 이 수리 건 부담 안건의 제안 모두(만든 순서). 다른 호실의 수리 건이면 비어 있다. */
+  List<Proposal> findByRoomRecordIdAndRepairCaseIdOrderByCreatedAtAscIdAsc(
+      UUID roomRecordId, UUID repairCaseId);
 }
