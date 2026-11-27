@@ -21,6 +21,10 @@ public interface NoticeRepository extends JpaRepository<Notice, UUID> {
   @Query("SELECT n FROM Notice n WHERE n.id = :id")
   Optional<Notice> findForUpdate(@Param("id") UUID id);
 
+  /** 응답 요청에 걸린 통지의 호실. 잠그기 전에 읽어 호실을 먼저 잠그려고 쓴다(호실 → 통지 → 요청, 09 3장 "잠금"). 칸은 만든 뒤 바뀌지 않는다. */
+  @Query("SELECT n.roomRecordId FROM Notice n WHERE n.id = :id AND n.responseRequestId IS NOT NULL")
+  Optional<UUID> findRequestRoomId(@Param("id") UUID id);
+
   /**
    * 이 호실의 응답 요청들에 걸린 통지 중 종류가 {@code kinds}인 것(만든 순서, 같으면 ID). 호실도 함께 걸러 다른 호실의 통지는 들어가지 않는다. 잠그지
    * 않는다(읽기 전용 조회).

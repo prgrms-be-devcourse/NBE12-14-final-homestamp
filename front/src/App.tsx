@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react"
+import { clearTakenAt } from "@/lib/photos"
 import { Plus, ShieldCheck } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -21,7 +22,11 @@ import {
 } from "@/data/demo"
 import { useRouter, type Page } from "@/lib/router"
 import { roomOptions } from "@/lib/room-options"
-import { LoadingState, NotFoundState } from "@/components/common/states"
+import {
+  ErrorState,
+  LoadingState,
+  NotFoundState,
+} from "@/components/common/states"
 import { NotificationsPage } from "@/pages/notifications-page"
 import { RepairDetailPage } from "@/pages/repair-detail-page"
 import { InspectionPage } from "@/pages/inspection-page"
@@ -149,40 +154,78 @@ export default function App() {
   const [auth] = useState(() => createAuth())
   const [account, setAccount] = useState<Account | null>(null)
   const [restoring, setRestoring] = useState(true)
+  // 새로고침 뒤 로그인 복원이 연결 오류·서버 오류로 실패했을 때의 안내. 로그아웃하지 않고 다시 시도하게 해요(#191)
+  const [restoreError, setRestoreError] = useState<string>()
+  const [restoreTry, setRestoreTry] = useState(0)
   const [authOpen, setAuthOpen] = useState(false)
+  // 쓰는 중에 세션이 끝나 로그인 화면으로 보낼 때의 안내(LOGIN_REQUIRED·REFRESH_REUSED 문구)
+  const [ended, setEnded] = useState<string>()
   useEffect(() => {
     let alive = true
-    auth.restore().then((a) => {
-      if (alive) {
+    auth.restore().then(
+      (a) => {
+        if (!alive) return
         setAccount(a)
         setRestoring(false)
-      }
-    })
+      },
+      (e: unknown) => {
+        if (alive) setRestoreError(errorMessage(e))
+      },
+    )
     return () => {
       alive = false
     }
-  }, [auth])
+  }, [auth, restoreTry])
+  // 토큰 만료 뒤 재발급도 실패하면 로그인 화면으로 보내요. 주소는 그대로 두어 다시 로그인하면 보던 화면으로 돌아와요
+  useEffect(
+    () =>
+      auth.onSessionEnd((e) => {
+        setAccount(null)
+        setAuthOpen(true)
+        setEnded(e.message)
+      }),
+    [auth],
+  )
   const link = isShareLink()
   if (restoring)
     return (
       <div className="auth-loading">
-        <LoadingState label="HomeStamp를 여는 중이에요" />
+        {restoreError ? (
+          <ErrorState
+            message={restoreError}
+            onRetry={() => {
+              setRestoreError(undefined)
+              setRestoreTry((n) => n + 1)
+            }}
+          />
+        ) : (
+          <LoadingState label="HomeStamp를 여는 중이에요" />
+        )}
       </div>
     )
   if (!account && (!link || authOpen))
     return (
       <AuthScreen
         auth={auth}
-        initialMode={link ? "signup" : "login"}
+        initialMode={link && !ended ? "signup" : "login"}
         onDone={(a) => {
           setAccount(a)
           setAuthOpen(false)
+          setEnded(undefined)
         }}
-        onBack={link ? () => setAuthOpen(false) : undefined}
-        notice={
+        onBack={
           link
-            ? "공유받은 기록에 응답하려면 가입한 뒤, 초대받은 번호로 호실에 연결해 주세요."
+            ? () => {
+                setAuthOpen(false)
+                setEnded(undefined)
+              }
             : undefined
+        }
+        notice={
+          ended ??
+          (link
+            ? "공유받은 기록에 응답하려면 가입한 뒤, 초대받은 번호로 호실에 연결해 주세요."
+            : undefined)
         }
       />
     )
@@ -197,6 +240,8 @@ export default function App() {
           auth.logout().then(() => {
             replaceUrl(null, "", "/")
             setAccount(null)
+            // 만료된 세션을 로그아웃하다 재발급이 401이면 세션 끝 안내가 함께 오지만, 사람이 고른 로그아웃이라 안내하지 않아요
+            setEnded(undefined)
           })
         }
       />
@@ -215,6 +260,8 @@ function HomeStampApp({
 }) {
   const query = new URLSearchParams(window.location.search)
   const accountId = account?.id
+  // 계정이 바뀌면 앞 계정이 고른 사진의 촬영 시각을 비워요(lib/photos, #371 리뷰)
+  useEffect(() => clearTakenAt(), [accountId])
   const api = useApi()
   // 공용 입력 창이 수리 건을 바꾸면 상세 화면이 다시 불러오게 올리는 번호
   const [repairTick, setRepairTick] = useState(0)
@@ -1216,7 +1263,12 @@ function HomeStampApp({
                       )}
                     </>
                   )}
-                  {page === "timeline" && <TimelinePage events={events} />}
+                  {page === "timeline" && (
+                    <TimelinePage
+                      events={events}
+                      asOf={db.timelineAsOf?.[room.id]}
+                    />
+                  )}
                   {page === "notifications" && (
                     <NotificationsPage
                       accountId={accountId ?? ""}

@@ -16,6 +16,10 @@ export interface Event {
   by: string
   at: string
   privateTo?: Role
+  // 대상 이름(수리 건 제목 등). 있으면 text에는 행동부터 들어 있어요(서버 경과, http-timeline). 목업은 text 첫 토막이 대상이에요
+  subject?: string
+  // 서버 경과의 원래 대상(06 4장 timeline target). 원인 설명·고친 내용 응답처럼 수리 건이 아닌 대상을 그 수리 건 경과에 붙일 때 써요
+  ref?: { kind: string; id: string }
 }
 export interface AmountOffer {
   id: string
@@ -52,6 +56,26 @@ export interface CauseClaim {
   supersededBy?: string
   supersedes?: string
   // 서버가 이 설명에 지금 응답할 수 있다고 했는지(06 4-6 causeNotes[].canRespond). 목업은 비워 둬요
+  canRespond?: boolean
+}
+// 진행 상황(REP-6, 08 5-2). 원래 하자 기록은 그대로 두고 지금 상황을 더해요. 고칠 수 없어요
+export interface ProgressNote {
+  id: string
+  by: Role
+  text: string
+  // [상황이 바뀌었어요]를 켜서 상대에게 확인을 요청했는지(REP-6d)
+  asksCheck: boolean
+  at: string
+  // 진행 상황 사진(단계 PROGRESS). 화면은 썸네일 주소나 정해진 표시예요
+  photos: string[]
+  // 상대의 지금 답. [상황이 바뀌었어요]가 아니거나 답 전이면 없어요
+  response?: {
+    by: Role
+    answer: "맞아요" | "보류" | "이견"
+    reason: string
+    at: string
+  }
+  // 보는 사람이 지금 답할 수 있는지(서버 canRespond)
   canRespond?: boolean
 }
 export interface AfterRecord {
@@ -219,9 +243,14 @@ export interface Repair {
   proposal?: Proposal
   proposalHistory?: Proposal[]
   causes?: CauseClaim[]
+  progressNotes?: ProgressNote[]
+  // 마지막으로 진행 상황을 물은 시각(목업만, 7일에 한 번)
+  progressAskedAt?: string
   afterRecords?: AfterRecord[]
   closeBy?: Role
   soloClosed?: Role
+  // 혼자 끝낸 처리 완료에 상대가 남긴 이견(마지막 [아직 안 됐어요], 06 REP-5f). 양측 확인이 되면 없어요
+  closeObjection?: { by: Role; reason: string; at: string }
   afterPhotos?: string[]
   hidden?: boolean
   notes?: { text: string; by: Role; kind: string; at?: string }[]
@@ -448,6 +477,8 @@ export interface DemoState {
   notices: Notice[]
   // 호실별 수리 건 목록의 기준 시각(06 4-6 목록 asOf, 호실 ID → ISO 또는 null). HTTP만 채워요(목업은 없음)
   repairListAsOf?: Record<string, string | null>
+  // 호실마다 경과 기준 시각(06 4장 timeline asOf). 공유를 그만둔 뒤면 그 시각, 아니면 null. 목업은 비워 둬요
+  timelineAsOf?: Record<string, string | null>
 }
 export const uid = () => crypto.randomUUID()
 export const won = formatWon

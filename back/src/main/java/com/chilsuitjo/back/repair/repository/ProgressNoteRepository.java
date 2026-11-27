@@ -15,6 +15,9 @@ public interface ProgressNoteRepository extends JpaRepository<ProgressNote, UUID
   /** 이 수리 건들의 진행 상황 모두. 목록 한 쪽에서 진행 상황 대상 행동을 찾는다(06 4-6 {@code lastActionAt}). */
   List<ProgressNote> findByRepairCaseIdIn(Collection<UUID> repairCaseIds);
 
+  /** 수리 건의 진행 상황, 남긴 순서(수리 건 상세 {@code progressNotes}). */
+  List<ProgressNote> findByRepairCaseIdOrderByCreatedAtAscIdAsc(UUID repairCaseId);
+
   /** 그 호실의 진행 상황. 다른 호실의 ID면 비어 있다(ROOM-2a). */
   Optional<ProgressNote> findByIdAndRoomRecordId(UUID id, UUID roomRecordId);
 

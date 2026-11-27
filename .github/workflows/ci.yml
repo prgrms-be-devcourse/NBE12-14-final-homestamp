@@ -26,6 +26,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       back: ${{ steps.diff.outputs.back }}
+      back_image: ${{ steps.diff.outputs.back_image }}
       front: ${{ steps.diff.outputs.front }}
       hooks: ${{ steps.diff.outputs.hooks }}
     steps:
@@ -39,7 +40,10 @@ jobs:
           # 워크플로가 바뀌면 모든 job을 돌려 CI 자신을 검사한다
           all=$(echo "$files" | grep -q '^\.github/workflows/' && echo true || echo false)
           has() { [ "$all" = true ] || echo "$files" | grep -qE "$1"; }
-          echo "back=$(has '^back/' && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          # CI 전용 Gradle 설정(.github/gradle/, Maven 미러)이 바뀌어도 백엔드 검사를 돌린다
+          echo "back=$(has '^(back/|\.github/gradle/)' && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          # 이미지 검사 스크립트(scan.sh·evaluate.sh·예외 목록)만 바뀌어도 이미지 검사를 돌린다
+          echo "back_image=$(has '^(back/|\.github/gradle/|\.github/scripts/image/)' && echo true || echo false)" >> "$GITHUB_OUTPUT"
           echo "front=$(has '^front/' && echo true || echo false)" >> "$GITHUB_OUTPUT"
           echo "hooks=$(has '^(scripts/hooks/|\.claude/|\.codex/)' && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
@@ -179,12 +183,13 @@ jobs:
           distribution: temurin
           java-version: '25'
           cache: gradle
-      - name: 서식 (Spotless)
-        run: ./gradlew spotlessCheck --no-daemon
-      - name: 테스트·커버리지 (Testcontainers postgres:18.6, JaCoCo)
-        run: ./gradlew build --no-daemon
-      - name: 백엔드 Docker 이미지 빌드 (linux/amd64)
-        run: docker build --platform linux/amd64 --tag homestamp-back:ci --file Dockerfile .
+      # 캐시에 없는 의존성은 Maven Central 대신 미러에서 받는다(러너 공유 IP의 429 막기, #372)
+      - name: CI Maven 미러
+        run: mkdir -p ~/.gradle/init.d && cp ../.github/gradle/ci-mirror.init.gradle ~/.gradle/init.d/
+      # Gradle을 한 번만 띄운다(따로 돌리면 JVM·설정 읽기를 두 번 함, #335)
+      # Migration 통합 테스트는 back-migration이 따로 돌린다
+      - name: 서식·테스트·커버리지 (Spotless, Testcontainers postgres:18.6, JaCoCo)
+        run: ./gradlew spotlessCheck build --no-daemon -PexcludeTests=com.chilsuitjo.back.MigrationRunnerIntegrationTest
       - name: 커버리지 보고서
         if: always()
         uses: actions/upload-artifact@v7
@@ -193,6 +198,61 @@ jobs:
           path: back/build/reports/jacoco/test/
           if-no-files-found: ignore
           retention-days: 7
+
+  # 이미지 빌드·검사는 Dockerfile 안에서 따로 컴파일하는 multi-stage라 back과 동시에 돌린다(#335).
+  # 필수 검사는 ci-result 하나라 PR의 이미지 빌드·Trivy 검사는 여기 한 곳에서만 한다(image-publish는 main·수동만, #350).
+  # Docker 안의 Gradle은 CI Maven 미러(.github/gradle/ci-mirror.init.gradle)에서 받아 Maven Central 429를 피한다(#372)
+  back-image:
+    needs: changes
+    if: needs.changes.outputs.back_image == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      # Docker 안의 Gradle도 미러에서 받게, 미러 설정만 담은 Gradle 홈을 넘긴다(수 KB, #372).
+      # 캐시를 통째로 넘기면 수백 MB를 옮기느라 오히려 느리다
+      - name: 백엔드 Docker 이미지 빌드 (linux/amd64)
+        run: |
+          mkdir -p "$RUNNER_TEMP/gradle-home/init.d"
+          cp .github/gradle/ci-mirror.init.gradle "$RUNNER_TEMP/gradle-home/init.d/"
+          docker build --platform linux/amd64 \
+            --build-context gradle-home="$RUNNER_TEMP/gradle-home" \
+            --tag homestamp-back:candidate --file back/Dockerfile back
+      # 검사 실패(취약점 DB를 못 받음·새 취약점)는 PR을 막지 않는다(런북 이미지-발행.md "PR에서", 예전 image-publish와 같음).
+      # 결과는 아래 artifact와 이 단계의 실패 표시로 본다. 이미지 빌드 실패는 위 단계에서 막는다
+      - name: 보안 검사 (Trivy, 막지 않음)
+        continue-on-error: true
+        run: .github/scripts/image/scan.sh homestamp-back:candidate trivy-report
+      - name: 검사 결과 보관
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: trivy-report-${{ github.sha }}
+          path: trivy-report/
+          if-no-files-found: warn
+          retention-days: 30
+
+  # 운영 jar를 JRE 컨테이너에서 실제로 실행해 보는 Migration 통합 테스트는 혼자 테스트 시간의 약 40%(CI 77초, #348)라
+  # back과 동시에 돌린다(#350). 커버리지 대상(*Service·*Transitions)이 아니라 back의 커버리지 검사와 상관없다
+  back-migration:
+    needs: changes
+    if: needs.changes.outputs.back == 'true'
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: back
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: gradle
+      - name: CI Maven 미러
+        run: mkdir -p ~/.gradle/init.d && cp ../.github/gradle/ci-mirror.init.gradle ~/.gradle/init.d/
+      - name: Migration 통합 테스트 (MigrationRunnerIntegrationTest)
+        run: ./gradlew test --tests com.chilsuitjo.back.MigrationRunnerIntegrationTest --no-daemon
 
   front:
     needs: changes
@@ -232,7 +292,7 @@ jobs:
   # 규칙 세트의 "통과 필수"는 이것 하나. 건너뛴 job(skipped)은 통과로 본다
   ci-result:
     if: always()
-    needs: [changes, conventions, decision-record, gitleaks, back, front, hooks]
+    needs: [changes, conventions, decision-record, gitleaks, back, back-image, back-migration, front, hooks]
     runs-on: ubuntu-24.04
     steps:
       - env:

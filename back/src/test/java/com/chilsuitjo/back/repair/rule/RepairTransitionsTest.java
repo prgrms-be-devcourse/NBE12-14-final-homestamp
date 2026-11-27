@@ -943,6 +943,26 @@ class RepairTransitionsTest {
         at);
   }
 
+  // ---- 사진 추가(REP-7g) ----
+
+  @Test
+  void REP_7g_사진_추가는_덧붙이기라_상태를_바꾸지_않는다() {
+    RepairState acked = registered(AckState.ACK);
+
+    assertThat(rules.apply(acked, entry(ActionType.ADD_PHOTO, PartySide.LANDLORD)))
+        .isEqualTo(acked);
+  }
+
+  @Test
+  void REP_7g_없는_수리_건이나_측이_없는_주체의_사진_추가는_INVALID_STATE() {
+    assertError(
+        ErrorCode.INVALID_STATE,
+        () -> rules.apply(RepairState.NONE, entry(ActionType.ADD_PHOTO, PartySide.TENANT)));
+    assertError(
+        ErrorCode.INVALID_STATE,
+        () -> rules.apply(registered(AckState.ACK), entry(ActionType.ADD_PHOTO, null)));
+  }
+
   // ---- 아직 없는 행동 ----
 
   /** 아직 만들지 않은 수리 행동. 새 행동을 붙이면 여기서 빼고 따로 테스트한다. */
@@ -958,7 +978,8 @@ class RepairTransitionsTest {
             ActionType.NOT_YET,
             ActionType.CLOSE_ALONE,
             ActionType.ASK_PROGRESS,
-            ActionType.NOTE_PROGRESS);
+            ActionType.NOTE_PROGRESS,
+            ActionType.ADD_PHOTO);
     return Arrays.stream(ActionType.values())
         .filter(type -> type.area() == ActionType.Area.REPAIR && !done.contains(type));
   }

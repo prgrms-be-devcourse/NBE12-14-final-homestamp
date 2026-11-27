@@ -42,6 +42,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <p>통지 하나가 묶음 하나인 지금 구조를 기준으로 한다(문자 모으기의 묶음 전체 변경은 아직 없음). 결과는 가져간 통지의 묶음 ID로만 찾으므로, 업체가 모르는 ID를
  * 돌려주거나 일부를 빠뜨려도 다른 통지에 적히지 않는다(빠진 통지는 결과 없음).
  *
+ * <p>전달됨을 적는 트랜잭션에서 그 통지에 걸린 응답 요청의 기다림도 시작한다({@link NoticeWaitStart}). 요청에 걸린 통지면 호실을 먼저 잠근다.
+ *
  * <p>일정 간격 실행은 {@link DeliveryPollScheduler}가 한다. 이 작업자는 문자를 보내지 않는다(업체에 결과만 묻는다).
  */
 @Service
@@ -55,6 +57,7 @@ public class DeliveryResultPoller {
   private final Clock clock;
   private final TransactionTemplate transaction;
   private final Duration protectFor;
+  private final NoticeWaitStart waitStart;
 
   public DeliveryResultPoller(
       DeliveryPollClaimer claimer,
@@ -62,7 +65,8 @@ public class DeliveryResultPoller {
       SmsGateway gateway,
       Clock clock,
       PlatformTransactionManager transactionManager,
-      @Value("${app.delivery.poller.protect-for:2m}") Duration protectFor) {
+      @Value("${app.delivery.poller.protect-for:2m}") Duration protectFor,
+      NoticeWaitStart waitStart) {
     if (protectFor == null
         || protectFor.isNegative()
         || protectFor.isZero()
@@ -79,6 +83,7 @@ public class DeliveryResultPoller {
     this.transaction = new TransactionTemplate(transactionManager);
     this.transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     this.protectFor = protectFor;
+    this.waitStart = waitStart;
   }
 
   /** 많아야 {@code limit}개를 가져가 묻고, 가져간 통지 수를 돌려준다. 한 통지에서 예외가 나도 나머지는 적는다. */
@@ -169,6 +174,10 @@ public class DeliveryResultPoller {
    */
   private void record(ClaimedDeliveryPoll poll, DeliveryOutcome outcome, Instant observedAt) {
     transaction.executeWithoutResult(status -> {
+      if (outcome == DeliveryOutcome.DELIVERED) {
+        // 전달되면 요청의 기다림도 같은 트랜잭션에서 시작한다. 행동과 같은 순서(호실 → 통지 → 요청)로 잠그려고 호실을 먼저 잡는다
+        waitStart.lockRoomOf(poll.noticeId());
+      }
       Notice notice = notices.findForUpdate(poll.noticeId()).orElse(null);
       if (notice == null || notice.getStatus() != NoticeStatus.SENT) {
         return; // 그사이 다른 쪽이 끝냈다(상태는 앞으로만)
@@ -180,6 +189,8 @@ public class DeliveryResultPoller {
       if (outcome == DeliveryOutcome.DELIVERED) {
         // 보호 중 다른 작업자가 예약 시각을 옮겼더라도 같은 토큰의 전달 증거는 남긴다.
         notice.markDelivered(observedAt);
+        // 기다림은 전달된 시각(서버가 확인한 시각)부터 센다(03 1-1 "타이머 시작점"). 실패하면 통지도 되돌아가 다음 조회에서 다시 적는다
+        waitStart.reached(notice, observedAt);
         return;
       }
       if (outcome == DeliveryOutcome.FAILED) {

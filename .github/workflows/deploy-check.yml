@@ -1,0 +1,38 @@
+# PR 검증: 배포 경로(워크플로·SSM 문서 명령·호출 스크립트)를 AWS 없이 시험한다. 운영 배포는 deploy.yml
+name: deploy-check
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/deploy.yml
+      - .github/workflows/deploy-check.yml
+      - .github/scripts/**
+      - infra/terraform/deploy.tf
+      - infra/terraform/ssm/**
+      - infra/deploy/deploy-front.sh
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: actionlint
+        run: docker run --rm -v "$PWD:/repo:ro" -w /repo rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 -color .github/workflows/deploy.yml .github/workflows/deploy-check.yml
+      - name: preflight(가짜 gh, 승인 규칙)
+        run: bash .github/scripts/test/preflight-test.sh
+      - name: 이미지 출처 확인(가짜 docker·gh)
+        run: bash .github/scripts/test/check-image-test.sh
+      - name: SSM 호출 스크립트(가짜 aws)
+        run: bash .github/scripts/test/ssm-deploy-test.sh
+      - name: SSM 문서 명령(가짜 deploy.sh, 주입·변조·권한)
+        run: bash .github/scripts/test/deploy-command-test.sh
+      - name: 화면 SSM 문서 명령·배포 역할 IAM(가짜 deploy-front.sh)
+        run: bash .github/scripts/test/deploy-front-command-test.sh
+      - name: 화면 파일 계약(check-front.sh와 deploy-front.sh가 같은 판단)
+        run: bash .github/scripts/test/front-contract-test.sh
