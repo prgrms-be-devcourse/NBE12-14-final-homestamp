@@ -5,14 +5,50 @@ import type { HttpRequest } from "./http-client"
 import {
   causeBasisCode,
   repairFromDetail,
+  repairFromListItem,
   type RepairCaseDetailBody,
+  type RepairCasePageBody,
 } from "./http-repair-view"
+import type { Repair } from "@/data/demo"
 
 // 수리 건 API의 HTTP 구현(06 4-6). 상태를 바꾸는 요청은 http-client가 Idempotency-Key를 붙여요.
 // 응답은 http-repair-view가 서버 모양(RepairCaseDetail)을 화면 모델로 바꿔요.
 // 사진은 업로드 표(upload-tickets, PHO-1·C)를 아직 받지 못해서, 사진을 고른 요청은 서버로 보내지 않고 "연결 전"으로 안내해요.
 const noPhotosYet = (photos: readonly unknown[] | undefined) => {
   if (photos?.length) throw notConnected()
+}
+
+// 호실의 수리 건 목록(GET /api/rooms/{id}/repair-cases, 06 4-6)을 끝까지 받아 화면 모델로 바꿔요. 새것부터예요.
+// asOf는 이 목록의 기준 시각(공유를 그만둔 뒤 보이는 범위를 고정한 시각, 없으면 null)이에요. 첫 쪽 값을 써요.
+// 호실 상세의 asOf와 따로 계산되니(06 4-6) 목록 화면은 이 값을 써요
+const REPAIR_PAGE_SIZE = 100
+export interface RepairList {
+  asOf: string | null
+  items: Repair[]
+}
+export async function listAllRepairs(
+  request: HttpRequest,
+  roomId: string,
+): Promise<RepairList> {
+  const items: Repair[] = []
+  const seen = new Set<string>()
+  let asOf: string | null | undefined
+  let cursor: string | null = null
+  do {
+    const page: RepairCasePageBody = await request<RepairCasePageBody>(
+      "GET",
+      endpoints.repairCasePage(roomId, REPAIR_PAGE_SIZE, cursor ?? undefined),
+    )
+    // 탈퇴한 상대 등으로 서버가 asOf를 비워 보낼 수 있어요(null·없음 모두 "기준 없음")
+    if (asOf === undefined) asOf = page.asOf ?? null
+    items.push(...page.items.map((b) => repairFromListItem(b, roomId)))
+    cursor = page.nextCursor
+    // 같은 커서가 다시 오면(서버 오류) 끝없이 받지 않고 멈춰요
+    if (cursor && seen.has(cursor))
+      throw new Error("수리 건 목록을 끝까지 받지 못했어요.")
+    if (cursor) seen.add(cursor)
+  } while (cursor)
+  return { asOf: asOf ?? null, items }
 }
 
 export function createHttpRepairCases(request: HttpRequest): RepairCasesApi {

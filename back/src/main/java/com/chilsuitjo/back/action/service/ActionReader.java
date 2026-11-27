@@ -2,6 +2,7 @@ package com.chilsuitjo.back.action.service;
 
 import com.chilsuitjo.back.action.dto.ActionEntry;
 import com.chilsuitjo.back.action.dto.ActionTarget;
+import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 
@@ -21,4 +22,11 @@ public interface ActionReader {
 
   /** 한 호실의 행동 전체, {@code room_seq} 순. */
   List<ActionEntry> findByRoom(UUID roomRecordId);
+
+  /**
+   * 이 호실에서 이 대상들 중 하나를 가리키는 행동, {@code room_seq} 순. 목록 한 쪽처럼 여러 대상의 행동이 필요할 때 대상마다 부르지 않고 한 번에
+   * 읽는다(#289 리뷰). 호실 자체 대상({@code ActionTarget.roomRecord})은 받지 않는다({@link #findByTarget}). 대상이 없으면
+   * 빈 목록.
+   */
+  List<ActionEntry> findByTargets(UUID roomRecordId, Collection<ActionTarget> targets);
 }

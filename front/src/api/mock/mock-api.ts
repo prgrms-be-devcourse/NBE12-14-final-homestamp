@@ -6,6 +6,7 @@ import { canAccessRoom, sideOf } from "@/lib/workflows"
 import { createMockRepairCases } from "./repair-cases"
 import { createMockRecords } from "./records"
 import { mockAvailableActions } from "./available-actions"
+import { mockDownloads } from "../downloads"
 
 // Mock API: 실제 서버처럼 비동기로 응답합니다. 테스트에서는 지연 없이 바로 응답해요.
 const delay = () =>
@@ -26,6 +27,7 @@ export function createMockApi(store: MockStore): HomeStampApi {
     repairCases: createMockRepairCases(store),
     records: createMockRecords(store),
     actions: mockAvailableActions,
+    downloads: mockDownloads,
     async listRooms(s) {
       await delay()
       return store.getState().rooms.filter((r) => {

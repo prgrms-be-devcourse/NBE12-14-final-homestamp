@@ -23,6 +23,9 @@ public interface CorrectionRequestRepository extends JpaRepository<CorrectionReq
   /** 그 기록에 이 상태의 고친 내용이 남았나(기다리는 것이 0개가 되면 확인 요청을 닫음, 05 2-4). */
   boolean existsByTargetKeyAndStatus(String targetKey, CorrectionStatus status);
 
+  /** 이 호실에서 수리 건이 대상인 고친 내용 모두(상태와 상관없이). */
+  List<CorrectionRequest> findByRoomRecordIdAndRepairCaseIdNotNull(UUID roomRecordId);
+
   /** 그 기록에서 이 상태인 고친 내용 모두(처리 완료 등으로 닫을 때). */
   List<CorrectionRequest> findByTargetKeyAndStatus(String targetKey, CorrectionStatus status);
 
