@@ -244,7 +244,7 @@ public class JpaWaitService implements WaitService, WaitQuery {
     return open.stream().findFirst();
   }
 
-  private static RequestView view(ResponseRequest r) {
+  static RequestView view(ResponseRequest r) {
     return new RequestView(
         r.getKind(),
         r.target(),

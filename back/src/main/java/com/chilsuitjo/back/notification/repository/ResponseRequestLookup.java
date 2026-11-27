@@ -49,6 +49,9 @@ public interface ResponseRequestLookup {
   /** 호실에서 이 측이 보낸 열린 요청(WAITING·UNCONFIRMED) 전부. 다른 호실의 요청은 들어가지 않는다(만든 순서). */
   List<ResponseRequest> findOpenRequestedBy(UUID roomRecordId, PartySide requestedBySide);
 
+  /** 호실에서 이 측이 보낸 요청 전부(상태 무관). 다른 호실의 요청은 들어가지 않는다(만든 순서, 같으면 ID). */
+  List<ResponseRequest> findRequestedBy(UUID roomRecordId, PartySide requestedBySide);
+
   /** 호실의 요청 중 종류가 {@code kinds}이고 상태가 {@code statuses}인 것 모두(양방향, 만든 순서). 다른 호실의 요청은 들어가지 않는다. */
   List<ResponseRequest> findInRoom(
       UUID roomRecordId, Set<RequestKind> kinds, Set<RequestStatus> statuses);
