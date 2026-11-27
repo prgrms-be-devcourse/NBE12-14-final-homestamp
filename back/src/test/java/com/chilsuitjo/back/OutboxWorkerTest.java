@@ -27,7 +27,9 @@ import com.chilsuitjo.back.notification.service.InviteLinks;
 import com.chilsuitjo.back.notification.service.NoticeOutbox;
 import com.chilsuitjo.back.notification.service.OutboxPoller;
 import com.chilsuitjo.back.notification.service.OutboxWorker;
+import com.chilsuitjo.back.notification.service.PhoneHmacs;
 import com.chilsuitjo.back.notification.service.RecipientDirectory;
+import com.chilsuitjo.back.notification.service.SmsOptOuts;
 import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Duration;
@@ -96,6 +98,8 @@ class OutboxWorkerTest {
   @Autowired private Clock clock;
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private DeliveryPollSchedule deliveryPollSchedule;
+  @Autowired private SmsOptOuts smsOptOuts;
+  @Autowired private PhoneHmacs phoneHmacs;
 
   private UUID room;
   private UUID party;
@@ -242,6 +246,7 @@ class OutboxWorkerTest {
             noticeRepository,
             inviteLinks,
             recipients,
+            smsOptOuts,
             gateway,
             clock,
             transactionManager,
@@ -477,6 +482,7 @@ class OutboxWorkerTest {
         noticeRepository,
         inviteLinks,
         directory,
+        smsOptOuts,
         sender,
         clock,
         transactionManager,
@@ -487,12 +493,31 @@ class OutboxWorkerTest {
         smsMode);
   }
 
+  private OutboxWorker workerWith(
+      RecipientDirectory directory, SmsOptOuts optOuts, SmsGateway sender) {
+    return new OutboxWorker(
+        outboxRepository,
+        noticeRepository,
+        inviteLinks,
+        directory,
+        optOuts,
+        sender,
+        clock,
+        transactionManager,
+        50,
+        List.of(Duration.ofMinutes(1)),
+        Duration.ofDays(3),
+        deliveryPollSchedule,
+        "fake");
+  }
+
   private OutboxWorker workerWith(RecipientDirectory directory, NoticeRepository repository) {
     return new OutboxWorker(
         outboxRepository,
         repository,
         inviteLinks,
         directory,
+        smsOptOuts,
         gateway,
         clock,
         transactionManager,
@@ -562,6 +587,58 @@ class OutboxWorkerTest {
     assertThat(notice(noticeId).get("sent_at")).isNull();
   }
 
+  /** 넣은 뒤 받는 번호가 수신 거부가 되면 업체를 부르지 않는다. 번호가 없을 때와 같은 끝이라 통지는 최종 실패가 아니다(실제 DB 조회). */
+  @Test
+  void 받는_번호가_수신_거부면_보내지_않고_통지를_최종_실패로_두지_않는다() {
+    UUID noticeId = enqueue();
+    String hmac = phoneHmacs.phoneHmac("010-1234-5678");
+    jdbc.update("INSERT INTO state.sms_opt_out (phone_hmac, created_at) VALUES (?, now())", hmac);
+    try {
+      worker.runOnce();
+    } finally {
+      jdbc.update("DELETE FROM state.sms_opt_out WHERE phone_hmac = ?", hmac);
+    }
+
+    assertThat(gateway.sentBatchIds()).doesNotContain(noticeId);
+    assertThat(outboxStatus(noticeId)).isEqualTo("FAILED");
+    assertThat(notice(noticeId).get("status")).isEqualTo("REQUESTED");
+    assertThat(notice(noticeId).get("sent_at")).isNull();
+  }
+
+  /** 수신 거부를 판정할 수 없으면(HMAC·DB 실패) 거부 없음으로 보지 않는다: 보내지 않고 다시 시도로 둔다. */
+  @Test
+  void 수신_거부_조회가_실패하면_보내지_않고_다시_시도한다() {
+    SmsGateway never = mock(SmsGateway.class);
+    SmsOptOuts failing = mock(SmsOptOuts.class);
+    when(failing.isOptedOut(any())).thenThrow(new IllegalStateException("HMAC 실패"));
+    UUID noticeId = enqueue();
+
+    workerWith(recipients, failing, never).runOnce();
+
+    verifyNoInteractions(never);
+    assertThat(outboxStatus(noticeId)).isEqualTo("PENDING");
+    assertThat(notice(noticeId).get("status")).isEqualTo("REQUESTED");
+  }
+
+  /** 번호가 없으면 수신 거부를 묻지 않고, 거부가 아니면 그 번호로 보낸다. */
+  @Test
+  void 수신_거부는_보낼_번호가_있을_때만_묻고_거부가_아니면_보낸다() {
+    SmsOptOuts optOuts = mock(SmsOptOuts.class);
+    when(optOuts.isOptedOut("01012345678")).thenReturn(false);
+    UUID sent = enqueue();
+
+    workerWith(recipients, optOuts, gateway).runOnce();
+
+    assertThat(gateway.sentBatchIds()).contains(sent);
+    verify(optOuts).isOptedOut("01012345678");
+
+    recipients.seedRecipient(party, new Recipient.InviteeWithoutPhone());
+    SmsOptOuts unused = mock(SmsOptOuts.class);
+    enqueue();
+    workerWith(recipients, unused, gateway).runOnce();
+    verifyNoInteractions(unused);
+  }
+
   @Test
   void 문자_방식을_읽을_수_없으면_작업자를_만들지_않는다() {
     for (String bad : List.of("", "DISABLED", "unknown")) {
@@ -584,6 +661,7 @@ class OutboxWorkerTest {
             noticeRepository,
             inviteLinks,
             recipients,
+            smsOptOuts,
             new SmsGateway() {
               @Override
               public SmsSendResult send(SmsMessage message) {
@@ -654,6 +732,7 @@ class OutboxWorkerTest {
         noticeRepository,
         inviteLinks,
         recipients,
+        smsOptOuts,
         gateway,
         clock,
         transactionManager,

@@ -50,6 +50,7 @@ public class OutboxWorker {
   private final NoticeRepository notices;
   private final InviteLinks inviteLinks;
   private final RecipientDirectory recipients;
+  private final SmsOptOuts smsOptOuts;
   private final SmsGateway gateway;
   private final Clock clock;
   private final TransactionTemplate transaction;
@@ -64,6 +65,7 @@ public class OutboxWorker {
       NoticeRepository notices,
       InviteLinks inviteLinks,
       RecipientDirectory recipients,
+      SmsOptOuts smsOptOuts,
       SmsGateway gateway,
       Clock clock,
       PlatformTransactionManager transactionManager,
@@ -86,6 +88,7 @@ public class OutboxWorker {
     this.notices = notices;
     this.inviteLinks = inviteLinks;
     this.recipients = recipients;
+    this.smsOptOuts = smsOptOuts;
     this.gateway = gateway;
     this.clock = clock;
     this.transaction = new TransactionTemplate(transactionManager);
@@ -136,7 +139,8 @@ public class OutboxWorker {
    */
   private void process(UUID outboxId) {
     Optional<Notice> notice;
-    Recipient recipient;
+    Optional<String> phone;
+    boolean optedOut;
     try {
       Outbox row = outbox.findById(outboxId).orElse(null);
       if (row == null) {
@@ -168,25 +172,22 @@ public class OutboxWorker {
         skipWhileDisabled(outboxId, notice.get().getId());
         return;
       }
-      recipient = recipients.resolve(notice.get().getRecipientPartyId());
+      phone = phoneOf(recipients.resolve(notice.get().getRecipientPartyId()));
+      // 수신 거부는 서비스 전체에서 그 번호로 보내지 않는다(03 K "수신 중단"). 넣을 때가 아니라 업체를 부르기 직전에 다시 본다: 넣은 뒤 거부한 번호에
+      // 가지 않게(decisions 2026-11-27 수신 거부 조회 "발송 직전 재확인"). 조회가 실패하면 예외라 아래에서 보내지 않고 다시 시도로 둔다(false로
+      // 바꾸지 않음)
+      optedOut = phone.isPresent() && smsOptOuts.isOptedOut(phone.get());
     } catch (RuntimeException e) {
       log.warn("보내기 전 단계 실패, 다시 시도: outbox={}, error={}", outboxId, e.getClass().getName());
       finish(outboxId, null, SmsSendResult.retry());
       return;
     }
-    // 번호가 있는 두 결과만 보낸다. 인증 풀림·번호 지움·받을 사람 없음은 phoneOfRecipient가 빈 값을 주던 경우와 같다(#242). 판정할 수 없으면
-    // resolve가
-    // 예외를 올려 위에서 다시 시도로 둔다(빈 값으로 바꾸지 않음). 수신 거부 확인은 아직 없다(SmsOptOuts 구현 뒤 여기서 본다, #163)
-    Optional<String> phone =
-        switch (recipient) {
-          case Recipient.VerifiedMember member -> Optional.of(member.phone());
-          case Recipient.Invitee invitee -> Optional.of(invitee.phone());
-          case Recipient.UnverifiedMember unverified -> Optional.empty();
-          case Recipient.InviteeWithoutPhone withoutPhone -> Optional.empty();
-          case Recipient.Unavailable unavailable -> Optional.empty();
-        };
     if (phone.isEmpty()) {
       skipWithoutPhone(outboxId, notice.get().getId());
+      return;
+    }
+    if (optedOut) {
+      skipOptedOut(outboxId, notice.get().getId());
       return;
     }
     SmsSendResult result = send(notice.get(), phone.get());
@@ -227,6 +228,31 @@ public class OutboxWorker {
     transaction.executeWithoutResult(
         status -> outbox.findById(outboxId).ifPresent(Outbox::markFailed));
     log.warn("보낼 번호가 없어 문자를 보내지 않음: notice={}", noticeId);
+  }
+
+  /**
+   * 받는 번호가 수신 거부 목록에 있다. 번호가 없을 때와 같은 끝이다: 줄만 보내지 않은 채 끝내고, 업체 실패가 아니므로 통지를 최종 실패로 두지 않는다("문자가 가지
+   * 않았어요"·[다시 보내기]가 뜨면 이유가 틀림). 문자 대신 서비스 안 알림으로 바꾸기(05 {@code notice} 채널)와 그때 요청을 혼자 진행 가능(상대 수신
+   * 거부)으로 둘지는 NOTI-1·#163에서 정한다. 로그에는 번호를 남기지 않는다.
+   */
+  private void skipOptedOut(UUID outboxId, UUID noticeId) {
+    transaction.executeWithoutResult(
+        status -> outbox.findById(outboxId).ifPresent(Outbox::markFailed));
+    log.warn("받는 번호가 수신 거부라 문자를 보내지 않음: notice={}", noticeId);
+  }
+
+  /**
+   * 번호가 있는 두 결과만 보낸다. 인증 풀림·번호 지움·받을 사람 없음은 빈 값이다(#242). 판정할 수 없으면 {@code resolve}가 예외를 올려 다시 시도로
+   * 둔다(빈 값으로 바꾸지 않음).
+   */
+  private static Optional<String> phoneOf(Recipient recipient) {
+    return switch (recipient) {
+      case Recipient.VerifiedMember member -> Optional.of(member.phone());
+      case Recipient.Invitee invitee -> Optional.of(invitee.phone());
+      case Recipient.UnverifiedMember unverified -> Optional.empty();
+      case Recipient.InviteeWithoutPhone withoutPhone -> Optional.empty();
+      case Recipient.Unavailable unavailable -> Optional.empty();
+    };
   }
 
   /** disabled에서 보내지 않고 끝낸다. 번호가 없을 때와 같은 끝(줄만 끝내고 통지는 그대로)이고, 로그로 이유를 구분한다. */
