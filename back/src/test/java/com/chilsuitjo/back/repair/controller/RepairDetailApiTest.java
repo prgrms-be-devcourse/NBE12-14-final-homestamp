@@ -261,6 +261,39 @@ class RepairDetailApiTest {
             .header("Idempotency-Key", action + "-" + UUID.randomUUID()));
   }
 
+  // ---- 종료 확인 요청(#339) ----
+
+  @Test
+  void 종료를_요청하기_전에는_closeRequest가_없고_요청하면_기다림이_보인다() throws Exception {
+    UUID caseId = register();
+    detail(caseId, tenant).andExpect(jsonPath("$.closeRequest").doesNotExist());
+
+    respond(caseId, landlord, "ACK", null).andExpect(status().isOk());
+    act(caseId, tenant, "start").andExpect(status().isOk());
+    act(caseId, tenant, "request-close").andExpect(status().isOk());
+
+    for (UUID who : new UUID[] {tenant, landlord}) {
+      detail(caseId, who)
+          .andExpect(jsonPath("$.closeRequest.status").value("WAITING"))
+          .andExpect(jsonPath("$.closeRequest.openedAt").isNotEmpty())
+          .andExpect(jsonPath("$.closeRequest.closedReason").doesNotExist())
+          .andExpect(jsonPath("$.closeRequest.closedAt").doesNotExist());
+    }
+  }
+
+  @Test
+  void 종료를_확인하면_closeRequest는_답한_상태로_남는다() throws Exception {
+    UUID caseId = register();
+    respond(caseId, landlord, "ACK", null).andExpect(status().isOk());
+    act(caseId, tenant, "start").andExpect(status().isOk());
+    act(caseId, tenant, "request-close").andExpect(status().isOk());
+    act(caseId, landlord, "confirm-close").andExpect(status().isOk());
+
+    detail(caseId, tenant)
+        .andExpect(jsonPath("$.status").value("DONE"))
+        .andExpect(jsonPath("$.closeRequest.status").value("ANSWERED"));
+  }
+
   // ---- 사진(#175) ----
 
   @Test
