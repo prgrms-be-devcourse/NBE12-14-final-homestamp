@@ -5,13 +5,17 @@ import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.notification.dto.OpenRequestCommand;
 import com.chilsuitjo.back.notification.dto.RequestHandle;
 import com.chilsuitjo.back.notification.dto.RequestTarget;
+import com.chilsuitjo.back.notification.dto.RequestView;
 import com.chilsuitjo.back.notification.dto.SoloCheck;
 import com.chilsuitjo.back.notification.dto.SoloQuery;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.rule.RequestStatus;
 import com.chilsuitjo.back.notification.rule.SoloReason;
 import com.chilsuitjo.back.notification.rule.SoloRule;
+import java.time.Clock;
+import java.time.Instant;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -36,18 +40,24 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * <p>진짜 구현은 요청을 DB에 두어 부르는 쪽 트랜잭션과 함께 되돌아간다. 가짜도 같게, 트랜잭션 안에서 바꾼 요청은 그 트랜잭션이 커밋되지 않으면 바꾸기 전으로
  * 되돌린다(한 요청의 뒤 단계가 거절되면 앞 단계가 닫은 요청도 열린 채로 남는다, #177 리뷰). 트랜잭션 밖(단위 테스트)에서는 바로 적는다.
  *
+ * <p><b>조회({@link WaitQuery})도 같은 메모리 요청을 읽는다.</b> 쓰기와 읽기가 같은 상태를 본다. 가짜는 통지·전달·타이머가 없어서 {@code
+ * firstNotifiedAt}·{@code dueAt}·{@code soloReason}을 늘 비운다(보내지 않은 통지의 시각이나 기한을 만들어 내지 않는다). {@link
+ * #markUnconfirmed}로 바꾼 미확인도 이유는 비운다. {@code openedAt}은 처음 연 시각이고 묶어도 바뀌지 않는다.
+ *
  * <p>실제 구현(NOTI-1·5, 기다림 타이머)이 들어오면 이 클래스를 지운다. 다른 도메인은 {@link WaitService}만 쓰므로 바뀌지 않는다.
  */
 @Service
-public class FakeWaitService implements WaitService {
+public class FakeWaitService implements WaitService, WaitQuery {
 
   private final Map<Key, Request> requests = new ConcurrentHashMap<>();
   private final Set<Key> blocked = ConcurrentHashMap.newKeySet();
   private final Map<Key, SoloCheck> soloChecks = new ConcurrentHashMap<>();
   private final CounterpartReader counterparts;
+  private final Clock clock;
 
-  public FakeWaitService(CounterpartReader counterparts) {
+  public FakeWaitService(CounterpartReader counterparts, Clock clock) {
     this.counterparts = counterparts;
+    this.clock = clock;
   }
 
   @Override
@@ -67,8 +77,12 @@ public class FakeWaitService implements WaitService {
         new Request(
             UUID.randomUUID(),
             command.roomRecordId(),
+            command.kind(),
+            command.target(),
             command.requestedBySide(),
             RequestStatus.WAITING,
+            null,
+            clock.instant(),
             null);
     write(key, created);
     return new RequestHandle(created.id(), true);
@@ -82,7 +96,7 @@ public class FakeWaitService implements WaitService {
     if (request != null
         && request.status().isOpen()
         && request.requestedBySide() != answeredBySide) {
-      write(key, request.with(RequestStatus.ANSWERED, null));
+      write(key, request.with(RequestStatus.ANSWERED));
     }
   }
 
@@ -93,7 +107,7 @@ public class FakeWaitService implements WaitService {
     if (request != null
         && request.status().isOpen()
         && request.requestedBySide() == requestedBySide) {
-      write(key, request.with(RequestStatus.WITHDRAWN, null));
+      write(key, request.with(RequestStatus.WITHDRAWN));
     }
   }
 
@@ -115,14 +129,14 @@ public class FakeWaitService implements WaitService {
             "상대 쪽 제안 요청이 열려 있어요. 역제안이면 answered 다음 open을 불러 주세요(05 proposal ③)");
       }
       // 낸 쪽이 바꾸면 같은 요청이 다시 기다림이 된다(05 proposal ②, 03 E). 안건마다 기다리는 요청이 하나라 새로 열 수 없다
-      write(key, existing.with(RequestStatus.WAITING, null));
+      write(key, existing.with(RequestStatus.WAITING));
       return new RequestHandle(existing.id(), false);
     }
     if (command.kind() == RequestKind.CORRECTION_CONFIRM
         && existing.status() == RequestStatus.UNCONFIRMED) {
       // 미확인 뒤 같은 기록을 또 고치면 새 요청을 열지 않고 같은 요청이 다시 기다림이 된다(03 1-4 "미확인 뒤 다시 고침", #104).
       // 기록마다 요청 하나(03 1-4 "요청", 05 response_request)이고 제안 바꾸기(②)와 같은 모양이다
-      write(key, existing.with(RequestStatus.WAITING, null));
+      write(key, existing.with(RequestStatus.WAITING));
       return new RequestHandle(existing.id(), false);
     }
     // 그 밖의 열린 요청(기다림·미확인)은 상태를 그대로 두고 묶는다. 혼자 진행이 열리는 종류는 미확인이면 혼자 진행도 그대로다(03 1-4
@@ -137,7 +151,7 @@ public class FakeWaitService implements WaitService {
       Key key = entry.getKey();
       Request request = entry.getValue();
       if (key.kind() == kind && target.equals(key.target()) && request.status().isOpen()) {
-        write(key, request.with(RequestStatus.CLOSED, reason));
+        write(key, request.closed(reason, clock.instant()));
       }
     }
   }
@@ -150,7 +164,7 @@ public class FakeWaitService implements WaitService {
       if (request.roomRecordId().equals(roomRecordId)
           && kinds.contains(entry.getKey().kind())
           && request.status().isOpen()) {
-        write(entry.getKey(), request.with(RequestStatus.CLOSED, reason));
+        write(entry.getKey(), request.closed(reason, clock.instant()));
         closed++;
       }
     }
@@ -180,6 +194,26 @@ public class FakeWaitService implements WaitService {
   public SoloCheck canGoSoloDirectly(SoloQuery query) {
     return SoloRule.direct(
         counterparts.read(query.roomRecordId(), query.requestedBySide()), query.kind());
+  }
+
+  @Override
+  public List<RequestView> awaiting(UUID roomRecordId, PartySide answeringSide) {
+    PartySide requestedBySide = counterpartOf(answeringSide);
+    return requests.values().stream()
+        .filter(r -> r.roomRecordId().equals(roomRecordId))
+        .filter(r -> r.requestedBySide() == requestedBySide)
+        .filter(r -> r.status().isOpen())
+        .map(Request::view)
+        .toList();
+  }
+
+  @Override
+  public Optional<RequestView> latest(RequestKind kind, RequestTarget target) {
+    if (Key.hasDirection(kind)) {
+      throw new IllegalArgumentException(kind + "는 방향이 둘이라 latest로 읽지 않아요");
+    }
+    // 키마다 가장 최근에 연 요청 하나만 남는다(닫힌 뒤 새로 열면 덮어씀)
+    return Optional.ofNullable(requests.get(Key.of(target, kind, null))).map(Request::view);
   }
 
   // ---- 테스트·로컬에서 상황을 만드는 도구 ----
@@ -222,7 +256,7 @@ public class FakeWaitService implements WaitService {
         Key.of(target, kind, requestedBySide),
         (k, request) ->
             request.status() == RequestStatus.WAITING
-                ? request.with(RequestStatus.UNCONFIRMED, null)
+                ? request.with(RequestStatus.UNCONFIRMED)
                 : request);
   }
 
@@ -321,11 +355,48 @@ public class FakeWaitService implements WaitService {
   private record Request(
       UUID id,
       UUID roomRecordId,
+      RequestKind kind,
+      RequestTarget target,
       PartySide requestedBySide,
       RequestStatus status,
-      ClosedReason closedReason) {
-    Request with(RequestStatus newStatus, ClosedReason reason) {
-      return new Request(id, roomRecordId, requestedBySide, newStatus, reason);
+      ClosedReason closedReason,
+      Instant createdAt,
+      Instant closedAt) {
+
+    /** 닫지 않는 상태 바꾸기. 닫힌 이유·시각은 닫을 때만 있다({@link #closed}). */
+    Request with(RequestStatus newStatus) {
+      if (newStatus == RequestStatus.CLOSED) {
+        throw new IllegalArgumentException("닫기는 closed로 해 주세요");
+      }
+      return new Request(
+          id, roomRecordId, kind, target, requestedBySide, newStatus, null, createdAt, null);
+    }
+
+    Request closed(ClosedReason reason, Instant at) {
+      return new Request(
+          id,
+          roomRecordId,
+          kind,
+          target,
+          requestedBySide,
+          RequestStatus.CLOSED,
+          reason,
+          createdAt,
+          at);
+    }
+
+    RequestView view() {
+      return new RequestView(
+          kind,
+          target,
+          requestedBySide,
+          status,
+          createdAt,
+          null,
+          null,
+          null,
+          closedReason,
+          closedAt);
     }
   }
 }

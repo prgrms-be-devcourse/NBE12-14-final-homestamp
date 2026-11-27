@@ -53,6 +53,9 @@ export const endpoints = {
   ) => `/api/photos/${id(pid)}/${action}`,
   // 4-6 수리·돈
   repairCases: (rid: string) => `/api/rooms/${id(rid)}/repair-cases`,
+  // 수리 건 목록 한 쪽(06 4-6, 커서 방식)
+  repairCasePage: (rid: string, size: number, cursor?: string) =>
+    `/api/rooms/${id(rid)}/repair-cases?size=${size}${cursor ? `&cursor=${id(cursor)}` : ""}`,
   repairCase: (cid: string) => `/api/repair-cases/${id(cid)}`,
   // 원인 설명 응답(06 4장 POST /api/cause-notes/{id}/respond)
   causeNoteRespond: (nid: string) => `/api/cause-notes/${id(nid)}/respond`,
