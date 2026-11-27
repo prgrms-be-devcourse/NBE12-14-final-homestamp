@@ -11,6 +11,8 @@ import com.chilsuitjo.back.link.dto.LinkRoom;
 import com.chilsuitjo.back.link.dto.LinkViewKind;
 import com.chilsuitjo.back.link.dto.LinkViewRequest;
 import com.chilsuitjo.back.link.rule.LinkToken;
+import com.chilsuitjo.back.room.rule.PartyStatus;
+import com.chilsuitjo.back.room.rule.RoomStatus;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,7 +26,7 @@ import org.springframework.test.context.ActiveProfiles;
  * 실제 호실 행만 바꿔, "미리 거른 뒤 잠그기 전에 정산 완료·합류가 된" 경우를 만든다. pipeline이 트랜잭션을 맡아 테스트에는
  * {@code @Transactional}을 두지 않는다(행은 임의 ID라 다른 테스트와 겹치지 않는다).
  */
-@Import(TestcontainersConfiguration.class)
+@Import({TestcontainersConfiguration.class, FakeLinkContentSource.class})
 @SpringBootTest
 @ActiveProfiles("test")
 class LinkViewRecentAccessTest {
@@ -132,7 +134,17 @@ class LinkViewRecentAccessTest {
         member,
         LinkToken.hash(token));
     content.seedRoom(
-        room, party, new LinkRoom(PartySide.LANDLORD, "서울특별시", "강남구", "역삼동", false, false));
+        room,
+        party,
+        new LinkRoom(
+            PartySide.LANDLORD,
+            "서울특별시",
+            "강남구",
+            "역삼동",
+            false,
+            false,
+            PartyStatus.INVITED,
+            RoomStatus.LIVING));
     return new Fixture(room, link, token);
   }
 
