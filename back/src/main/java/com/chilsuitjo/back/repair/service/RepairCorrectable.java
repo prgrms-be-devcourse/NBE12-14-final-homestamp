@@ -1,6 +1,8 @@
 package com.chilsuitjo.back.repair.service;
 
+import com.chilsuitjo.back.action.dto.ActionCommand;
 import com.chilsuitjo.back.action.dto.DigestInput;
+import com.chilsuitjo.back.action.dto.PhotoDigest;
 import com.chilsuitjo.back.action.service.ActionRequestContext;
 import com.chilsuitjo.back.correction.dto.AppliedVersion;
 import com.chilsuitjo.back.correction.dto.CorrectableSnapshot;
@@ -15,11 +17,13 @@ import com.chilsuitjo.back.repair.entity.RepairCase;
 import com.chilsuitjo.back.repair.entity.RepairContent;
 import com.chilsuitjo.back.repair.repository.RepairCaseRepository;
 import com.chilsuitjo.back.repair.repository.RepairContentRepository;
+import com.chilsuitjo.back.repair.repository.RepairPhotos;
 import com.chilsuitjo.back.repair.repository.RepairStateStore;
 import com.chilsuitjo.back.repair.rule.ClosedBy;
 import com.chilsuitjo.back.repair.rule.RepairStatus;
 import com.chilsuitjo.back.room.dto.RoomPartSummary;
 import com.chilsuitjo.back.room.service.RoomQueryService;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -55,6 +59,8 @@ public class RepairCorrectable implements Correctable {
   private final RepairContentRepository contents;
   private final RoomQueryService rooms;
   private final ActionRequestContext requestContext;
+  private final RepairStateStore store;
+  private final RepairPhotos photos;
 
   @Override
   public CorrectionTargetKind kind() {
@@ -159,10 +165,20 @@ public class RepairCorrectable implements Correctable {
     return RepairStateStore.digest(content(versionId));
   }
 
-  /** [사진 더해서 다시 요청]은 다음 PR(#258)에서 만든다. 지금은 부르는 곳이 없다. */
+  /** 보충·[상황이 바뀌었어요]·고친 내용 다시 요청 중 가장 최근({@link RepairStateStore#lastRerequestAt}). */
   @Override
-  public void attachEvidence(UUID targetId, UUID correctionRequestId, List<String> uploadTickets) {
-    throw new UnsupportedOperationException("고친 내용 다시 요청은 아직 만들지 않았어요(#258 후속)");
+  public Instant lastRerequestAt(UUID targetId) {
+    return store.lastRerequestAt(caseRow(targetId));
+  }
+
+  /**
+   * [사진 더해서 다시 요청]의 근거 사진을 새 고친 내용에 붙인다. 단계는 보충과 같은 {@code BEFORE}이고 수리 건 카드 한도에 함께 센다 ({@link
+   * RepairPhotos#attachToCorrection}, #278).
+   */
+  @Override
+  public List<PhotoDigest> attachEvidence(
+      ActionCommand command, UUID targetId, UUID correctionRequestId, List<String> uploadTickets) {
+    return photos.attachToCorrection(command, targetId, correctionRequestId, uploadTickets);
   }
 
   /** 새 판을 지금 판 다음 번호로 저장한다. 시각은 행동 시각이다. */
