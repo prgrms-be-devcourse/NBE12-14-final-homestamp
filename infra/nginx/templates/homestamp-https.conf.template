@@ -1,5 +1,13 @@
 # 인증서가 있을 때. 80은 ACME 확인과 HTTPS로 보내기만, 443에서 TLS를 끝내고 화면·API를 낸다
 
+# /assets/ 캐시: 해시 이름 파일이 실제로 있을 때(200·304)만 오래 둔다. 없는 파일(404)·오류는 저장하지 않게 한다
+# (immutable 404가 남으면 나중에 복구한 파일도 브라우저가 받지 않음)
+map $status $homestamp_assets_cache {
+  200 "public, max-age=31536000, immutable";
+  304 "public, max-age=31536000, immutable";
+  default "no-store";
+}
+
 # 우리 도메인이 아닌 Host는 끊는다. 443은 인증서를 내보이지 않고 TLS 핸드셰이크를 거절한다
 server {
   listen 80 default_server;
@@ -84,11 +92,21 @@ server {
     try_files /index.html =404;
   }
 
-  # 빌드 결과의 해시가 붙은 파일은 오래 캐시한다
+  # 빌드 결과의 해시가 붙은 파일(Vite assets)은 릴리스가 아니라 공용 불변 폴더(/srv/homestamp/front/assets)에서 낸다.
+  # 이전·새 판의 index.html이 부르는 파일이 전환·되돌리기 중에도 같이 있게(deploy-front.sh, 런북 배포-화면.md).
+  # 없는 파일은 404(index.html로 대신 답하지 않음). 이름이 내용 해시라 오래 캐시한다
   location /assets/ {
+    root /srv/homestamp/front;
     include /etc/nginx/snippets/security-headers.conf;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-    add_header Cache-Control "public, max-age=31536000, immutable" always;
+    add_header Cache-Control $homestamp_assets_cache always;
+    try_files $uri =404;
+  }
+  # 지금 나가는 판(배포 확인용). 없으면 404(index.html로 대신 답하지 않음), 캐시하지 않는다
+  location = /version.json {
+    include /etc/nginx/snippets/security-headers.conf;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Cache-Control "no-store" always;
     try_files $uri =404;
   }
 
