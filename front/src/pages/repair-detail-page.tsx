@@ -1,6 +1,11 @@
 import type { RecordRequest } from "@/api/records"
 import { useRef, type ReactNode } from "react"
-import { ClipboardCheck, MessageSquareText, ShieldCheck } from "lucide-react"
+import {
+  ClipboardCheck,
+  MessageSquareText,
+  ShieldCheck,
+  StickyNote,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Empty, Status, Timeline } from "@/components/common/blocks"
 import { Fold } from "@/components/common/fold"
@@ -45,6 +50,7 @@ import {
 } from "@/features/repair/repair-records"
 import { CostAgreement } from "@/features/proposal/repair-discussions"
 import { CauseNotes } from "@/features/repair/cause-notes"
+import { ProgressNotes } from "@/features/repair/progress-notes"
 import { RepairPayments } from "@/features/payment/repair-payments"
 import { afterMasks, beforeMasks, type maskOf } from "@/lib/photo-privacy"
 import { safeSharedText } from "@/lib/service-rules"
@@ -387,6 +393,24 @@ export function RepairDetailPage({
               repair={r}
               role={role}
               readOnly={!has("cause-notes")}
+              onCommand={command}
+            />
+          </Fold>
+        ) : undefined
+      }
+      progress={
+        !isGuest ? (
+          <Fold
+            title="진행 상황"
+            count={r.progressNotes?.length ?? 0}
+            icon={<StickyNote size={16} />}
+            className="mt-0 rounded-[18px] shadow-[0_1px_2px_#1720330a]"
+          >
+            <ProgressNotes
+              repair={r}
+              role={role}
+              canNote={has("progress-notes")}
+              canAsk={has("ask-progress")}
               onCommand={command}
             />
           </Fold>

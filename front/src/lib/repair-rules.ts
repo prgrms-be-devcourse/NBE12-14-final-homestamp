@@ -1140,3 +1140,57 @@ export function respondCauseNote(
     at: nowText(),
   })
 }
+
+// 진행 상황(REP-6, 08 5-2). 목업은 서버 대신 같은 규칙을 짧게 따라요(화면 확인은 HTTP 모드로)
+const PROGRESS_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000
+export function addProgressNote(
+  r: Repair,
+  role: Role,
+  note: { text: string; photos: string[]; asksCheck: boolean },
+  id = uid(),
+) {
+  if (!note.text.trim() && !note.photos.length)
+    throw new Error("글이나 사진을 하나 이상 남겨 주세요.")
+  if (note.asksCheck && r.ack !== "확인됨")
+    throw new Error("하자를 둘 다 확인한 건에서만 확인을 요청할 수 있어요.")
+  r.progressNotes = [
+    ...(r.progressNotes || []),
+    {
+      id,
+      by: role,
+      text: note.text.trim(),
+      asksCheck: note.asksCheck,
+      at: new Date().toISOString(),
+      photoCount: note.photos.length,
+    },
+  ]
+}
+export function askProgress(r: Repair, now = Date.now()) {
+  const last = r.progressAskedAt ? Date.parse(r.progressAskedAt) : NaN
+  if (!Number.isNaN(last) && now - last < PROGRESS_INTERVAL_MS)
+    throw new Error("진행 상황은 7일에 한 번 물을 수 있어요.")
+  r.progressAskedAt = new Date(now).toISOString()
+}
+export function respondProgressNote(
+  r: Repair,
+  role: Role,
+  noteId: string,
+  answer: "맞아요" | "보류" | "이견",
+  reason: string,
+) {
+  const note = r.progressNotes?.find((n) => n.id === noteId)
+  if (!note?.asksCheck)
+    throw new Error("확인을 요청한 진행 상황에만 답할 수 있어요.")
+  if (note.by === role)
+    throw new Error("내가 남긴 진행 상황에는 답할 수 없어요.")
+  if (note.response?.answer === "맞아요")
+    throw new Error("이미 맞아요로 답했어요.")
+  if (answer !== "맞아요" && !reason.trim())
+    throw new Error("사유를 입력해 주세요.")
+  note.response = {
+    by: role,
+    answer,
+    reason: reason.trim(),
+    at: new Date().toISOString(),
+  }
+}

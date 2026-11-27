@@ -37,6 +37,13 @@ export interface NewCauseNote {
   previousId?: string
 }
 
+// 진행 상황 남기기(REP-6, 08 5-2): 글이나 사진 하나 이상. asksCheck면 상대에게 확인 요청(하자를 둘 다 확인한 건만, 7일에 한 번)
+export interface NewProgressNote {
+  text: string
+  photos: string[]
+  asksCheck: boolean
+}
+
 export interface RepairCasesApi {
   get(s: Session, id: string): Promise<RepairCaseView>
   // POST /api/rooms/{roomId}/repair-cases: 하자 등록(재발 등록 포함)
@@ -67,6 +74,21 @@ export interface RepairCasesApi {
     id: string,
     causeId: string,
     body: { answer: "ACK" | "DISPUTE"; reason?: string },
+  ): Promise<RepairCaseView>
+  // POST /ask-progress: 진행 상황 묻기(본문 없음, 누가 물었든 한 건에 7일에 한 번)
+  askProgress(s: Session, id: string): Promise<RepairCaseView>
+  // POST /progress-notes {text, uploadTickets, asksCheck}
+  addProgressNote(
+    s: Session,
+    id: string,
+    body: NewProgressNote,
+  ): Promise<RepairCaseView>
+  // POST /api/progress-notes/{noteId}/respond: [상황이 바뀌었어요]에 상대가 답해요(맞아요·보류·이견)
+  respondProgressNote(
+    s: Session,
+    id: string,
+    noteId: string,
+    body: { answer: RespondAnswer; reason?: string },
   ): Promise<RepairCaseView>
   // POST /respond {answer, reason, seenVersionNo}
   respond(
