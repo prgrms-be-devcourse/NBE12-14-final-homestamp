@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
 import com.chilsuitjo.back.global.common.PartySide;
+import com.chilsuitjo.back.photo.dto.PhotoTarget;
 import com.chilsuitjo.back.photo.rule.PhotoStage;
 import com.chilsuitjo.back.photo.rule.PhotoTargetType;
 import java.time.Instant;
@@ -214,6 +215,21 @@ class PhotoTest {
     assertThat(filledTargetColumns(photo)).containsExactly(Map.entry("inspectionId", TARGET_ID));
     assertThat(photo.getRoomPartId()).isEqualTo(PART_ID);
     assertThat(photo.getRedactedFromPhotoId()).isEqualTo(redactedFrom);
+  }
+
+  @ParameterizedTest
+  @EnumSource(PhotoTargetType.class)
+  void 일반_사진의_대상은_만들_때_넘긴_종류와_ID다(PhotoTargetType targetType) {
+    Photo photo = targetPhoto(targetType, TARGET_ID);
+
+    assertThat(photo.target()).isEqualTo(new PhotoTarget.Ref(targetType, TARGET_ID));
+  }
+
+  @Test
+  void 부위_사진의_대상은_점검과_부위다() {
+    Photo photo = inspectionPhoto(TARGET_ID, PART_ID);
+
+    assertThat(photo.target()).isEqualTo(new PhotoTarget.InspectionPart(TARGET_ID, PART_ID));
   }
 
   /** 대상 칸 여덟 개 중 채워진 것만. */
