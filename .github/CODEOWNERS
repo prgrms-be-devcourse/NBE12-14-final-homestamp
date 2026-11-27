@@ -42,6 +42,7 @@
 /front/src/features/action/                           @yoo-sihun
 /front/src/features/repair/                           @yoo-sihun
 /front/src/features/correction/                       @yoo-sihun
+/front/src/features/download/                         @yoo-sihun
 /front/src/features/proposal/                         @jinni1
 /front/src/features/payment/                          @jinni1
 /front/src/features/settlement/                       @jinni1

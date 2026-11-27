@@ -1,6 +1,7 @@
 package com.chilsuitjo.back.repair.repository;
 
 import com.chilsuitjo.back.repair.entity.ProgressNote;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -10,6 +11,9 @@ import org.springframework.data.repository.query.Param;
 
 /** 진행 상황({@code record.progress_note}, B). 덧붙이기만 한다. repair 안에서만 쓴다. */
 public interface ProgressNoteRepository extends JpaRepository<ProgressNote, UUID> {
+
+  /** 이 수리 건들의 진행 상황 모두. 목록 한 쪽에서 진행 상황 대상 행동을 찾는다(06 4-6 {@code lastActionAt}). */
+  List<ProgressNote> findByRepairCaseIdIn(Collection<UUID> repairCaseIds);
 
   /** 그 호실의 진행 상황. 다른 호실의 ID면 비어 있다(ROOM-2a). */
   Optional<ProgressNote> findByIdAndRoomRecordId(UUID id, UUID roomRecordId);

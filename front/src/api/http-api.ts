@@ -3,6 +3,7 @@ import { endpoints } from "./endpoints"
 import { createHttpRepairCases } from "./http-repair-cases"
 import { createHttpRecords } from "./http-records"
 import { httpAvailableActions } from "./http-available-actions"
+import { createHttpDownloads } from "./downloads"
 import type { HttpRequest } from "./http-client"
 import { listAllRooms, roomFromSummary } from "./http-rooms"
 import type { Notice } from "@/data/demo"
@@ -17,6 +18,7 @@ export function createHttpApi(request: HttpRequest): HomeStampApi {
     repairCases: createHttpRepairCases(request),
     records: createHttpRecords(request),
     actions: httpAvailableActions,
+    downloads: createHttpDownloads(request),
     async listRooms(s) {
       return (await listAllRooms(request)).map((b) =>
         roomFromSummary(b, s.accountId),
