@@ -187,6 +187,8 @@ export NGINX_WORKERS="docker exec $EDGE sh -c 'pgrep -P \"\$(cat /tmp/nginx.pid)
 "$work/nginx/switch-upstream.sh" "$P-green:8080" >/dev/null
 # 고정 sleep 없이: switch-upstream.sh가 이전 작업 프로세스가 끝나기를 기다렸으므로 바로 새 연결이 green으로 간다
 check "전환: 끝나자마자 green으로" grep -q '^green ' <<<"$(curl "${C[@]}" "https://$DOMAIN:$S/api/x")"
+check "RELOAD_WAIT 형식 오류: 2로 끝남" bash -c "RELOAD_WAIT=0 '$work/nginx/switch-upstream.sh' $P-blue:8080 >/dev/null 2>&1; test \$? -eq 2"
+check "RELOAD_WAIT 형식 오류 뒤: 파일이 green 그대로(바꾸기 전에 검사)" grep -q "$P-green:8080" "$work/nginx/run/upstream/upstream.conf"
 check "전환 실패(없는 주소): 0이 아닌 종료" bash -c "! '$work/nginx/switch-upstream.sh' nohost-xyz:8080 >/dev/null 2>&1"
 check "전환 실패 뒤: 파일이 green 그대로" grep -q "$P-green:8080" "$work/nginx/run/upstream/upstream.conf"
 check "전환 실패 뒤: 트래픽 green 그대로" grep -q '^green ' <<<"$(curl "${C[@]}" "https://$DOMAIN:$S/api/x")"
