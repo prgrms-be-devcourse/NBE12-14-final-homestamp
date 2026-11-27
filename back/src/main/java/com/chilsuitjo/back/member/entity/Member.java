@@ -1,5 +1,6 @@
 package com.chilsuitjo.back.member.entity;
 
+import com.chilsuitjo.back.member.dto.LoginCheck;
 import com.chilsuitjo.back.member.rule.MemberStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -11,6 +12,7 @@ import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 import java.time.Instant;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -117,11 +119,33 @@ public class Member {
   }
 
   /**
+   * {@link #canLogInWith}가 맞으면, 토큰을 주기 전에 비밀번호가 그대로인지 다시 볼 수 있게 확인한 해시를 담아 돌려준다(06 ACC-2, #262).
+   * 해시는 {@link LoginCheck} 안에서 비교에만 쓴다.
+   */
+  public Optional<LoginCheck> checkLogin(String rawPassword, PasswordEncoder encoder) {
+    return canLogInWith(rawPassword, encoder)
+        ? Optional.of(new LoginCheck(id, passwordHash))
+        : Optional.empty();
+  }
+
+  /**
    * 다른 계정이 이 번호를 인증해 이 계정의 인증 번호와 인증 시각을 비운다(06 ACC-3a, 05 {@code member}: 이전 계정의 {@code phone}을
    * NULL로). 이미 연결된 호실(당사자 자리)은 건드리지 않는다.
    */
   public void releasePhone() {
     this.phone = null;
     this.phoneVerifiedAt = null;
+  }
+
+  /**
+   * 비밀번호 해시를 바꾼다(06 ACC-4a 변경, ACC-5b 재설정). 해시만 받는다(해시 방식은 부르는 쪽이 정한다). 탈퇴한 회원은 바꿀 수 없다.
+   *
+   * @throws IllegalStateException 탈퇴한 회원
+   */
+  public void changePasswordHash(String passwordHash) {
+    if (status != MemberStatus.ACTIVE) {
+      throw new IllegalStateException("탈퇴한 회원의 비밀번호는 바꾸지 않는다");
+    }
+    this.passwordHash = Objects.requireNonNull(passwordHash);
   }
 }

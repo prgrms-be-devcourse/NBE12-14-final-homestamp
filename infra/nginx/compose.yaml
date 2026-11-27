@@ -1,0 +1,37 @@
+# 앱 EC2의 입구 nginx. /opt/homestamp/nginx에서
+#   docker compose --env-file images.env up -d
+# 앱 컨테이너(blue/green)는 배포 스크립트가 따로 띄운다. 이 파일은 nginx만 다룬다
+name: homestamp-edge
+
+services:
+  nginx:
+    image: ${NGINX_IMAGE:?images.env를 --env-file로 넘긴다}
+    container_name: homestamp-nginx
+    # 80·443을 호스트에서 직접 받고, 127.0.0.1에만 묶인 앱에 닿는다
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      NGINX_ENTRYPOINT_QUIET_LOGS: "1"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      - SETUID
+      - SETGID
+      - CHOWN
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./run/conf.d:/etc/nginx/conf.d:ro
+      - ./run/snippets:/etc/nginx/snippets:ro
+      # 폴더로 묶는다: switch-upstream.sh가 mv로 바꾼 새 파일이 컨테이너에 보이게
+      - ./run/upstream:/etc/nginx/homestamp:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - /var/www/certbot:/var/www/certbot:ro
+      - /srv/homestamp/front:/srv/homestamp/front:ro
+    # 접속·오류 기록은 표준 출력으로 → Docker json-file(10MB×3, ec2.tf 시작 스크립트)

@@ -319,6 +319,38 @@ class FakeWaitServiceTest {
   }
 
   @Test
+  void 확인_없음이_된_고친_내용_확인에_또_고치면_같은_요청이_다시_기다림이다() {
+    OpenRequestCommand confirm =
+        new OpenRequestCommand(
+            roomRecordId, RequestKind.CORRECTION_CONFIRM, repairCase, PartySide.TENANT);
+    RequestHandle first = waits.open(confirm);
+    waits.markUnconfirmed(repairCase, RequestKind.CORRECTION_CONFIRM);
+
+    // 03 1-4 "미확인 뒤 다시 고침": 새 요청을 열지 않고 같은 요청을 기다림으로 되돌린다(#104)
+    RequestHandle again = waits.restart(confirm);
+
+    assertThat(again.created()).isFalse();
+    assertThat(again.requestId()).isEqualTo(first.requestId());
+    assertThat(waits.statusOf(repairCase, RequestKind.CORRECTION_CONFIRM))
+        .contains(RequestStatus.WAITING);
+  }
+
+  @Test
+  void 미확인인_진행_상황_묻기에_다시_요청해도_상태는_그대로다() {
+    OpenRequestCommand ask =
+        new OpenRequestCommand(
+            roomRecordId, RequestKind.PROGRESS_CHECK, repairCase, PartySide.TENANT);
+    waits.open(ask);
+    waits.markUnconfirmed(repairCase, RequestKind.PROGRESS_CHECK);
+
+    // 기다림으로 되돌리는 것은 고친 내용 확인만이다(#104 범위)
+    waits.restart(ask);
+
+    assertThat(waits.statusOf(repairCase, RequestKind.PROGRESS_CHECK))
+        .contains(RequestStatus.UNCONFIRMED);
+  }
+
+  @Test
   void 상대_쪽_제안_요청이_열려_있으면_바꾸기로_다시_요청할_수_없다() {
     waits.open(proposal(PartySide.LANDLORD));
 
