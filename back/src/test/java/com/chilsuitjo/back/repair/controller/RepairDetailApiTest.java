@@ -282,6 +282,27 @@ class RepairDetailApiTest {
   }
 
   @Test
+  void 공유를_그만둔_뒤_상대가_종료를_확인해도_그만둔_사람에게는_기다림으로_보인다() throws Exception {
+    // 상세 status는 asOf로 다시 계산해 종료 확인 대기다. closeRequest도 같은 시점으로 맞춘다(불변식 18, #344 리뷰)
+    UUID caseId = register();
+    respond(caseId, landlord, "ACK", null).andExpect(status().isOk());
+    act(caseId, tenant, "start").andExpect(status().isOk());
+    act(caseId, tenant, "request-close").andExpect(status().isOk());
+    stopSharing(PartySide.TENANT, Timestamp.from(Instant.now()));
+    act(caseId, landlord, "confirm-close").andExpect(status().isOk());
+
+    detail(caseId, tenant)
+        .andExpect(jsonPath("$.asOf").isNotEmpty())
+        .andExpect(jsonPath("$.status").value("CLOSE_WAIT"))
+        .andExpect(jsonPath("$.closeRequest.status").value("WAITING"))
+        .andExpect(jsonPath("$.closeRequest.closedAt").doesNotExist());
+    // 확인한 쪽은 지금 값(자기 행동은 보인다)
+    detail(caseId, landlord)
+        .andExpect(jsonPath("$.status").value("DONE"))
+        .andExpect(jsonPath("$.closeRequest.status").value("ANSWERED"));
+  }
+
+  @Test
   void 종료를_확인하면_closeRequest는_답한_상태로_남는다() throws Exception {
     UUID caseId = register();
     respond(caseId, landlord, "ACK", null).andExpect(status().isOk());

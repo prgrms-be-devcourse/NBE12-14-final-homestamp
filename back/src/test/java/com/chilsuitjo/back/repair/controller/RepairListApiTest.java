@@ -388,6 +388,8 @@ class RepairListApiTest {
   void 공유를_그만둔_뒤에는_waiting이_비어_있다() throws Exception {
     // 걸려 있던 일반 확인 요청은 공유 중단으로 닫히고 그만둔 사람에게는 새 요청을 만들지 않는다(03 1-4, #339)
     register(tenant, "천장 누수");
+    // 중단 전에는 하자 확인이 열려 있었다(그래야 비는 것이 공유 중단 때문임을 볼 수 있다, #344 리뷰)
+    list(tenant).andExpect(jsonPath("$.items[0].waiting.length()").value(1));
     stopSharing(PartySide.TENANT);
 
     list(tenant)
