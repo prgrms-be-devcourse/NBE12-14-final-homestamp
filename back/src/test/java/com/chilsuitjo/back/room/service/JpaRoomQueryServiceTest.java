@@ -10,6 +10,8 @@ import com.chilsuitjo.back.room.dto.MemberRoom;
 import com.chilsuitjo.back.room.dto.RoomPartSummary;
 import com.chilsuitjo.back.room.dto.RoomSummary;
 import com.chilsuitjo.back.room.rule.RoomStatus;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -25,6 +27,7 @@ class JpaRoomQueryServiceTest extends RoomReadersTestSupport {
 
   @Autowired private RoomQueryService service;
   @Autowired private RoomViewService views;
+  @PersistenceContext private EntityManager entityManager;
 
   @Test
   void 진짜_구현이_쓰인다() {
@@ -169,12 +172,21 @@ class JpaRoomQueryServiceTest extends RoomReadersTestSupport {
   }
 
   @Test
-  void 다시_공유해_시각이_비면_제한이_없다() {
+  void 그만뒀다가_다시_공유하면_제한이_풀린다() {
     UUID me = member(true);
+    Instant stoppedAt = Instant.parse("2026-11-01T00:00:00Z");
     UUID room = room("LIVING");
-    // 다시 공유하면 sharing_stopped_at이 NULL이 된다(05 party)
-    party(room, "TENANT", me, "CONNECTED", null);
+    UUID mine = party(room, "TENANT", me, "SHARING_STOPPED", stoppedAt);
     party(room, "LANDLORD", member(true), "CONNECTED", null);
+    assertThat(service.roomsOf(me))
+        .containsExactly(
+            new MemberRoom(room, PartySide.TENANT, RoomStatus.LIVING, false, true, stoppedAt));
+
+    // 다시 공유하면 연결됨으로 돌아가고 sharing_stopped_at을 비운다(05 party, 03 B). 다시 공유 API가 아직 없어 그 결과 행을 직접 만든다
+    jdbc.update(
+        "UPDATE state.party SET status = 'CONNECTED', sharing_stopped_at = NULL WHERE id = ?",
+        mine);
+    entityManager.clear(); // 위에서 읽어 둔 자리를 버리고 DB에서 다시 읽게
 
     assertThat(service.roomsOf(me))
         .containsExactly(
