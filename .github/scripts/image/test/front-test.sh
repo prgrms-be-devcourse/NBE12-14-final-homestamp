@@ -108,6 +108,7 @@ for r in index.html version.json assets/x.js; do
 done
 cpx plink && mkdir -p "$W/plink/public" && ln -s ../package.json "$W/plink/public/p.txt"
 expect "public 안의 링크 → 빌드 실패" "$([ "$(fb plink $R1 "$W/plink")" != 0 ] && echo fail)" fail
+grep -q '링크·특수 파일' "$W/build-plink.out" && ok "링크 실패 원인이 링크 검사" || bad "링크 실패 원인"
 
 echo "== 내용 확인(check-front, docker create·export·cp)"
 ck() { inr "'$HERE/check-front.sh' $1 $2 >'$W/ck.out' 2>&1; echo \$?"; }
