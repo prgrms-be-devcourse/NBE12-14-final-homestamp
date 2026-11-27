@@ -30,7 +30,10 @@ import org.hibernate.annotations.UuidGenerator;
  * <p>대상은 V1의 대상 칸 여덟 개 중 하나이거나, 모두 비어 있으면 호실 기록 자체다(예: 거주 종료 요청). 요청 종류와 대상 종류의 짝은 여기서 검사하지
  * 않는다(정해지지 않은 규칙이 있음. 예: 정산 끝내기의 대상이 호실 기록인지 정산인지, #117).
  *
- * <p>상태를 바꾸는 메서드는 아직 없다. 답함·닫힘·미확인 전이는 실제 {@code WaitService}에서 더한다.
+ * <p>상태는 열린 요청(기다림·미확인)에서만 바뀐다: 답함({@link #answer(PartySide)})·거둠({@link
+ * #withdraw(PartySide)})·닫힘({@link #close})·제안 바꾸기로 다시 기다림({@link #rewait}). 끝난 요청(답함·거둠·닫힘)은 다시 열지
+ * 않는다(03 1-4 "닫힌 요청을 자동으로 되살리지 않는다"). 미확인으로 바꾸기·기한 정하기는 기다림 타이머(d3)와 전달 확인 연동에서 더한다. 어떤 요청을
+ * 바꿀지(대상·종류·방향)는 {@code WaitService}가 고른다.
  */
 @Entity
 @Table(schema = "state", name = "response_request")
@@ -125,6 +128,81 @@ public class ResponseRequest {
     this.createdAt = Objects.requireNonNull(createdAt, "createdAt");
     this.status = RequestStatus.WAITING;
     setTarget(Objects.requireNonNull(target, "target"));
+  }
+
+  /** 열린 요청인가(기다림·미확인). */
+  public boolean isOpen() {
+    return status.isOpen();
+  }
+
+  /**
+   * 상대가 답했다. 요청한 측이 부르면 답이 아니라 거절한다. 기한 칸은 그대로 둔다(작업자는 {@code WAITING}만 보므로 재통지·미확인이 다시 걸리지 않음).
+   * 미확인 뒤 늦은 답이어도 {@code solo_reason}은 지우지 않는다(혼자 진행이 열렸던 사실. 혼자 진행 판단은 상태를 먼저 본다).
+   *
+   * <p>답이 없는 요청·끝난 요청에 "아무것도 하지 않음"({@code WaitService#answered})은 고르는 쪽({@code WaitService})이 지킨다.
+   * 여기 온 요청은 열려 있어야 한다.
+   */
+  public void answer(PartySide answeredBySide) {
+    requireOpen();
+    if (answeredBySide == requestedBySide) {
+      throw new IllegalStateException("요청한 측은 자기 요청에 답하지 않아요");
+    }
+    status = RequestStatus.ANSWERED;
+  }
+
+  /** 요청한 측이 거뒀다({@code WITHDRAWN}, decisions 2026-11-26). 요청한 측만 거둘 수 있다. */
+  public void withdraw(PartySide withdrawnBySide) {
+    requireOpen();
+    if (withdrawnBySide != requestedBySide) {
+      throw new IllegalStateException("요청한 측만 거둘 수 있어요");
+    }
+    status = RequestStatus.WITHDRAWN;
+  }
+
+  /** 답 없이 닫는다. 닫힌 이유와 시각은 함께 채운다(V1 CHECK). 시각은 원인 행동의 시각이다. */
+  public void close(ClosedReason reason, Instant at) {
+    requireOpen();
+    status = RequestStatus.CLOSED;
+    closedReason = Objects.requireNonNull(reason, "reason");
+    closedAt = Objects.requireNonNull(at, "at");
+  }
+
+  /**
+   * 같은 요청이 다시 기다림이 된다. 두 경우만이다: 제안을 낸 쪽이 자기 안을 바꿨다(05 {@code proposal} ②), 미확인이 된 고친 내용 확인에 같은 기록을
+   * 또 고쳤다(03 1-4 "미확인 뒤 다시 고침", decisions 2026-11-27, #104). 요청 ID·만든 시각·첫 통지 시각은 그대로이고, 미확인 때 열린
+   * 혼자 진행 이유는 지운다.
+   *
+   * <p>기한을 "그 시각부터 다시 센다"(03 1-4 "기한"·03 E)는 기다림 타이머(d3)가 들어올 때 정한다. 지금은 기한을 정하는 코드가 없어 기한이 있으면 조용히
+   * 옛 기한을 남기지 않고 거절한다(타이머가 만든 미확인은 기한이 있으므로 d3에서 이 경로를 함께 정한다).
+   */
+  public void rewait() {
+    requireOpen();
+    boolean correctionAgain =
+        kind == RequestKind.CORRECTION_CONFIRM && status == RequestStatus.UNCONFIRMED;
+    if (kind != RequestKind.PROPOSAL && !correctionAgain) {
+      throw new IllegalStateException("다시 기다림은 제안 요청과 미확인 고친 내용 확인만이에요: " + kind);
+    }
+    requireNoDeadline();
+    status = RequestStatus.WAITING;
+    soloReason = null;
+  }
+
+  /** 기한이 이미 정해졌나(재통지·미확인 중 하나라도). */
+  public boolean hasDeadline() {
+    return renotifyDueAt != null || unconfirmedDueAt != null;
+  }
+
+  /** 기한 다시 세기가 필요한 전이에서 부른다. 기한이 있으면 기다림 타이머(d3) 전이라 거절한다. */
+  public void requireNoDeadline() {
+    if (hasDeadline()) {
+      throw new IllegalStateException("기한 다시 세기는 기다림 타이머(d3)에서 정해요");
+    }
+  }
+
+  private void requireOpen() {
+    if (!isOpen()) {
+      throw new IllegalStateException("끝난 요청은 바꾸지 않아요: " + status);
+    }
   }
 
   /** 저장된 대상 칸을 다시 {@link RequestTarget}으로 돌려준다. 칸이 모두 비어 있으면 호실 기록 자체다. */
