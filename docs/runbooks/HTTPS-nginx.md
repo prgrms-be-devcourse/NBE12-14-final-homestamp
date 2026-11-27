@@ -116,7 +116,9 @@ nginx가 죽어도 앱 컨테이너는 그대로다. `docker compose --env-file 
 5. 전환              /opt/homestamp/nginx/switch-upstream.sh 127.0.0.1:<green 앱 포트>
 6. blue 종료
 ```
-- `switch-upstream.sh`는 주소 모양을 검사하고 `nginx -t`가 통과할 때만 reload한다. 검사나 reload가 실패하면 이전 주소로 되돌리고 0이 아닌 값으로 끝난다 → 배포 스크립트는 green을 지우고 blue를 그대로 둔다
+- `switch-upstream.sh`는 주소 모양을 검사하고 `nginx -t`가 통과할 때만 reload한다. reload 신호 뒤 이전 작업 프로세스가 모두 끝나야(처리 중 요청을 마침, `worker_shutdown_timeout 30s`, 기다림 `RELOAD_WAIT` 45초) 0으로 끝난다. 검사·reload가 실패하거나 기다림을 넘기면 이전 주소로 되돌리고 0이 아닌 값으로 끝난다 → 배포 스크립트는 새 앱을 멈추고 남긴 채 이전 앱을 그대로 둔다. 기다림을 넘겨 되돌린 경우에는 되돌린 reload가 끝나기를 기다리지 않으므로, 새 주소를 쥔 작업 프로세스가 최대 30초 더 새 앱으로 보낼 수 있고 새 앱이 멈춘 뒤의 그 요청은 503(`@api_unavailable`)이 된다(받아들인 위험)
+- `worker_shutdown_timeout 30s`: reload(전환·인증서 갱신) 때 30초를 넘게 처리 중인 요청은 끊긴다. 앱 응답 기다림 `proxy_read_timeout 60s`보다 짧다. 지금 API에는 30초를 넘는 요청과 오래 열어 두는 연결(SSE·WebSocket)이 없다. 생기면 이 값을 다시 정한다
+- 전환 뒤 확인 헤더: `/api/`에 127.0.0.1에서 온 요청에만 `X-Homestamp-Upstream`(실제로 답한 앱 주소)을 붙인다. 앱이 보낸 같은 이름은 지우고, 밖의 요청에는 보내지 않는다(#205 `deploy.sh`가 새 슬롯이 답했는지 본다)
 - 1~4 중 하나라도 실패하면 5를 부르지 않는다. **앞 단계에서 적용된 DB 변경(Migration)은 되돌리지 않는다**(스키마는 이전 앱과도 맞게, 04 8장)
 - 앱 포트는 blue `127.0.0.1:8081`·green `127.0.0.1:8082`다(관리 포트 9091·9092와 짝, decisions 2026-11-25). 확정(#205)
 - `switch-upstream.sh` 계약: 인자 `<host:port>` 하나(`--write-only`는 첫 설치용), 종료 0 성공·1 검사나 reload 실패(이전 주소로 되돌림, 처음이라 이전 파일이 없으면 되돌릴 것 없이 1)·2 주소 형식 오류(파일을 바꾸지 않음, 인자가 없으면 1). 지금 앱은 `run/upstream/upstream.conf`의 `server` 줄로 판단한다. 헬스는 다시 보지 않는다
