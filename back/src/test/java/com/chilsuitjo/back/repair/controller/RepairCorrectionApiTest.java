@@ -333,6 +333,9 @@ class RepairCorrectionApiTest {
         .andExpect(jsonPath("$.code").value("REASON_REQUIRED"));
     respond(ids.get(0), landlord, "r1", "NEED_MORE", "사진이 더 필요해요", 1)
         .andExpect(jsonPath("$.state").value("NEED_MORE"));
+    // 이견도 사유가 없거나 공백뿐이면 거절한다(REP-9a)
+    respond(ids.get(1), landlord, "r2-blank", "DISPUTE", "  ", 1)
+        .andExpect(jsonPath("$.code").value("REASON_REQUIRED"));
     respond(ids.get(1), landlord, "r2", "DISPUTE", "물이 새지 않아요", 1)
         .andExpect(jsonPath("$.state").value("DISPUTE"));
 
