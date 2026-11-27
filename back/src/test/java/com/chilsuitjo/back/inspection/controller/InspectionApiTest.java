@@ -307,6 +307,24 @@ class InspectionApiTest {
   }
 
   @Test
+  void INSP_3b_불변식_18_공유를_그만둔_뒤_상대가_등록한_수리_건은_나란히_보기에서_빠진다() throws Exception {
+    UUID before = created(registerRepair(landlord, "rep-before"));
+    UUID moveOut = created(start(tenant, "out", "MOVE_OUT", null));
+    stopSharing(PartySide.TENANT, clock.instant());
+    daysPass(1);
+    created(registerRepair(landlord, "rep-after"));
+
+    detail(tenant, moveOut)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.sideBySide.parts.length()").value(1))
+        .andExpect(jsonPath("$.sideBySide.parts[0].repairCases.length()").value(1))
+        .andExpect(jsonPath("$.sideBySide.parts[0].repairCases[0].id").value(before.toString()));
+    detail(landlord, moveOut)
+        .andExpect(jsonPath("$.sideBySide.parts[0].repairCases.length()").value(2))
+        .andExpect(jsonPath("$.sideBySide.parts[0].repairCases[0].id").value(before.toString()));
+  }
+
+  @Test
   void INSP_3b_입주_점검_상세에는_나란히_보기가_없다() throws Exception {
     UUID moveIn = created(start(tenant, "in", "MOVE_IN", null));
     detail(tenant, moveIn)

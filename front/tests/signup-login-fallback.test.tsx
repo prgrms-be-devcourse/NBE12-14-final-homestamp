@@ -25,6 +25,7 @@ function fakeAuth(): AuthApi {
     restore: vi.fn(async () => null),
     logout: vi.fn(async () => undefined),
     getToken: () => undefined,
+    onSessionEnd: () => () => undefined,
   }
 }
 const type = (label: RegExp, value: string) =>
