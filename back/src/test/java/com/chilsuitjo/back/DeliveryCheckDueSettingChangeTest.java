@@ -14,6 +14,7 @@ import com.chilsuitjo.back.notification.service.DeliveryResultPoller;
 import com.chilsuitjo.back.notification.service.InMemoryRecipientDirectory;
 import com.chilsuitjo.back.notification.service.InviteLinks;
 import com.chilsuitjo.back.notification.service.NoticeOutbox;
+import com.chilsuitjo.back.notification.service.NoticeWaitStart;
 import com.chilsuitjo.back.notification.service.OutboxWorker;
 import java.sql.Timestamp;
 import java.time.Clock;
@@ -66,6 +67,7 @@ class DeliveryCheckDueSettingChangeTest {
   @Autowired private InMemoryRecipientDirectory recipients;
   @Autowired private InviteLinks inviteLinks;
   @Autowired private PlatformTransactionManager transactionManager;
+  @Autowired private NoticeWaitStart waitStart;
   @Autowired private TransactionTemplate transaction;
   @Autowired private JdbcTemplate jdbc;
 
@@ -185,7 +187,8 @@ class DeliveryCheckDueSettingChangeTest {
             gateway,
             clock,
             transactionManager,
-            Duration.ofMinutes(2))
+            Duration.ofMinutes(2),
+            waitStart)
         .runOnce(50);
   }
 

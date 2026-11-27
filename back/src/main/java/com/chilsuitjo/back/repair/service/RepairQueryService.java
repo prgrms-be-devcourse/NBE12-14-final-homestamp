@@ -16,8 +16,13 @@ import com.chilsuitjo.back.correction.rule.CorrectionTransitions;
 import com.chilsuitjo.back.correction.service.CorrectionReader;
 import com.chilsuitjo.back.global.common.AckState;
 import com.chilsuitjo.back.global.common.PartySide;
+import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
+import com.chilsuitjo.back.notification.dto.RequestTarget;
+import com.chilsuitjo.back.notification.rule.RequestKind;
+import com.chilsuitjo.back.notification.rule.RequestStatus;
+import com.chilsuitjo.back.notification.service.WaitQuery;
 import com.chilsuitjo.back.photo.dto.PhotoCard;
 import com.chilsuitjo.back.photo.dto.PhotoTarget;
 import com.chilsuitjo.back.photo.rule.PhotoTargetType;
@@ -107,6 +112,7 @@ public class RepairQueryService {
   private final CauseNoteTransitions causeRules;
   private final CorrectionReader correctionReader;
   private final ProposalService proposalService;
+  private final WaitQuery waits;
   private final Clock clock;
 
   /**
@@ -205,8 +211,49 @@ public class RepairQueryService {
         new RepairCaseDetail.Money(moneyAsSeen(row, sight, shown)),
         photoCards,
         causeNotesOf(row, gate, viewer),
+        closeRequestOf(row, sight, shown),
         corrections,
         List.copyOf(actions));
+  }
+
+  /**
+   * 종료 확인 요청 중 가장 최근 것({@code WaitQuery.latest(CLOSE_CONFIRM, 수리 건)}, 06 4-6, #339). {@code
+   * WaitQuery}는 보이는 범위를 보지 않아서 여기서 거른다: 연 측·연 시각이 보는 사람에게 보이지 않으면(공유를 그만둔 뒤 상대가 연 요청) 없는 것으로
+   * 본다({@link RepairSight#sees}). 그만둔 사람에게는 새 요청을 만들지 않으므로(03 1-4) 보통은 그대로 보인다.
+   *
+   * <p>공유를 그만둔 뒤({@code asOf})에는 상세 {@code status}와 같은 시점으로 맞춘다(불변식 18, #344 리뷰): 다시 계산한 상태가 종료 확인
+   * 대기인데 요청이 이미 닫혔으면(그 뒤 상대가 확인함 등) 그 시각에는 열려 있던 것이라 열린 모습으로 준다. 기한이 {@code asOf} 전이면 미확인, 아니면
+   * 기다림이고 닫힌 이유·시각은 비운다. 원래는 공유 중단 때 요청이 {@code SHARING_STOPPED}로 먼저 닫혀 이 일이 없어야 하지만(03 1-4), 그 닫기가
+   * 들어오기 전에도 상태와 어긋나지 않게 둔다.
+   */
+  private RepairCaseDetail.CloseRequest closeRequestOf(
+      RepairCase row, RepairSight sight, RepairState shown) {
+    Instant asOf = sight.asOf();
+    return waits
+        .latest(RequestKind.CLOSE_CONFIRM, RequestTarget.of(TargetKind.REPAIR_CASE, row.getId()))
+        .filter(view -> sight.sees(view.requestedBySide(), view.openedAt()))
+        .map(view -> {
+          if (asOf != null
+              && shown.status() == RepairStatus.CLOSE_WAIT
+              && !view.status().isOpen()) {
+            boolean overdue = view.dueAt() != null && !view.dueAt().isAfter(asOf);
+            return new RepairCaseDetail.CloseRequest(
+                overdue ? RequestStatus.UNCONFIRMED : RequestStatus.WAITING,
+                view.openedAt(),
+                view.dueAt(),
+                overdue ? view.soloReason() : null,
+                null,
+                null);
+          }
+          return new RepairCaseDetail.CloseRequest(
+              view.status(),
+              view.openedAt(),
+              view.dueAt(),
+              view.soloReason(),
+              view.closedReason(),
+              view.closedAt());
+        })
+        .orElse(null);
   }
 
   /**

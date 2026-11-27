@@ -12,6 +12,7 @@ import {
 import { Art } from "@/components/common/blocks"
 import type { PhotoMask } from "@/data/demo"
 import { maskLabel } from "@/lib/photo-privacy"
+import { showUnavailable } from "@/lib/photos"
 
 interface PhotoGalleryProps {
   photos: string[]
@@ -38,10 +39,24 @@ function Shown({
   className?: string
 }) {
   if (!src) return <Art art={art} large />
-  if (!mask) return <img className={className} src={src} alt={alt} />
+  if (!mask)
+    return (
+      <img
+        className={className}
+        src={src}
+        alt={alt}
+        onError={showUnavailable}
+      />
+    )
   return (
     <span className="photo-masked" title={maskLabel(mask)}>
-      <img className={className} src={src} alt="" aria-hidden />
+      <img
+        className={className}
+        src={src}
+        alt=""
+        aria-hidden
+        onError={showUnavailable}
+      />
       <span className="photo-masked-label">
         <EyeOff size={14} aria-hidden />
         개인정보 이유로 가림

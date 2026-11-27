@@ -8,6 +8,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+import org.springframework.web.servlet.handler.MappedInterceptor;
 
 /**
  * {@link TermsGateInterceptor}를 {@code /api/**}에 건다. 확인 전에도 받는 주소는 {@link
@@ -32,10 +33,15 @@ class TermsGateWebConfig implements WebMvcConfigurer {
       }
       throw new IllegalStateException("TermsService가 없어 약관 확인 전 막기(CONS-4)를 걸 수 없다");
     }
-    registry
-        .addInterceptor(new TermsGateInterceptor(service))
-        .addPathPatterns("/api/**")
-        .excludePathPatterns(TermsGateInterceptor.EXEMPT);
+    registry.addInterceptor(mapped(new TermsGateInterceptor(service)));
+  }
+
+  /**
+   * 막기를 걸 주소 규칙. {@code /api/**}에서 {@link TermsGateInterceptor#EXEMPT}를 뺀다. 테스트가 같은 규칙으로 주소를 맞춰 본다.
+   */
+  static MappedInterceptor mapped(TermsGateInterceptor interceptor) {
+    return new MappedInterceptor(
+        new String[] {"/api/**"}, TermsGateInterceptor.EXEMPT.toArray(String[]::new), interceptor);
   }
 
   /** 자동 설정을 끈 테스트 범위인지. 앱으로 띄우면 이 값이 없다(기본 켬). */

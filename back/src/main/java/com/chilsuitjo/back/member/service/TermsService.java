@@ -18,6 +18,8 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -38,14 +40,19 @@ public class TermsService {
 
   /**
    * @param gateEnabled {@code terms.gate.enabled}. 끄면 {@link #requireUpToDate}가 막지 않는다. 확인 기록 없이
-   *     회원을 바로 넣는 다른 기능의 테스트에서만 끈다(테스트 클래스패스 설정). 운영 기본값은 켬
+   *     회원을 바로 넣는 다른 기능의 테스트에서만 끈다(테스트 클래스패스 설정). 운영 기본값은 켬. {@code prod} 프로필에서 끄면 시작하지 않는다(막기가 조용히
+   *     꺼지지 않게)
    */
   public TermsService(
       MemberRepository members,
       MemberAcknowledgementRepository acknowledgements,
       TermsVersions versions,
       Clock clock,
-      @Value("${terms.gate.enabled:true}") boolean gateEnabled) {
+      @Value("${terms.gate.enabled:true}") boolean gateEnabled,
+      Environment environment) {
+    if (!gateEnabled && environment.acceptsProfiles(Profiles.of("prod"))) {
+      throw new IllegalStateException("prod에서는 약관 확인 전 막기(terms.gate.enabled)를 끌 수 없다(CONS-4)");
+    }
     this.members = members;
     this.acknowledgements = acknowledgements;
     this.versions = versions;

@@ -1,6 +1,8 @@
 # dev에 머지될 때 백엔드 Gradle 캐시(배포본·의존성)를 dev 범위에 저장한다(#335).
 # CI(ci.yml)는 PR에서만 돌고 GitHub 캐시는 PR끼리 나눠 쓰지 못해, 새 PR마다 "gradle cache is not found"로 처음부터 받았다.
-# dev 범위에 있는 캐시는 dev를 향한 모든 PR이 읽는다. 캐시 키는 setup-java가 Gradle 파일 해시로 정하므로 ci.yml back과 같다.
+# dev 범위에 있는 캐시는 dev를 향한 모든 PR이 읽는다. 키는 setup-java가 Gradle 파일 해시로 정하므로 ci.yml back·back-migration과 같다.
+# Docker 이미지 빌드는 캐시 대신 CI Maven 미러로 받는다(ci.yml back-image, #372). 예전 image job(Docker 층 캐시)은 뺐다:
+# 캐시를 채우는 job 자신이 Maven Central 429로 계속 실패했다.
 name: Gradle 캐시
 
 on:
@@ -33,6 +35,9 @@ jobs:
           distribution: temurin
           java-version: '25'
           cache: gradle
+      # 의존성은 Maven Central 대신 미러에서 받는다(러너 공유 IP의 429 막기, #372)
+      - name: CI Maven 미러
+        run: mkdir -p ~/.gradle/init.d && cp ../.github/gradle/ci-mirror.init.gradle ~/.gradle/init.d/
       # 테스트는 돌리지 않는다. 컴파일과 서식 검사가 쓰는 의존성만 받아 캐시에 넣는다
       - name: 의존성 받기
         run: ./gradlew spotlessCheck compileTestJava --no-daemon

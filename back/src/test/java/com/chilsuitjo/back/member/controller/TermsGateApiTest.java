@@ -9,18 +9,25 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.chilsuitjo.back.TestcontainersConfiguration;
 import com.chilsuitjo.back.global.error.ErrorCode;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Import;
@@ -29,6 +36,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 
 /**
  * 06 CONS-4a·b, 4-1 {@code GET /api/me}의 {@code pendingAcknowledgements}·{@code POST
@@ -45,8 +54,67 @@ class TermsGateApiTest {
 
   private static final String NEW_TERMS = "2026-12-01";
 
+  /**
+   * 면제 목록에 있지만 아직 컨트롤러가 없는 주소(06 4장 표에만 있음). 컨트롤러를 만들면 아래 테스트가 실패하므로 여기서 빼고, 주소가 06과 같은지 다시 본다. 사진
+   * 지우기의 {@code redactedUpload}(가린 사본 등록)를 확인 전에 받을지는 그때 정한다(#338 리뷰 4).
+   */
+  private static final Set<String> NOT_YET_MAPPED =
+      Set.of(
+          "/api/me/withdraw",
+          "/api/me/notifications/*/read",
+          "/api/rooms/*/stop-sharing",
+          "/api/photos/*/erase");
+
+  private static final Path SPEC = Path.of("../docs/rules/06-요구사항-명세.md");
+
   @Autowired private MockMvc mvc;
   @Autowired private JdbcTemplate jdbc;
+
+  @Autowired
+  @Qualifier("requestMappingHandlerMapping")
+  private RequestMappingHandlerMapping mappings;
+
+  // 면제 주소 계약(#338 리뷰 4)
+
+  @Test
+  void 면제_주소는_06_API_표의_POST_주소이고_컨트롤러가_있거나_아직_만들기_전이다() throws Exception {
+    String spec = Files.readString(SPEC.toAbsolutePath().normalize());
+    Set<String> posts = postPatterns();
+
+    for (String exempt : TermsGateInterceptor.EXEMPT) {
+      if (exempt.endsWith("/**")) {
+        continue;
+      }
+      assertThat(specRow(exempt).matcher(spec).find())
+          .as("06 4장 표에 POST %s 줄이 있어야 한다", exempt)
+          .isTrue();
+      if (NOT_YET_MAPPED.contains(exempt)) {
+        assertThat(posts)
+            .as("%s 컨트롤러가 생겼으면 NOT_YET_MAPPED에서 빼고 주소를 다시 본다", exempt)
+            .doesNotContain(exempt);
+      } else {
+        assertThat(posts).as("%s 컨트롤러가 있어야 한다", exempt).contains(exempt);
+      }
+    }
+  }
+
+  /** 06 표의 {@code | `POST /api/rooms/{id}/stop-sharing` |} 줄. 면제 주소의 {@code *}는 경로 변수 자리다. */
+  private static Pattern specRow(String exempt) {
+    String path =
+        Arrays.stream(exempt.split("\\*", -1))
+            .map(Pattern::quote)
+            .collect(Collectors.joining("\\{[^}]+\\}"));
+    return Pattern.compile("\\| `POST " + path + "` \\|");
+  }
+
+  /** 앱에 있는 POST 주소. 경로 변수는 {@code *}로 바꾼다. */
+  private Set<String> postPatterns() {
+    return mappings.getHandlerMethods().keySet().stream()
+        .filter(info -> info.getMethodsCondition().getMethods().contains(RequestMethod.POST))
+        .flatMap(info -> info.getPatternValues().stream())
+        .map(p -> p.replaceAll("\\{[^}]+\\}", "*"))
+        .collect(Collectors.toSet());
+  }
 
   // GET /api/me 다시 확인할 항목
 
