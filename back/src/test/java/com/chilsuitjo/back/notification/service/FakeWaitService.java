@@ -169,13 +169,13 @@ public class FakeWaitService implements WaitService, WaitQuery {
   @Override
   public int closeAll(UUID roomRecordId, ClosedReason reason, Set<RequestKind> kinds) {
     // 운영(JpaWaitService)과 같은 범위만 닫는다. 정해지지 않은 이유는 같은 예외다(#113)
-    Set<RequestStatus> statuses = CloseAllScope.statuses(reason, kinds);
+    Map<RequestKind, Set<RequestStatus>> targets = CloseAllScope.targets(reason, kinds);
     int closed = 0;
     for (Map.Entry<Key, Request> entry : requests.entrySet()) {
       Request request = entry.getValue();
       if (request.roomRecordId().equals(roomRecordId)
-          && kinds.contains(entry.getKey().kind())
-          && statuses.contains(request.status())) {
+          && targets.containsKey(entry.getKey().kind())
+          && targets.get(entry.getKey().kind()).contains(request.status())) {
         write(entry.getKey(), request.closed(reason, clock.instant()));
         closed++;
       }
