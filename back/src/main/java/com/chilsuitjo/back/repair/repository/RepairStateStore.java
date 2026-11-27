@@ -33,6 +33,7 @@ import com.chilsuitjo.back.repair.entity.CauseNote;
 import com.chilsuitjo.back.repair.entity.ProgressNote;
 import com.chilsuitjo.back.repair.entity.RepairCase;
 import com.chilsuitjo.back.repair.entity.RepairContent;
+import com.chilsuitjo.back.repair.rule.RepairSight;
 import com.chilsuitjo.back.repair.rule.RepairState;
 import com.chilsuitjo.back.repair.rule.RepairStatus;
 import com.chilsuitjo.back.repair.rule.RepairTransitions;
@@ -289,7 +290,7 @@ public class RepairStateStore {
     if (check.since() == null) {
       return true;
     }
-    Instant cutoff = sharingCutoff(row, side).orElse(null);
+    RepairSight sight = sightFor(row, side);
     List<ActionEntry> history =
         new ArrayList<>(actions.findByTarget(ActionTarget.repairCase(row.getId())));
     for (CauseNote note : causeNotes.findByRepairCaseIdOrderByCreatedAtAscIdAsc(row.getId())) {
@@ -300,7 +301,7 @@ public class RepairStateStore {
             entry.actorSide() != null
                 && entry.actorSide() != side
                 && entry.createdAt().isAfter(check.since())
-                && (cutoff == null || !entry.createdAt().isAfter(cutoff)));
+                && sight.sees(entry.actorSide(), entry.createdAt()));
   }
 
   /** 이 종류의 마지막 행동 시각(행동 기록이 원본, 안내서 8-1). 없으면 null. */
@@ -350,29 +351,22 @@ public class RepairStateStore {
   }
 
   /**
-   * 이 호실에서 보이는 범위를 고정하는 시각(03 6-6 9번 "그만둔 시각 기준으로 고정", 3-1 "모든 줄에 같게"). 제한이 살아 있는 공유 중단 시각 중 이른
-   * 것이고, 없으면 비어 있다. 공유 중단은 양방향이라 어느 쪽이 그만뒀든 같다. 상대가 탈퇴해 풀린 공유 중단은 보지 않는다({@code RoomParties}, 06
-   * CONS-3p·3q). 이 시각보다 뒤에 남은 상대 측 행동은 보는 사람에게 보이지 않는다(불변식 18).
-   *
-   * <p>탈퇴로 풀리는지는 <b>보는 사람 기준</b>이다({@code RoomParties}가 "내 측"에서 판단): 보는 사람의 상대가 탈퇴했으면 두 측의 중단 모두 보지
-   * 않는다(#175).
+   * 보는 사람에게 이 호실 수리 기록이 어디까지 보이나({@link RepairSight}, 03 6-6 9번 "그만둔 시각 기준으로 고정", 3-1 "모든 줄에 같게",
+   * 6-4). 탈퇴로 풀리는지는 <b>보는 사람 기준</b>이다({@code RoomParties}가 "내 측"에서 판단, #175). 상대가 탈퇴했으면 남아 있는 공유 중단
+   * 시각 뒤의 그 측 기록은 계속 보이지 않는다(#288).
    *
    * @param viewer 보는 사람의 측
    */
-  public Optional<Instant> sharingCutoff(RepairCase row, PartySide viewer) {
-    return Optional.ofNullable(sharingCutoff(parties.read(row.getRoomRecordId(), viewer)));
+  public RepairSight sightFor(RepairCase row, PartySide viewer) {
+    return RepairSight.of(parties.read(row.getRoomRecordId(), viewer), viewer);
   }
 
+  /**
+   * 제한이 살아 있는 공유 중단 시각 중 이른 것({@link RepairSight#shared}). 지금 할 수 있는 일(요청 열기)과 상대가 볼 수 있는지를 정한다.
+   * 상대가 탈퇴해 풀린 공유 중단은 보지 않는다(06 CONS-3p·3q).
+   */
   private static Instant sharingCutoff(RoomParties room) {
-    Instant stopped = null;
-    if (room.mySharingStoppedApplies()) {
-      stopped = room.mine().sharingStoppedAt();
-    }
-    if (room.counterpartSharingStoppedApplies()) {
-      Instant theirs = room.counterpart().sharingStoppedAt();
-      stopped = stopped == null || theirs.isBefore(stopped) ? theirs : stopped;
-    }
-    return stopped;
+    return RepairSight.of(room, null).shared();
   }
 
   private RepairCase row(ActionCommand command) {

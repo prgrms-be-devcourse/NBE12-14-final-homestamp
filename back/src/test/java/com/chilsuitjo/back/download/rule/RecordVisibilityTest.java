@@ -99,6 +99,38 @@ class RecordVisibilityTest {
   }
 
   @Test
+  void 작성_중_상대가_더한_항목은_기준_측_내려받기에_넣는다() {
+    // #291 리뷰: 기준 측은 작성 중에도 상대가 더한 항목을 보고 답한다. 응답만 남고 그 대상 항목이 빠지면 안 된다
+    UUID inspection = UUID.randomUUID();
+    ActionEntry start = startInspection(1, inspection, PartySide.TENANT, T0);
+    ActionEntry authorItem = addItem(2, inspection, PartySide.TENANT, T0.plusSeconds(1));
+    ActionEntry theirItem = addItem(3, inspection, PartySide.LANDLORD, T0.plusSeconds(2));
+    ActionEntry theirPhoto =
+        inspectionEntry(
+            4,
+            ActionType.ADD_PART_PHOTO,
+            PartySide.LANDLORD,
+            ActionTarget.inspection(inspection),
+            Map.of(),
+            T0.plusSeconds(3));
+    List<ActionEntry> all = List.of(start, authorItem, theirItem, theirPhoto);
+
+    assertThat(RecordVisibility.select(all, PartySide.TENANT, Cutoff.NONE))
+        .containsExactly(start, authorItem, theirItem, theirPhoto);
+    // 기준 측의 작성 중 항목은 지금처럼 상대에게 빠진다
+    assertThat(RecordVisibility.select(all, PartySide.LANDLORD, Cutoff.NONE))
+        .containsExactly(start, theirItem, theirPhoto);
+  }
+
+  @Test
+  void 시작_행동이_없어_기준_측을_모르는_점검의_상대_초안은_뺀다() {
+    UUID inspection = UUID.randomUUID();
+    ActionEntry item = addItem(1, inspection, PartySide.LANDLORD, T0);
+
+    assertThat(RecordVisibility.select(List.of(item), PartySide.TENANT, Cutoff.NONE)).isEmpty();
+  }
+
+  @Test
   void 확인_요청을_보낸_점검은_상대에게도_넣는다() {
     UUID inspection = UUID.randomUUID();
     UUID other = UUID.randomUUID();

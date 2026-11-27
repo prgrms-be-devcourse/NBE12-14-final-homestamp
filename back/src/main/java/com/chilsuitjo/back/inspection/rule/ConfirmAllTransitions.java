@@ -18,10 +18,11 @@ import org.springframework.stereotype.Component;
  * 결정).
  *
  * <ul>
- *   <li>대상은 행동하는 사람이 답하지 않은 항목(확인 기다림·확인 없음)뿐이다. 보류·이견은 하나씩 답한다(03 H "이견은 하나씩")
+ *   <li>대상은 행동하는 사람이 답하지 않은 항목(확인 기다림·확인 없음)뿐이다. 보류·이견은 하나씩 답한다(03 H "이견은 하나씩"). 작성 중이면 기준 측이 상대가
+ *       더한 항목에 답할 때만 대상이 있다(#286)
  *   <li>요청 payload {@code items}의 본 항목·판 번호가 지금 대상과 하나라도 다르면 {@code VERSION_CONFLICT}(화면을 연 뒤 바뀐
  *       항목에 보지 않고 도장을 찍지 않게)
- *   <li>항목이 없는 점검이면 "하자 기록 없음" 확인이다(03 H "항목이 하나도 없어도 상대가 확인해야 잠긴다"). 기준 측이 아닌 사람만, 한 번만
+ *   <li>항목이 없는 점검이면 "하자 기록 없음" 확인이다(03 H "항목이 하나도 없어도 상대가 확인해야 잠긴다"). 확인 요청 뒤에만, 기준 측이 아닌 사람만, 한 번만
  * </ul>
  */
 @Component
@@ -44,9 +45,8 @@ public class ConfirmAllTransitions implements Transitions<ConfirmAllState> {
     if (action.type() != ActionType.CONFIRM_ALL) {
       throw new BusinessException(ErrorCode.INVALID_STATE);
     }
-    if (!InspectionItemTransitions.answerable(now.status()) || now.itemsHidden()) {
-      throw new BusinessException(ErrorCode.INVALID_STATE);
-    }
+    // 대상은 store가 이 사람에게 보이고 답할 수 있는 항목만 담는다(작성 중이면 상대가 더한 항목만,
+    // InspectionItemTransitions.itemAnswerable)
     if (!seen(action).equals(now.unanswered())) {
       throw new BusinessException(ErrorCode.VERSION_CONFLICT);
     }
@@ -58,21 +58,28 @@ public class ConfirmAllTransitions implements Transitions<ConfirmAllState> {
 
   /** 화면에서 [남은 항목 모두 확인]을 켤지. {@link #apply}가 지금 대상을 그대로 보내면 성공하는지와 같다. 호실 단위 거절은 보지 않는다. */
   public static boolean canConfirmAll(ConfirmAllState state, PartySide side) {
-    if (!InspectionItemTransitions.answerable(state.status()) || state.itemsHidden()) {
-      return false;
-    }
-    return !state.unanswered().isEmpty()
-        || (state.noItems() && side != state.author() && !state.confirmedNoItems());
+    return !state.unanswered().isEmpty() || (noItemsConfirmable(state) && side != state.author());
   }
 
   private static void requireNoItemsConfirmable(ConfirmAllState now, PartySide side) {
-    if (!now.noItems() || now.confirmedNoItems()) {
+    if (!noItemsConfirmable(now)) {
       // 답할 항목이 남지 않았다(모두 답했거나 보류·이견만 남음). 보류·이견은 하나씩 답한다
       throw new BusinessException(ErrorCode.INVALID_STATE);
     }
     if (side == now.author()) {
       throw new BusinessException(ErrorCode.NOT_COUNTERPART_SIDE);
     }
+  }
+
+  /**
+   * "하자 기록 없음"을 확인할 수 있는 점검인가: 확인 요청 뒤이고(작성 중에는 기준 측이 아직 쓰고 있다, #286), 기준 측 작성 중 항목이 가려지지 않았고, 항목이
+   * 하나도 없고, 아직 확인하지 않았다. 측은 보지 않는다.
+   */
+  private static boolean noItemsConfirmable(ConfirmAllState state) {
+    return InspectionItemTransitions.answerable(state.status())
+        && !state.draftHidden()
+        && state.noItems()
+        && !state.confirmedNoItems();
   }
 
   /** payload의 본 항목·판 번호. 형식이 틀리면 {@code VALIDATION_FAILED}(서비스가 먼저 보지만 규칙도 같은 값을 읽는다). */
