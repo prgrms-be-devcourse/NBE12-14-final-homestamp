@@ -42,6 +42,8 @@ export const CONNECTED_APIS: readonly {
   { method: "POST", path: /^\/api\/auth\/refresh$/ },
   { method: "POST", path: /^\/api\/auth\/logout$/ },
   { method: "GET", path: /^\/api\/me$/ },
+  // 바뀐 약관·확인 항목 다시 확인(06 4-1, CONS-4, #338)
+  { method: "POST", path: /^\/api\/me\/agreements$/ },
   // 휴대폰 인증 문자·인증번호 확인·가입(06 4-1, ACC-1, #208)
   { method: "POST", path: /^\/api\/auth\/phone-verifications$/ },
   {
