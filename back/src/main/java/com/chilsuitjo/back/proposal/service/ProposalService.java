@@ -1,10 +1,14 @@
 package com.chilsuitjo.back.proposal.service;
 
+import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.proposal.dto.AgendaRef;
 import com.chilsuitjo.back.proposal.dto.AgendaResult;
 import com.chilsuitjo.back.proposal.dto.ProposalCommand;
 import com.chilsuitjo.back.proposal.dto.ProposalResult;
+import com.chilsuitjo.back.proposal.rule.AgendaStatus;
+import java.time.Instant;
 import java.util.UUID;
+import java.util.function.BiPredicate;
 
 /**
  * 돈 안건 장치의 입구(03 G-1 "백엔드: 돈 안건"). 제안·동의·이견·다른 안·거둠을 수리비 부담·정산 항목·보증금이 같이 쓴다. 안건마다 다른 것은 head가 어디에
@@ -93,4 +97,19 @@ public interface ProposalService {
    *     pipeline의 오류
    */
   ProposalResult dispute(UUID proposalId, UUID memberId, String idempotencyKey, String reason);
+
+  /**
+   * 보는 사람에게 보이는 제안 행동만으로 다시 계산한 안건 상태(03 6-6 9번 "상태도 그 시각까지로 다시 계산", 3-1 "사진·돈 포함 모든 줄"). 공유를 그만둔 뒤
+   * 수리 건 상세·목록이 같은 값을 보이려고 부른다(06 4-6, decisions 2026-11-27). 이 안건의 제안 행동(제안·동의·이견)을 행동 번호 순으로
+   * {@code ProposalTransitions}로 다시 쌓는다. 기준 금액은 행동을 남길 때 이미 검사했으니 다시 보지 않는다.
+   *
+   * <p>읽기만 한다(잠그지 않음). 지금은 수리비 부담({@code REPAIR_BURDEN})만 받는다.
+   *
+   * @param roomRecordId 안건이 속한 호실 기록 ID
+   * @param agenda 다시 계산할 안건
+   * @param sees 행동을 남긴 측(서버 행동이면 null)과 시각을 받아 보는 사람에게 보이는지
+   * @return 보이는 행동만으로 계산한 안건 상태. 보이는 제안 행동이 없으면 {@code NONE}
+   */
+  AgendaStatus statusAsSeen(
+      UUID roomRecordId, AgendaRef agenda, BiPredicate<PartySide, Instant> sees);
 }

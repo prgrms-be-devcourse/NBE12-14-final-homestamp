@@ -3,6 +3,7 @@ package com.chilsuitjo.back.auth.repository;
 import com.chilsuitjo.back.auth.entity.RefreshToken;
 import jakarta.persistence.LockModeType;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -31,6 +32,12 @@ public interface RefreshTokenRepository extends JpaRepository<RefreshToken, UUID
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("SELECT t FROM RefreshToken t WHERE t.tokenHash = :hash")
   Optional<RefreshToken> findByTokenHashForUpdate(@Param("hash") String hash);
+
+  /** 그 회원의 아직 폐기되지 않은 토큰이 있는 묶음들(ID 순). 행은 잠그지 않는다. 폐기는 묶음마다 잠금을 잡고 {@link #revokeFamily}로 한다. */
+  @Query(
+      "SELECT DISTINCT t.familyId FROM RefreshToken t"
+          + " WHERE t.memberId = :memberId AND t.revokedAt IS NULL ORDER BY t.familyId")
+  List<UUID> findActiveFamilyIds(@Param("memberId") UUID memberId);
 
   /** 그 회원의 한 묶음에서 아직 폐기되지 않은 토큰을 모두 폐기한다. 바꾼 줄 수를 돌려준다. */
   @Modifying(flushAutomatically = true, clearAutomatically = true)

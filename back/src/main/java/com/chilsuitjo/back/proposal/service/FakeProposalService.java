@@ -13,11 +13,13 @@ import com.chilsuitjo.back.proposal.dto.ProposalResult;
 import com.chilsuitjo.back.proposal.rule.AgendaStatus;
 import com.chilsuitjo.back.proposal.rule.ProposalOutcome;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BiPredicate;
 
 /**
  * 돈 안건 장치 가짜(#111). DB·pipeline 없이 메모리에 안건만 적는다. repair·settlement가 {@link ProposalService}를 부르는
@@ -169,6 +171,13 @@ public class FakeProposalService implements ProposalService {
             replace(now.history(), agreed));
     agendas.put(key, next);
     return next;
+  }
+
+  /** 가짜는 행동을 남기지 않아 보이는 범위를 보지 않고 지금 상태를 돌려준다. */
+  @Override
+  public AgendaStatus statusAsSeen(
+      UUID roomRecordId, AgendaRef agenda, BiPredicate<PartySide, Instant> sees) {
+    return agendas.getOrDefault(new Agenda(roomRecordId, agenda), empty(agenda)).status();
   }
 
   private static AgendaResult empty(AgendaRef agenda) {
