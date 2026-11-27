@@ -114,7 +114,13 @@ public class RepairQueryService {
    * 3-1 "사진·돈 포함 모든 줄", 양방향). 그 시각까지의 행동과 보는 사람 자신의 행동만으로 다시 계산하고({@code Replay.fold}), 그 시각을
    * {@code asOf}로 돌려준다(화면의 "○월 ○일 기준"). 상대가 그 뒤에 바꾼 하자 인정·수리 진행·부담 상태는 드러나지 않는다(#166 리뷰). {@code
    * availableActions}는 실제 요청과 같아야 해서 지금 상태로 계산한다: 그만둔 쪽은 pipeline이 막아({@code SHARING_STOPPED}) 버튼이
-   * 없고, 남은 쪽의 지금 상태에는 그만둔 쪽이 바꾼 것이 없다(하자 응답·보충은 공유 중단 중 막힘).
+   * 없고, 남은 쪽의 지금 상태에는 그만둔 쪽이 바꾼 것이 없다(그만둔 쪽은 기존 수리 건의 상태를 바꾸지 못함, 03 1-4).
+   *
+   * <p><b>상대가 탈퇴했으면</b>({@link RepairSight#departed}) 다시 계산하지 않는다: 남은 사람은 제한이 풀려(06 CONS-3p) 실제
+   * 상태에서 행동하므로 상태·{@code closeRequestedBy}·버튼은 모두 지금 값이고 {@code asOf}는 null이다(호실 상세 {@code GET
+   * /api/rooms/{id}}와 같음). 중단 동안 탈퇴자가 남긴 <b>내용</b>(원인 설명·진행 상황·고친 내용·사진)만 가린다(03 6-4). 그래서 남은 사람이
+   * 공유를 그만뒀던 쪽이면 탈퇴자가 중단 동안 바꾼 상태가 지금 값에 섞여 보인다. 탈퇴 처리가 그 행동을 상태에서도 빼면 없어지는 알려진 한계다(decisions
+   * 2026-11-27).
    *
    * <p>사진({@code photos})은 수리 건에 붙은 사진이다(하자 등록·보충). 보이는 범위(공유 중단 뒤 고정, 지운 사진 흔적)는 사진 창구가 03 3-1대로
    * 거른다({@code PhotoService.cards}, #175).
@@ -137,6 +143,7 @@ public class RepairQueryService {
     RepairSight sight = store.sightFor(row, gate.side());
     Instant asOf = sight.asOf();
     List<ActionEntry> visible = visibleActions(row, sight);
+    // 탈퇴(departed)면 asOf가 null이라 다시 쌓지 않는다: 남은 사람의 행동이 기댄 실제 상태가 줄어든 이력 위에서 깨지지 않게(#294 리뷰)
     RepairState shown = asOf == null ? state : Replay.fold(rules, visible);
     if (state.status() == RepairStatus.IN_PROGRESS) {
       // 혼자 종료 버튼은 실제 혼자 종료와 같은 판단(06 4-0). 측마다 달라 상세에서만 채운다
@@ -157,7 +164,7 @@ public class RepairQueryService {
     if (gate.side() != null && gate.rejection(ActionType.NOTE_CAUSE).isEmpty()) {
       actions.add(CAUSE_NOTES);
     }
-    List<RepairCaseDetail.Correction> corrections = correctionsOf(row, gate, asOf);
+    List<RepairCaseDetail.Correction> corrections = correctionsOf(row, gate, sight);
     if (corrections.stream()
         .anyMatch(c ->
             c.status() == CorrectionStatus.WAITING && c.availableActions().contains(RESPOND))) {
@@ -199,9 +206,11 @@ public class RepairQueryService {
    *
    * <p>공유를 그만둔 뒤({@code asOf})에는 그 시각까지 고친 것과 보는 사람 자신이 고친 것만 보이고, 응답도 그 시각까지의 응답과 보는 사람 자신의 응답 중
    * 마지막으로 보여 준다(03 6-6 9번, 불변식 18). 그래서 그만두기 전에 보류·이견이었고 그 뒤 상대가 맞아요로 바꿨으면 보류·이견과 그 사유가 그대로 보인다.
+   * 상대가 탈퇴했으면 중단 동안 탈퇴자가 고친 것만 빼고 응답은 지금 값이다({@link RepairSight}, 상세 Javadoc).
    */
   private List<RepairCaseDetail.Correction> correctionsOf(
-      RepairCase row, RoomGate gate, Instant asOf) {
+      RepairCase row, RoomGate gate, RepairSight sight) {
+    Instant asOf = sight.asOf();
     PartySide viewer = gate.side();
     boolean closedByBoth =
         row.getStatus() == RepairStatus.DONE && row.getClosedBy() == ClosedBy.BOTH;
@@ -210,7 +219,7 @@ public class RepairQueryService {
     List<RepairCaseDetail.Correction> result = new ArrayList<>();
     for (CorrectionView view :
         correctionReader.findByRecord(CorrectionTargetKind.REPAIR_CASE, row.getId())) {
-      if (asOf != null && view.createdAt().isAfter(asOf) && view.requestedBySide() != viewer) {
+      if (!sight.sees(view.requestedBySide(), view.createdAt())) {
         continue;
       }
       Shown shown = shownAnswer(view, viewer, asOf);

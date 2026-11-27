@@ -31,7 +31,9 @@ import java.util.UUID;
  * @param solo 혼자 진행 가능으로 바뀐 수리 건인지(ROOM-7)
  * @param createdAt 등록한 시각
  * @param asOf 공유를 그만둬 보이는 범위를 고정한 시각(화면의 "○월 ○일 기준", 03 6-6 9번). 이때 {@code status}·{@code
- *     content}·{@code defect}·{@code money}는 그 시각까지의 행동과 보는 사람 자신의 행동으로 다시 계산한 값이다. 고정되지 않았으면 null
+ *     content}·{@code defect}·{@code money}는 그 시각까지의 행동과 보는 사람 자신의 행동으로 다시 계산한 값이다. 고정되지 않았으면 null.
+ *     상대가 탈퇴했으면 남은 공유 중단 시각이 있어도 null이고 상태는 지금 값이다(06 CONS-3p, 호실 상세와 같음). 이때는 중단 동안 탈퇴자가 남긴 내용(원인
+ *     설명·진행 상황·고친 내용·사진)만 가린다(03 6-4, {@code RepairSight})
  * @param content 보이는 판(고정되지 않았으면 지금 판)
  * @param defect 하자 인정
  * @param money 수리비 부담

@@ -35,7 +35,8 @@ class RepairSightTest {
     RepairSight sight = sight(MINE, THEIRS, PartyPresence.WITHDRAWN);
 
     assertThat(sight).isEqualTo(new RepairSight(PartySide.TENANT, null, MINE));
-    assertThat(sight.asOf()).isEqualTo(MINE);
+    // 상태는 다시 계산하지 않는다: 남은 사람은 실제 상태에서 행동한다(06 CONS-3p, #294 리뷰)
+    assertThat(sight.asOf()).isNull();
     assertThat(sight.sees(PartySide.LANDLORD, AFTER)).isFalse();
     assertThat(sight.sees(PartySide.LANDLORD, MINE)).isTrue();
     // 남은 사람의 기록과 서버 기록은 풀린 기준을 따른다
