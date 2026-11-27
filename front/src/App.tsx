@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from "react"
+import { useEffect, useRef, useState, useSyncExternalStore } from "react"
 import { Plus, ShieldCheck } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -51,6 +51,7 @@ import { createAuth, type Account } from "@/api/auth"
 import { AuthScreen } from "@/features/auth/auth-screen"
 import { PhotoGallery } from "@/features/photo/photo-gallery"
 import { ReceivedInvitations } from "@/features/room/received-invitations"
+import { RoomDownload } from "@/features/download/room-download"
 import { PartPhotoContent } from "@/features/photo/part-photo-content"
 import { maskOf } from "@/lib/photo-privacy"
 import { MoneyLeftNotice } from "@/features/payment/money-left"
@@ -233,13 +234,26 @@ function HomeStampApp({
     if (accountId)
       api.records.load({ accountId }).catch((e) => toast(errorMessage(e)))
   }, [api, accountId])
-  // 호실에 들어가면 그 호실 상세(입주일·availableActions)를 새로 받아요(GET /api/rooms/{id}). 목업은 할 일이 없어요
+  // 호실에 들어가면 그 호실 상세(입주일·availableActions)와 수리 건 목록을 새로 받아요(GET /api/rooms/{id}, /repair-cases).
+  // 같은 호실 안에서는 수리 건 목록·홈에 들어갈 때만 다시 받아, 상세에서 행동한 뒤 돌아오면 바뀐 상태가 보여요.
+  // 수리 상세·돈·점검 화면은 자기 데이터를 따로 받거나 아직 목록을 쓰지 않아 다시 받지 않아요(#293 리뷰). 목업은 할 일이 없어요
+  const listing = page === "repairs" || page === "home"
+  const inRoom = page !== "rooms" && page !== "notifications"
+  const loadedRoom = useRef("")
   useEffect(() => {
-    if (accountId && route.roomId)
-      api.records
-        .loadRoom({ accountId }, route.roomId)
-        .catch((e) => toast(errorMessage(e)))
-  }, [api, accountId, route.roomId])
+    // 호실 밖(내 호실 목록·알림)으로 나가면 비워, 같은 호실에 다시 들어올 때(상세로 바로 들어와도) 새로 받아요.
+    // 라우터는 호실 밖 화면에서도 앞서 본 roomId를 이어 두므로(지금 보는 호실) roomId만으로는 알 수 없어요
+    if (!accountId || !route.roomId || !inRoom) {
+      loadedRoom.current = ""
+      return
+    }
+    const key = `${accountId}:${route.roomId}`
+    if (loadedRoom.current === key && !listing) return
+    loadedRoom.current = key
+    api.records
+      .loadRoom({ accountId }, route.roomId)
+      .catch((e) => toast(errorMessage(e)))
+  }, [api, accountId, route.roomId, listing, inRoom])
   // 내 호실: 내가 만들었거나 연결을 수락한 호실. 호실마다 내 측(임차인/임대인)은 연결로 정해져요.
   const myRooms = db.rooms.filter((r) => {
     const s = sideOf(r, accountId)
@@ -291,8 +305,8 @@ function HomeStampApp({
   const repairListed = db.repairs.some(
     (r) => r.id === repairId && r.roomId === roomId,
   )
-  // http 모드는 수리 건 목록을 아직 받지 않아(#264) 기록에 없는 건도 상세 주소로 열고, 상세 화면이 서버에서 받아요(#179).
-  // 남의 수리 건·없는 건이면 상세 화면이 서버의 404를 받아 '찾을 수 없음'을 보여요
+  // http 모드는 목록을 받기 전(주소로 바로 연 상세)이나 목록을 다시 받기 전(방금 등록한 건)에도 상세 주소로 열고,
+  // 상세 화면이 서버에서 받아요(#179, #290). 남의 수리 건·없는 건이면 상세 화면이 서버의 404를 받아 '찾을 수 없음'을 보여요
   const serverOnlyRepair =
     api.mode === "http" &&
     page === "detail" &&
@@ -1143,6 +1157,8 @@ function HomeStampApp({
                       setSearch={setSearch}
                       tabCount={tabCount}
                       detail={detail}
+                      events={events}
+                      asOf={db.repairListAsOf?.[room.id]}
                     />
                   )}
                   {page === "detail" && repair && detailView(repair)}
@@ -1180,14 +1196,25 @@ function HomeStampApp({
                     />
                   )}
                   {page === "connection" && (
-                    <ConnectionPage
-                      room={room}
-                      role={role}
-                      readOnly={readOnly}
-                      sessionPhone={sessionPhone}
-                      roomHas={roomHas}
-                      open={open}
-                    />
+                    <>
+                      <ConnectionPage
+                        room={room}
+                        role={role}
+                        readOnly={readOnly}
+                        sessionPhone={sessionPhone}
+                        roomHas={roomHas}
+                        open={open}
+                      />
+                      {/* 내려받기(S-19)는 읽기만 하는 호실도 돼요. 목업은 서버 기록이 없어 HTTP에서만 보여요.
+                          호실을 바꾸면 앞 호실의 준비 상태(받은 목록)가 남지 않게 새로 그려요(#323 리뷰) */}
+                      {api.mode === "http" && (
+                        <RoomDownload
+                          key={room.id}
+                          roomId={room.id}
+                          roomName={room.name}
+                        />
+                      )}
+                    </>
                   )}
                   {page === "timeline" && <TimelinePage events={events} />}
                   {page === "notifications" && (
