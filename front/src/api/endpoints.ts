@@ -36,6 +36,8 @@ export const endpoints = {
   roomDownload: (rid: string) => `/api/rooms/${id(rid)}/download`,
   invite: (rid: string) => `/api/rooms/${id(rid)}/invite`,
   invitations: "/api/invitations",
+  // 가입 전 링크 열람(S-16, LINK-1). 토큰은 주소에 두지 않고 본문으로 보내요(06 LINK-2b)
+  linkView: "/api/public/links/view",
   connect: (pid: string) => `/api/invitations/${id(pid)}/connect`,
   rejectInvitation: (pid: string) => `/api/invitations/${id(pid)}/reject`,
   roomInfo: (rid: string) => `/api/rooms/${id(rid)}/info`,

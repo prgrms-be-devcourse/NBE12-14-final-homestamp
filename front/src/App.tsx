@@ -36,6 +36,8 @@ import { CounterpartNotice } from "@/components/common/counterpart-notice"
 import { RoomsPage } from "@/pages/rooms-page"
 import { RepairsPage } from "@/pages/repairs-page"
 import { SharePage, type SharedKind } from "@/pages/share-page"
+import { LinkViewPage } from "@/features/link/link-view-page"
+import { isLinkViewPath } from "@/api/link-view"
 import { hasAction, type RoomAction } from "@/api/actions"
 import { ApiProvider } from "@/api"
 import { useApi } from "@/api/hooks"
@@ -158,6 +160,9 @@ export default function App() {
   const [restoreError, setRestoreError] = useState<string>()
   const [restoreTry, setRestoreTry] = useState(0)
   const [authOpen, setAuthOpen] = useState(false)
+  // 문자 링크(/l#토큰, S-16)로 들어왔는지. 가입·로그인을 마치거나 [받은 초대 보기]를 누르면 링크 화면을 닫고 홈으로 가요
+  const [linkOpen, setLinkOpen] = useState(isLinkViewPath)
+  const [authMode, setAuthMode] = useState<"signup" | "login">("signup")
   // 쓰는 중에 세션이 끝나 로그인 화면으로 보낼 때의 안내(LOGIN_REQUIRED·REFRESH_REUSED 문구)
   const [ended, setEnded] = useState<string>()
   useEffect(() => {
@@ -187,6 +192,11 @@ export default function App() {
     [auth],
   )
   const link = isShareLink()
+  // 링크 화면을 떠나면 주소에서 토큰(#)을 지워요. 연결은 토큰이 아니라 인증한 번호로 받은 초대에서 해요(06 4-3 invitations)
+  const leaveLink = () => {
+    replaceUrl(null, "", "/")
+    setLinkOpen(false)
+  }
   if (restoring)
     return (
       <div className="auth-loading">
@@ -203,18 +213,37 @@ export default function App() {
         )}
       </div>
     )
-  if (!account && (!link || authOpen))
+  if (linkOpen && !authOpen)
+    return (
+      <LinkViewPage
+        member={Boolean(account)}
+        onSignup={() => {
+          setAuthMode("signup")
+          setAuthOpen(true)
+        }}
+        onLogin={() => {
+          setAuthMode("login")
+          setAuthOpen(true)
+        }}
+        onContinue={leaveLink}
+      />
+    )
+  if (!account && (!(link || linkOpen) || authOpen))
     return (
       <AuthScreen
+        key={linkOpen ? `link-${authMode}` : "auth"}
         auth={auth}
-        initialMode={link && !ended ? "signup" : "login"}
+        initialMode={
+          ended ? "login" : linkOpen ? authMode : link ? "signup" : "login"
+        }
         onDone={(a) => {
           setAccount(a)
           setAuthOpen(false)
           setEnded(undefined)
+          if (linkOpen) leaveLink()
         }}
         onBack={
-          link
+          link || linkOpen
             ? () => {
                 setAuthOpen(false)
                 setEnded(undefined)
@@ -223,9 +252,11 @@ export default function App() {
         }
         notice={
           ended ??
-          (link
-            ? "공유받은 기록에 응답하려면 가입한 뒤, 초대받은 번호로 호실에 연결해 주세요."
-            : undefined)
+          (linkOpen
+            ? "링크로 받은 기록에 답하거나 호실에 연결하려면 가입한 뒤, 초대받은 번호로 인증해 주세요."
+            : link
+              ? "공유받은 기록에 응답하려면 가입한 뒤, 초대받은 번호로 호실에 연결해 주세요."
+              : undefined)
         }
       />
     )
