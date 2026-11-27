@@ -85,7 +85,7 @@ resource "aws_ssm_document" "deploy_front" {
         StringEquals = ["platformType", "Linux"]
       }
       inputs = {
-        # deploy-front.sh: 받기(몇 MB) + 꺼내기·검사 + 확인 20초 + 되돌리기 확인 20초 + 정리. 넘으면 신호 → interrupted(런북 "시간 제한")
+        # deploy-front.sh: 받기(몇 MB) + 지금 상태 확인 20초 + 꺼내기·검사 + 확인 20초 + 되돌리기 확인 20초 + 정리. 넘으면 신호 → interrupted(런북 "시간 제한")
         timeoutSeconds = "600"
         runCommand     = split("\n", trimspace(templatefile("${path.module}/ssm/deploy-front-command.sh.tftpl", { expected_sha256 = var.deploy_front_script_sha256 })))
       }

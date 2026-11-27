@@ -138,12 +138,22 @@ mk() { # <태그> <커밋> [플랫폼] [추가 Dockerfile 줄]: $W/img/<태그>/
 std() { # <태그>: 판 이름 = 태그
   site_std "$W/img/$1" "$1" "$(rev_of "$1")" && mk "$1" "$(rev_of "$1")"
 }
-for v in a b c d e f g h i j; do std $v || exit 1; done
+for v in a b c d e f g h i j z; do std $v || exit 1; done
 asset() { echo "$V/front/assets/$1-$(h8 "$2").$3"; } # <이름> <판> <확장자>
 
 # ---- 백엔드 상태 흉내: 화면 배포가 건드리지 않는지
 printf '{"deploy_id":"back-1"}\n' >"$W/backstate/last.json"
 back_before="$(cd "$W/backstate" && sha256sum last.json)"
+
+echo "== F0 첫 배포가 확인에 실패하면 배포 전(current 없음)으로 돌림"
+mkdir -p "$W/img/zx" && site_std "$W/img/zx" z "$(rev_of z)"
+cp "$W/img/zx/site/assets/lazy-$(h8 z).js" "$(asset lazy z js)" && chmod 000 "$(asset lazy z js)"
+expect "F0 z 첫 배포 → 16" "$(deploy "$IMG_z")" 16
+expect "F0 current 없음" "$(cur)" -
+expect "F0 version.json 404(배포 전과 같음)" "$(code /version.json)" 404
+expect "F0 rolled_back verified" "$(field rolled_back)" verified
+[ ! -f "$V/state/last-good" ] && ok "F0 last-good 없음" || bad "F0 last-good 생김"
+rm -f "$(asset lazy z js)"
 
 echo "== F1 첫 배포(current 없음)"
 expect "F1 첫 배포 종료 0" "$(deploy "$IMG_a")" 0
@@ -191,8 +201,15 @@ id_c="$(cut -d/ -f2 <<<"$(cur)")"
 echo "== F5 되돌린 상태도 확인 실패(17) → 다음 배포는 먼저 확인(4)"
 mkdir -p "$W/img/dx" && site_std "$W/img/dx" d "$(rev_of d)"
 cp "$W/img/dx/site/assets/lazy-$(h8 d).js" "$(asset lazy d js)" && chmod 000 "$(asset lazy d js)"
+# 전환 전 확인(precheck)은 c가 멀쩡해서 통과하고, 전환한 뒤에 c가 깨진다(전환 뒤 손상 = 되돌린 상태 확인 실패)
+sed 's/^VERIFY_TIMEOUT=.*/VERIFY_TIMEOUT=15/' "$W/deploy-front.env" >"$W/mid.env"
+runner --name $T-mid $T-runner:local bash "$SRC/infra/deploy/deploy-front.sh" --config "$W/mid.env" "$IMG_d" >"$W/out/mid" 2>&1 &
+p=$!
+for _ in $(seq 1 150); do grep -q '^phase=switched$' "$V/state/in-progress" 2>/dev/null && break; sleep 0.2; done
 chmod 000 "$V/front/releases/$id_c/version.json"
-expect "F5 d 배포 → 17" "$(deploy "$IMG_d")" 17
+wait $p
+expect "F5 d 배포 → 17" "$?" 17
+grep -q 'failed_step":"rollback"' "$V/state/last.json" && grep -q '"rolled_back":"unverified"' "$V/state/last.json" && ok "F5 복구 성공으로 기록하지 않음(unverified)" || bad "F5 기록"
 expect "F5 current는 c로 돌아감" "$(cut -d/ -f2 <<<"$(cur)")" "$id_c"
 [ -f "$V/state/in-progress" ] && grep -q '^phase=rollback$' "$V/state/in-progress" && ok "F5 in-progress(rollback) 남김" || bad "F5 in-progress"
 before="$(snap)"
@@ -343,6 +360,17 @@ expect "F15 링크인 FRONT_ROOT → 2" "$(deploy --config "$W/link.env" "$IMG_c
 docker create --name homestamp-front-extract-left "$IMG_a" >/dev/null
 expect "F15 남은 꺼내기 컨테이너가 있어도 배포(a) → 0" "$(deploy "$IMG_a")" 0
 [ -z "$(docker ps -aq --filter name=^homestamp-front-extract-)" ] && ok "F15 남은 꺼내기 컨테이너 지움" || bad "F15 컨테이너 남음"
+
+echo "== F16 지금 나가는 판이 이미 깨져 있으면 전환하지 않음(4)"
+id_now="$(cut -d/ -f2 <<<"$(cur)")"
+chmod 000 "$(asset index a js)"
+before="$(snap)"
+expect "F16 c 배포 → 4" "$(deploy "$IMG_c")" 4
+expect "F16 failed_step precheck" "$(field failed_step)" precheck
+expect "F16 그대로(새 릴리스·assets 없음)" "$(snap)" "$before"
+expect "F16 current 그대로" "$(cut -d/ -f2 <<<"$(cur)")" "$id_now"
+[ ! -f "$V/state/in-progress" ] && ok "F16 in-progress 없음" || bad "F16 in-progress"
+chmod 644 "$(asset index a js)"
 
 echo "== F12 계약 시험: check-front.sh(CI)와 deploy-front.sh --check-dir(서버)가 같은 판단"
 for tag in a blink bhard bdot bname bext bmap bsub bnohash bver bnoidx bref bout bbig; do

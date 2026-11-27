@@ -482,6 +482,11 @@ if [[ $lg != - && "$(mf "$lg" digest)" == "$digest" ]]; then
   exit 0
 fi
 
+# ---- 2-1. 지금 나가는 상태(되돌릴 대상)가 HTTPS로 확인되는지 먼저 본다. 이미 깨져 있으면 전환해도 되돌린 상태를 확인할 수 없으므로
+#           바꾸지 않는다(4). 전환한 뒤에 깨지면 되돌린 상태 확인이 실패해 17(복구 성공으로 기록하지 않음)
+step=precheck
+retry check_target "$cur" || die $EXIT_STATE "지금 나가는 상태($cur)가 HTTPS 확인을 통과하지 못했습니다. 되돌릴 대상을 확인할 수 없어 바꾸지 않습니다(런북 \"지금 상태 확인 실패\")"
+
 # ---- 3. 꺼내기: 실행하지 않는 컨테이너 → .incoming(같은 파일시스템, root만) → 검사. 이미지 크기로 쓰는 양의 끝을 먼저 본다
 step=extract
 free="$(df -PB1 "$FRONT_ROOT" | awk 'NR==2{print $4}')"
