@@ -14,6 +14,9 @@ import jakarta.persistence.LockModeType;
 import jakarta.persistence.PersistenceContext;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -177,6 +180,41 @@ class JpaActionWriter implements ActionWriter, ActionReader {
                 ActionRecord.class)
             .setParameter("id", target.id())
             .getResultList();
+    return records.stream().map(JpaActionWriter::entryOf).toList();
+  }
+
+  @Override
+  public List<ActionEntry> findByTargets(UUID roomRecordId, Collection<ActionTarget> targets) {
+    Map<String, List<UUID>> idsByColumn = new LinkedHashMap<>();
+    for (ActionTarget target : targets) {
+      String column = columnOf(target);
+      if (column == null) {
+        throw new IllegalArgumentException("호실 자체 대상은 findByTarget으로 읽어요");
+      }
+      idsByColumn.computeIfAbsent(column, c -> new ArrayList<>()).add(target.id());
+    }
+    if (idsByColumn.isEmpty()) {
+      return List.of();
+    }
+    // 칸 이름은 ActionHash.TARGET_COLUMNS에서만 오므로 SQL에 이어 붙여도 된다(findByTarget과 같음)
+    List<String> conditions = new ArrayList<>();
+    List<String> columns = new ArrayList<>(idsByColumn.keySet());
+    for (int i = 0; i < columns.size(); i++) {
+      conditions.add(columns.get(i) + " IN (:ids" + i + ")");
+    }
+    var query =
+        entityManager
+            .createNativeQuery(
+                "SELECT * FROM record.action WHERE room_record_id = :room AND ("
+                    + String.join(" OR ", conditions)
+                    + ") ORDER BY room_seq",
+                ActionRecord.class)
+            .setParameter("room", roomRecordId);
+    for (int i = 0; i < columns.size(); i++) {
+      query.setParameter("ids" + i, idsByColumn.get(columns.get(i)));
+    }
+    @SuppressWarnings("unchecked")
+    List<ActionRecord> records = query.getResultList();
     return records.stream().map(JpaActionWriter::entryOf).toList();
   }
 

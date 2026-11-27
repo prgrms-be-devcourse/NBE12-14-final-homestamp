@@ -20,6 +20,7 @@ import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.rule.RequestStatus;
 import com.chilsuitjo.back.notification.rule.RoomPhase;
 import com.chilsuitjo.back.notification.rule.SoloReason;
+import java.time.Clock;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -31,7 +32,8 @@ class FakeWaitServiceTest {
   /** 바로 혼자 진행이 읽는 자리 사실. 테스트마다 바꾼다(기본: 상대가 연결됨, 공유 중). */
   private RoomParties parties = parties(connected());
 
-  private final FakeWaitService waits = new FakeWaitService((room, side) -> parties);
+  private final FakeWaitService waits =
+      new FakeWaitService((room, side) -> parties, Clock.systemUTC());
   private final UUID roomRecordId = UUID.randomUUID();
   private final RequestTarget repairCase =
       RequestTarget.of(TargetKind.REPAIR_CASE, UUID.randomUUID());
@@ -503,10 +505,12 @@ class FakeWaitServiceTest {
   void 바로_혼자_진행은_행동하는_측으로_자리를_읽는다() {
     PartySide[] asked = new PartySide[1];
     FakeWaitService reading =
-        new FakeWaitService((room, side) -> {
-          asked[0] = side;
-          return parties;
-        });
+        new FakeWaitService(
+            (room, side) -> {
+              asked[0] = side;
+              return parties;
+            },
+            Clock.systemUTC());
 
     reading.canGoSoloDirectly(
         new SoloQuery(roomRecordId, RequestKind.CLOSE_CONFIRM, repairCase, PartySide.LANDLORD));
@@ -517,9 +521,11 @@ class FakeWaitServiceTest {
   @Test
   void 자리를_읽지_못하면_불가로_바꾸지_않고_예외를_그대로_던진다() {
     FakeWaitService missing =
-        new FakeWaitService((room, side) -> {
-          throw new BusinessException(ErrorCode.NOT_FOUND);
-        });
+        new FakeWaitService(
+            (room, side) -> {
+              throw new BusinessException(ErrorCode.NOT_FOUND);
+            },
+            Clock.systemUTC());
 
     assertThatThrownBy(() -> missing.canGoSoloDirectly(closeDirectly()))
         .isInstanceOf(BusinessException.class);
