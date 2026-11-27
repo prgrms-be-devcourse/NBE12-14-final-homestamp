@@ -51,6 +51,21 @@ class InspectionTransitionsTest {
         .hasMessage(ErrorCode.INSPECTION_EXISTS.name());
   }
 
+  @Test
+  void 시작_버튼은_실제_시작과_같은_판단이다() {
+    InspectionState none = InspectionState.notStarted(false, false);
+    InspectionState ended = InspectionState.notStarted(false, true);
+    InspectionState existing = draft(PartySide.TENANT, NOW, null);
+
+    assertThat(rules.canStart(none, InspectionKind.MOVE_IN)).isTrue();
+    assertThat(rules.canStart(existing, InspectionKind.MOVE_IN)).isFalse();
+    // 거주 종료 뒤 입주 점검은 막고(INVALID_STATE), 퇴거 점검은 시작한다(INSP-3)
+    assertThat(rules.canStart(ended, InspectionKind.MOVE_IN)).isFalse();
+    assertThatThrownBy(() -> rules.apply(ended, start(PartySide.TENANT, "MOVE_IN", null)))
+        .hasMessage(ErrorCode.INVALID_STATE.name());
+    assertThat(rules.canStart(ended, InspectionKind.MOVE_OUT)).isTrue();
+  }
+
   // ---- 확인 요청(INSP-1f) ----
 
   @Test

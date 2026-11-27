@@ -88,6 +88,30 @@ public class InspectionTransitions implements Transitions<InspectionState> {
         && !state.confirmBlocked();
   }
 
+  /**
+   * 이 종류의 점검을 지금 시작할 수 있나(호실 상세 {@code availableActions}의 {@code inspections}, 06 4-3). {@link
+   * #apply}의 시작과 같은 판단({@link #startRejection})이다. 입주일을 함께 보낼지는 화면이 호실 입주일로 정하므로 보지 않는다. 호실 단위
+   * 거절(정산 완료·공유 중단 등)은 여기서 보지 않는다({@code RoomGate.rejection}).
+   */
+  public boolean canStart(InspectionState now, InspectionKind kind) {
+    return startRejection(now, kind) == null;
+  }
+
+  /**
+   * 시작을 막는 상태 규칙. 버튼({@link #canStart})과 실제 요청({@link #start})이 이 함수를 같이 쓴다(06 4-0 "버튼과 실제 요청은 서버의
+   * 같은 함수"). 이미 같은 종류의 점검이 있으면 {@code INSPECTION_EXISTS}, 거주 종료 뒤 입주 점검이면 {@code INVALID_STATE}, 막지
+   * 않으면 null이다.
+   */
+  private static ErrorCode startRejection(InspectionState now, InspectionKind kind) {
+    if (now.exists()) {
+      return ErrorCode.INSPECTION_EXISTS;
+    }
+    if (kind == InspectionKind.MOVE_IN && Boolean.TRUE.equals(now.roomEnded())) {
+      return ErrorCode.INVALID_STATE;
+    }
+    return null;
+  }
+
   /** 상대도 확인 요청을 보낼 수 있게 되는 시각(화면의 "작성 중이에요 · 8일째"). 시작 시각을 모르면 null. */
   public Instant counterpartCanRequestAt(InspectionState state) {
     return state.startedAt() == null ? null : state.startedAt().plus(draftStaleAfter);
@@ -125,8 +149,9 @@ public class InspectionTransitions implements Transitions<InspectionState> {
       }
       return started(now, action, in.kind(), now.moveInDateMissing(), false);
     }
-    if (Boolean.TRUE.equals(now.roomEnded())) {
-      throw new BusinessException(ErrorCode.INVALID_STATE);
+    ErrorCode rejection = startRejection(now, in.kind());
+    if (rejection != null) {
+      throw new BusinessException(rejection);
     }
     if (Boolean.TRUE.equals(now.moveInDateMissing()) && !dateGiven) {
       throw new BusinessException(ErrorCode.MOVE_IN_DATE_REQUIRED);
