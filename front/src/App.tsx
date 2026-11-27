@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from "react"
+import { useEffect, useRef, useState, useSyncExternalStore } from "react"
 import { Plus, ShieldCheck } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -21,7 +21,11 @@ import {
 } from "@/data/demo"
 import { useRouter, type Page } from "@/lib/router"
 import { roomOptions } from "@/lib/room-options"
-import { LoadingState, NotFoundState } from "@/components/common/states"
+import {
+  ErrorState,
+  LoadingState,
+  NotFoundState,
+} from "@/components/common/states"
 import { NotificationsPage } from "@/pages/notifications-page"
 import { RepairDetailPage } from "@/pages/repair-detail-page"
 import { InspectionPage } from "@/pages/inspection-page"
@@ -149,40 +153,78 @@ export default function App() {
   const [auth] = useState(() => createAuth())
   const [account, setAccount] = useState<Account | null>(null)
   const [restoring, setRestoring] = useState(true)
+  // 새로고침 뒤 로그인 복원이 연결 오류·서버 오류로 실패했을 때의 안내. 로그아웃하지 않고 다시 시도하게 해요(#191)
+  const [restoreError, setRestoreError] = useState<string>()
+  const [restoreTry, setRestoreTry] = useState(0)
   const [authOpen, setAuthOpen] = useState(false)
+  // 쓰는 중에 세션이 끝나 로그인 화면으로 보낼 때의 안내(LOGIN_REQUIRED·REFRESH_REUSED 문구)
+  const [ended, setEnded] = useState<string>()
   useEffect(() => {
     let alive = true
-    auth.restore().then((a) => {
-      if (alive) {
+    auth.restore().then(
+      (a) => {
+        if (!alive) return
         setAccount(a)
         setRestoring(false)
-      }
-    })
+      },
+      (e: unknown) => {
+        if (alive) setRestoreError(errorMessage(e))
+      },
+    )
     return () => {
       alive = false
     }
-  }, [auth])
+  }, [auth, restoreTry])
+  // 토큰 만료 뒤 재발급도 실패하면 로그인 화면으로 보내요. 주소는 그대로 두어 다시 로그인하면 보던 화면으로 돌아와요
+  useEffect(
+    () =>
+      auth.onSessionEnd((e) => {
+        setAccount(null)
+        setAuthOpen(true)
+        setEnded(e.message)
+      }),
+    [auth],
+  )
   const link = isShareLink()
   if (restoring)
     return (
       <div className="auth-loading">
-        <LoadingState label="HomeStamp를 여는 중이에요" />
+        {restoreError ? (
+          <ErrorState
+            message={restoreError}
+            onRetry={() => {
+              setRestoreError(undefined)
+              setRestoreTry((n) => n + 1)
+            }}
+          />
+        ) : (
+          <LoadingState label="HomeStamp를 여는 중이에요" />
+        )}
       </div>
     )
   if (!account && (!link || authOpen))
     return (
       <AuthScreen
         auth={auth}
-        initialMode={link ? "signup" : "login"}
+        initialMode={link && !ended ? "signup" : "login"}
         onDone={(a) => {
           setAccount(a)
           setAuthOpen(false)
+          setEnded(undefined)
         }}
-        onBack={link ? () => setAuthOpen(false) : undefined}
-        notice={
+        onBack={
           link
-            ? "공유받은 기록에 응답하려면 가입한 뒤, 초대받은 번호로 호실에 연결해 주세요."
+            ? () => {
+                setAuthOpen(false)
+                setEnded(undefined)
+              }
             : undefined
+        }
+        notice={
+          ended ??
+          (link
+            ? "공유받은 기록에 응답하려면 가입한 뒤, 초대받은 번호로 호실에 연결해 주세요."
+            : undefined)
         }
       />
     )
@@ -197,6 +239,8 @@ export default function App() {
           auth.logout().then(() => {
             replaceUrl(null, "", "/")
             setAccount(null)
+            // 만료된 세션을 로그아웃하다 재발급이 401이면 세션 끝 안내가 함께 오지만, 사람이 고른 로그아웃이라 안내하지 않아요
+            setEnded(undefined)
           })
         }
       />
@@ -234,13 +278,26 @@ function HomeStampApp({
     if (accountId)
       api.records.load({ accountId }).catch((e) => toast(errorMessage(e)))
   }, [api, accountId])
-  // 호실에 들어가면 그 호실 상세(입주일·availableActions)를 새로 받아요(GET /api/rooms/{id}). 목업은 할 일이 없어요
+  // 호실에 들어가면 그 호실 상세(입주일·availableActions)와 수리 건 목록을 새로 받아요(GET /api/rooms/{id}, /repair-cases).
+  // 같은 호실 안에서는 수리 건 목록·홈에 들어갈 때만 다시 받아, 상세에서 행동한 뒤 돌아오면 바뀐 상태가 보여요.
+  // 수리 상세·돈·점검 화면은 자기 데이터를 따로 받거나 아직 목록을 쓰지 않아 다시 받지 않아요(#293 리뷰). 목업은 할 일이 없어요
+  const listing = page === "repairs" || page === "home"
+  const inRoom = page !== "rooms" && page !== "notifications"
+  const loadedRoom = useRef("")
   useEffect(() => {
-    if (accountId && route.roomId)
-      api.records
-        .loadRoom({ accountId }, route.roomId)
-        .catch((e) => toast(errorMessage(e)))
-  }, [api, accountId, route.roomId])
+    // 호실 밖(내 호실 목록·알림)으로 나가면 비워, 같은 호실에 다시 들어올 때(상세로 바로 들어와도) 새로 받아요.
+    // 라우터는 호실 밖 화면에서도 앞서 본 roomId를 이어 두므로(지금 보는 호실) roomId만으로는 알 수 없어요
+    if (!accountId || !route.roomId || !inRoom) {
+      loadedRoom.current = ""
+      return
+    }
+    const key = `${accountId}:${route.roomId}`
+    if (loadedRoom.current === key && !listing) return
+    loadedRoom.current = key
+    api.records
+      .loadRoom({ accountId }, route.roomId)
+      .catch((e) => toast(errorMessage(e)))
+  }, [api, accountId, route.roomId, listing, inRoom])
   // 내 호실: 내가 만들었거나 연결을 수락한 호실. 호실마다 내 측(임차인/임대인)은 연결로 정해져요.
   const myRooms = db.rooms.filter((r) => {
     const s = sideOf(r, accountId)
@@ -292,8 +349,8 @@ function HomeStampApp({
   const repairListed = db.repairs.some(
     (r) => r.id === repairId && r.roomId === roomId,
   )
-  // http 모드는 수리 건 목록을 아직 받지 않아(#264) 기록에 없는 건도 상세 주소로 열고, 상세 화면이 서버에서 받아요(#179).
-  // 남의 수리 건·없는 건이면 상세 화면이 서버의 404를 받아 '찾을 수 없음'을 보여요
+  // http 모드는 목록을 받기 전(주소로 바로 연 상세)이나 목록을 다시 받기 전(방금 등록한 건)에도 상세 주소로 열고,
+  // 상세 화면이 서버에서 받아요(#179, #290). 남의 수리 건·없는 건이면 상세 화면이 서버의 404를 받아 '찾을 수 없음'을 보여요
   const serverOnlyRepair =
     api.mode === "http" &&
     page === "detail" &&
@@ -1144,6 +1201,8 @@ function HomeStampApp({
                       setSearch={setSearch}
                       tabCount={tabCount}
                       detail={detail}
+                      events={events}
+                      asOf={db.repairListAsOf?.[room.id]}
                     />
                   )}
                   {page === "detail" && repair && detailView(repair)}

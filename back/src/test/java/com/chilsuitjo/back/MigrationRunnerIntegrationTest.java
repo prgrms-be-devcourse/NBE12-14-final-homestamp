@@ -26,6 +26,7 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.UUID;
 import java.util.jar.JarFile;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -150,11 +151,11 @@ class MigrationRunnerIntegrationTest {
     String db = "hs_main";
     prepareDatabase(db);
     roleContract(db);
-    int logStart = POSTGRES.getLogs().length();
+    int logStart = logMark();
 
     migrate(db, MIGRATION, OWNER);
 
-    String log = POSTGRES.getLogs().substring(logStart);
+    String log = logSince(logStart);
     // D. 실제 DDL 실행 주체: 모든 DDL이 session=migration, current=owner
     List<String[]> ddl = ddlAudit(log, db);
     assertThat(ddl).isNotEmpty();
@@ -254,9 +255,9 @@ class MigrationRunnerIntegrationTest {
         list(
             db,
             "SELECT installed_rank||'|'||version||'|'||checksum||'|'||installed_on FROM public.flyway_schema_history ORDER BY 1");
-    int rerunStart = POSTGRES.getLogs().length();
+    int rerunStart = logMark();
     migrate(db, MIGRATION, OWNER);
-    String rerunLog = POSTGRES.getLogs().substring(rerunStart);
+    String rerunLog = logSince(rerunStart);
     assertThat(snapshot(db)).isEqualTo(snapshot);
     assertThat(
             list(
@@ -332,9 +333,9 @@ class MigrationRunnerIntegrationTest {
     String historyQuery =
         "SELECT installed_rank||'|'||coalesce(version,'-')||'|'||coalesce(checksum::text,'-')||'|'||installed_on||'|'||success FROM public.flyway_schema_history ORDER BY 1";
     List<String> historyBefore = list(db, historyQuery);
-    int logStart = POSTGRES.getLogs().length();
+    int logStart = logMark();
     Throwable failure = catchRun(files(migrationUrl(db), MIGRATION, PASSWORD, OWNER));
-    String log = POSTGRES.getLogs().substring(logStart);
+    String log = logSince(logStart);
     assertThat(failure).isInstanceOf(org.flywaydb.core.api.exception.FlywayValidateException.class);
     String described =
         MigrationMode.describeValidation(
@@ -494,12 +495,12 @@ class MigrationRunnerIntegrationTest {
   void 이름이_규칙에_맞지_않는_SQL_파일이_있으면_아무것도_적용하지_않고_실패한다() throws Exception {
     String db = "hs_f_badname";
     prepareDatabase(db);
-    int logStart = POSTGRES.getLogs().length();
+    int logStart = logMark();
     Throwable failure =
         catchRunAt(
             files(migrationUrl(db), MIGRATION, PASSWORD, OWNER),
             "classpath:migration-test/badname");
-    String log = POSTGRES.getLogs().substring(logStart);
+    String log = logSince(logStart);
     String described = MigrationMode.describe((RuntimeException) failure);
     report(
         db
@@ -553,9 +554,9 @@ class MigrationRunnerIntegrationTest {
     attack.put("FLYWAY_URL", "jdbc:postgresql://hs-attacker:5432/x");
     attack.put("FLYWAY_LOCATIONS", "filesystem:/tmp");
     attack.put("PGHOST", "hs-attacker");
-    int logStart = POSTGRES.getLogs().length();
+    int logStart = logMark();
     Cli rerun = cli(db, MIGRATION, PASSWORD, attack);
-    String log = POSTGRES.getLogs().substring(logStart);
+    String log = logSince(logStart);
     report(
         "cli rerun+attack_env exit="
             + rerun.exit()
@@ -705,11 +706,11 @@ class MigrationRunnerIntegrationTest {
     migrate(db, MIGRATION, OWNER);
     List<String> objects = snapshot(db);
     List<String> historyBefore = history(db);
-    int logStart = POSTGRES.getLogs().length();
+    int logStart = logMark();
 
     applyGrants(db);
 
-    String log = POSTGRES.getLogs().substring(logStart);
+    String log = logSince(logStart);
     List<String> executed = statements(log, db, MIGRATION);
     report("apply_grants verbs=" + statementVerbs(log, db, MIGRATION));
     // migrate가 아니다: 스키마 객체·이력은 그대로, DDL은 GRANT·REVOKE·ALTER DEFAULT PRIVILEGES(DO 블록 안)만
@@ -846,11 +847,11 @@ class MigrationRunnerIntegrationTest {
 
   void assertGrantRejected(String db, String name, String expectedDetail, List<String> acl)
       throws Exception {
-    int logStart = POSTGRES.getLogs().length();
+    int logStart = logMark();
     Throwable failure =
         catchApply(
             files(migrationUrl(db), MIGRATION, PASSWORD, OWNER), MigrationMode.MIGRATION_LOCATION);
-    String log = POSTGRES.getLogs().substring(logStart);
+    String log = logSince(logStart);
     String described = MigrationMode.describe((RuntimeException) failure);
     report(name + " described=" + described + " verbs=" + statementVerbs(log, db, MIGRATION));
     assertThat(failure).isInstanceOf(org.flywaydb.core.api.exception.FlywayValidateException.class);
@@ -976,7 +977,7 @@ class MigrationRunnerIntegrationTest {
     cases.put("grants-roles-test/migration-login.properties", "GRANT 대상에 Migration 로그인을 넣지 않는다");
     cases.put("grants-roles-test/empty-human.properties", "GRANT 역할 이름 형식이 올바르지 않다");
     cases.put("grants-roles-test/no-such.properties", "GRANT 역할 설정 리소스가 없다");
-    int logStart = POSTGRES.getLogs().length();
+    int logStart = logMark();
     for (Map.Entry<String, String> c : cases.entrySet()) {
       Throwable failure = null;
       try {
@@ -994,7 +995,7 @@ class MigrationRunnerIntegrationTest {
           .as(c.getKey())
           .isEqualTo(c.getValue());
     }
-    assertThat(users(POSTGRES.getLogs().substring(logStart), db)).as("DB에 접속하지 않았다").isEmpty();
+    assertThat(users(logSince(logStart), db)).as("DB에 접속하지 않았다").isEmpty();
     // Owner 이름이 역할 대상과 겹쳐도 실패
     assertThatThrownBy(() ->
             MigrationMode.run(
@@ -1587,6 +1588,52 @@ class MigrationRunnerIntegrationTest {
 
   static Connection adminConnection(String db) throws SQLException {
     return DriverManager.getConnection(url(db), POSTGRES.getUsername(), POSTGRES.getPassword());
+  }
+
+  /**
+   * 여기부터가 새 로그인 위치({@link #logSince}와 짝). 컨테이너 로그는 Docker를 거쳐 늦게 들어오므로, 길이만 재면 앞서 끝난 접속(예: 직전
+   * {@code --apply-grants}의 GRANT)의 로그가 그 뒤에 섞여 들어와 이번 실행의 것으로 읽힌다(#353). 관리자 접속으로 표시 문장을 남기고 그것이
+   * 로그에 보일 때까지 기다린 뒤 그 줄 다음을 돌려준다. 로그는 문장을 실행한 순서대로 쌓이므로, 표시가 보이면 그 앞의 로그는 모두 들어와 있다. 표시는 테스트 DB가
+   * 아닌 기본 DB에 남겨 DB별 로그 검사에 섞이지 않는다.
+   */
+  static int logMark() throws SQLException {
+    String logs = awaitMark();
+    int end = logs.indexOf('\n', logs.lastIndexOf(MARK));
+    return end < 0 ? logs.length() : end + 1;
+  }
+
+  /** {@link #logMark} 뒤의 로그. 끝에도 표시를 남기고 기다려서, 방금 끝난 실행의 로그가 늦게 들어와 빠지지 않게 한다. 끝 표시 줄은 넣지 않는다. */
+  static String logSince(int start) throws SQLException {
+    String logs = awaitMark();
+    int markLine = logs.lastIndexOf('\n', logs.lastIndexOf(MARK)) + 1;
+    return logs.substring(start, Math.max(start, markLine));
+  }
+
+  static final String MARK = "hs-log-mark-";
+
+  /** 표시 문장을 남기고 그것이 보이는 로그 전체를 돌려준다. 30초 안에 보이지 않으면 실패한다. */
+  static String awaitMark() throws SQLException {
+    String mark = MARK + UUID.randomUUID();
+    admin(POSTGRES.getDatabaseName(), "SELECT '" + mark + "'");
+    long deadline = System.nanoTime() + Duration.ofSeconds(30).toNanos();
+    while (true) {
+      String logs = POSTGRES.getLogs();
+      int at = logs.lastIndexOf(mark);
+      if (at >= 0) {
+        // 이 표시 뒤에 붙은 로그는 버린다: 다음 lastIndexOf(MARK)가 이 표시를 찾게
+        int end = logs.indexOf('\n', at);
+        return end < 0 ? logs : logs.substring(0, end + 1);
+      }
+      if (System.nanoTime() > deadline) {
+        throw new AssertionError("30초 안에 로그 표시가 보이지 않는다: " + mark);
+      }
+      try {
+        Thread.sleep(50);
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        throw new AssertionError("로그 표시를 기다리다 멈췄다", e);
+      }
+    }
   }
 
   static void admin(String db, String sql) throws SQLException {

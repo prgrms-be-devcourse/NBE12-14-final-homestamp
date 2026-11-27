@@ -315,9 +315,9 @@ public class RepairStateStore {
 
   /**
    * 지금 종료를 요청한 측: 종료 확인 대기일 때 마지막 {@code REQUEST_CLOSE}의 측(행동 기록이 원본, 상태 행에 칸이 없음). 대기가 아니면 null.
-   * 행동은 {@code room_seq} 순이라 마지막 것이 지금 요청이다.
+   * 행동은 {@code room_seq} 순이라 마지막 것이 지금 요청이다. 목록(06 4-6)도 같은 값을 쓴다.
    */
-  private static PartySide closeRequestedBy(RepairCase row, List<ActionEntry> history) {
+  public static PartySide closeRequestedBy(RepairCase row, List<ActionEntry> history) {
     if (row.getStatus() != RepairStatus.CLOSE_WAIT) {
       return null;
     }
@@ -358,7 +358,22 @@ public class RepairStateStore {
    * @param viewer 보는 사람의 측
    */
   public RepairSight sightFor(RepairCase row, PartySide viewer) {
-    return RepairSight.of(parties.read(row.getRoomRecordId(), viewer), viewer);
+    return sightFor(row.getRoomRecordId(), viewer);
+  }
+
+  /** {@link #sightFor(RepairCase, PartySide)}와 같다. 보이는 범위는 호실 단위라 목록은 한 번만 읽는다(06 4-6). */
+  public RepairSight sightFor(UUID roomRecordId, PartySide viewer) {
+    return RepairSight.of(parties.read(roomRecordId, viewer), viewer);
+  }
+
+  /**
+   * 이 측이 이 시각보다 뒤에 등록한 수리 건은 상대 측이 볼 수 없다(03 불변식 18). 상세의 {@code hiddenFromCounterpart}와 같은
+   * 판단이다(등록한 측에서 본 공유 중단 시각). 숨는 기록이 없으면 비어 있다.
+   *
+   * @param registrant 등록한 측
+   */
+  public Optional<Instant> hiddenAfter(UUID roomRecordId, PartySide registrant) {
+    return Optional.ofNullable(sharingCutoff(parties.read(roomRecordId, registrant)));
   }
 
   /**
