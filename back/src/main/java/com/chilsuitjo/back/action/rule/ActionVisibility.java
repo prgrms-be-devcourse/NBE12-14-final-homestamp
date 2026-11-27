@@ -1,10 +1,8 @@
-package com.chilsuitjo.back.download.rule;
+package com.chilsuitjo.back.action.rule;
 
 import com.chilsuitjo.back.action.dto.ActionEntry;
-import com.chilsuitjo.back.action.rule.ActionType;
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.common.TargetKind;
-import com.chilsuitjo.back.notification.dto.RoomParties;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.EnumSet;
@@ -15,7 +13,8 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
- * 내려받기 {@code 기록.json}에 넣을 행동 고르기(03 3-1 보이는 범위 표, 불변식 18). 순수 함수라 Repository·Clock을 부르지 않는다.
+ * 보는 사람에게 보일 행동 고르기(03 3-1 보이는 범위 표, 불변식 18). 행동 목록을 그대로 보이는 조회가 같이 쓴다: 내려받기 {@code 기록.json}(06
+ * DL-1)과 경과(REP-11). 상태를 다시 계산하는 상세(수리 건 등)는 각 도메인이 같은 기준으로 둔다. 순수 함수라 Repository·Clock을 부르지 않는다.
  *
  * <ul>
  *   <li>내가 남긴 행동은 늘 넣는다
@@ -25,7 +24,7 @@ import java.util.stream.Collectors;
  *   <li>확인 요청 전인 점검(작성 중)의 상대 점검 행동은 뺀다(3-1 "작성 중 점검 → 상대 측은 '작성 중'만", 06 INSP-1a)
  * </ul>
  */
-public final class RecordVisibility {
+public final class ActionVisibility {
 
   /** 공유 중단 뒤에도 양쪽에 보이는 행동(03 3-1, 불변식 18). */
   static final Set<ActionType> SHOWN_TO_BOTH =
@@ -60,17 +59,17 @@ public final class RecordVisibility {
   /** 점검 항목 행동이 어느 점검의 것인지 적는 payload 키({@code InspectionItemStateStore.INSPECTION_ID}와 같은 값). */
   static final String INSPECTION_ID = "inspectionId";
 
-  /** {@code 기록.json} 순서: 시각 순, 같은 시각이면 {@code room_seq} 순(번호는 파일에 넣지 않는다). */
+  /** 보이는 순서: 시각 순, 같은 시각이면 {@code room_seq} 순(번호는 내보내지 않는다, 03 3-1). */
   public static final Comparator<ActionEntry> ORDER =
       Comparator.comparing(ActionEntry::createdAt).thenComparingLong(ActionEntry::roomSeq);
 
-  private RecordVisibility() {}
+  private ActionVisibility() {}
 
   /**
    * 보는 사람 기준 공유 중단 기준 시각 둘.
    *
    * @param shared 상대·서버 행동을 빼는 시각. 제한이 살아 있는 공유 중단 시각 중 이른 것이고, 없으면 null이다. 상대가 탈퇴해 풀린 공유 중단은 보지
-   *     않는다(06 CONS-3p·3q, {@link RoomParties})
+   *     않는다(06 CONS-3p·3q)
    * @param departed 상대가 탈퇴했을 때 그 측 행동을 계속 빼는 시각. 남아 있는 공유 중단 시각(누가 그만뒀든) 중 이른 것이고, 상대가 탈퇴하지 않았거나
    *     없으면 null이다. 중단 동안 탈퇴자가 남긴 기록은 상대가 본 적이 없어 탈퇴하면 숨기고 지운다(03 6-4). 제한이 풀린 것은 남은 사람이 할 수 있는
    *     일이고, 그 기록을 보여 준다는 뜻이 아니다. 탈퇴 처리가 {@code sharing_stopped_at}을 지우지 않는다는 전제다
@@ -81,17 +80,20 @@ public final class RecordVisibility {
     public static final Cutoff NONE = new Cutoff(null, null);
   }
 
-  /** 보는 사람 기준 공유 중단 기준 시각({@link Cutoff}). */
-  public static Cutoff cutoff(RoomParties room) {
-    Instant shared =
-        earliest(
-            room.mySharingStoppedApplies() ? room.mine().sharingStoppedAt() : null,
-            room.counterpartSharingStoppedApplies() ? room.counterpart().sharingStoppedAt() : null);
-    Instant departed =
-        room.counterpart().withdrawn()
-            ? earliest(room.mine().sharingStoppedAt(), room.counterpart().sharingStoppedAt())
-            : null;
-    return new Cutoff(shared, departed);
+  /**
+   * 보는 사람 기준 공유 중단 기준 시각({@link Cutoff}). 값은 {@code CounterpartReader.read(호실, 내 측)}가 주는 {@code
+   * RoomParties}의 두 자리에서 읽어 넘긴다({@code action}은 {@code notification}을 모른다, 09 3장). 상대가 탈퇴하면 공유 중단
+   * 제한이 둘 다 풀린다는 판단은 {@code RoomParties.mySharingStoppedApplies}·{@code
+   * counterpartSharingStoppedApplies}와 같다(06 CONS-3p·3q, 상대 탈퇴가 앞선다).
+   *
+   * @param mineStoppedAt 내가 공유를 그만둔 시각. 없으면 null
+   * @param counterpartStoppedAt 상대가 공유를 그만둔 시각. 없으면 null
+   * @param counterpartWithdrawn 상대가 탈퇴했나
+   */
+  public static Cutoff cutoff(
+      Instant mineStoppedAt, Instant counterpartStoppedAt, boolean counterpartWithdrawn) {
+    Instant stopped = earliest(mineStoppedAt, counterpartStoppedAt);
+    return counterpartWithdrawn ? new Cutoff(null, stopped) : new Cutoff(stopped, null);
   }
 
   private static Instant earliest(Instant a, Instant b) {
@@ -101,7 +103,7 @@ public final class RecordVisibility {
     return b == null || a.isBefore(b) ? a : b;
   }
 
-  /** 이 행동을 보는 사람의 {@code 기록.json}에 넣나. */
+  /** 이 행동이 보는 사람에게 보이나. */
   public static boolean visible(ActionEntry entry, PartySide viewer, Cutoff cutoff) {
     if (entry.actorSide() != null && entry.actorSide() == viewer) {
       return true;
@@ -123,13 +125,13 @@ public final class RecordVisibility {
     return at != null && entry.createdAt().isAfter(at);
   }
 
-  /** 넣을 행동만 {@link #ORDER} 순으로. 확인 요청이 기준 시각 뒤의 상대 행동이라 빠졌으면 보는 사람은 그 점검을 작성 중으로만 봤으므로 초안도 뺀다. */
+  /** 보이는 행동만 {@link #ORDER} 순으로. 확인 요청이 기준 시각 뒤의 상대 행동이라 빠졌으면 보는 사람은 그 점검을 작성 중으로만 봤으므로 초안도 뺀다. */
   public static List<ActionEntry> select(List<ActionEntry> all, PartySide viewer, Cutoff cutoff) {
     List<ActionEntry> passed = all.stream().filter(e -> visible(e, viewer, cutoff)).toList();
     Set<UUID> requested =
         passed.stream()
             .filter(e -> e.type() == ActionType.REQUEST_INSPECTION_CONFIRM)
-            .map(RecordVisibility::inspectionOf)
+            .map(ActionVisibility::inspectionOf)
             .filter(Objects::nonNull)
             .collect(Collectors.toSet());
     return passed.stream().filter(e -> !hiddenDraft(e, viewer, requested)).sorted(ORDER).toList();
