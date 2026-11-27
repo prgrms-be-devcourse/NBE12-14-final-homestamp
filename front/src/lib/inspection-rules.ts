@@ -567,6 +567,17 @@ const sessionKey = (kind: Kind) =>
   kind === "in" ? ("moveIn" as const) : ("moveOut" as const)
 export const sessionOf = (room: Room, kind: Kind) => room[sessionKey(kind)]
 export const kindLabel = (kind: Kind) => (kind === "in" ? "입주" : "퇴거")
+// 잠기기 전 하자 더하기 버튼이 '빠뜨린 하자 더하기' 창(부위·설명·사진)을 여는지. 아니면 기록 창(부위 사진·하자)이에요.
+// HTTP: 서버는 점검이 있는 동안 누구든 항목을 더하게 해요(06 4-7 INSP-1d·1e). 작성 중 기준 측만 기록 창을 쓰고,
+// 작성 중 상대와 확인 요청 뒤 양쪽은 이 창을 써요. 목업: 확인 요청 뒤 상대만(작성 중 상대에게는 목업이 버튼을 주지 않아요)
+export function addsMissingDefect(
+  status: ReturnType<typeof inspectionStatus>,
+  mine: boolean,
+  http: boolean,
+) {
+  if (status === "확인 요청") return http || !mine
+  return http && status === "작성 중" && !mine
+}
 // 잠김: 확인 요청 뒤 모든 하자 항목이 확인·이견·상대 미확인으로 정리되거나, 하자 없이 요청해 '하자 기록 없음'으로 잠긴 경우
 export function inspectionStatus(
   room: Room,

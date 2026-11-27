@@ -258,6 +258,85 @@ describe("점검 기록", () => {
     expect(screen.getByRole("alert").textContent).toBe(ZONE_PART_ERROR)
     expect(commit).not.toHaveBeenCalled()
   })
+
+  // 고르기 칸(Base UI Select)은 jsdom에서 클릭으로 고르지 않아 키보드로 골라요
+  const choose = async (label: string, option: string) => {
+    const box = await screen.findByRole("combobox", { name: label })
+    if (box.getAttribute("aria-expanded") !== "true") fireEvent.click(box)
+    const o = await screen.findByRole("option", { name: option })
+    o.focus()
+    fireEvent.keyDown(o, { key: "Enter" })
+    await vi.waitFor(() =>
+      expect(screen.getByRole("combobox", { name: label }).textContent).toMatch(
+        option,
+      ),
+    )
+  }
+
+  test("HTTP에서는 제목 칸 없이 부위·설명·사진만 서버 점검 주소로 보낸다(상대가 작성 중에 더해도 서버가 정함)", async () => {
+    const parts = {
+      asOf: null,
+      parts: [
+        {
+          id: "part-ceiling",
+          zone: "욕실",
+          name: "천장",
+          enabled: true,
+          hidden: false,
+          toggleable: false,
+        },
+      ],
+    }
+    const http = createHttpApi((async (_m: string, path: string) =>
+      path === endpoints.roomParts("302") ? parts : []) as HttpRequest)
+    const commit = vi.fn()
+    inDialog(
+      <ApiProvider api={http} accountId="dev-tenant">
+        <InspectionItemForm
+          kind="in"
+          room={room({
+            id: "302",
+            moveIn: {
+              author: "임대인",
+              status: "작성 중",
+              server: {
+                id: "insp-1",
+                availableActions: ["items"],
+                lockedAt: null,
+                lockReason: null,
+                counterpartCanRequestAt: "2026-12-01T00:00:00Z",
+                asOf: null,
+              },
+            },
+          })}
+          role="임차인"
+          locked={false}
+          defectClosed={false}
+          commit={commit}
+          onCancel={() => {}}
+        />
+      </ApiProvider>,
+    )
+    await choose("구역", "욕실")
+    await choose("부위", "천장")
+    fireEvent.click(screen.getByRole("checkbox"))
+    expect(screen.queryByLabelText("기록 제목")).toBeNull()
+    type("상태 설명", "천장에 물 자국이 있어요")
+    type(/사진 메모/, "왼쪽 모서리")
+    submit(/기록 남기기/)
+
+    expect(screen.queryByRole("alert")).toBeNull()
+    const [request, text] = commit.mock.calls[0] as [ApiRequest, string]
+    expect(request).toEqual({
+      path: endpoints.inspectionAction("insp-1", "items"),
+      body: {
+        roomPartId: "part-ceiling",
+        description: "천장에 물 자국이 있어요\n\n사진 메모: 왼쪽 모서리",
+      },
+      photos: [],
+    })
+    expect(text).toMatch(/^입주 점검 · 욕실 · 천장 등록/)
+  })
 })
 
 describe("호실 연결", () => {

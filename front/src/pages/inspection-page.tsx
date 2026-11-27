@@ -44,6 +44,7 @@ import {
   confirmItem,
   respondItem,
   supplementItem,
+  addsMissingDefect,
   confirmNoDefects,
   finishSoloInspection,
   inspectionStatus,
@@ -153,11 +154,14 @@ export function InspectionPage({
   const [stillLiving, setStillLiving] = useState(false)
   const roomHas = (a: RoomAction) => hasAction(roomActions, a)
   // 버튼은 서버가 준 availableActions로만 그려요(08 0장 원칙 6). 값은 api.actions가 줘요(GET /api/inspections/{id}).
-  const { actions: available } = useApi()
+  const { actions: available, mode } = useApi()
   const actions = available.inspection(db, room, sessKind, role, {
     readOnly,
   })
   const has = (a: InspectionAction) => hasAction(actions, a)
+  const http = mode === "http"
+  // 잠기기 전 [+] 버튼이 '빠뜨린 하자 더하기' 창을 여는지(아니면 기록 창). 잠긴 뒤는 늘 그 창이에요
+  const addsMissing = addsMissingDefect(moveIn, moveInMine, http)
   // 입주 점검 시작 때 입주일을 물을지: 호실 입주일이 비어 있을 때만(INSP-2b). 목업은 이때만 시작 버튼을 줘요
   const askMoveInDate = !room.since
   const itemActions = (i: Inspection) =>
@@ -498,7 +502,7 @@ export function InspectionPage({
               )}
               {has("items") && missingHint}
             </div>
-          ) : moveIn === "확인 요청" && !moveInMine ? (
+          ) : addsMissing ? (
             has("items") && (
               <div className="flex flex-col items-end gap-1">
                 <Button variant="outline" onClick={() => setMissingOpen(true)}>
@@ -555,6 +559,9 @@ export function InspectionPage({
             {moveIn === "작성 중" && !moveInMine && (
               <small className="muted">
                 {sideText(session!.author)}이 기준 기록을 쓰고 있어요.
+                {addsMissing && has("items")
+                  ? ` 그사이 빠진 하자를 더할 수 있고, 더한 하자는 ${sideText(session!.author)}에게 바로 보여 답을 받아요.`
+                  : ""}
               </small>
             )}
             {((moveIn === "없음" && !needMoveInDate) ||
@@ -596,7 +603,9 @@ export function InspectionPage({
             {moveIn === "확인 요청" && !session?.noDefects && (
               <small className="muted">
                 {moveInMine
-                  ? "상대가 항목마다 확인·이견을 남기면 점검이 잠겨요. 하자는 이제 고치기로 덧붙이고, 부위 사진은 계속 올릴 수 있어요."
+                  ? http
+                    ? "상대가 항목마다 확인·이견을 남기면 점검이 잠겨요. 빠진 하자는 [+ 빠뜨린 하자 더하기]로 더하고, 더한 하자도 상대가 답해요."
+                    : "상대가 항목마다 확인·이견을 남기면 점검이 잠겨요. 하자는 이제 고치기로 덧붙이고, 부위 사진은 계속 올릴 수 있어요."
                   : "항목마다 확인·이견을 남기거나 ‘남은 항목 모두 확인’을 눌러 주세요. 빠진 하자는 [+ 빠뜨린 하자 더하기]로 더해요."}
               </small>
             )}

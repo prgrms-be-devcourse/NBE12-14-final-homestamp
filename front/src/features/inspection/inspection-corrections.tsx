@@ -1,12 +1,13 @@
 import {
   inspectionIdIn,
-  inspectionIdOf,
   notInSpec,
   photoIdOf,
   post,
+  postWithPhotos,
   type RecordRequest,
 } from "@/api/records"
 import { endpoints } from "@/api/endpoints"
+import { useApi } from "@/api/hooks"
 import { useState, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -568,12 +569,19 @@ export function MissingDefectDialog({
   const [part, setPart] = useState<RoomPart>()
   const [photos, setPhotos] = useState<string[]>([])
   const [error, setError] = useState("")
+  // HTTP는 서버가 받는 칸(부위 + 설명 + 사진, 06 4-7)만 보여요. 제목·추가 이유 칸이 없고, 규칙은 서버가 정해요(목업 규칙 확인은 하지 않아요)
+  const http = useApi().mode === "http"
   return (
     <ActionDialog
       open={open}
       title="빠진 하자 추가"
-      description="점검을 고치는 일이라 기준 기록을 쓴 쪽이 확인해야 반영돼요. 빠진 하자 추가도 상대 쪽이 확인해야 항목이 돼요(응답이 없어도 혼자 반영되지 않아요). 기존 항목의 고치기·사진 추가는 각 항목 카드에서 할 수 있어요."
-      submitLabel="추가 요청"
+      description={
+        http
+          ? // 서버: 더하면 바로 항목이 되고 상대(더하지 않은 쪽)가 답해요. 점검 상태·잠금은 그대로예요(06 4-7 INSP-1d·1e)
+            "빠뜨린 하자를 새 항목으로 더해요. 더한 항목은 바로 남고 상대가 맞아요·보류·이견으로 답해요. 점검이 잠긴 뒤에 더해도 잠금은 그대로예요."
+          : "점검을 고치는 일이라 기준 기록을 쓴 쪽이 확인해야 반영돼요. 빠진 하자 추가도 상대 쪽이 확인해야 항목이 돼요(응답이 없어도 혼자 반영되지 않아요). 기존 항목의 고치기·사진 추가는 각 항목 카드에서 할 수 있어요."
+      }
+      submitLabel={http ? "하자 더하기" : "추가 요청"}
       onClose={() => {
         setPhotos([])
         setError("")
@@ -599,14 +607,15 @@ export function MissingDefectDialog({
             reason,
           )
         }
-        const e = check(db, update)
+        const e = http ? "" : check(db, update)
         if (e) return e
         onAct(
-          post(
-            endpoints.inspectionAction(inspectionIdOf(room.id, kind), "items"),
-            { ...data, reason },
+          postWithPhotos(
+            endpoints.inspectionAction(inspectionIdIn(room, kind), "items"),
+            { roomPartId: data.roomPartId, description: data.description },
+            data.photos,
           ),
-          `${kind === "in" ? "입주" : "퇴거"} 점검 · 빠뜨린 하자 더하기 · ${data.title}`,
+          `${kind === "in" ? "입주" : "퇴거"} 점검 · 빠뜨린 하자 더하기 · ${data.title || data.zone}`,
           update,
           "",
         )
@@ -619,13 +628,15 @@ export function MissingDefectDialog({
         onChange={setPart}
         defaultPart={{ zone: "욕실", name: "천장" }}
       />
-      <div className="field">
-        <label htmlFor="im-title">하자 제목</label>
-        <Input id="im-title" name="title" maxLength={80} required />
-      </div>
+      {!http && (
+        <div className="field">
+          <label htmlFor="im-title">하자 제목</label>
+          <Input id="im-title" name="title" maxLength={80} required />
+        </div>
+      )}
       <div className="field">
         <label htmlFor="im-desc">상태 설명</label>
-        <Textarea id="im-desc" name="description" required />
+        <Textarea id="im-desc" name="description" maxLength={2000} required />
       </div>
       <div className="field">
         <label htmlFor="im-photos">사진 · 선택</label>
@@ -644,15 +655,17 @@ export function MissingDefectDialog({
           <small className="muted">{photos.length}장 선택됨</small>
         )}
       </div>
-      <div className="field">
-        <label htmlFor="im-reason">추가하는 이유 · 필수</label>
-        <Textarea
-          id="im-reason"
-          name="reason"
-          required
-          placeholder="예: 입주 점검 때 빠뜨린 하자예요"
-        />
-      </div>
+      {!http && (
+        <div className="field">
+          <label htmlFor="im-reason">추가하는 이유 · 필수</label>
+          <Textarea
+            id="im-reason"
+            name="reason"
+            required
+            placeholder="예: 입주 점검 때 빠뜨린 하자예요"
+          />
+        </div>
+      )}
       {error && (
         <p role="alert" className="form-error">
           {error}
