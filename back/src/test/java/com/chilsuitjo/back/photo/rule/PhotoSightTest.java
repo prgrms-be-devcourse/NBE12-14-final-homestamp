@@ -30,6 +30,22 @@ class PhotoSightTest {
         .isEqualTo(visible);
   }
 
+  /**
+   * #295: 두 번째 인자는 상대에게 보이기 시작한 시각({@code photo_visibility.released_at})이다. 작성 중 점검의 사진은 아직 비어
+   * 있어서(null) 상대에게 안 보이고, 올린 사람에게는 늘 보인다(03 3-1 "작성 중 점검", INSP-1a).
+   */
+  @ParameterizedTest(name = "{0}이 올린 아직 안 보인 사진, 중단 {1} → {2}")
+  @CsvSource({
+    "TENANT, false, true", // 내 작성 중 사진은 내게 보인다
+    "TENANT, true, true", // 공유를 그만둔 뒤에도 내 사진은 보인다
+    "LANDLORD, false, false", // 상대의 작성 중 사진은 공유 중이어도 안 보인다
+    "LANDLORD, true, false",
+  })
+  void 상대에게_아직_보이지_않은_사진은_올린_사람에게만_보인다(PartySide uploadedBy, boolean stopped, boolean visible) {
+    assertThat(PhotoSight.visibleTo(uploadedBy, null, TENANT, stopped ? STOPPED : null))
+        .isEqualTo(visible);
+  }
+
   @ParameterizedTest
   @CsvSource({"TENANT", "LANDLORD"})
   void 보는_측이_바뀌어도_같은_규칙이다(PartySide viewer) {
