@@ -17,8 +17,11 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.jpa.repository.support.SimpleJpaRepository;
+import org.springframework.jdbc.core.ConnectionCallback;
+import org.springframework.jdbc.datasource.init.ScriptUtils;
 
 class SettlementTransferHeadVersionEntityTest extends SchemaTestSupport {
   private static final Instant NOW = Instant.parse("2026-11-26T10:00:00Z");
@@ -48,7 +51,7 @@ class SettlementTransferHeadVersionEntityTest extends SchemaTestSupport {
     assertThat(loaded.getVersion()).isZero();
     assertThat(loaded.getDirection()).isEqualTo(TransferDirection.REFUND);
     assertThat(loaded.getRecordedBySide()).isEqualTo(PartySide.LANDLORD);
-    assertThat(loaded.getResponse()).isEqualTo(TransferResponse.NONE);
+    assertThat(loaded.getResponse()).isEqualTo(TransferResponse.PENDING);
     assertThat(loaded.getCurrentVersionId()).isEqualTo(first.getId());
     SettlementTransferVersion loadedFirst =
         entityManager.find(SettlementTransferVersion.class, loaded.getCurrentVersionId());
@@ -77,6 +80,71 @@ class SettlementTransferHeadVersionEntityTest extends SchemaTestSupport {
     assertThatThrownBy(entityManager::flush)
         .isInstanceOf(PersistenceException.class)
         .hasStackTraceContaining("fk_settlement_transfer_version_settlement_transfer_id_room");
+  }
+
+  @Test
+  void 기존_NONE만_PENDING으로_바뀌고_새_송금도_PENDING으로_시작한다() {
+    // 트랜잭션 안에서 V11의 응답 제약과 기본값을 복원한다.
+    jdbc.execute(
+        "ALTER TABLE state.settlement_transfer DROP CONSTRAINT settlement_transfer_response_check");
+    jdbc.execute(
+        """
+        ALTER TABLE state.settlement_transfer ADD CONSTRAINT settlement_transfer_response_check
+        CHECK (response IN ('NONE', 'ACK', 'NEED_MORE', 'DISPUTE'))
+        """);
+    jdbc.execute("ALTER TABLE state.settlement_transfer ALTER COLUMN response SET DEFAULT 'NONE'");
+    UUID unanswered = insertTransferWithDatabaseDefault();
+    UUID answered = insertTransferWithDatabaseDefault();
+    jdbc.update("UPDATE state.settlement_transfer SET response = 'ACK' WHERE id = ?", answered);
+    assertThat(response(unanswered)).isEqualTo("NONE");
+    // 실제 마이그레이션 전에는 기존 행의 지연 FK 검사가 끝나 있다.
+    jdbc.execute("SET CONSTRAINTS ALL IMMEDIATE");
+
+    jdbc.execute(
+        (ConnectionCallback<Void>)
+            connection -> {
+              ScriptUtils.executeSqlScript(
+                  connection,
+                  new ClassPathResource(
+                      "db/migration/V12__rename_settlement_transfer_response_none_to_pending.sql"));
+              return null;
+            });
+
+    assertThat(response(unanswered)).isEqualTo("PENDING");
+    assertThat(response(answered)).isEqualTo("ACK");
+    jdbc.execute("SET CONSTRAINTS ALL DEFERRED");
+    UUID newTransfer = insertTransferWithDatabaseDefault();
+    assertThat(response(newTransfer)).isEqualTo("PENDING");
+    jdbc.execute("SET CONSTRAINTS ALL IMMEDIATE");
+    assertThatThrownBy(() ->
+            jdbc.update(
+                "UPDATE state.settlement_transfer SET response = 'NONE' WHERE id = ?", newTransfer))
+        .isInstanceOf(DataIntegrityViolationException.class)
+        .hasMessageContaining("settlement_transfer_response_check");
+  }
+
+  private UUID insertTransferWithDatabaseDefault() {
+    SettlementTransfer transfer = newTransfer();
+    entityManager.flush();
+    jdbc.update(
+        """
+        INSERT INTO state.settlement_transfer
+          (id, room_record_id, settlement_id, direction, current_version_id, recorded_by_side,
+           created_at, version)
+        VALUES (?, ?, ?, 'REFUND', ?, 'LANDLORD', CURRENT_TIMESTAMP, 0)
+        """,
+        transfer.getId(),
+        transfer.getRoomRecordId(),
+        transfer.getSettlementId(),
+        transfer.getCurrentVersionId());
+    entityManager.persist(firstVersion(transfer));
+    entityManager.flush();
+    return transfer.getId();
+  }
+
+  private String response(UUID transferId) {
+    return jdbc.queryForObject(
+        "SELECT response FROM state.settlement_transfer WHERE id = ?", String.class, transferId);
   }
 
   private SettlementTransfer newTransfer() {

@@ -20,7 +20,7 @@ class SettlementTransferTest {
     UUID relatedTransfer = UUID.randomUUID();
     SettlementTransfer transfer = transfer(UUID.randomUUID(), relatedTransfer);
 
-    assertThat(transfer.getResponse()).isEqualTo(TransferResponse.NONE);
+    assertThat(transfer.getResponse()).isEqualTo(TransferResponse.PENDING);
     assertThat(transfer.getConfirmedVersionId()).isNull();
     assertThat(transfer.getReceiptConfirmedAt()).isNull();
     assertThat(transfer.getSameAsTransferId()).isEqualTo(relatedTransfer);

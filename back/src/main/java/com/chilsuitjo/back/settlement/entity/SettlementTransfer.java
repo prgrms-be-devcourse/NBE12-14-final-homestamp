@@ -83,7 +83,7 @@ public class SettlementTransfer {
     this.direction = Objects.requireNonNull(direction, "송금 방향이 있어야 해요");
     this.currentVersionId = Objects.requireNonNull(currentVersionId, "현재 판 ID가 있어야 해요");
     this.recordedBySide = Objects.requireNonNull(recordedBySide, "송금을 기록한 측이 있어야 해요");
-    this.response = TransferResponse.NONE;
+    this.response = TransferResponse.PENDING;
     this.sameAsTransferId = sameAsTransferId;
     this.createdAt = Objects.requireNonNull(createdAt, "생성 시각이 있어야 해요");
   }
