@@ -28,6 +28,11 @@ import org.springframework.transaction.annotation.Transactional;
  * 닿는 것은 미확인 기한(06 0-1 {@code wait.unconfirmed})의 시작이라 기다림 타이머(d3)에서 다루고, 알림({@code INFO})은 답을 묻지
  * 않는다. 정산 초대({@code SETTLEMENT_INVITE})에는 요청을 걸지 않는다. 지금 이것을 부르는 곳은 문자 전달 결과뿐이다. 링크 열람·알림 열람도 같은
  * 메서드를 부르면 된다(빠른 쪽이 시작점).
+ *
+ * <p><b>고치기 전 번호로 간 통지</b>: 링크가 번호 고치기로 무효({@code REINVITED})가 된 통지가 닿은 것은 시작점이 아니다. 그 문자는 지금 상대가
+ * 아닌 옛 번호로 갔다(#370 T-2, #399). 업체의 전달 사실은 통지에 그대로 남고(부르는 쪽이 이미 적음), 요청의 기다림만 시작하거나 앞당기지 않는다.
+ * 연결({@code CONNECTED})로 무효가 된 링크는 맞는 사람이 연결한 것이라 그대로 시작점이다. 다른 이유로 무효인 링크는 지금처럼 요청이 열려 있는지로만 본다.
+ * 번호를 고치기 <b>전에</b> 이미 닿아 시작된 기다림은 번호 고치기 처리(T-2 (2) "새 전달부터 기한을 다시 셈")가 다룬다.
  */
 @Component
 public class NoticeWaitStart {
@@ -35,16 +40,19 @@ public class NoticeWaitStart {
   private final NoticeRepository notices;
   private final ResponseRequestRepository requests;
   private final RoomGateReader rooms;
+  private final InviteLinks inviteLinks;
   private final Duration renotifyAfter;
 
   public NoticeWaitStart(
       NoticeRepository notices,
       ResponseRequestRepository requests,
       RoomGateReader rooms,
+      InviteLinks inviteLinks,
       @Value("${app.wait.renotify:48h}") Duration renotifyAfter) {
     this.notices = notices;
     this.requests = requests;
     this.rooms = rooms;
+    this.inviteLinks = inviteLinks;
     this.renotifyAfter = WaitDurations.require(renotifyAfter, "app.wait.renotify");
   }
 
@@ -56,7 +64,8 @@ public class NoticeWaitStart {
 
   /**
    * 통지가 {@code at}에 닿았다. 요청 통지가 걸린 열린 요청이면 기다림을 시작한다({@link ResponseRequest#startWaiting}). 끝난 요청이면
-   * 버린다. 통지와 요청의 호실이 같은지는 DB 외래 키({@code fk_notice_response_request_id_room})가 막는다.
+   * 버린다. 링크가 번호 고치기로 무효가 된 통지면 버린다(위 "고치기 전 번호로 간 통지"). 통지와 요청의 호실이 같은지는 DB 외래 키({@code
+   * fk_notice_response_request_id_room})가 막는다.
    *
    * @return 기다림을 이번에 시작했으면 true
    */
@@ -65,6 +74,9 @@ public class NoticeWaitStart {
     if (notice.getResponseRequestId() == null
         || (notice.getKind() != NoticeKind.REQUEST && notice.getKind() != NoticeKind.INVITE)) {
       return false;
+    }
+    if (notice.getLinkId() != null && inviteLinks.isReinvited(notice.getLinkId())) {
+      return false; // 옛 번호에 닿은 것이라 지금 상대에게 닿은 증거가 아니다(#370 T-2)
     }
     ResponseRequest request =
         requests

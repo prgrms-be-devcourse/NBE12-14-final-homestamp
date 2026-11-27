@@ -40,8 +40,10 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>통지는 같은 점검 초대({@code record}가 그 점검)면 <b>초대 문자 한 통</b>에 요청을 붙인다(같은 주소의 문자가 두 통 가지 않게). 다른 점검은 그
  * 점검의 링크({@code issueInvite(호실, 자리, 점검)}, 같은 점검이면 유효한 링크를 다시 씀)로 요청 통지를 따로 넣는다. 호실 초대 링크나 다른 기록의
- * 링크는 점검 링크로 쓰지 않는다. 다른 점검에 아직 닿지 않은 요청 통지가 있으면 다시 초대해도 그 문자를 또 넣지 않는다. 기다림은 요청이 걸린 통지가 닿을 때
- * 시작한다({@link NoticeWaitStart}). 문자를 넣는 것만으로는 시작하지 않는다.
+ * 링크는 점검 링크로 쓰지 않는다. 다른 점검에 아직 닿지 않은 요청 통지가 있으면 다시 초대해도 그 문자를 또 넣지 않는다. 단, 그 통지의 링크가 이미 무효면(번호를 고쳐
+ * 다시 초대 {@code REINVITED} 등) 받는 사람이 그 문자로 열 수 없으므로 있는 통지로 치지 않고 새 링크로 다시 넣는다(#399 A 지적, #370 T-2 "새
+ * 링크로 새 통지"). 기다림은 요청이 걸린 통지가 닿을 때 시작한다({@link NoticeWaitStart}). 문자를 넣는 것만으로는 시작하지 않고, 고치기 전 번호로 간
+ * 통지가 닿은 것은 시작점이 아니다.
  */
 @Service
 public class InviteRequestLinker {
@@ -114,11 +116,12 @@ public class InviteRequestLinker {
         continue;
       }
       if (target.equals(record)) {
-        // 초대 문자 한 통이 요청 통지가 된다. 초대 문자는 어차피 나가므로 요청을 걸어도 문자가 늘지 않고, 앞 통지가 아직 닿지 않았어도 먼저 닿는 쪽이
-        // 기다림의 시작점이다(#302 startWaiting은 더 이른 시각으로만 바꿈)
+        // 초대 문자 한 통이 요청 통지가 된다. 초대 문자는 어차피 나가므로 요청을 걸어도 문자가 늘지 않고, 앞 통지가 아직 닿지 않았어도 지금 번호로 간
+        // 통지끼리는 먼저 닿는 쪽이 기다림의 시작점이다(#302 startWaiting은 더 이른 시각으로만 바꿈). 번호를 고쳐 무효가 된 옛 링크의 통지는 닿아도
+        // 시작점이 아니다(NoticeWaitStart)
         inviteRequestId = requestId;
-      } else if (!notices.existsByResponseRequestIdAndStatusIn(requestId, NOT_YET_REACHED)) {
-        // 다시 초대해도 아직 닿지 않은 요청 통지가 있으면 같은 문자를 또 넣지 않는다
+      } else if (!hasUsableNotice(requestId)) {
+        // 다시 초대해도 아직 닿지 않고 링크도 살아 있는 요청 통지가 있으면 같은 문자를 또 넣지 않는다
         UUID link =
             inviteLinks.issueInvite(roomRecordId, recipientPartyId, target, issuedByMemberId);
         outbox.enqueueSms(
@@ -129,6 +132,17 @@ public class InviteRequestLinker {
     return outbox.enqueueSms(
         new SmsNoticeCommand(
             roomRecordId, recipientPartyId, NoticeKind.INVITE, inviteRequestId, inviteLinkId));
+  }
+
+  /**
+   * 이 요청에 아직 닿지 않았고 받는 사람이 쓸 수 있는 통지가 있나. 링크가 무효인 통지는 세지 않는다: 번호를 고치면 옛 링크가 무효가 되고 보낸(SENT) 통지는 보낸
+   * 사실로 남는데, 그 문자는 옛 번호로 갔고 링크도 열리지 않는다(#370 T-2). 다른 이유로 무효인 링크도 열리지 않으니 세지 않는다(연결 {@code
+   * CONNECTED}로 무효가 된 자리는 다시 초대하지 않아 이 메서드가 불리지 않는다). 링크가 없는 통지는 무효가 될 링크가 없어 센다. 호실을 잠근 뒤라 번호 고치기의
+   * 무효화와 겹치지 않는다.
+   */
+  private boolean hasUsableNotice(UUID requestId) {
+    return notices.findLinkIdsByRequestAndStatusIn(requestId, NOT_YET_REACHED).stream()
+        .anyMatch(link -> link == null || !inviteLinks.isInvalidatedInvite(link));
   }
 
   /** 통지가 필요한 요청 ID. 새로 열었거나 아직 기다림이 시작되지 않은 기다림이면 그 ID, 아니면 null. */

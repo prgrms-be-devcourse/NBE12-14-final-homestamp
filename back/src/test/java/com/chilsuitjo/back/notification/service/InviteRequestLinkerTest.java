@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.chilsuitjo.back.TestcontainersConfiguration;
 import com.chilsuitjo.back.action.service.ActionRequestContext;
 import com.chilsuitjo.back.action.service.RequestContextTestSupport;
+import com.chilsuitjo.back.global.common.LinkInvalidReason;
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.notification.dto.AwaitingConfirm;
@@ -173,6 +174,81 @@ class InviteRequestLinkerTest {
     assertThat(requestCount(room.id())).isEqualTo(1);
   }
 
+  // ---- 번호를 고쳐 다시 초대(#370 T-2, #399 A 지적): 옛 링크의 보낸 통지는 있는 통지로도, 기다림 증거로도 치지 않는다 ----
+
+  @Test
+  void 번호를_고쳐_다시_초대하면_옛_링크의_보낸_요청_통지는_세지_않고_새_링크로_요청_통지를_넣는다() {
+    Room room = room();
+    UUID inspection = inspection(room.id());
+    awaiting(room.id(), new AwaitingConfirm(inspection, PartySide.TENANT));
+    invite(room, null);
+    UUID oldLink = linkOf(room, inspection);
+    UUID oldNotice = (UUID) byKind(notices(room.id()), "REQUEST").get("id");
+    UUID requestId = (UUID) byKind(notices(room.id()), "REQUEST").get("response_request_id");
+    markSent(oldNotice);
+
+    reinvite(room);
+    invite(room, null);
+
+    List<Map<String, Object>> requests =
+        notices(room.id()).stream().filter(r -> "REQUEST".equals(r.get("kind"))).toList();
+    assertThat(requests)
+        .hasSize(2)
+        .allSatisfy(r -> assertThat(r).containsEntry("response_request_id", requestId));
+    Map<String, Object> fresh =
+        requests.stream().filter(r -> !oldNotice.equals(r.get("id"))).findFirst().orElseThrow();
+    assertThat(fresh.get("link_id"))
+        .isNotEqualTo(oldLink)
+        .isEqualTo(linkOf(room, inspection, true));
+    // 옛 통지는 보낸 사실 그대로 남는다
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT status FROM state.notice WHERE id = ?", String.class, oldNotice))
+        .isEqualTo("SENT");
+    assertThat(requestCount(room.id())).isEqualTo(1);
+
+    // 옛 번호에 늦게 닿은 것은 시작점이 아니고, 새 번호에 닿아야 시작한다
+    Instant late = AT.plusSeconds(60);
+    Instant fresher = AT.plusSeconds(120);
+    assertThat(inTx(() -> waitStart.reached(notices.findById(oldNotice).orElseThrow(), late)))
+        .isFalse();
+    assertThat(request(requestId).get("first_notified_at")).isNull();
+    assertThat(
+            inTx(() ->
+                waitStart.reached(notices.findById((UUID) fresh.get("id")).orElseThrow(), fresher)))
+        .isTrue();
+    assertThat(((java.sql.Timestamp) request(requestId).get("first_notified_at")).toInstant())
+        .isEqualTo(fresher);
+    // 새 번호로 시작한 뒤 옛 번호 통지가 더 이른 시각으로 와도 시작점·기한을 앞당기지 않는다
+    inTx(() -> waitStart.reached(notices.findById(oldNotice).orElseThrow(), late));
+    assertThat(((java.sql.Timestamp) request(requestId).get("first_notified_at")).toInstant())
+        .isEqualTo(fresher);
+  }
+
+  @Test
+  void 같은_점검을_번호를_고쳐_다시_초대하면_새_초대_문자에_요청이_걸리고_옛_초대_문자의_전달로는_시작하지_않는다() {
+    Room room = room();
+    UUID inspection = inspection(room.id());
+    awaiting(room.id(), new AwaitingConfirm(inspection, PartySide.TENANT));
+    UUID oldInvite = invite(room, inspectionTarget(inspection));
+    UUID requestId = (UUID) notice(notices(room.id()), oldInvite).get("response_request_id");
+    markSent(oldInvite);
+
+    reinvite(room);
+    UUID newInvite = invite(room, inspectionTarget(inspection));
+
+    List<Map<String, Object>> rows = notices(room.id());
+    assertThat(rows).hasSize(2).allSatisfy(r -> assertThat(r).containsEntry("kind", "INVITE"));
+    assertThat(notice(rows, newInvite)).containsEntry("response_request_id", requestId);
+    assertThat(notice(rows, newInvite).get("link_id"))
+        .isNotEqualTo(notice(rows, oldInvite).get("link_id"));
+    assertThat(inTx(() -> waitStart.reached(notices.findById(oldInvite).orElseThrow(), AT)))
+        .isFalse();
+    assertThat(request(requestId).get("first_notified_at")).isNull();
+    assertThat(inTx(() -> waitStart.reached(notices.findById(newInvite).orElseThrow(), AT)))
+        .isTrue();
+  }
+
   @Test
   void 미확인이_된_요청에는_통지를_더하지_않는다() {
     Room room = room();
@@ -271,6 +347,20 @@ class InviteRequestLinkerTest {
     });
   }
 
+  /** 번호 고치기처럼 그 자리의 초대 링크를 모두 {@code REINVITED} 무효로 한다(#317, InviteLinks 순서 ②). */
+  private void reinvite(Room room) {
+    inTx(() ->
+        inviteLinks.invalidateInvites(room.id(), room.counterpart(), LinkInvalidReason.REINVITED));
+  }
+
+  /** 작업자가 업체에 보낸 뒤처럼 둔다(결과 전). */
+  private void markSent(UUID noticeId) {
+    jdbc.update(
+        "UPDATE state.notice SET status = 'SENT', sent_at = ? WHERE id = ?",
+        java.sql.Timestamp.from(AT),
+        noticeId);
+  }
+
   private <T> T inTx(Supplier<T> work) {
     return new TransactionTemplate(txManager)
         .execute(status -> RequestContextTestSupport.within(requestContext, AT, work));
@@ -319,6 +409,17 @@ class InviteRequestLinkerTest {
   private UUID linkOf(Room room, UUID inspection) {
     return jdbc.queryForObject(
         "SELECT id FROM state.link WHERE room_record_id = ? AND party_id = ? AND inspection_id = ?",
+        UUID.class,
+        room.id(),
+        room.counterpart(),
+        inspection);
+  }
+
+  /** 그 점검의 링크 중 유효한({@code valid}) 것 또는 무효인 것. */
+  private UUID linkOf(Room room, UUID inspection, boolean valid) {
+    return jdbc.queryForObject(
+        "SELECT id FROM state.link WHERE room_record_id = ? AND party_id = ? AND inspection_id = ?"
+            + (valid ? " AND invalidated_at IS NULL" : " AND invalidated_at IS NOT NULL"),
         UUID.class,
         room.id(),
         room.counterpart(),
