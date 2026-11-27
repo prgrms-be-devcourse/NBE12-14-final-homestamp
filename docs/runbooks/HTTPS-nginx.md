@@ -22,7 +22,7 @@ certbot(컨테이너) ── 하루 한 번 systemd 타이머 ── renew → �
 | `/opt/homestamp/nginx/run/` | `render.sh`·`switch-upstream.sh`가 만드는 실행 설정 | 올리지 않음 |
 | `/etc/letsencrypt/` | 인증서와 키(certbot 기본 권한: `archive/`·`live/` 0700 root, 키 0600) | **절대 올리지 않음** |
 | `/var/www/certbot/` | ACME 확인 파일(잠깐 생겼다 지워짐) | — |
-| `/srv/homestamp/front/current` | React 빌드를 가리키는 링크(`releases/<버전>`) | 배포가 만든다 |
+| `/srv/homestamp/front/` | 화면: `current` → `releases/<배포 ID>`, 공용 `assets/`(배포-화면.md) | `deploy-front.sh`가 만든다 |
 
 nginx 컨테이너는 읽기 전용 루트, `no-new-privileges`, 권한은 `NET_BIND_SERVICE·SETUID·SETGID·CHOWN`만 둔다. 인증서 폴더는 읽기 전용으로 묶는다. 접속 기록은 경로만(쿼리 문자열·Referer 없음) 표준 출력으로 내보내 Docker 로그 회전(10MB×3)을 따른다.
 
@@ -122,7 +122,11 @@ nginx가 죽어도 앱 컨테이너는 그대로다. `docker compose --env-file 
 - 1~4 중 하나라도 실패하면 5를 부르지 않는다. **앞 단계에서 적용된 DB 변경(Migration)은 되돌리지 않는다**(스키마는 이전 앱과도 맞게, 04 8장)
 - 앱 포트는 blue `127.0.0.1:8081`·green `127.0.0.1:8082`다(관리 포트 9091·9092와 짝, decisions 2026-11-25). 확정(#205)
 - `switch-upstream.sh` 계약: 인자 `<host:port>` 하나(`--write-only`는 첫 설치용), 종료 0 성공·1 검사나 reload 실패(이전 주소로 되돌림, 처음이라 이전 파일이 없으면 되돌릴 것 없이 1)·2 주소 형식 오류(파일을 바꾸지 않음, 인자가 없으면 1). 지금 앱은 `run/upstream/upstream.conf`의 `server` 줄로 판단한다. 헬스는 다시 보지 않는다
-- 화면(React)은 배포 스크립트가 `/srv/homestamp/front/releases/<버전>`에 풀고 `current` 링크만 바꾼다. nginx reload는 필요 없다. **아직 이 단계를 맡은 곳이 없다**(#205 `deploy.sh`·#206 `deploy.yml`에 프론트 빌드·풀기가 없음). 프론트는 백엔드와 따로 정적 파일 이미지(GHCR)로 발행하고 전용 배포 스크립트가 이 경로에 푸는 방식으로 정했고, 후속 PR `feat/common/front-image`·`feat/common/front-deploy`가 맡는다. 그 전에는 사용자 공개 배포를 하지 않는다
+- 화면(React)은 `deploy-front.sh`(`docs/runbooks/배포-화면.md`)가 `/srv/homestamp/front`에 설치하고 `current` 링크만 바꾼다. nginx reload는 하지 않는다(`open_file_cache`를 쓰지 않아 다음 요청부터 새 판). 자리:
+  - `root /srv/homestamp/front/current`: `index.html`(`no-cache`)·SPA·해시 없는 공개 파일
+  - `location /assets/` → 공용 `/srv/homestamp/front/assets/`(모든 릴리스가 같이 쓰는 해시 이름 파일, 없으면 404, 긴 캐시). 릴리스 폴더 안의 `assets`는 보지 않는다. 그래서 배포 뒤에도 이전 판을 연 브라우저가 옛 JS·CSS를 받는다
+  - `location = /version.json` → `current/version.json`, `Cache-Control: no-store` 하나(없으면 404). 배포 확인이 지금 나가는 커밋을 이것으로 본다
+  - `/api/`·블루/그린 전환은 그대로
 - 요청 제한(04 3-2 `limit_req`: 로그인·인증 문자·링크 조회)은 이 PR에 넣지 않았다. 경로와 기준을 정하는 후속 작업으로 둔다. 로그인·인증 문자의 횟수 제한은 앱이 따로 한다(`RATE_LIMITED`·`DAILY_LIMIT`). 링크 조회의 IP 제한이 비어 있다
 
 ## 8. HSTS 켜기 (HTTPS가 잘 도는 것을 확인한 뒤)
@@ -143,4 +147,4 @@ nginx가 죽어도 앱 컨테이너는 그대로다. `docker compose --env-file 
 ```sh
 mkdir -p /tmp/hs-nginx-work && infra/nginx/test/local-test.sh /tmp/hs-nginx-work   # 빈 폴더를 준다
 ```
-운영과 같은 nginx 이미지·설정·컨테이너 보안 옵션으로, 시험용 자체 CA 인증서를 써서 확인한다(52개): HTTP 전용 모드·ACME·모르는 Host 끊기, HTTPS 체인·이름·TLS 1.2/1.3·1.1 거절·모르는 SNI 거절, 화면·SPA·캐시, Actuator·점 파일 막기, 보안 헤더·HSTS 기본 꺼짐·`/api/`에서 앱 헤더 중복 없음(가짜 앱이 Spring Security 기본 헤더를 낸다)·503에도 보안 헤더, API 경로·가짜 X-Forwarded-* 덮어쓰기·413, 블루/그린 전환·실패 시 유지, 앱 꺼짐 503. 실제 Let's Encrypt·DNS·EC2·systemd는 시험하지 않는다.
+운영과 같은 nginx 이미지·설정·컨테이너 보안 옵션으로, 시험용 자체 CA 인증서를 써서 확인한다(62개): HTTP 전용 모드·ACME·모르는 Host 끊기, HTTPS 체인·이름·TLS 1.2/1.3·1.1 거절·모르는 SNI 거절, 화면·SPA·캐시·공용 `/assets/`(릴리스 안 assets 404)·`/version.json`(`no-store`, 없으면 404)·reload 없는 `current` 전환, Actuator·점 파일 막기, 보안 헤더·HSTS 기본 꺼짐·`/api/`에서 앱 헤더 중복 없음(가짜 앱이 Spring Security 기본 헤더를 낸다)·503에도 보안 헤더, API 경로·가짜 X-Forwarded-* 덮어쓰기·413, 블루/그린 전환·실패 시 유지, 앱 꺼짐 503. 실제 Let's Encrypt·DNS·EC2·systemd는 시험하지 않는다.
