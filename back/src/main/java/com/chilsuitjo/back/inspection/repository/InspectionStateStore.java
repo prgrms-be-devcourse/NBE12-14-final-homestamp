@@ -43,6 +43,7 @@ public class InspectionStateStore {
   private final CounterpartReader parties;
   private final ActionRequestContext requestContext;
   private final WaitService waits;
+  private final InspectionPhotos photos;
 
   /** 점검 시작(06 INSP-1a·2b)의 저장 방법. 종류와 채울 입주일은 payload에 있다. */
   public StateStore<InspectionState> starting() {
@@ -170,6 +171,9 @@ public class InspectionStateStore {
      *       {@code canGoSoloDirectly}로 판단한다
      * </ul>
      *
+     * <p>상대 자리와 상관없이 작성 중에 붙인 사진의 {@code released_at}을 행동 시각으로 채운다(#295). 사진이 보이는지는 그 시각과 공유 중단
+     * 시각으로 photo가 판단해서 항목({@code InspectionSight})과 같은 때 보이고 같은 때 가려진다.
+     *
      * <p><b>현재 구현 범위의 한계</b>: 상대 측이 "지금까지 쓴 것으로" 보냈을 때 기준 측에 가는 서비스 안 알림(06 4-7)은 아직 보내지 않는다. 지금
      * {@code InAppNotifier}는 메모리에만 쌓는 가짜라 사용자가 볼 수 없어서, 실제 저장이 들어오는 U3-2 뒤에 주제를 정해 연결한다(#116 D 제안
      * (가), #234 리뷰). 그때도 공유 중단 제한이 살아 있으면 보내지 않는다(불변식 18).
@@ -188,6 +192,8 @@ public class InspectionStateStore {
       if (!stopped && room.counterpart().presence() == PartyPresence.CONNECTED) {
         row.markShown(at);
       }
+      // 작성 중에 붙인 사진도 항목과 같은 때부터 보인다. 공유를 그만둔 뒤면 그 시각보다 뒤라 계속 가려진다(#295, 불변식 18)
+      photos.release(command.roomRecordId(), row.getId(), at);
       if (InspectionSight.reachable(room)) {
         waits.open(
             new OpenRequestCommand(
