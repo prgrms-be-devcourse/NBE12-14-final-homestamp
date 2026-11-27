@@ -20,6 +20,7 @@ import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.notification.dto.RequestTarget;
+import com.chilsuitjo.back.notification.dto.RequestView;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.rule.RequestStatus;
 import com.chilsuitjo.back.notification.service.WaitQuery;
@@ -223,8 +224,12 @@ public class RepairQueryService {
    *
    * <p>공유를 그만둔 뒤({@code asOf})에는 상세 {@code status}와 같은 시점으로 맞춘다(불변식 18, #344 리뷰): 다시 계산한 상태가 종료 확인
    * 대기인데 요청이 이미 닫혔으면(그 뒤 상대가 확인함 등) 그 시각에는 열려 있던 것이라 열린 모습으로 준다. 기한이 {@code asOf} 전이면 미확인, 아니면
-   * 기다림이고 닫힌 이유·시각은 비운다. 원래는 공유 중단 때 요청이 {@code SHARING_STOPPED}로 먼저 닫혀 이 일이 없어야 하지만(03 1-4), 그 닫기가
-   * 들어오기 전에도 상태와 어긋나지 않게 둔다.
+   * 기다림이고 닫힌 이유·시각은 비운다.
+   *
+   * <p>단, {@code asOf}나 그 전에 닫힌 요청({@code CLOSED}이고 {@code closedAt <= asOf})은 그 시각에도 닫혀 있었으므로 닫힌
+   * 이유·시각 그대로 준다. 공유 중단 때 {@code SHARING_STOPPED}로 닫힌 요청은 {@code closedAt == asOf}라 "공유 중단으로 닫힘"으로
+   * 보인다(03 B, #382). 답함·거둠은 닫힌 시각이 저장되지 않지만(05 {@code response_request}), 다시 계산한 상태가 종료 확인 대기면 그 답은
+   * 보는 사람에게 보이지 않는 행동, 곧 {@code asOf} 뒤의 상대 행동이라 열린 모습으로 되돌린다.
    */
   private RepairCaseDetail.CloseRequest closeRequestOf(
       RepairCase row, RepairSight sight, RepairState shown) {
@@ -235,7 +240,8 @@ public class RepairQueryService {
         .map(view -> {
           if (asOf != null
               && shown.status() == RepairStatus.CLOSE_WAIT
-              && !view.status().isOpen()) {
+              && !view.status().isOpen()
+              && !closedBy(view, asOf)) {
             boolean overdue = view.dueAt() != null && !view.dueAt().isAfter(asOf);
             return new RepairCaseDetail.CloseRequest(
                 overdue ? RequestStatus.UNCONFIRMED : RequestStatus.WAITING,
@@ -254,6 +260,11 @@ public class RepairQueryService {
               view.closedAt());
         })
         .orElse(null);
+  }
+
+  /** 이 시각이나 그 전에 닫힌 요청인가({@code CLOSED}만 닫힌 시각이 있다, V1 CHECK). */
+  private static boolean closedBy(RequestView view, Instant at) {
+    return view.status() == RequestStatus.CLOSED && !view.closedAt().isAfter(at);
   }
 
   /**
