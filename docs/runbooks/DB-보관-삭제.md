@@ -69,7 +69,7 @@ psql -X -v ON_ERROR_STOP=1 \
 | 1. Role Bootstrap | 신뢰된 DB 관리자(Migration 계정 아님) | `psql`로 `bootstrap_roles.sql` | 최초 한 번, 역할이 바뀔 때 |
 | 2. Migration | Migration 로그인 → `SET ROLE` Owner | 앱 이미지 `--migrate`(Flyway) | 구현(#173 병합) |
 | 3. GRANT | Migration 로그인 → `SET LOCAL ROLE` Owner | 앱 이미지 `--apply-grants`(JDBC 리소스 `db/grants/grants.sql`, 아래 "실행 방식") | 구현(#299, 로컬 PostgreSQL 18.6·UID 10002 CLI 검증). 운영 실행 전 |
-| 4. Green 시작 | 배포 스크립트 | 2·3이 모두 종료 코드 0일 때만 | 배포 스크립트 미구현 |
+| 4. Green 시작 | 배포 스크립트 `infra/deploy/deploy.sh` | 2·3이 모두 종료 코드 0일 때만 | 구현(#205, 런북 `배포-블루그린.md`). 운영 실행 전 |
 
 Bootstrap의 `psql` 실행과 GRANT의 JDBC 실행은 다른 절차다. GRANT를 `psql`로 실행하지 않는다(`psql` 변수와 메타 명령을 쓰지 않는 SQL이고, 잠금·`set_config`를 실행기가 같은 트랜잭션에서 준비해야 한다).
 
@@ -121,7 +121,7 @@ GRANT SQL은 `back/src/main/resources/db/grants/grants.sql` 하나다(앱 이미
 - Human은 NOLOGIN 읽기 그룹 하나(`human-role`, decisions 2026-11-25 "Human 그룹")이고 GRANT는 그 그룹에만 준다. LOGIN 역할을 넣으면 `grants.sql` 사전 검사가 실패하고 아무것도 바꾸지 않는다. 사람별 LOGIN 역할은 이 실행이 만들거나 바꾸지 않는다(아래 "사람별 Human 계정"의 발급·회수 절차). 그래서 사람이 바뀌어도 이 파일과 이미지는 바뀌지 않는다.
 - 실패 로그에는 SQLState와 grants.sql 사전 검사의 고정 메시지(테이블·컬럼 이름 목록 포함, 앞 600자)만 남기고 비밀번호·SQL 본문은 남기지 않는다. Flyway가 INFO로 남기는 접속 주소 줄(`Database: <JDBC 주소>`)은 `--migrate`·`--apply-grants` 모두 끈다(호스트·DB 이름·인증서 경로를 로그에 남기지 않음).
 
-배포 순서의 남은 위험(배포 스크립트 미구현):
+배포 순서의 남은 위험(`deploy.sh`가 1~4를 서버 잠금 하나로 묶는다, #205):
 
 - **잠금의 실제 범위**: `pg_advisory_xact_lock(1752392040, 156)`은 GRANT 트랜잭션 안에서만 잡는 트랜잭션 잠금이라 GRANT 실행끼리만 직렬화한다. 이 키를 잡는 코드는 GRANT 실행뿐이고 `--migrate`(Flyway)는 자기 잠금을 따로 쓰므로, DB 잠금으로는 Migration과 GRANT가 서로 막히지 않는다고 본다. 대신 GRANT는 잠금을 잡은 뒤 Flyway 이력 지문을 검증 때와 비교해, 검증과 잠금 사이에 커밋된 Migration이 있으면 실패한다. 잠금 뒤(GRANT 트랜잭션 중)에 커밋되는 Migration은 잡지 못하지만, 그 Migration이 만든 새 테이블에는 권한이 없어 다음 GRANT가 분류 검사로 실패하고, 기존 테이블에 더한 새 컬럼은 Human 컬럼 허용 목록 밖이라 보이지 않는다(검토해 목록에 넣을 때까지). **Migration과 GRANT를 묶은 배포 전체의 상호 배제는 #205의 서버 단위 배포 잠금**(단일 EC2에서 배포 한 번에 하나, decisions 2026-11-25)이 맡는다. 분산 잠금은 두지 않는다.
 - `--migrate`가 앞 버전 몇 개를 적용한 뒤 실패하면 `--apply-grants`도 실행하지 않는다(대기 중인 버전이 남아 검증 실패). 이때 Blue가 쓰는 권한은 그대로지만, 이미 적용된 스키마 변경과의 호환성은 보장되지 않는다.
