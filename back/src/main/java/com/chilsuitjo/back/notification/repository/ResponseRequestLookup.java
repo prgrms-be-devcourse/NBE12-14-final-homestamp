@@ -45,4 +45,10 @@ public interface ResponseRequestLookup {
    */
   List<ResponseRequest> findByStatusIn(
       RequestKind kind, RequestTarget target, Set<RequestStatus> statuses);
+
+  /** 호실에서 이 측이 보낸 열린 요청(WAITING·UNCONFIRMED) 전부. 다른 호실의 요청은 들어가지 않는다(만든 순서). */
+  List<ResponseRequest> findOpenRequestedBy(UUID roomRecordId, PartySide requestedBySide);
+
+  /** 대상 + 종류의 요청 중 가장 최근에 만든 것(상태 무관). 같은 시각이면 ID가 큰 것(UUIDv7). 방향이 둘인 점검 확인은 하나로 정해지지 않아 거절한다. */
+  Optional<ResponseRequest> findLatest(RequestKind kind, RequestTarget target);
 }
