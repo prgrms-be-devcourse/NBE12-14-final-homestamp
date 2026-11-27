@@ -1,7 +1,7 @@
 # 자동 배포 경로: GitHub Actions(deploy.yml, Environment production 승인) → OIDC → 이 역할 → 이 SSM 문서 → deploy.sh
 # (04 9-2·16장, 런북 docs/runbooks/배포-자동화.md)
 #
-# 이 역할로 할 수 있는 것: 우리 앱 EC2 한 대에 homestamp-deploy 문서만 보내고 결과를 읽기.
+# 이 역할로 할 수 있는 것: 우리 앱 EC2 한 대에 homestamp-deploy(백엔드)·homestamp-deploy-front(화면) 문서만 보내고 결과를 읽기.
 # AWS-RunShellScript·AWS-RunDocument 같은 범용 문서는 허락하지 않고 명시적으로도 막는다(아무 명령이나 root로 돌리는 길).
 # 문서는 입력(digest)을 명령에 끼워 넣지 않고, 해시를 고정한 deploy.sh만 실행한다. 다른 문서를 부르는 aws:runDocument 단계는 없다.
 # 명령 취소(CancelCommand)는 주지 않는다: 자원 범위를 좁힐 수 없고(계정의 남의 명령도 취소 가능), 배포는 서버에서 끝까지 도는 편이 안전하다.
@@ -13,6 +13,16 @@ variable "deploy_script_sha256" {
   validation {
     condition     = can(regex("^([0-9a-f]{64})?$", var.deploy_script_sha256))
     error_message = "deploy_script_sha256는 빈 값이거나 64자리 소문자 16진수여야 합니다."
+  }
+}
+
+variable "deploy_front_script_sha256" {
+  description = "EC2에 설치를 승인한 /opt/homestamp/deploy/deploy-front.sh의 SHA-256. 비어 있으면 화면 문서가 실행을 거절한다(종료 20)"
+  type        = string
+  default     = ""
+  validation {
+    condition     = can(regex("^([0-9a-f]{64})?$", var.deploy_front_script_sha256))
+    error_message = "deploy_front_script_sha256는 빈 값이거나 64자리 소문자 16진수여야 합니다."
   }
 }
 
@@ -51,6 +61,38 @@ resource "aws_ssm_document" "deploy" {
   })
 }
 
+# 화면(React) 배포: 해시를 고정한 deploy-front.sh만 실행한다(런북 docs/runbooks/배포-화면.md). 앱 컨테이너·DB·nginx 설정은 건드리지 않는다
+resource "aws_ssm_document" "deploy_front" {
+  name            = "${var.prefix}-deploy-front"
+  document_type   = "Command"
+  document_format = "JSON"
+  target_type     = "/AWS::EC2::Instance"
+  content = jsonencode({
+    schemaVersion = "2.2"
+    description   = "homestamp front deploy: run the pinned deploy-front.sh with one image digest"
+    parameters = {
+      Digest = {
+        type              = "String"
+        description       = "front image digest (sha256:<64 hex>)"
+        allowedPattern    = "^sha256:[0-9a-f]{64}$"
+        interpolationType = "ENV_VAR"
+      }
+    }
+    mainSteps = [{
+      action = "aws:runShellScript"
+      name   = "deploy_front"
+      precondition = {
+        StringEquals = ["platformType", "Linux"]
+      }
+      inputs = {
+        # deploy-front.sh: 받기(몇 MB) + 꺼내기·검사 + 확인 20초 + 되돌리기 확인 20초 + 정리. 넘으면 신호 → interrupted(런북 "시간 제한")
+        timeoutSeconds = "600"
+        runCommand     = split("\n", trimspace(templatefile("${path.module}/ssm/deploy-front-command.sh.tftpl", { expected_sha256 = var.deploy_front_script_sha256 })))
+      }
+    }]
+  })
+}
+
 data "aws_iam_policy_document" "deploy_assume" {
   statement {
     actions = ["sts:AssumeRoleWithWebIdentity"]
@@ -80,11 +122,11 @@ resource "aws_iam_role" "deploy" {
 }
 
 data "aws_iam_policy_document" "deploy" {
-  # SendCommand는 문서와 대상 인스턴스 양쪽 자원으로 허락을 본다. 둘 다 하나씩만
+  # SendCommand는 문서와 대상 인스턴스 양쪽 자원으로 허락을 본다. 배포 문서 둘(백엔드·화면)과 앱 EC2 하나만
   statement {
     sid       = "SendDeployDocumentToWebOnly"
     actions   = ["ssm:SendCommand"]
-    resources = [aws_ssm_document.deploy.arn, aws_instance.web.arn]
+    resources = [aws_ssm_document.deploy.arn, aws_ssm_document.deploy_front.arn, aws_instance.web.arn]
   }
 
   # 결과 읽기. 이 두 동작은 자원 범위를 좁힐 수 없다(AWS 서비스 권한 표). 읽기만이고 명령을 바꾸지 못한다
@@ -99,7 +141,7 @@ data "aws_iam_policy_document" "deploy" {
     sid           = "DenySendCommandElsewhere"
     effect        = "Deny"
     actions       = ["ssm:SendCommand"]
-    not_resources = [aws_ssm_document.deploy.arn, aws_instance.web.arn]
+    not_resources = [aws_ssm_document.deploy.arn, aws_ssm_document.deploy_front.arn, aws_instance.web.arn]
   }
 
   # 세션(셸·포트 포워딩)과 문서 고치기는 배포 역할의 일이 아니다
@@ -133,4 +175,9 @@ output "deploy_role_name" {
 output "deploy_document_name" {
   description = "배포 전용 SSM 문서 이름"
   value       = aws_ssm_document.deploy.name
+}
+
+output "deploy_front_document_name" {
+  description = "화면 배포 전용 SSM 문서 이름"
+  value       = aws_ssm_document.deploy_front.name
 }
