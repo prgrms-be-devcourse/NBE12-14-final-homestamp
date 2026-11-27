@@ -112,4 +112,12 @@ class FakeActionWriter implements ActionWriter, ActionReader {
   public synchronized List<ActionEntry> findByRoom(UUID roomRecordId) {
     return entries.stream().filter(e -> roomRecordId.equals(e.roomRecordId())).toList();
   }
+
+  @Override
+  public synchronized List<ActionEntry> findByTargets(
+      UUID roomRecordId, java.util.Collection<ActionTarget> targets) {
+    return entries.stream()
+        .filter(e -> roomRecordId.equals(e.roomRecordId()) && targets.contains(e.target()))
+        .toList();
+  }
 }

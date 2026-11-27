@@ -1,6 +1,8 @@
 package com.chilsuitjo.back.download.dto;
 
 import com.chilsuitjo.back.action.rule.ActionType;
+import com.chilsuitjo.back.correction.rule.CorrectionStatus;
+import com.chilsuitjo.back.global.common.AckState;
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.room.rule.RoomStatus;
@@ -31,6 +33,8 @@ public record RoomDownload(RecordFile record, List<List<UUID>> photoBatches, int
    * @param roomStatus 내려받을 때의 호실 상태
    * @param actions 내가 볼 수 있는 행동 전체. 시각 순, 같은 시각이면 남긴 순
    * @param photos 그 행동들에 붙은 사진. 행동 순, 같은 행동 안에서는 표시 순서
+   * @param pendingCorrections 같이 확인하기 전인 고친 내용(기다림·거절·미확인). 기록은 도장 찍힌 모습이 기준이라 따로 상태와 함께 담는다(03 G
+   *     "링크 열람과 내려받기"). 만든 순
    */
   public record RecordFile(
       String format,
@@ -39,7 +43,34 @@ public record RoomDownload(RecordFile record, List<List<UUID>> photoBatches, int
       PartySide mySide,
       RoomStatus roomStatus,
       List<RecordAction> actions,
-      List<RecordPhoto> photos) {}
+      List<RecordPhoto> photos,
+      List<PendingCorrection> pendingCorrections) {}
+
+  /**
+   * 확인 전 고친 내용 하나. 공유를 그만둔 뒤에는 그 시각까지 고친 것과 내가 고친 것만, 응답도 그 시각까지의 응답과 내 응답 중 마지막으로 담는다(03 6-6 9번,
+   * 수리 건 상세와 같은 기준).
+   *
+   * @param target 고친 기록. 입주일이면(호실 기록 자체) null
+   * @param field 고친 칸
+   * @param newValue 새 값
+   * @param requestedBy 고친 측
+   * @param status {@code WAITING}(기다림)·{@code REJECTED}(보류·이견)·{@code UNCONFIRMED}(미확인)
+   * @param answer 상대의 응답({@code PENDING}·{@code NEED_MORE}·{@code DISPUTE} 등)
+   * @param answerReason 보류·이견의 사유
+   * @param answeredAt 마지막 응답 시각. 없으면 null
+   */
+  public record PendingCorrection(
+      UUID id,
+      Target target,
+      String field,
+      Object newValue,
+      PartySide requestedBy,
+      String reason,
+      Instant createdAt,
+      CorrectionStatus status,
+      AckState answer,
+      String answerReason,
+      Instant answeredAt) {}
 
   /**
    * 행동 한 줄.

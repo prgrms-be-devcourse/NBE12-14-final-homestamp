@@ -61,6 +61,9 @@ function fakeHttp(made?: { id: string }) {
     if (path.startsWith(`${endpoints.rooms}?`))
       return { items: [summary("302")], nextCursor: null }
     if (path === endpoints.room("302")) return detail("302")
+    // 06 4-6 수리 건 목록: 이 시험에서는 비어 있어요
+    if (path.startsWith(endpoints.repairCases("302")))
+      return { asOf: null, mySide: "TENANT", items: [], nextCursor: null }
     return []
   }) as HttpRequest
   return { calls, request }

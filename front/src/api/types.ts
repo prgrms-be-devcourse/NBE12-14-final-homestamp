@@ -2,6 +2,7 @@ import type { Notice, Room } from "@/data/demo"
 import type { RepairCasesApi } from "./repair-cases"
 import type { RecordsApi } from "./records"
 import type { AvailableActionsApi } from "./available-actions"
+import type { DownloadsApi } from "./downloads"
 
 // 화면이 쓰는 API 모양. Mock과 HTTP가 같은 모양을 구현합니다.
 // 명세에 응답 본문 형식이 아직 정해지지 않은 곳은 화면 모델(data/demo의 타입)을 그대로 쓰고, 백엔드 연결 때 변환 함수만 바꿉니다.
@@ -42,4 +43,6 @@ export interface HomeStampApi {
   records: RecordsApi
   // 수리 건 밖 기록의 availableActions(호실·점검·정산·지불·고친 내용)
   actions: AvailableActionsApi
+  // 호실 기록 내려받기(S-19, DL-1): 목록과 원본 사진 주소
+  downloads: DownloadsApi
 }
