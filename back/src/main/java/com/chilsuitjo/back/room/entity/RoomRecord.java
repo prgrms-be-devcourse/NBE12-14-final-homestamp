@@ -112,4 +112,14 @@ public class RoomRecord {
       this.counterpartFirstConnectedAt = Objects.requireNonNull(at, "at");
     }
   }
+
+  /** 정산 완료(자동 마감 포함). 호실 단위 거절({@code SETTLED})과 링크용 조회가 같은 기준으로 본다. */
+  public boolean isSettled() {
+    return status == RoomStatus.SETTLED;
+  }
+
+  /** 합류 전 기록(03 B "같은 집 기록이 있을 때"). 호실 단위 거절({@code JOINED_RECORD})과 링크용 조회가 같은 기준으로 본다. */
+  public boolean isJoinedAway() {
+    return joinedIntoId != null;
+  }
 }
