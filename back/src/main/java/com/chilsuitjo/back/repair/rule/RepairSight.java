@@ -6,7 +6,7 @@ import java.time.Instant;
 
 /**
  * 보는 사람에게 수리 기록이 어디까지 보이나(03 3-1 "모든 줄에 같게", 6-6 9번, 6-4, 불변식 18). 수리 건 상세·원인 설명·진행 상황·혼자 종료가 같은
- * 판단을 쓴다. 내려받기({@code download.rule.RecordVisibility.cutoff})와 같은 기준이다.
+ * 판단을 쓴다. 경과·내려받기({@code action.rule.ActionVisibility.cutoff})와 같은 기준이다.
  *
  * <ul>
  *   <li>보는 사람 자신의 기록은 늘 보인다
