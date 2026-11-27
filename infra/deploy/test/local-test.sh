@@ -74,9 +74,15 @@ events {}
 http {
   access_log off;
   include /edge/upstream/upstream.conf;
+  # 실제 nginx(infra/nginx)와 같은 확인 헤더 계약
+  map $remote_addr $homestamp_upstream_probe { 127.0.0.1 $upstream_addr; default ""; }
   server {
     listen 127.0.0.1:18090;
-    location /api/ { proxy_pass http://homestamp_app; proxy_next_upstream off; }
+    location /api/ {
+      proxy_pass http://homestamp_app; proxy_next_upstream off;
+      proxy_hide_header X-Homestamp-Upstream;
+      add_header X-Homestamp-Upstream $homestamp_upstream_probe always;
+    }
   }
 }
 EOF
@@ -99,6 +105,8 @@ if ! docker container inspect $T-edge >/dev/null 2>&1; then
 else
   docker exec $T-edge nginx -t -q || { restore; exit 1; }
   if [[ -e $W/flags/switch-reload-fail ]]; then restore; echo "mock: reload 실패" >&2; exit 1; fi
+  # reload가 아직 반영되지 않은 nginx 흉내: 파일만 바꾸고 0(이전 앱이 계속 답함)
+  if [[ -e $W/flags/switch-no-reload ]]; then exit 0; fi
   docker exec $T-edge nginx -s reload
 fi
 sleep 1
@@ -245,6 +253,14 @@ echo "== 10b. 전환 뒤 nginx·앱이 401이 아닌 답(404)도 실패로 보�
 expect "종료 16" "$(deploy "$IMG_api404")" 16
 after_fail verify-404
 check_last "기록: verify, rolled_back true" '"exit_code":16,"failed_step":"verify","prev_slot":"blue","prev_running":true,"active_slot":"blue","rolled_back":true'
+
+echo "== 10f. reload가 반영되기 전(이전 앱의 401)은 새 슬롯 성공이 아님 → 되돌림"
+touch "$W/flags/switch-no-reload"
+expect "종료 16(이전 blue의 401을 green 성공으로 보지 않음)" "$(deploy "$IMG_v1")" 16
+rm -f "$W/flags/switch-no-reload"
+if grep -q '답한 앱 127.0.0.1:18081' "$(lastout)"; then ok "출력: 실제로 답한 앱(blue)을 밝힘"; else bad "출력: 답한 앱 $(grep '전환 뒤 확인 실패' "$(lastout)" | head -n 1)"; fi
+check_last "기록: verify, rolled_back true(되돌린 blue도 같은 식별로 확인)" '"exit_code":16,"failed_step":"verify","prev_slot":"blue","prev_running":true,"active_slot":"blue","rolled_back":true'
+expect "upstream=blue" "$(active)" 127.0.0.1:18081
 
 echo "== 10c. 되돌리기 실패 → 두 앱 남김(17)"
 echo 127.0.0.1:18081 >"$W/flags/switch-fail-to"
