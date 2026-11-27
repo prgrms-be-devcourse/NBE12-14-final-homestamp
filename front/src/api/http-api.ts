@@ -1,6 +1,7 @@
 import type { HomeStampApi, Region, RegionOption } from "./types"
 import { endpoints } from "./endpoints"
 import { createHttpRepairCases } from "./http-repair-cases"
+import { createHttpRoomParts } from "./http-parts"
 import { createHttpRecords } from "./http-records"
 import { httpAvailableActions } from "./http-available-actions"
 import { createHttpDownloads } from "./downloads"
@@ -13,9 +14,11 @@ const toNotices = (body: unknown) => body as Notice[]
 const toRegions = (body: unknown) => body as Region[]
 const toRegionOptions = (body: unknown) => body as RegionOption[]
 export function createHttpApi(request: HttpRequest): HomeStampApi {
+  const parts = createHttpRoomParts(request)
   return {
     mode: "http",
-    repairCases: createHttpRepairCases(request),
+    repairCases: createHttpRepairCases(request, parts.partsOf),
+    parts,
     records: createHttpRecords(request),
     actions: httpAvailableActions,
     downloads: createHttpDownloads(request),

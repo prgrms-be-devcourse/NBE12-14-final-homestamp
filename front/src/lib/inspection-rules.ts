@@ -75,8 +75,10 @@ function apply(
       i.wait = undefined
     }
   }
-  if (c.field === "부위") i.zone = c.to
-  else if (c.field === "제목") i.title = c.to
+  if (c.field === "부위") {
+    i.zone = c.to
+    if (c.toPartId) i.roomPartId = c.toPartId
+  } else if (c.field === "제목") i.title = c.to
   else if (c.field === "설명") i.description = c.to
   // 항목 삭제는 두지 않아요(decisions 늘 지키는 원칙 1). removed는 예전 기록 표시용이에요.
   else if (c.field === "빠진 하자 추가") {
@@ -128,7 +130,13 @@ export function requestItemEdits(
   d: DemoState,
   role: Role,
   id: string,
-  next: { title: string; description: string; zone: string },
+  // roomPartId: 고른 부위(06 4-3). 이름이 같은 부위도 있어 ID가 있으면 ID로 바뀌었는지 봐요
+  next: {
+    title: string
+    description: string
+    zone: string
+    roomPartId?: string
+  },
   reason: string,
 ) {
   const i = item(d, id)
@@ -144,13 +152,24 @@ export function requestItemEdits(
     i.corrections?.some(
       (c) => c.status === "확인 대기" && c.field === field && c.to === to,
     )
+  const partChanged =
+    next.roomPartId && i.roomPartId
+      ? next.roomPartId !== i.roomPartId
+      : next.zone !== i.zone
   const changes = (
     [
       ["제목", i.title, title],
       ["설명", i.description, description],
       ["부위", i.zone, next.zone],
     ] as const
-  ).filter(([f, a, b]) => a !== b && !waiting(f, b))
+  ).filter(
+    ([f, a, b]) => (f === "부위" ? partChanged : a !== b) && !waiting(f, b),
+  )
+  // 부위 고친 내용에는 새 부위 ID를 같이 남겨요(반영할 때 기록의 roomPartId도 바꿔요)
+  const withPart = (c: FactCorrection<string>) => {
+    if (c.field === "부위") c.toPartId = next.roomPartId
+    return c
+  }
   if (!changes.length) throw new Error("바뀐 내용이 없어요.")
   if (i.publication === "draft") {
     // 작성 중(상대에게 보이기 전, 등록 이전 단계)에는 바로 고쳐지고 이력만 남아요.
@@ -168,20 +187,21 @@ export function requestItemEdits(
     i.title = title
     i.description = description
     i.zone = next.zone
+    if (next.roomPartId) i.roomPartId = next.roomPartId
     bumpVersion(i)
     return []
   }
   if (!isItemStamped(d, i)) {
     // 확인 요청은 보냈지만 상대가 이 항목에 아직 답하지 않았고 점검도 잠기기 전: 바로 고쳐지고 이력에 '확인 전에 고침'으로 남아요.
     return changes.map(([field, from, to]) => {
-      const c = newRequest(i, role, field, from, to, reason)
+      const c = withPart(newRequest(i, role, field, from, to, reason))
       apply(i, c, "확인 전")
       return c
     })
   }
   if (!reason.trim()) throw new Error("왜 바꾸는지 적어 주세요.")
   return changes.map(([field, from, to]) =>
-    newRequest(i, role, field, from, to, reason),
+    withPart(newRequest(i, role, field, from, to, reason)),
   )
 }
 // 빠진 하자 추가: 누구든(상대 쪽도) 요청, 상대 쪽 확인이 있어야 항목이 돼요(미응답이어도 혼자 반영하지 않음)
@@ -190,7 +210,13 @@ export function requestAdd(
   room: Room,
   role: Role,
   kind: "in" | "out",
-  data: { zone: string; title: string; description: string; photos: string[] },
+  data: {
+    zone: string
+    roomPartId?: string
+    title: string
+    description: string
+    photos: string[]
+  },
   reason: string,
 ) {
   if (!data.title.trim() || !data.description.trim())
@@ -210,6 +236,7 @@ export function requestAdd(
     id: uid(),
     roomId: room.id,
     kind,
+    roomPartId: data.roomPartId,
     zone: data.zone,
     title: data.title.trim(),
     description: data.description.trim(),

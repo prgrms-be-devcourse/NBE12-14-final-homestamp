@@ -19,7 +19,8 @@ export type RespondAnswer = "ACK" | "NEED_MORE" | "DISPUTE"
 // 백엔드가 생기면 업로드 표(upload-tickets, PHO-1) 번호로 바뀌어요.
 export interface NewRepairCase {
   title: string
-  zone: string
+  // 그 호실의 부위(06 4-6 roomPartId). 숨긴 부위·꺼 둔 설비·가전은 VALIDATION_FAILED
+  roomPartId: string
   description: string
   photos: string[]
   // 같은 곳 재발이면 이전 수리 건(REP 재발)

@@ -21,6 +21,9 @@ export const CONNECTED_APIS: readonly {
   { method: "POST", path: /^\/api\/rooms$/ },
   { method: "GET", path: /^\/api\/rooms$/ },
   { method: "GET", path: /^\/api\/rooms\/[^/]+$/ },
+  // 부위 목록·부위 더하기(06 4-3, ROOM-3, #356). 숨김·다시 보이기·켜고 끔은 그 화면이 생길 때 더해요
+  { method: "GET", path: /^\/api\/rooms\/[^/]+\/parts$/ },
+  { method: "POST", path: /^\/api\/rooms\/[^/]+\/parts$/ },
   // 호실 기록 내려받기 목록과 사진 주소 받기(06 4장·4-5, DL-1·S-19, #321)
   { method: "GET", path: /^\/api\/rooms\/[^/]+\/download$/ },
   { method: "POST", path: /^\/api\/photos\/view-urls$/ },

@@ -2,7 +2,8 @@ import type { ReactNode } from "react"
 import { describe, expect, test, vi } from "vitest"
 import { fireEvent, render, screen } from "@testing-library/react"
 import { Dialog, DialogContent } from "../src/components/ui/dialog"
-import { createDemo, type Room } from "../src/data/demo"
+import { createDemo, type DemoState, type Room } from "../src/data/demo"
+import { createSampleSeed } from "../src/api/mock/dev-seed"
 import { endpoints } from "../src/api/endpoints"
 import type { ApiRequest } from "../src/api/records"
 import type { Account } from "../src/api/auth"
@@ -169,13 +170,15 @@ describe("호실 만들기", () => {
     })
     expect(by).toBe("임대인")
     // 목업은 넣은 번호를 호실의 기준 연락처로 저장해요
-    const update = send.mock.calls[0][3] as (d: { rooms: Room[] }) => void
-    const d = { rooms: [] as Room[] }
+    const update = send.mock.calls[0][3] as (d: DemoState) => void
+    const d = { rooms: [] as Room[] } as DemoState
     update(d)
     expect(d.rooms[0]).toMatchObject({
       phone: "01055556666",
       creator: "임대인",
     })
+    // 서버처럼 기본 부위 29개를 그 호실의 부위로 복사해요(ROOM-1a)
+    expect(d.roomParts?.[d.rooms[0].id]).toHaveLength(29)
     await vi.waitFor(() => expect(onCreated).toHaveBeenCalledWith("new-room"))
   })
 
@@ -231,20 +234,26 @@ describe("정산 항목", () => {
 })
 
 describe("점검 기록", () => {
-  test("구역·부위를 고르지 않으면 보내지 않는다", () => {
+  test("구역·부위를 고르지 않으면 보내지 않는다", async () => {
     const commit = vi.fn()
     inDialog(
-      <InspectionItemForm
-        kind="in"
-        room={room()}
-        role="임차인"
-        locked={false}
-        defectClosed={false}
-        commit={commit}
-        onCancel={() => {}}
-      />,
+      <ApiProvider
+        api={createMockApi(createMockStore(createSampleSeed))}
+        accountId="dev-tenant"
+      >
+        <InspectionItemForm
+          kind="in"
+          room={room()}
+          role="임차인"
+          locked={false}
+          defectClosed={false}
+          commit={commit}
+          onCancel={() => {}}
+        />
+      </ApiProvider>,
     )
     expect(screen.getByText("입주 당시 기록 남기기")).toBeTruthy()
+    await screen.findByRole("combobox", { name: "구역" })
     submit(/기록 남기기/)
     expect(screen.getByRole("alert").textContent).toBe(ZONE_PART_ERROR)
     expect(commit).not.toHaveBeenCalled()

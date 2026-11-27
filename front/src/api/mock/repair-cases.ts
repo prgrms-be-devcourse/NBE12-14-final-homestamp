@@ -28,6 +28,7 @@ import {
 } from "@/lib/repair-rules"
 import { canAccessRoom, logRepairNotice, sideOf } from "@/lib/workflows"
 import { versionOf } from "@/lib/versions"
+import { partLabel } from "@/lib/room-parts"
 import { recordAction, type MockStore } from "./store"
 import { repairAvailableActions } from "./repair-actions"
 import { roomAvailableActions } from "./room-actions"
@@ -245,6 +246,23 @@ export function createMockRepairCases(store: MockStore): RepairCasesApi {
           )
         if (!b.title.trim())
           return fail(400, "VALIDATION_FAILED", "제목을 입력해 주세요.")
+        // 부위(06 4-6): 그 호실의 부위가 아니면 NOT_FOUND, 숨긴 부위·꺼 둔 설비·가전은 VALIDATION_FAILED(ROOM-3a·3d)
+        if (!b.roomPartId)
+          return fail(400, "VALIDATION_FAILED", "부위를 골라 주세요.")
+        const part = d.roomParts?.[roomId]?.find((p) => p.id === b.roomPartId)
+        if (!part) return fail(404, "NOT_FOUND", "이 호실의 부위가 아니에요.")
+        if (part.hidden)
+          return fail(
+            400,
+            "VALIDATION_FAILED",
+            "숨긴 부위예요. 다시 보이게 한 뒤 등록해 주세요.",
+          )
+        if (!part.enabled)
+          return fail(
+            400,
+            "VALIDATION_FAILED",
+            "꺼 둔 설비·가전이에요. 켠 뒤 등록해 주세요.",
+          )
         if (!b.photos.length)
           return fail(
             400,
@@ -261,7 +279,8 @@ export function createMockRepairCases(store: MockStore): RepairCasesApi {
               id,
               roomId,
               title: b.title,
-              zone: b.zone,
+              roomPartId: part.id,
+              zone: partLabel(part),
               description: b.description,
               photos: b.photos,
               art: "wall",

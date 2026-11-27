@@ -2,6 +2,7 @@ import type { Ack, CauseClaim, Repair, RepairStatus, Role } from "@/data/demo"
 import type { RepairAction } from "./actions"
 import type { RepairCaseView } from "./repair-cases"
 import { seoulDate } from "./http-rooms"
+import { partLabelOf, type RoomPart } from "@/lib/room-parts"
 
 // 수리 건 상세(GET /api/repair-cases/{id}, 06 4-6)의 서버 모양. 칸 이름은 백엔드 RepairCaseDetail과 같아요.
 type ServerSide = "TENANT" | "LANDLORD"
@@ -206,9 +207,16 @@ export function repairFromListItem(
   return { ...repairBase(b, roomId), lastActionAt: b.lastActionAt }
 }
 
-export function repairFromDetail(b: RepairCaseDetailBody): RepairCaseView {
+// 상세 → 화면 모델. 부위는 roomPartId로 호실 부위 목록에서 찾아 "구역 · 부위"로 보여요(이름이 같은 방·욕실 "천장"을 가르려고).
+// 목록을 받지 못했거나 목록에 없는 부위면 서버가 준 partName을 그대로 써요
+export function repairFromDetail(
+  b: RepairCaseDetailBody,
+  parts?: readonly RoomPart[],
+): RepairCaseView {
   const repair: Repair = {
     ...repairBase(b, b.roomRecordId),
+    roomPartId: b.content.roomPartId,
+    zone: partLabelOf(parts, b.content.roomPartId, b.content.partName),
     description: b.content.description ?? "",
     causes: causesOf(b.causeNotes),
   }

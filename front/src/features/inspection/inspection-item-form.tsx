@@ -12,11 +12,8 @@ import { uid, type Role, type Room } from "@/data/demo"
 import { ensureAuthor, kindLabel, sessionOf } from "@/lib/inspection-rules"
 import { isLateMoveInInspection } from "@/lib/workflows"
 import { sideText } from "@/lib/words"
-import {
-  readZonePart,
-  ZONE_PART_ERROR,
-  type Commit,
-} from "@/lib/record-commands"
+import { ZONE_PART_ERROR, type Commit } from "@/lib/record-commands"
+import { partLabel, type RoomPart } from "@/lib/room-parts"
 
 // 점검 기록 남기기(S-14, INSP).
 // 입주 점검: 하자가 없으면 '부위 사진'(상대 확인 없이 등록 시각만), 하자가 있으면 '하자 항목'.
@@ -40,8 +37,7 @@ export function InspectionItemForm({
   onCancel: () => void
 }) {
   const roomId = room.id
-  const [zone, setZone] = useState("구역 선택")
-  const [part, setPart] = useState("")
+  const [part, setPart] = useState<RoomPart>()
   const [photos, setPhotos] = useState<string[]>([])
   const [hasDefect, setHasDefect] = useState(false)
   const [error, setError] = useState("")
@@ -49,13 +45,10 @@ export function InspectionItemForm({
   const basicPhotoMode = kind === "in" && !hasDefect
   const partField = (
     <PartField
-      zone={zone}
-      part={part}
+      roomId={roomId}
+      value={part?.id ?? ""}
       pickPart={kind !== "in"}
-      onChange={(z, p) => {
-        setZone(z)
-        setPart(p)
-      }}
+      onChange={setPart}
     />
   )
   const photoField = (
@@ -68,12 +61,13 @@ export function InspectionItemForm({
     />
   )
   const submit = (text: (name: string) => string) => {
-    const place = readZonePart(zone, part, text)
-    if (!place) {
+    if (!part) {
       setError(ZONE_PART_ERROR)
       return
     }
-    const where = `${place.zone} · ${place.part}`
+    // 부위는 roomPartId로 보내고(06 4-7), 화면 글자는 그 부위에서 만들어요
+    const roomPartId = part.id
+    const where = partLabel(part)
     if (basicPhotoMode) {
       if (!photos.length) {
         setError("부위 사진을 한 장 이상 첨부해 주세요.")
@@ -92,7 +86,12 @@ export function InspectionItemForm({
             inspectionIdOf(roomId, "in"),
             "part-photos",
           ),
-          { zone: where, title, description: text("photoMemo"), photos },
+          {
+            roomPartId,
+            title,
+            description: text("photoMemo"),
+            photos,
+          },
         ),
         "입주 부위 사진 · " + title + " 등록",
         (d) => {
@@ -106,6 +105,7 @@ export function InspectionItemForm({
             id: uid(),
             roomId,
             kind: "in",
+            roomPartId,
             zone: where,
             title,
             description: text("photoMemo"),
@@ -142,7 +142,7 @@ export function InspectionItemForm({
         title: text("title"),
         description: text("description"),
         photoMemo: text("photoMemo") || undefined,
-        zone: where,
+        roomPartId,
         photos,
       }),
       `${kind === "in" ? "입주" : "퇴거"} 점검 · ${text("title")} 등록${room.connection === "연결 전" ? " · 혼자 남긴 기록(상대 확인 없음)" : ""}`,
@@ -161,6 +161,7 @@ export function InspectionItemForm({
           description:
             text("description") +
             (text("photoMemo") ? "\n\n사진 메모: " + text("photoMemo") : ""),
+          roomPartId,
           zone: where,
           photos,
           ack: "확인 대기",

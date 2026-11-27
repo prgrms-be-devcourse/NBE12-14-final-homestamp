@@ -4,6 +4,7 @@ import type { MockStore } from "./store"
 import type { Notice } from "@/data/demo"
 import { canAccessRoom, sideOf } from "@/lib/workflows"
 import { createMockRepairCases } from "./repair-cases"
+import { createMockRoomParts } from "./parts"
 import { createMockRecords } from "./records"
 import { mockAvailableActions } from "./available-actions"
 import { mockDownloads } from "../downloads"
@@ -25,6 +26,7 @@ export function createMockApi(store: MockStore): HomeStampApi {
   return {
     mode: "mock",
     repairCases: createMockRepairCases(store),
+    parts: createMockRoomParts(store),
     records: createMockRecords(store),
     actions: mockAvailableActions,
     downloads: mockDownloads,

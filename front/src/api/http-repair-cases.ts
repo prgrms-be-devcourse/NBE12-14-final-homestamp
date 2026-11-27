@@ -10,6 +10,7 @@ import {
   type RepairCasePageBody,
 } from "./http-repair-view"
 import type { Repair } from "@/data/demo"
+import type { RoomPart } from "@/lib/room-parts"
 
 // 수리 건 API의 HTTP 구현(06 4-6). 상태를 바꾸는 요청은 http-client가 Idempotency-Key를 붙여요.
 // 응답은 http-repair-view가 서버 모양(RepairCaseDetail)을 화면 모델로 바꿔요.
@@ -51,11 +52,20 @@ export async function listAllRepairs(
   return { asOf: asOf ?? null, items }
 }
 
-export function createHttpRepairCases(request: HttpRequest): RepairCasesApi {
-  const detail = async (id: string) =>
-    repairFromDetail(
-      await request<RepairCaseDetailBody>("GET", endpoints.repairCase(id)),
+// partsOf: 호실 부위 목록(http-parts). 상세의 roomPartId를 "구역 · 부위"로 바꾸는 데 써요.
+// 목록을 받지 못해도 상세는 보여야 해서, 실패하면 서버의 partName으로 그려요
+export function createHttpRepairCases(
+  request: HttpRequest,
+  partsOf?: (roomId: string) => Promise<RoomPart[]>,
+): RepairCasesApi {
+  const detail = async (id: string) => {
+    const b = await request<RepairCaseDetailBody>(
+      "GET",
+      endpoints.repairCase(id),
     )
+    const parts = await partsOf?.(b.roomRecordId).catch(() => undefined)
+    return repairFromDetail(b, parts)
+  }
   const act = async (
     id: string,
     action: Parameters<typeof endpoints.repairAction>[1],
@@ -81,12 +91,21 @@ export function createHttpRepairCases(request: HttpRequest): RepairCasesApi {
     closeAlone: (_s, id) => act(id, "close-alone"),
     // 다시 열기는 없앴어요(decisions 2026-11-25). 서버에 API가 없어 보내지 않아요
     reopen: () => Promise.reject(notConnected()),
-    // 하자 등록은 부위 목록(A)과 사진 업로드 표(C)가 연결된 뒤에 맞춰요(#179). 지금은 connected.ts에 없어 서버로 가지 않아요
+    // 하자 등록은 사진 업로드 표(C)가 연결된 뒤에 맞춰요(#179). 지금은 connected.ts에 없어 서버로 가지 않아요.
+    // 부위는 06 4-6 본문처럼 roomPartId로 보내요(#356)
     create: async (_s, roomId, b) => {
       const made = await request<{ id: string }>(
         "POST",
         endpoints.repairCases(roomId),
-        { body: b },
+        {
+          body: {
+            roomPartId: b.roomPartId,
+            title: b.title,
+            description: b.description,
+            photos: b.photos,
+            recurrenceOf: b.recurrenceOf,
+          },
+        },
       )
       return detail(made.id)
     },
