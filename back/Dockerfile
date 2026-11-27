@@ -1,15 +1,17 @@
-# 의존성만 받는 단계. 소스와 따로 두어, Gradle 파일이 바뀌지 않으면 CI가 이 층을 캐시로 다시 쓴다(Maven Central 429 줄이기, #350)
-FROM eclipse-temurin:25-jdk-noble AS deps
+# Gradle 홈(배포본·의존성 캐시·init 스크립트). 기본은 비어 있어 빌드가 직접 받는다(로컬은 그대로).
+# CI는 러너가 채운 Gradle 홈을 --build-context gradle-home=<폴더>로 넘겨, Docker 안에서 Maven Central에 가지 않는다(429 막기, #372)
+FROM scratch AS gradle-home
+
+FROM eclipse-temurin:25-jdk-noble AS builder
 WORKDIR /workspace
 
 COPY gradlew settings.gradle build.gradle lombok.config ./
 COPY gradle/ ./gradle/
-RUN ./gradlew resolveDependencies --no-daemon
-
-FROM deps AS builder
 COPY src/main/ ./src/main/
 
-RUN ./gradlew bootJar --no-daemon -x test
+# 넘겨받은 Gradle 홈을 쓰기 가능으로 붙인다. 빌드 중에 쓴 것은 버려지고 결과 jar만 남는다(층에 캐시를 복사하지 않음)
+RUN --mount=type=bind,from=gradle-home,target=/root/.gradle,rw \
+    ./gradlew bootJar --no-daemon -x test
 RUN set -eu; \
     set -- build/libs/*.jar; \
     if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then \

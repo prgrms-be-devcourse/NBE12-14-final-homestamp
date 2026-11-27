@@ -1,0 +1,29 @@
+// CI 전용 Gradle init 스크립트(#372). 의존성·플러그인을 Maven Central보다 먼저 Google의 Maven Central 미러에서 찾는다.
+// GitHub 러너는 출구 IP를 나눠 써서 Maven Central이 IP 단위로 429(Too Many Requests)를 낸다. 미러는 Maven Central과 같은 파일을 둔다.
+// 워크플로가 ~/.gradle/init.d/에 두고, Docker 빌드에는 --build-context gradle-home으로 넘긴다. 로컬 빌드에는 쓰지 않는다.
+def mirror = 'https://maven-central.storage-download.googleapis.com/maven2/'
+
+beforeSettings { settings ->
+    settings.pluginManagement.repositories {
+        maven {
+            name = 'MavenCentralMirror'
+            url = mirror
+        }
+        gradlePluginPortal()
+    }
+}
+
+allprojects {
+    buildscript.repositories {
+        maven {
+            name = 'MavenCentralMirror'
+            url = mirror
+        }
+    }
+    repositories {
+        maven {
+            name = 'MavenCentralMirror'
+            url = mirror
+        }
+    }
+}
