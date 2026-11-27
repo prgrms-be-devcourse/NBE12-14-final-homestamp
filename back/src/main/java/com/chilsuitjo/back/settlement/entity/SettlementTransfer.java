@@ -50,7 +50,7 @@ public class SettlementTransfer {
   private TransferResponse response;
 
   /** 받은 측이 별도로 기록한 금액이 같은 송금이면 보낸 측의 기록을 가리킨다. */
-  @Column(name = "same_as_transfer_id")
+  @Column(name = "same_as_transfer_id", updatable = false)
   private UUID sameAsTransferId;
 
   @Column(name = "receipt_confirmed_at")
