@@ -18,7 +18,7 @@ const NO_ZONE = "구역 선택"
 // 호실 부위 목록(06 4-3)에서 고르고, 값은 부위 ID(roomPartId)예요. 숨긴 부위·꺼 둔 설비·가전은 고를 수 없어요(ROOM-3a·3d).
 // 맞는 부위가 없으면 "기타 (직접 입력)"으로 고른 구역에 부위를 더하고 그 부위를 골라요(06 S-10 ② 부위, ROOM-3c).
 // pickPart: 구역을 바꾸면 그 구역의 첫 부위로 둘지(그 밖), 부위를 비울지(입주 점검)
-// defaultPart: 처음 열 때 고를 부위(이 호실에 고를 수 있는 같은 구역·이름이 있을 때만)
+// defaultPart: 처음 열 때 고를 부위(이 호실에 같은 구역·이름의 부위가 하나뿐이고 고를 수 있을 때만)
 export function PartField({
   roomId,
   value,
@@ -63,16 +63,17 @@ export function PartField({
     const current = value ? loaded.find((x) => x.id === value) : undefined
     if (current && isPickable(current)) return
     // ID가 있으면 그 부위만 유지해요. 고를 수 없는 ID를 같은 이름의 다른 부위로 바꾸지 않아요.
-    // ID가 없는 이전 기록이나 새 기록만 구역·이름으로 기본 부위를 찾아요.
-    const p =
+    // ID가 없는 이전 기록이나 새 기록만 구역·이름으로 기본 부위를 찾아요. 같은 구역·이름의 부위가
+    // 정확히 하나이고 고를 수 있을 때만 골라요. 여럿이면(같은 이름 허용, ROOM-3c) 어느 부위인지 알 수 없고,
+    // 하나뿐인데 숨겼거나 꺼 두었으면(ROOM-3a·3d) 다른 부위로 바꾸지 않고 다시 고르게 해요
+    const matches =
       !value && defaultPart
-        ? loaded.find(
-            (x) =>
-              x.zone === defaultPart.zone &&
-              x.name === defaultPart.name &&
-              isPickable(x),
+        ? loaded.filter(
+            (x) => x.zone === defaultPart.zone && x.name === defaultPart.name,
           )
-        : undefined
+        : []
+    const p =
+      matches.length === 1 && isPickable(matches[0]) ? matches[0] : undefined
     if (p || value) onChange(p)
   }, [loaded, value, defaultPart, onChange])
 
