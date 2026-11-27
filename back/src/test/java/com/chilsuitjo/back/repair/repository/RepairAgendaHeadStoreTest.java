@@ -50,7 +50,8 @@ class RepairAgendaHeadStoreTest {
 
   @BeforeEach
   void region() {
-    jdbc.update("INSERT INTO region (code, sido, dong) VALUES ('9999999999', '테스트', '테스트동')");
+    jdbc.update(
+        "INSERT INTO region (code, sido, dong) VALUES ('9999999999', '테스트', '테스트동') ON CONFLICT DO NOTHING");
   }
 
   @Test

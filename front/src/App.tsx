@@ -55,6 +55,7 @@ import { createAuth, type Account } from "@/api/auth"
 import { AuthScreen } from "@/features/auth/auth-screen"
 import { PhotoGallery } from "@/features/photo/photo-gallery"
 import { ReceivedInvitations } from "@/features/room/received-invitations"
+import { RoomDownload } from "@/features/download/room-download"
 import { PartPhotoContent } from "@/features/photo/part-photo-content"
 import { maskOf } from "@/lib/photo-privacy"
 import { MoneyLeftNotice } from "@/features/payment/money-left"
@@ -1224,14 +1225,25 @@ function HomeStampApp({
                     />
                   )}
                   {page === "connection" && (
-                    <ConnectionPage
-                      room={room}
-                      role={role}
-                      readOnly={readOnly}
-                      sessionPhone={sessionPhone}
-                      roomHas={roomHas}
-                      open={open}
-                    />
+                    <>
+                      <ConnectionPage
+                        room={room}
+                        role={role}
+                        readOnly={readOnly}
+                        sessionPhone={sessionPhone}
+                        roomHas={roomHas}
+                        open={open}
+                      />
+                      {/* 내려받기(S-19)는 읽기만 하는 호실도 돼요. 목업은 서버 기록이 없어 HTTP에서만 보여요.
+                          호실을 바꾸면 앞 호실의 준비 상태(받은 목록)가 남지 않게 새로 그려요(#323 리뷰) */}
+                      {api.mode === "http" && (
+                        <RoomDownload
+                          key={room.id}
+                          roomId={room.id}
+                          roomName={room.name}
+                        />
+                      )}
+                    </>
                   )}
                   {page === "timeline" && <TimelinePage events={events} />}
                   {page === "notifications" && (

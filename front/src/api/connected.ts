@@ -19,6 +19,9 @@ export const CONNECTED_APIS: readonly {
   { method: "POST", path: /^\/api\/rooms$/ },
   { method: "GET", path: /^\/api\/rooms$/ },
   { method: "GET", path: /^\/api\/rooms\/[^/]+$/ },
+  // 호실 기록 내려받기 목록과 사진 주소 받기(06 4장·4-5, DL-1·S-19, #321)
+  { method: "GET", path: /^\/api\/rooms\/[^/]+\/download$/ },
+  { method: "POST", path: /^\/api\/photos\/view-urls$/ },
   // 법정동 찾기·단계 선택(06 4-3, ROOM-1, #193)
   { method: "GET", path: /^\/api\/regions\/search$/ },
   { method: "GET", path: /^\/api\/regions$/ },
