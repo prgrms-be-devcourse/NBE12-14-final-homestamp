@@ -49,6 +49,9 @@ export function repairAvailableActions(
   add("photos", mine || (living && r.status === "처리 중"))
   // 원인 설명은 거주 중에 쪽마다 남기고 상대가 동의·이견을 달아요(08 5-3)
   add("cause-notes", living)
+  // 진행 상황은 묻기는 시작 전·처리 중, 남기기는 언제든(06 4-6 REP-6)
+  add("ask-progress", living && r.status !== "처리 완료")
+  add("progress-notes", true)
   add(
     "supplement",
     living &&

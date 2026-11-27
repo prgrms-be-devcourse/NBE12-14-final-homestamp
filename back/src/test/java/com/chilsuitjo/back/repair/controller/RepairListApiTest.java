@@ -8,6 +8,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.chilsuitjo.back.TestcontainersConfiguration;
 import com.chilsuitjo.back.global.common.PartySide;
+import com.chilsuitjo.back.global.common.TargetKind;
+import com.chilsuitjo.back.notification.dto.OpenRequestCommand;
+import com.chilsuitjo.back.notification.dto.RequestTarget;
+import com.chilsuitjo.back.notification.rule.RequestKind;
+import com.chilsuitjo.back.notification.service.FakeWaitService;
 import java.sql.Timestamp;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,6 +42,7 @@ class RepairListApiTest {
 
   @Autowired private MockMvc mvc;
   @Autowired private JdbcTemplate jdbc;
+  @Autowired private FakeWaitService waits;
 
   private UUID room;
   private UUID tenant;
@@ -327,6 +333,68 @@ class RepairListApiTest {
         .andExpect(jsonPath("$.asOf").doesNotExist())
         .andExpect(jsonPath("$.items[0].status").value("IN_PROGRESS"))
         .andExpect(jsonPath("$.items[0].lastActionAt").value(createdAt(caseId)));
+  }
+
+  // ---- waiting(#339) ----
+
+  @Test
+  void 등록하면_상대가_답할_하자_확인이_두_측_모두에게_보인다() throws Exception {
+    UUID caseId = register(tenant, "천장 누수");
+
+    for (UUID who : new UUID[] {tenant, landlord}) {
+      list(who)
+          .andExpect(jsonPath("$.items[0].id").value(caseId.toString()))
+          .andExpect(jsonPath("$.items[0].waiting.length()").value(1))
+          .andExpect(jsonPath("$.items[0].waiting[0].kind").value("DEFECT_CONFIRM"))
+          .andExpect(jsonPath("$.items[0].waiting[0].answeringSide").value("LANDLORD"))
+          .andExpect(jsonPath("$.items[0].waiting[0].status").value("WAITING"));
+    }
+  }
+
+  @Test
+  void 종료를_요청하면_종료_확인이_보이고_답한_하자_확인은_빠진다() throws Exception {
+    UUID caseId = register(tenant, "천장 누수");
+    respond(caseId, landlord, "ACK").andExpect(status().isOk());
+    action(caseId, tenant, "start").andExpect(status().isOk());
+    action(caseId, tenant, "request-close").andExpect(status().isOk());
+
+    list(landlord)
+        .andExpect(jsonPath("$.items[0].waiting.length()").value(1))
+        .andExpect(jsonPath("$.items[0].waiting[0].kind").value("CLOSE_CONFIRM"))
+        .andExpect(jsonPath("$.items[0].waiting[0].answeringSide").value("LANDLORD"));
+  }
+
+  @Test
+  void 금액_확인과_다른_수리_건의_요청은_섞이지_않는다() throws Exception {
+    // awaiting은 호실 단위라 종류·대상이 섞여 나온다. 금액 확인은 지불이 대상이라 담지 않는다(06 4-6)
+    UUID first = register(tenant, "천장 누수");
+    UUID second = register(tenant, "벽지 곰팡이");
+    waits.open(
+        new OpenRequestCommand(
+            room,
+            RequestKind.AMOUNT_CONFIRM,
+            RequestTarget.of(TargetKind.REPAIR_CASE, first),
+            PartySide.TENANT));
+
+    list(tenant)
+        .andExpect(jsonPath("$.items[0].id").value(second.toString()))
+        .andExpect(jsonPath("$.items[0].waiting.length()").value(1))
+        .andExpect(jsonPath("$.items[1].id").value(first.toString()))
+        .andExpect(jsonPath("$.items[1].waiting.length()").value(1))
+        .andExpect(jsonPath("$.items[1].waiting[0].kind").value("DEFECT_CONFIRM"));
+  }
+
+  @Test
+  void 공유를_그만둔_뒤에는_waiting이_비어_있다() throws Exception {
+    // 걸려 있던 일반 확인 요청은 공유 중단으로 닫히고 그만둔 사람에게는 새 요청을 만들지 않는다(03 1-4, #339)
+    register(tenant, "천장 누수");
+    // 중단 전에는 하자 확인이 열려 있었다(그래야 비는 것이 공유 중단 때문임을 볼 수 있다, #344 리뷰)
+    list(tenant).andExpect(jsonPath("$.items[0].waiting.length()").value(1));
+    stopSharing(PartySide.TENANT);
+
+    list(tenant)
+        .andExpect(jsonPath("$.asOf").isNotEmpty())
+        .andExpect(jsonPath("$.items[0].waiting").isEmpty());
   }
 
   // ---- 준비물 ----

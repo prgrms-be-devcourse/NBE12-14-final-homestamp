@@ -17,13 +17,23 @@ export const CONNECTED_APIS: readonly {
     path: /^\/api\/repair-cases\/[^/]+\/(respond|supplement|start|request-close|confirm-close|not-yet|close-alone|cause-notes)$/,
   },
   { method: "POST", path: /^\/api\/cause-notes\/[^/]+\/respond$/ },
+  // 진행 상황 묻기·남기기·상황 변화 응답(06 4-6, REP-6, #367)
+  {
+    method: "POST",
+    path: /^\/api\/repair-cases\/[^/]+\/(ask-progress|progress-notes)$/,
+  },
+  { method: "POST", path: /^\/api\/progress-notes\/[^/]+\/respond$/ },
   // 호실 만들기·내 호실 목록·호실 상세(06 4-3, ROOM-1·2, #232)
   { method: "POST", path: /^\/api\/rooms$/ },
   { method: "GET", path: /^\/api\/rooms$/ },
   { method: "GET", path: /^\/api\/rooms\/[^/]+$/ },
+  // 호실 경과(06 4장, REP-11, #359)
+  { method: "GET", path: /^\/api\/rooms\/[^/]+\/timeline$/ },
   // 호실 기록 내려받기 목록과 사진 주소 받기(06 4장·4-5, DL-1·S-19, #321)
   { method: "GET", path: /^\/api\/rooms\/[^/]+\/download$/ },
   { method: "POST", path: /^\/api\/photos\/view-urls$/ },
+  // 사진 올리기: 업로드 표 받기(06 4-5, PHO-1, #365). S3에는 화면이 presigned POST로 직접 올려요
+  { method: "POST", path: /^\/api\/rooms\/[^/]+\/upload-tickets$/ },
   // 법정동 찾기·단계 선택(06 4-3, ROOM-1, #193)
   { method: "GET", path: /^\/api\/regions\/search$/ },
   { method: "GET", path: /^\/api\/regions$/ },
