@@ -129,6 +129,7 @@ export function RepairDetailPage({
     isGuest || !accountId ? null : { accountId },
     db,
     refreshTick,
+    initial.roomId,
   )
   const r = view?.repair ?? initial
   const actions: RepairAction[] = isGuest ? [] : (view?.availableActions ?? [])
@@ -141,12 +142,17 @@ export function RepairDetailPage({
     if (!e) onNotify("기록했어요.")
     return e
   }
+  // 서버 경과에서 원인 설명·고친 내용 응답은 그 기록이 대상이라(06 4장 timeline target) 이 수리 건의 ID로 찾아 붙여요(#359)
+  const ownRefs = new Set([
+    ...(r.causes || []).map((c) => c.id),
+    ...(r.corrections || []).map((c) => c.id),
+  ])
   const evs = db.events.filter(
     (e) =>
       e.roomId === r.roomId &&
       (!e.privateTo || (!isGuest && e.privateTo === role)) &&
-      e.target?.kind === "repair" &&
-      e.target.id === r.id &&
+      ((e.target?.kind === "repair" && e.target.id === r.id) ||
+        (e.ref !== undefined && ownRefs.has(e.ref.id))) &&
       (!isGuest ||
         !/부담|금액|지불|비용|정산|원/.test(e.text.replace(r.title, ""))),
   )

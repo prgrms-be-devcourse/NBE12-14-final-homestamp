@@ -211,6 +211,15 @@ export function repairFromDetail(b: RepairCaseDetailBody): RepairCaseView {
     ...repairBase(b, b.roomRecordId),
     description: b.content.description ?? "",
     causes: causesOf(b.causeNotes),
+    ...(b.closeObjection
+      ? {
+          closeObjection: {
+            by: toRole(b.closeObjection.side),
+            reason: b.closeObjection.reason,
+            at: b.closeObjection.at,
+          },
+        }
+      : {}),
   }
   const availableActions = b.availableActions.filter((a): a is RepairAction =>
     (SCREEN_ACTIONS as readonly string[]).includes(a),
