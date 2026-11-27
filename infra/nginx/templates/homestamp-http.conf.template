@@ -1,0 +1,26 @@
+# 인증서가 아직 없을 때(최초 설치). render.sh가 /etc/letsencrypt/live/__DOMAIN__/에 인증서가 없으면 이 파일을 쓴다.
+# 80에서 ACME HTTP-01 확인 파일만 내주고, 나머지는 503. 화면·API는 HTTPS가 생긴 뒤에만 연다
+# (리프레시 토큰 쿠키가 Secure라 HTTP로는 어차피 로그인이 안 된다, 04 4-1)
+
+# 우리 도메인이 아닌 Host(IP로 직접, 다른 이름)는 답하지 않고 끊는다
+server {
+  listen 80 default_server;
+  server_name _;
+  return 444;
+}
+
+server {
+  listen 80;
+  server_name __DOMAIN__;
+
+  location ^~ /.well-known/acme-challenge/ {
+    root /var/www/certbot;
+    default_type text/plain;
+    try_files $uri =404;
+  }
+
+  location / {
+    default_type text/plain;
+    return 503 "HTTPS 준비 중\n";
+  }
+}

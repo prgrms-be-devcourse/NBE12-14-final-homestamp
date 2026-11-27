@@ -5,9 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
+import com.chilsuitjo.back.global.config.migration.DatabaseGrants;
+import com.chilsuitjo.back.global.config.migration.GrantRoles;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -21,7 +20,6 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.regex.Pattern;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -34,7 +32,9 @@ class DatabaseGrantsIntegrationTest {
   private static final String MIGRATION = "homestamp_migration";
   private static final String APP = "homestamp_app";
   private static final String PURGE = "homestamp_purge";
+  // Human은 NOLOGIN 읽기 그룹(#185). 실제 조회는 그 그룹의 멤버인 사람 계정으로 한다
   private static final String HUMAN = "homestamp_human";
+  private static final String HUMAN_PERSON = "homestamp_person_a";
   private static final String INHERITING_MIGRATION = "homestamp_migration_inherit";
   private static final String DECOY_OWNER = "homestamp_decoy_owner";
 
@@ -172,8 +172,7 @@ class DatabaseGrantsIntegrationTest {
   private static final PostgreSQLContainer POSTGRES =
       new PostgreSQLContainer(DockerImageName.parse("postgres:18.6"));
 
-  private static final GrantsJdbcExecutor.Roles ROLES =
-      new GrantsJdbcExecutor.Roles(OWNER, APP, PURGE, HUMAN);
+  private static final GrantRoles ROLES = new GrantRoles(OWNER, APP, PURGE, HUMAN);
 
   @BeforeAll
   static void migrateAsOwnerThroughMigrationRole() throws Exception {
@@ -244,9 +243,12 @@ class DatabaseGrantsIntegrationTest {
       String attributes =
           " NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS";
       statement.execute("CREATE ROLE " + OWNER + " NOLOGIN" + attributes);
-      for (String login : List.of(MIGRATION, APP, PURGE, HUMAN)) {
+      for (String login : List.of(MIGRATION, APP, PURGE, HUMAN_PERSON)) {
         statement.execute("CREATE ROLE " + login + " LOGIN" + attributes);
       }
+      statement.execute("CREATE ROLE " + HUMAN + " NOLOGIN" + attributes);
+      statement.execute(
+          "GRANT " + HUMAN + " TO " + HUMAN_PERSON + " WITH ADMIN FALSE, INHERIT TRUE, SET FALSE");
       statement.execute(
           "GRANT " + OWNER + " TO " + MIGRATION + " WITH ADMIN FALSE, INHERIT FALSE, SET TRUE");
       // 잘못된 실행 계정 시험용: Owner를 상속하는 로그인, 객체를 소유하지 않는 가짜 Owner
@@ -265,7 +267,7 @@ class DatabaseGrantsIntegrationTest {
               + MIGRATION
               + " WITH ADMIN FALSE, INHERIT FALSE, SET TRUE");
       statement.execute("SET log_statement = 'none'");
-      for (String login : List.of(MIGRATION, APP, PURGE, HUMAN, INHERITING_MIGRATION)) {
+      for (String login : List.of(MIGRATION, APP, PURGE, HUMAN_PERSON, INHERITING_MIGRATION)) {
         statement.execute("ALTER ROLE " + login + " PASSWORD '" + PASSWORD + "'");
       }
     }
@@ -282,7 +284,7 @@ class DatabaseGrantsIntegrationTest {
           "GRANT CONNECT ON DATABASE "
               + db
               + " TO "
-              + String.join(", ", MIGRATION, APP, PURGE, HUMAN, INHERITING_MIGRATION));
+              + String.join(", ", MIGRATION, APP, PURGE, HUMAN_PERSON, INHERITING_MIGRATION));
       statement.execute("REVOKE ALL ON SCHEMA public FROM PUBLIC");
       statement.execute("GRANT USAGE, CREATE ON SCHEMA public TO " + OWNER);
     }
@@ -420,7 +422,7 @@ class DatabaseGrantsIntegrationTest {
 
   private static void applyGrants() throws Exception {
     try (Connection connection = roleConnection(MIGRATION)) {
-      GrantsJdbcExecutor.apply(connection, ROLES);
+      DatabaseGrants.apply(connection, ROLES);
     }
   }
 
@@ -428,7 +430,7 @@ class DatabaseGrantsIntegrationTest {
   private static SQLException executeGrantsExpectingFailure() throws Exception {
     try (Connection connection = roleConnection(MIGRATION)) {
       SQLException failure =
-          assertThrows(SQLException.class, () -> GrantsJdbcExecutor.apply(connection, ROLES));
+          assertThrows(SQLException.class, () -> DatabaseGrants.apply(connection, ROLES));
       assertFalse(chain(failure).contains(PASSWORD), "실패 메시지에 비밀번호가 없다");
       return failure;
     }
@@ -561,9 +563,9 @@ class DatabaseGrantsIntegrationTest {
   }
 
   private static void assertHumanIsReadOnly() throws SQLException {
-    try (Connection connection = roleConnection(HUMAN);
+    // 사람 계정은 그룹 권한을 상속해 읽는다(SET ROLE 없이)
+    try (Connection connection = roleConnection(HUMAN_PERSON);
         Statement statement = connection.createStatement()) {
-      statement.execute("SET ROLE " + HUMAN);
       statement.execute("SELECT id, status FROM state.member");
       assertPermissionDenied(statement, "INSERT INTO state.sms_opt_out VALUES ('human', now())");
       assertPermissionDenied(statement, "UPDATE state.member SET status = status");
@@ -648,7 +650,7 @@ class DatabaseGrantsIntegrationTest {
           hasFunctionPrivilege(connection, HUMAN, "state.grants_default_function()", "EXECUTE"));
     }
     // 새 테이블은 Human에게 아무 권한이 없다(grants.sql 허용 목록에 넣어야 열림). 실제 로그인으로도 거부된다
-    try (Connection connection = roleConnection(HUMAN);
+    try (Connection connection = roleConnection(HUMAN_PERSON);
         Statement statement = connection.createStatement()) {
       for (String schema : Set.of("record", "state", "log")) {
         assertRolePrivileges(HUMAN, schema + ".grants_default_table", false, false, false, false);
@@ -820,7 +822,7 @@ class DatabaseGrantsIntegrationTest {
 
   @Test
   void permissionDeniedHelperDoesNotAcceptOtherErrorsOrSuccess() throws Exception {
-    try (Connection connection = roleConnection(HUMAN);
+    try (Connection connection = roleConnection(HUMAN_PERSON);
         Statement statement = connection.createStatement()) {
       for (String wrong :
           List.of(
@@ -908,22 +910,39 @@ class DatabaseGrantsIntegrationTest {
   @Test
   void jdbcGrantsUseOneConnectionOneTransactionAndLeaveNoSessionState() throws Exception {
     String db = freshDatabase("grants_session");
+    // 테스트 전용 관찰: 관리자가 만든 event trigger가 권한 변경 문장마다 그 순간의 실행 상태를 기록한다(운영 코드에 훅 없음).
+    // 함수는 호출자 권한으로 돌므로 current_user는 GRANT를 실행한 역할이다
+    try (Connection connection = adminConnection(db);
+        Statement statement = connection.createStatement()) {
+      statement.execute("CREATE SCHEMA hsobserve");
+      statement.execute("CREATE TABLE hsobserve.seen (state text NOT NULL)");
+      statement.execute("GRANT USAGE ON SCHEMA hsobserve TO " + OWNER);
+      statement.execute("GRANT INSERT ON hsobserve.seen TO " + OWNER);
+      statement.execute(
+          "CREATE FUNCTION hsobserve.record_state() RETURNS event_trigger LANGUAGE plpgsql"
+              + " SET search_path = pg_catalog AS $$ BEGIN INSERT INTO hsobserve.seen VALUES ("
+              + "session_user||'|'||current_user||'|'||pg_backend_pid()||'|'"
+              + "||current_setting('homestamp.grants.app_role')||'|'"
+              + "||(SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND pid=pg_backend_pid()"
+              + " AND classid=1752392040 AND objid=156 AND objsubid=2 AND granted)); END $$");
+      statement.execute(
+          "CREATE EVENT TRIGGER hsobserve_privilege_change ON ddl_command_end"
+              + " WHEN TAG IN ('GRANT', 'REVOKE', 'ALTER DEFAULT PRIVILEGES')"
+              + " EXECUTE FUNCTION hsobserve.record_state()");
+    }
     try (Connection connection = roleConnection(db, MIGRATION)) {
       int pid = Integer.parseInt(scalar(connection, "SELECT pg_backend_pid()::text"));
+      DatabaseGrants.Observed observed = DatabaseGrants.apply(connection, ROLES);
       List<String> insideTransaction = new ArrayList<>();
-      GrantsJdbcExecutor.Observed observed =
-          GrantsJdbcExecutor.apply(
-              connection,
-              ROLES,
-              c ->
-                  insideTransaction.add(
-                      scalar(
-                          c,
-                          "SELECT session_user||'|'||current_user||'|'||pg_backend_pid()||'|'"
-                              + "||current_setting('homestamp.grants.app_role')||'|'"
-                              + "||(SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND pid=pg_backend_pid()"
-                              + " AND classid=1752392040 AND objid=156 AND objsubid=2 AND granted)")));
-      assertEquals(new GrantsJdbcExecutor.Observed(MIGRATION, OWNER, pid), observed);
+      try (Connection admin = adminConnection(db);
+          Statement statement = admin.createStatement();
+          ResultSet rows = statement.executeQuery("SELECT DISTINCT state FROM hsobserve.seen")) {
+        while (rows.next()) {
+          insideTransaction.add(rows.getString(1));
+        }
+        statement.execute("DROP EVENT TRIGGER hsobserve_privilege_change");
+      }
+      assertEquals(new DatabaseGrants.Observed(MIGRATION, OWNER, pid), observed);
       // DO 블록 직후에도 같은 연결·같은 트랜잭션: Owner 유지, 지역 설정 유지, 잠금 보유
       assertEquals(
           List.of(MIGRATION + "|" + OWNER + "|" + pid + "|" + APP + "|1"), insideTransaction);
@@ -1014,44 +1033,65 @@ class DatabaseGrantsIntegrationTest {
       statement.execute("ALTER TABLE state.sms_opt_out_renamed RENAME TO sms_opt_out");
     }
     assertEquals(before, aclSnapshot(db));
+    // Human 자리에 LOGIN 역할(사람 계정)을 넣으면 그룹이 아니므로 실패하고 아무것도 바뀌지 않는다
+    assertFailsAndUnchanged(
+        db,
+        before,
+        MIGRATION,
+        new GrantRoles(OWNER, APP, PURGE, HUMAN_PERSON),
+        "human role must be a NOLOGIN read group");
     // 역할 이름: 없는 역할, 겹치는 역할
     assertFailsAndUnchanged(
         db,
         before,
         MIGRATION,
-        new GrantsJdbcExecutor.Roles(OWNER, "homestamp_missing", PURGE, HUMAN),
+        new GrantRoles(OWNER, "homestamp_missing", PURGE, HUMAN),
         "must exist");
-    assertFailsAndUnchanged(
-        db,
-        before,
-        MIGRATION,
-        new GrantsJdbcExecutor.Roles(OWNER, APP, APP, HUMAN),
-        "must be distinct");
+    // 겹치는 이름은 운영 실행기가 DB에 닿기 전에 거절한다. SQL 자체의 검사도 직접 실행해 확인한다
+    assertThrows(IllegalStateException.class, () -> new GrantRoles(OWNER, APP, APP, HUMAN));
+    assertRawGrantsFail(db, APP, APP, HUMAN, "must be distinct");
+    assertEquals(before, aclSnapshot(db));
     // Owner로 전환할 수 없는 로그인(App), 객체를 소유하지 않는 Owner, Owner를 상속하는 Migration
     assertFailsAndUnchanged(db, before, APP, ROLES, "permission denied to set role");
     assertFailsAndUnchanged(
         db,
         before,
         MIGRATION,
-        new GrantsJdbcExecutor.Roles(DECOY_OWNER, APP, PURGE, HUMAN),
+        new GrantRoles(DECOY_OWNER, APP, PURGE, HUMAN),
         "must be owned by the current owner role");
     assertFailsAndUnchanged(db, before, INHERITING_MIGRATION, ROLES, "must not inherit");
-    // DO 블록 끝난 뒤 COMMIT 전 오류
+    // COMMIT 시점 오류: 관리자가 만든 지연 제약 trigger가 COMMIT 때 실패한다(운영 코드에 훅 없음).
+    // event trigger가 권한 변경 중에 표시 행을 넣고, 지연 trigger는 그 행을 보고 COMMIT에서 예외를 낸다
+    try (Connection connection = adminConnection(db);
+        Statement statement = connection.createStatement()) {
+      statement.execute("CREATE SCHEMA hscommit");
+      statement.execute("CREATE TABLE hscommit.mark (id int)");
+      statement.execute(
+          "CREATE FUNCTION hscommit.fail_at_commit() RETURNS trigger LANGUAGE plpgsql AS $$"
+              + " BEGIN RAISE EXCEPTION 'injected commit failure'; END $$");
+      statement.execute(
+          "CREATE CONSTRAINT TRIGGER hscommit_fail AFTER INSERT ON hscommit.mark"
+              + " DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION hscommit.fail_at_commit()");
+      statement.execute(
+          "CREATE FUNCTION hscommit.mark_once() RETURNS event_trigger LANGUAGE plpgsql"
+              + " SECURITY DEFINER SET search_path = pg_catalog AS $$ BEGIN"
+              + " INSERT INTO hscommit.mark SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM hscommit.mark); END $$");
+      statement.execute(
+          "CREATE EVENT TRIGGER hscommit_mark ON ddl_command_end"
+              + " WHEN TAG IN ('GRANT', 'REVOKE', 'ALTER DEFAULT PRIVILEGES')"
+              + " EXECUTE FUNCTION hscommit.mark_once()");
+    }
     try (Connection connection = roleConnection(db, MIGRATION)) {
       SQLException failure =
-          assertThrows(
-              SQLException.class,
-              () ->
-                  GrantsJdbcExecutor.apply(
-                      connection,
-                      ROLES,
-                      c -> {
-                        try (Statement s = c.createStatement()) {
-                          s.execute("SELECT 1 / 0");
-                        }
-                      }));
-      assertTrue(chain(failure).contains("division by zero"), chain(failure));
+          assertThrows(SQLException.class, () -> DatabaseGrants.apply(connection, ROLES));
+      assertTrue(chain(failure).contains("injected commit failure"), chain(failure));
       assertConnectionReset(connection);
+    }
+    assertEquals("0", scalarAsAdmin(db, "SELECT count(*)::text FROM hscommit.mark"));
+    try (Connection connection = adminConnection(db);
+        Statement statement = connection.createStatement()) {
+      statement.execute("DROP EVENT TRIGGER hscommit_mark");
+      statement.execute("DROP SCHEMA hscommit CASCADE");
     }
     assertEquals(before, aclSnapshot(db), "COMMIT 전 오류도 전부 되돌린다");
   }
@@ -1099,7 +1139,7 @@ class DatabaseGrantsIntegrationTest {
     List<String> before = aclSnapshot(db);
     try (Connection connection = roleConnection(db, MIGRATION)) {
       SQLException failure =
-          assertThrows(SQLException.class, () -> GrantsJdbcExecutor.apply(connection, ROLES));
+          assertThrows(SQLException.class, () -> DatabaseGrants.apply(connection, ROLES));
       assertTrue(
           chain(failure).contains("injected grants failure at privilege change " + (total / 2)),
           chain(failure));
@@ -1128,7 +1168,7 @@ class DatabaseGrantsIntegrationTest {
       statement.execute("ALTER TABLE state.member ADD COLUMN recovery_contact varchar(50)");
     }
     applyGrants(db);
-    try (Connection connection = roleConnection(db, HUMAN);
+    try (Connection connection = roleConnection(db, HUMAN_PERSON);
         Statement statement = connection.createStatement()) {
       assertPermissionDenied(statement, "SELECT recovery_contact FROM state.member");
       statement.execute("SELECT id, status FROM state.member");
@@ -1142,7 +1182,7 @@ class DatabaseGrantsIntegrationTest {
     List<String> before = aclSnapshot(db);
     try (Connection connection = roleConnection(db, MIGRATION)) {
       SQLException failure =
-          assertThrows(SQLException.class, () -> GrantsJdbcExecutor.apply(connection, ROLES));
+          assertThrows(SQLException.class, () -> DatabaseGrants.apply(connection, ROLES));
       assertTrue(
           chain(failure)
               .contains("unapproved sensitive-looking columns: {state.notice.recipient_phone}"),
@@ -1155,7 +1195,7 @@ class DatabaseGrantsIntegrationTest {
   void sqlRefusesToRunWithoutSetRoleLockOrExplicitTransaction() throws Exception {
     String db = freshDatabase("grants_raw");
     List<String> before = aclSnapshot(db);
-    String sql = GrantsJdbcExecutor.sql();
+    String sql = DatabaseGrants.sql();
     try (Connection connection = roleConnection(db, MIGRATION);
         Statement statement = connection.createStatement()) {
       // 1) SET ROLE 없음
@@ -1196,10 +1236,10 @@ class DatabaseGrantsIntegrationTest {
       int runnerPid = Integer.parseInt(scalar(runner, "SELECT pg_backend_pid()::text"));
       holder.setAutoCommit(false);
       statement.execute("SELECT pg_advisory_xact_lock(1752392040, 156)");
-      CompletableFuture<GrantsJdbcExecutor.Observed> run =
+      CompletableFuture<DatabaseGrants.Observed> run =
           CompletableFuture.supplyAsync(() -> {
             try {
-              return GrantsJdbcExecutor.apply(runner, ROLES);
+              return DatabaseGrants.apply(runner, ROLES);
             } catch (SQLException exception) {
               throw new IllegalStateException(exception);
             }
@@ -1234,21 +1274,11 @@ class DatabaseGrantsIntegrationTest {
         new String[] {
           "homestamp_app; DROP", "Homestamp_app", "pg_signal_backend", "a\"b", "", "x".repeat(64)
         }) {
-      try (Connection connection = roleConnection(MIGRATION)) {
-        assertThrows(
-            IllegalArgumentException.class,
-            () ->
-                GrantsJdbcExecutor.apply(
-                    connection, new GrantsJdbcExecutor.Roles(OWNER, bad, PURGE, HUMAN)));
-        assertThrows(
-            IllegalArgumentException.class,
-            () ->
-                GrantsJdbcExecutor.apply(
-                    connection, new GrantsJdbcExecutor.Roles(bad, APP, PURGE, HUMAN)));
-        assertTrue(connection.getAutoCommit());
-        assertEquals(MIGRATION, scalar(connection, "SELECT current_user"));
-      }
+      assertThrows(IllegalStateException.class, () -> new GrantRoles(OWNER, bad, PURGE, HUMAN));
+      assertThrows(IllegalStateException.class, () -> new GrantRoles(bad, APP, PURGE, HUMAN));
+      assertThrows(IllegalStateException.class, () -> new GrantRoles(OWNER, APP, PURGE, bad));
     }
+    assertThrows(IllegalStateException.class, () -> new GrantRoles(OWNER, APP, PURGE, null));
   }
 
   /**
@@ -1265,7 +1295,7 @@ class DatabaseGrantsIntegrationTest {
               + member
               + "', 'human-test@example.invalid', 'HUMAN-TEST-HASH', 'n', '01000000000', 'ACTIVE', now(), 0)");
     }
-    try (Connection connection = roleConnection(db, HUMAN);
+    try (Connection connection = roleConnection(db, HUMAN_PERSON);
         Statement statement = connection.createStatement()) {
       for (var entry : HUMAN_COLUMN_ONLY.entrySet()) {
         String table = entry.getKey();
@@ -1349,7 +1379,7 @@ class DatabaseGrantsIntegrationTest {
 
   private static void applyGrants(String db) throws Exception {
     try (Connection connection = roleConnection(db, MIGRATION)) {
-      GrantsJdbcExecutor.apply(connection, ROLES);
+      DatabaseGrants.apply(connection, ROLES);
     }
   }
 
@@ -1365,12 +1395,36 @@ class DatabaseGrantsIntegrationTest {
     }
   }
 
+  /** 운영 실행기를 거치지 않고 SQL만 같은 순서로 실행해 SQL 자체의 사전 검사를 본다. */
+  private static void assertRawGrantsFail(
+      String db, String app, String purge, String human, String reason) throws Exception {
+    try (Connection connection = roleConnection(db, MIGRATION);
+        Statement statement = connection.createStatement()) {
+      connection.setAutoCommit(false);
+      statement.execute("SET LOCAL ROLE \"" + OWNER + "\"");
+      try (PreparedStatement config =
+          connection.prepareStatement("SELECT set_config(?, ?, true)")) {
+        for (String[] pair :
+            new String[][] {{"app_role", app}, {"purge_role", purge}, {"human_role", human}}) {
+          config.setString(1, "homestamp.grants." + pair[0]);
+          config.setString(2, pair[1]);
+          config.execute();
+        }
+      }
+      statement.execute("SELECT pg_advisory_xact_lock(1752392040, 156)");
+      SQLException failure =
+          assertThrows(SQLException.class, () -> statement.execute(DatabaseGrants.sql()));
+      assertTrue(chain(failure).contains(reason), reason + " / " + chain(failure));
+      connection.rollback();
+    }
+  }
+
   private static void assertFailsAndUnchanged(
-      String db, List<String> before, String login, GrantsJdbcExecutor.Roles roles, String reason)
+      String db, List<String> before, String login, GrantRoles roles, String reason)
       throws Exception {
     try (Connection connection = roleConnection(db, login)) {
       SQLException failure =
-          assertThrows(SQLException.class, () -> GrantsJdbcExecutor.apply(connection, roles));
+          assertThrows(SQLException.class, () -> DatabaseGrants.apply(connection, roles));
       assertTrue(chain(failure).contains(reason), reason + " / " + chain(failure));
       assertFalse(chain(failure).contains(PASSWORD));
       assertConnectionReset(connection);
@@ -1439,107 +1493,5 @@ class DatabaseGrantsIntegrationTest {
       text.append(t.getClass().getSimpleName()).append(": ").append(t.getMessage()).append(" > ");
     }
     return text.toString();
-  }
-
-  /**
-   * 테스트용 JDBC GRANT 실행기. 운영 실행기(#173 {@code --apply-grants})가 따를 계약과 같다.
-   *
-   * <ol>
-   *   <li>역할 이름을 #173·#185와 같은 규칙으로 검증(실패하면 DB에 닿기 전에 거절)
-   *   <li>자동 커밋 끔 → {@code SET LOCAL ROLE "<owner>"} → session_user·current_user 확인
-   *   <li>{@code set_config(?, ?, true)}로 역할 이름 공급(문자열 이어 붙이기 없음, 트랜잭션 지역)
-   *   <li>{@code pg_advisory_xact_lock(1752392040, 156)} → grants.sql DO 블록 → COMMIT
-   *   <li>오류면 ROLLBACK, 끝나면 자동 커밋 설정을 원래대로
-   * </ol>
-   */
-  static final class GrantsJdbcExecutor {
-    static final String RESOURCE = "db/grants/grants.sql";
-    static final int LOCK_CLASS = 1752392040;
-    static final int LOCK_OBJECT = 156;
-    private static final Pattern ROLE_NAME = Pattern.compile("(?!pg_)[a-z_][a-z0-9_]{0,62}");
-
-    record Roles(String owner, String app, String purge, String human) {}
-
-    record Observed(String sessionUser, String currentUser, int backendPid) {}
-
-    interface BeforeCommit {
-      void run(Connection connection) throws SQLException;
-    }
-
-    static String sql() {
-      try (InputStream in =
-          GrantsJdbcExecutor.class.getClassLoader().getResourceAsStream(RESOURCE)) {
-        if (in == null) {
-          throw new IllegalStateException("GRANT SQL 리소스가 없다: " + RESOURCE);
-        }
-        return new String(in.readAllBytes(), StandardCharsets.UTF_8);
-      } catch (IOException exception) {
-        throw new IllegalStateException("GRANT SQL 리소스를 읽지 못했다", exception);
-      }
-    }
-
-    static Observed apply(Connection connection, Roles roles) throws SQLException {
-      return apply(connection, roles, null);
-    }
-
-    static Observed apply(Connection connection, Roles roles, BeforeCommit beforeCommit)
-        throws SQLException {
-      for (String name : List.of(roles.owner(), roles.app(), roles.purge(), roles.human())) {
-        if (!ROLE_NAME.matcher(name).matches()) {
-          throw new IllegalArgumentException("GRANT 역할 이름 형식이 올바르지 않다");
-        }
-      }
-      String sql = sql();
-      boolean autoCommit = connection.getAutoCommit();
-      connection.setAutoCommit(false);
-      try {
-        Observed observed;
-        try (Statement statement = connection.createStatement()) {
-          // 검증된 식별자만 따옴표로 감싼다(정규식이 따옴표·대문자를 허용하지 않음)
-          statement.execute("SET LOCAL ROLE \"" + roles.owner() + "\"");
-          try (ResultSet result =
-              statement.executeQuery("SELECT session_user, current_user, pg_backend_pid()")) {
-            result.next();
-            observed = new Observed(result.getString(1), result.getString(2), result.getInt(3));
-          }
-        }
-        if (!observed.currentUser().equals(roles.owner())
-            || observed.sessionUser().equals(observed.currentUser())) {
-          throw new SQLException("GRANT는 Migration 로그인에서 Owner로 전환한 뒤에만 실행한다");
-        }
-        try (PreparedStatement statement =
-            connection.prepareStatement("SELECT set_config(?, ?, true)")) {
-          String[][] settings = {
-            {"homestamp.grants.app_role", roles.app()},
-            {"homestamp.grants.purge_role", roles.purge()},
-            {"homestamp.grants.human_role", roles.human()}
-          };
-          for (String[] setting : settings) {
-            statement.setString(1, setting[0]);
-            statement.setString(2, setting[1]);
-            statement.execute();
-          }
-        }
-        try (PreparedStatement statement =
-            connection.prepareStatement("SELECT pg_advisory_xact_lock(?, ?)")) {
-          statement.setInt(1, LOCK_CLASS);
-          statement.setInt(2, LOCK_OBJECT);
-          statement.execute();
-        }
-        try (Statement statement = connection.createStatement()) {
-          statement.execute(sql);
-        }
-        if (beforeCommit != null) {
-          beforeCommit.run(connection);
-        }
-        connection.commit();
-        return observed;
-      } catch (SQLException | RuntimeException exception) {
-        connection.rollback();
-        throw exception;
-      } finally {
-        connection.setAutoCommit(autoCommit);
-      }
-    }
   }
 }

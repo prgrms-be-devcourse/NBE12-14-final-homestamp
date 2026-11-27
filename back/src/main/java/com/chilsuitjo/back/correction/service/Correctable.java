@@ -1,10 +1,13 @@
 package com.chilsuitjo.back.correction.service;
 
+import com.chilsuitjo.back.action.dto.ActionCommand;
 import com.chilsuitjo.back.action.dto.DigestInput;
+import com.chilsuitjo.back.action.dto.PhotoDigest;
 import com.chilsuitjo.back.correction.dto.AppliedVersion;
 import com.chilsuitjo.back.correction.dto.CorrectableSnapshot;
 import com.chilsuitjo.back.correction.rule.CorrectionTargetKind;
 import com.chilsuitjo.back.global.common.PartySide;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -49,9 +52,22 @@ public interface Correctable {
   DigestInput digestOf(UUID versionId);
 
   /**
+   * 이 기록의 마지막 다시 요청 시각. [사진 더해서 다시 요청]의 7일은 같은 기록의 다시 요청끼리 함께 센다(06 0-1 {@code rerequest.interval}
+   * "한 기록에", #278): 수리 건이면 [보충하고 다시 확인 요청]·[상황이 바뀌었어요]·고친 내용의 다시 요청 중 가장 최근. 없으면 null. 행동 기록을 읽으므로
+   * 트랜잭션 안(pipeline의 {@code load}, 조회 서비스)에서만 부른다.
+   */
+  Instant lastRerequestAt(UUID targetId);
+
+  /**
    * 거절된 고친 내용을 다시 보낼 때 더한 근거 사진을 붙인다({@code RESUBMIT_CORRECTION}). {@code correction}은 아래층이라 {@code
    * photo}를 부를 수 없어서, 대상 도메인이 {@code PhotoService.attach}로 붙인다(05 {@code
-   * photo.correction_request_id}, decisions 2026-11-17).
+   * photo.correction_request_id}, decisions 2026-11-17). 사진 단계는 그 기록이 원래 쓰는 단계다(수리 건 내용이면 보충과 같은
+   * {@code BEFORE}, #278). 장수 한도도 그 기록의 한도에 함께 센다. 표가 없으면 아무것도 하지 않고 빈 목록이다.
+   *
+   * @param command 이 다시 요청 행동(보는 사람·호실 확인과 행동 시각에 씀)
+   * @param correctionRequestId 새로 만든 고친 내용(먼저 DB에 내보내 있어야 한다)
+   * @return 붙인 사진의 지문({@code SavedState.withPhotos}로 넘김)
    */
-  void attachEvidence(UUID targetId, UUID correctionRequestId, List<String> uploadTickets);
+  List<PhotoDigest> attachEvidence(
+      ActionCommand command, UUID targetId, UUID correctionRequestId, List<String> uploadTickets);
 }
