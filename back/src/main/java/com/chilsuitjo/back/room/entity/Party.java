@@ -96,6 +96,13 @@ public class Party {
     return new Party(roomRecordId, side, null, PartyStatus.EMPTY, null, at);
   }
 
+  /** 호실을 만들 때 상대 번호만 넣어 둔 반대쪽 자리(03 B "번호만"). 초대 전이라 문자·링크는 없다. 번호는 정규화된 번호다. 초대하면 초대됨이 된다. */
+  public static Party numberOnly(UUID roomRecordId, PartySide side, String phone, Instant at) {
+    Party party = new Party(roomRecordId, side, null, PartyStatus.NUMBER_ONLY, null, at);
+    party.invitePhone = Objects.requireNonNull(phone, "phone");
+    return party;
+  }
+
   /**
    * 이 자리의 초대 번호가 이 번호와 같은지(06 ROOM-5a·5b). 둘 다 정규화된 번호를 받는다. 번호가 지워졌거나 비교할 번호가 없으면 거짓이다. 번호 자체를 밖으로
    * 내보내지 않으려고 비교만 연다.
