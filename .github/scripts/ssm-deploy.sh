@@ -102,6 +102,7 @@ case "$status" in
       11 | 12) fail "$code" "$([[ $code == 11 ]] && echo '--migrate' || echo '--apply-grants') 실패·시간 초과: 새 앱은 시작하지 않았습니다. 원인을 본 뒤 사람이 다시 배포합니다(자동 재시도 없음)" ;;
       3) fail 3 "다른 배포가 서버에서 진행 중입니다. 끝난 뒤 다시 실행하세요" ;;
       5) fail 5 "이전 Migration·GRANT 컨테이너가 아직 실행 중입니다. 끝난 뒤 다시 실행하세요" ;;
+      4) fail 4 "활성 슬롯을 확인하지 못해 아무것도 바꾸지 않았습니다(upstream을 모름, 또는 같은 이미지인데 헬스·전환 뒤 확인 실패 noop-check). **운영자 확인 필요**(런북 \"upstream을 모름\"·\"같은 이미지인데 확인 실패\"). 같은 digest로 다시 배포해도 같습니다" ;;
       *) fail "$code" "배포 실패: 서버 종료 코드 $code(런북 종료 코드 표)" ;;
     esac ;;
   TimedOut) fail 40 "서버 실행 시간(2400초)을 넘었습니다. deploy.sh가 신호로 멈췄을 수 있습니다(EC2에서 deploy.sh --status)" ;;
