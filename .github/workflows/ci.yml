@@ -26,6 +26,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       back: ${{ steps.diff.outputs.back }}
+      back_image: ${{ steps.diff.outputs.back_image }}
       front: ${{ steps.diff.outputs.front }}
       hooks: ${{ steps.diff.outputs.hooks }}
     steps:
@@ -40,6 +41,8 @@ jobs:
           all=$(echo "$files" | grep -q '^\.github/workflows/' && echo true || echo false)
           has() { [ "$all" = true ] || echo "$files" | grep -qE "$1"; }
           echo "back=$(has '^back/' && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          # 이미지 검사 스크립트(scan.sh·evaluate.sh·예외 목록)만 바뀌어도 이미지 검사를 돌린다
+          echo "back_image=$(has '^(back/|\.github/scripts/image/)' && echo true || echo false)" >> "$GITHUB_OUTPUT"
           echo "front=$(has '^front/' && echo true || echo false)" >> "$GITHUB_OUTPUT"
           echo "hooks=$(has '^(scripts/hooks/|\.claude/|\.codex/)' && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
@@ -192,19 +195,43 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  # 이미지 빌드는 Dockerfile 안에서 따로 컴파일하는 multi-stage라 back과 동시에 돌린다(#335).
-  # 필수 검사는 ci-result 하나라 여기서 빼면 이미지가 깨진 PR도 머지되므로 ci.yml 안에 남긴다
+  # 이미지 빌드·검사는 Dockerfile 안에서 따로 컴파일하는 multi-stage라 back과 동시에 돌린다(#335).
+  # 필수 검사는 ci-result 하나라 PR의 이미지 빌드·Trivy 검사는 여기 한 곳에서만 한다(image-publish는 main·수동만, #350).
+  # Dockerfile의 deps 층(의존성만 받기)은 GitHub Actions 캐시로 다시 써서 Maven Central 429를 줄인다.
+  # 캐시는 gradle-cache.yml이 dev 머지 때 dev 범위에 채우고(같은 scope), PR은 읽기만 한다
   back-image:
     needs: changes
-    if: needs.changes.outputs.back == 'true'
+    if: needs.changes.outputs.back_image == 'true'
     runs-on: ubuntu-24.04
-    defaults:
-      run:
-        working-directory: back
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v3
       - name: 백엔드 Docker 이미지 빌드 (linux/amd64)
-        run: docker build --platform linux/amd64 --tag homestamp-back:ci --file Dockerfile .
+        uses: docker/build-push-action@v6
+        with:
+          context: back
+          file: back/Dockerfile
+          platforms: linux/amd64
+          tags: homestamp-back:candidate
+          load: true
+          push: false
+          # 읽기만 한다. PR마다 이미지 층을 쓰면 저장소 캐시 한도(10GB)를 채워 Gradle 캐시가 밀려난다
+          cache-from: type=gha,scope=back-image
+      # 검사 실패(취약점 DB를 못 받음·새 취약점)는 PR을 막지 않는다(런북 이미지-발행.md "PR에서", 예전 image-publish와 같음).
+      # 결과는 아래 artifact와 이 단계의 실패 표시로 본다. 이미지 빌드 실패는 위 단계에서 막는다
+      - name: 보안 검사 (Trivy, 막지 않음)
+        continue-on-error: true
+        run: .github/scripts/image/scan.sh homestamp-back:candidate trivy-report
+      - name: 검사 결과 보관
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: trivy-report-${{ github.sha }}
+          path: trivy-report/
+          if-no-files-found: warn
+          retention-days: 30
 
   # 운영 jar를 JRE 컨테이너에서 실제로 실행해 보는 Migration 통합 테스트는 혼자 테스트 시간의 약 40%(CI 77초, #348)라
   # back과 동시에 돌린다(#350). 커버리지 대상(*Service·*Transitions)이 아니라 back의 커버리지 검사와 상관없다

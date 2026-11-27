@@ -76,6 +76,17 @@ tasks.register('localAccessToken', JavaExec) {
     mainClass = 'com.chilsuitjo.back.global.security.LocalAccessToken'
 }
 
+// 운영 jar를 만드는 데 필요한 의존성 jar만 받아 둔다(소스 없이). Dockerfile의 deps 단계가 써서, 소스가 바뀌어도 이 층은
+// CI 캐시로 다시 쓴다(Maven Central 429 줄이기, #350)
+tasks.register('resolveDependencies') {
+    group = 'build setup'
+    description = 'bootJar에 필요한 의존성 jar를 받아 둔다'
+    def wanted = ['compileClasspath', 'runtimeClasspath', 'annotationProcessor'].collect { configurations.getByName(it) }
+    doLast {
+        wanted.each { it.resolve() }
+    }
+}
+
 tasks.named('test') {
     useJUnitPlatform()
     // 테스트 클래스를 나눠 돌릴 JVM 수(#335). 기본 1개, -PtestForks=N으로 바꾼다. JVM마다 테스트 DB 컨테이너가 따로라 섞이지 않는다
