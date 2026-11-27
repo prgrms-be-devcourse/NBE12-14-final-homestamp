@@ -78,6 +78,8 @@ tasks.register('localAccessToken', JavaExec) {
 
 tasks.named('test') {
     useJUnitPlatform()
+    // 테스트 클래스를 나눠 돌릴 JVM 수(#335). 기본 1개, -PtestForks=N으로 바꾼다. JVM마다 테스트 DB 컨테이너가 따로라 섞이지 않는다
+    maxParallelForks = (project.findProperty('testForks') ?: '1') as int
     // MigrationRunnerIntegrationTest가 운영 bootJar를 UID 10002 컨테이너에서 --migrate로 실행한다
     dependsOn tasks.named('bootJar')
     doFirst {
