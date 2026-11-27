@@ -217,8 +217,10 @@ public record RepairCaseDetail(
    *
    * @param ack 확인 기다림 / 맞아요 / 보류 / 이견 / 확인 없음
    * @param nextRerequestAt 다음에 보충할 수 있는 시각("○월 ○일부터 다시 요청할 수 있어요"). 보충한 적이 없으면 null
+   * @param ackAt 같이 확인한 시각(하자에 맞아요가 남은 시각). 아직이면 null. 사진 {@code createdAt}이 이보다 뒤면 화면이 "확인 뒤 추가"로
+   *     보인다(06 REP-7g)
    */
-  public record Defect(AckState ack, Instant nextRerequestAt) {}
+  public record Defect(AckState ack, Instant nextRerequestAt, Instant ackAt) {}
 
   /**
    * 수리비 부담. 지불·부담 제안은 그 기능을 만들 때 칸을 더한다.
