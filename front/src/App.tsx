@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from "react"
+import { useEffect, useRef, useState, useSyncExternalStore } from "react"
 import { Plus, ShieldCheck } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -233,13 +233,19 @@ function HomeStampApp({
       api.records.load({ accountId }).catch((e) => toast(errorMessage(e)))
   }, [api, accountId])
   // 호실에 들어가면 그 호실 상세(입주일·availableActions)와 수리 건 목록을 새로 받아요(GET /api/rooms/{id}, /repair-cases).
-  // 화면을 옮길 때마다 다시 받아, 상세에서 행동한 뒤 목록으로 돌아오면 바뀐 상태가 보여요. 목업은 할 일이 없어요
+  // 같은 호실 안에서는 수리 건 목록·홈에 들어갈 때만 다시 받아, 상세에서 행동한 뒤 돌아오면 바뀐 상태가 보여요.
+  // 수리 상세·돈·점검 화면은 자기 데이터를 따로 받거나 아직 목록을 쓰지 않아 다시 받지 않아요(#293 리뷰). 목업은 할 일이 없어요
+  const listing = page === "repairs" || page === "home"
+  const loadedRoom = useRef("")
   useEffect(() => {
-    if (accountId && route.roomId)
-      api.records
-        .loadRoom({ accountId }, route.roomId)
-        .catch((e) => toast(errorMessage(e)))
-  }, [api, accountId, route.roomId, page])
+    if (!accountId || !route.roomId) return
+    const key = `${accountId}:${route.roomId}`
+    if (loadedRoom.current === key && !listing) return
+    loadedRoom.current = key
+    api.records
+      .loadRoom({ accountId }, route.roomId)
+      .catch((e) => toast(errorMessage(e)))
+  }, [api, accountId, route.roomId, listing])
   // 내 호실: 내가 만들었거나 연결을 수락한 호실. 호실마다 내 측(임차인/임대인)은 연결로 정해져요.
   const myRooms = db.rooms.filter((r) => {
     const s = sideOf(r, accountId)
@@ -1142,7 +1148,7 @@ function HomeStampApp({
                       tabCount={tabCount}
                       detail={detail}
                       events={events}
-                      asOf={room.server?.asOf}
+                      asOf={db.repairListAsOf?.[room.id]}
                     />
                   )}
                   {page === "detail" && repair && detailView(repair)}

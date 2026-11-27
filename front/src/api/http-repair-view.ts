@@ -185,6 +185,7 @@ function repairBase(
     photos: [],
     art: "",
     date: recordDate(b.createdAt),
+    createdAt: b.createdAt,
     version: b.content.no,
     closeBy:
       b.status === "CLOSE_WAIT" && b.closeRequestedBy
