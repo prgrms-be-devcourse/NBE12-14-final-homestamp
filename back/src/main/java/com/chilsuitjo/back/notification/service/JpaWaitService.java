@@ -19,6 +19,7 @@ import com.chilsuitjo.back.notification.rule.SoloRule;
 import java.time.Duration;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -43,7 +44,7 @@ import org.springframework.transaction.annotation.Transactional;
  *       넘어가지 않는다
  *   <li>재통지 뒤 기한 다시 세기: {@code unconfirmed_due_at}이 있으면 {@code IllegalStateException}이다(기다림 타이머
  *       d3에서 정함)
- *   <li>{@link #closeAll}: 상대 탈퇴만 닫고, 거주 종료(문서끼리 범위가 다름)·공유 중단·정산 완료는 #113에서 정하기 전이라 {@code
+ *   <li>{@link #closeAll}: 상대 탈퇴와 거주 종료(#370 B-1)만 닫고, 공유 중단·정산 완료는 #113에서 정하기 전이라 {@code
  *       UnsupportedOperationException}이다
  * </ul>
  */
@@ -157,15 +158,20 @@ public class JpaWaitService implements WaitService, WaitQuery {
   }
 
   /**
-   * 정해진 범위({@link CloseAllScope}: 상대 탈퇴)만 닫는다. 그 밖의 이유는 #113에서 정하기 전이라 {@code
+   * 정해진 범위({@link CloseAllScope}: 상대 탈퇴, 거주 종료)만 닫는다. 그 밖의 이유는 #113에서 정하기 전이라 {@code
    * UnsupportedOperationException}이다(조용히 0을 돌려주면 닫히지 않은 요청이 남음). 닫힌 시각은 행동 시각이고, 부르는 쪽이 호실을 잠근
    * {@code save} 안에서 부른다.
    */
   @Override
   @Transactional(propagation = Propagation.MANDATORY)
   public int closeAll(UUID roomRecordId, ClosedReason reason, Set<RequestKind> kinds) {
-    Set<RequestStatus> statuses = CloseAllScope.statuses(reason, kinds);
-    List<ResponseRequest> open = requests.findInRoom(roomRecordId, kinds, statuses);
+    Map<RequestKind, Set<RequestStatus>> targets = CloseAllScope.targets(reason, kinds);
+    Set<RequestStatus> anyStatus = EnumSet.noneOf(RequestStatus.class);
+    targets.values().forEach(anyStatus::addAll);
+    List<ResponseRequest> open =
+        requests.findInRoom(roomRecordId, targets.keySet(), anyStatus).stream()
+            .filter(r -> targets.get(r.getKind()).contains(r.getStatus()))
+            .toList();
     if (!open.isEmpty()) {
       var at = requestContext.at();
       open.forEach(r -> r.close(reason, at));

@@ -32,6 +32,11 @@ import {
 } from "@/api/auth"
 import { isMobilePhone, maskPhone, MOBILE_PHONE_MESSAGE } from "@/lib/phone"
 import { Notice } from "@/components/common/notice"
+import {
+  PrivacyNoticePoints,
+  TermsSummary,
+} from "@/features/member/terms-blocks"
+import { TERMS_DESCRIPTION } from "@/features/member/terms-text"
 
 type Mode = "login" | "signup"
 // S-01 가입(휴대폰 → 계정 → 확인 항목) · S-02 로그인
@@ -212,13 +217,6 @@ function LoginForm({
     </form>
   )
 }
-
-const TERMS = [
-  "같은 호실의 상대 쪽에게 내가 남긴 사진·설명·행동 기록과 가린 이름(예: 정○○)이 보여요.",
-  "기록은 고치거나 지우지 않고 덧붙이며, 정산 완료 뒤 1년 동안 읽기 전용으로 보관한 뒤 삭제해요.",
-  "탈퇴하면 혼자 쓴 기록과 계정은 지워지고, 상대와 함께 만든 기록은 이름을 가린 채 보관 기간까지 남아요.",
-  "주민등록번호는 받지 않아요. 계약서·신분증·통장 사진은 올리지 마세요.",
-]
 
 function SignupForm({
   auth,
@@ -546,11 +544,7 @@ function SignupForm({
           </div>
           <div className="auth-notice">
             <strong>개인정보 처리 안내</strong>
-            <ul>
-              {TERMS.map((t) => (
-                <li key={t}>{t}</li>
-              ))}
-            </ul>
+            <PrivacyNoticePoints />
             <label className="consent mt-2">
               <Checkbox
                 checked={agree.privacyNotice}
@@ -586,22 +580,9 @@ function SignupForm({
         <DialogContent>
           <DialogHeader>
             <DialogTitle>이용약관</DialogTitle>
-            <DialogDescription>
-              HomeStamp는 세입자와 집주인이 같은 기록을 함께 보도록 돕는
-              서비스예요.
-            </DialogDescription>
+            <DialogDescription>{TERMS_DESCRIPTION}</DialogDescription>
           </DialogHeader>
-          <div className="space-y-2 text-sm leading-relaxed">
-            <p>
-              HomeStamp는 누가 얼마를 낼지 판단하지 않아요. 사람이 입력하고
-              상대가 확인한 사실만 남겨요.
-            </p>
-            <p>
-              합의는 양쪽이 같은 안에 동의해야만 생기고,
-              사실(고쳤다·냈다·받았다)은 혼자서도 남길 수 있어요.
-            </p>
-            <p>약관 전문은 서비스 정식 공개 때 이 화면에 게시돼요.</p>
-          </div>
+          <TermsSummary />
           <Button
             onClick={() => {
               setAgree((a) => ({ ...a, terms: true }))

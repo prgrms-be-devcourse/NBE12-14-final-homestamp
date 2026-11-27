@@ -10,6 +10,8 @@ export const endpoints = {
   refresh: "/api/auth/refresh",
   logout: "/api/auth/logout",
   me: "/api/me",
+  // 바뀐 약관·확인 항목 다시 확인(CONS-4)
+  agreements: "/api/me/agreements",
   // 4-2 홈·알림
   home: "/api/me/home",
   notifications: "/api/me/notifications",

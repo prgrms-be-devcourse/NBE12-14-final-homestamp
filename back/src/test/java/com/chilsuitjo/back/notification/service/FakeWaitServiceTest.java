@@ -15,6 +15,7 @@ import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.dto.RoomParties;
 import com.chilsuitjo.back.notification.dto.SoloCheck;
 import com.chilsuitjo.back.notification.dto.SoloQuery;
+import com.chilsuitjo.back.notification.rule.CloseAllScope;
 import com.chilsuitjo.back.notification.rule.PartyPresence;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.rule.RequestStatus;
@@ -407,7 +408,7 @@ class FakeWaitServiceTest {
 
     assertThatThrownBy(() ->
             waits.closeAll(
-                roomRecordId, ClosedReason.ROOM_ENDED, Set.of(RequestKind.DEFECT_CONFIRM)))
+                roomRecordId, ClosedReason.SHARING_STOPPED, Set.of(RequestKind.DEFECT_CONFIRM)))
         .isInstanceOf(UnsupportedOperationException.class);
     int closed =
         waits.closeAll(
@@ -416,6 +417,26 @@ class FakeWaitServiceTest {
     assertThat(closed).isEqualTo(2);
     assertThat(waits.closedReasonOf(repairCase, RequestKind.DEFECT_CONFIRM))
         .contains(ClosedReason.COUNTERPART_WITHDRAWN);
+  }
+
+  @Test
+  void 거주_종료는_운영과_같이_미확인_수리_요청은_닫고_미확인_종료_확인은_남긴다() {
+    RequestTarget otherCase = RequestTarget.of(TargetKind.REPAIR_CASE, UUID.randomUUID());
+    waits.open(defectConfirm());
+    waits.markUnconfirmed(repairCase, RequestKind.DEFECT_CONFIRM);
+    waits.open(
+        new OpenRequestCommand(
+            roomRecordId, RequestKind.CLOSE_CONFIRM, otherCase, PartySide.TENANT));
+    waits.markUnconfirmed(otherCase, RequestKind.CLOSE_CONFIRM);
+
+    int closed =
+        waits.closeAll(roomRecordId, ClosedReason.ROOM_ENDED, CloseAllScope.roomEndedKinds());
+
+    assertThat(closed).isEqualTo(1);
+    assertThat(waits.closedReasonOf(repairCase, RequestKind.DEFECT_CONFIRM))
+        .contains(ClosedReason.ROOM_ENDED);
+    assertThat(waits.statusOf(otherCase, RequestKind.CLOSE_CONFIRM))
+        .contains(RequestStatus.UNCONFIRMED);
   }
 
   @Test
