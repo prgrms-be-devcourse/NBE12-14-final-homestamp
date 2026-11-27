@@ -1190,9 +1190,14 @@ function HomeStampApp({
                         roomHas={roomHas}
                         open={open}
                       />
-                      {/* 내려받기(S-19)는 읽기만 하는 호실도 돼요. 목업은 서버 기록이 없어 HTTP에서만 보여요 */}
+                      {/* 내려받기(S-19)는 읽기만 하는 호실도 돼요. 목업은 서버 기록이 없어 HTTP에서만 보여요.
+                          호실을 바꾸면 앞 호실의 준비 상태(받은 목록)가 남지 않게 새로 그려요(#323 리뷰) */}
                       {api.mode === "http" && (
-                        <RoomDownload roomId={room.id} roomName={room.name} />
+                        <RoomDownload
+                          key={room.id}
+                          roomId={room.id}
+                          roomName={room.name}
+                        />
                       )}
                     </>
                   )}
