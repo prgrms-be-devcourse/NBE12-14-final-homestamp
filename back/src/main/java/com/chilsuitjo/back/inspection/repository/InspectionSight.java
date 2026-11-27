@@ -78,6 +78,11 @@ public class InspectionSight {
   /**
    * {@link #of(Inspection, PartySide)}와 같고, 이미 읽은 자리 사실과 행동 기록을 쓴다(한 번만 읽기, #397 리뷰).
    *
+   * <p><b>실패하면 닫힌 쪽으로</b>({@link #items}와 같음, #396): 보는 사람 측의 행동을 더해 다시 계산할 수 없으면(순서가 맞지 않아 전이 규칙이
+   * 거절) 그 시각까지의 행동만으로 본다. 그 시각까지의 행동마저 다시 계산할 수 없거나, 볼 수 있는 점검인데 보이는 행동에 점검이 없으면 지금 행 값으로 돌아가지 않고
+   * {@link IllegalStateException}을 던진다. 공유를 그만둔 뒤 상대가 시작한 점검({@link Sight#hides})은 보이는 행동이 없는 것이
+   * 맞으므로, 작성 중으로 보고 상대 항목을 모두 가린 값을 준다(부르는 쪽은 {@code hides}로 먼저 막는다).
+   *
    * @param room 보는 측 기준으로 읽은 자리 사실
    * @param recorded 이 점검을 가리키는 행동을 모두 담은 행동 기록({@code room_seq} 순). 다른 대상의 행동이 섞여 있어도 된다
    */
@@ -88,18 +93,44 @@ public class InspectionSight {
       return new Sight(
           viewer, null, row.getStatus(), viewer != row.getAuthorSide() && draft, draft);
     }
+    if (startedAfter(row, viewer, asOf)) {
+      return new Sight(viewer, asOf, InspectionStatus.DRAFT, true, true);
+    }
     ActionTarget target = ActionTarget.inspection(row.getId());
     List<ActionEntry> history =
         recorded.stream()
             .filter(entry -> target.equals(entry.target()))
             .filter(entry -> InspectionTransitions.CHANGES.contains(entry.type()))
             .toList();
-    InspectionStatus shown =
-        folded(row, history, e -> !e.createdAt().isAfter(asOf) || e.actorSide() == viewer);
+    Predicate<ActionEntry> beforeCutoff = e -> !e.createdAt().isAfter(asOf);
+    InspectionState atCutoff;
+    try {
+      atCutoff = Replay.fold(rules, history.stream().filter(beforeCutoff).toList());
+    } catch (BusinessException broken) {
+      throw new IllegalStateException("고정한 시각까지의 점검 기록을 다시 계산할 수 없어요: " + row.getId(), broken);
+    }
+    InspectionState shown;
+    try {
+      shown =
+          Replay.fold(
+              rules,
+              history.stream().filter(beforeCutoff.or(e -> e.actorSide() == viewer)).toList());
+    } catch (BusinessException rejected) {
+      shown = atCutoff;
+    }
+    if (!shown.exists()) {
+      throw new IllegalStateException("이 사람에게 보이는 점검 기록이 없어요: " + row.getId());
+    }
+    // 고정한 시각에 아직 없던 점검은 보는 사람이 그 뒤 시작한 것이라 보이는 상태로만 본다
     boolean draft =
-        shown == InspectionStatus.DRAFT
-            || folded(row, history, e -> !e.createdAt().isAfter(asOf)) == InspectionStatus.DRAFT;
-    return new Sight(viewer, asOf, shown, viewer != row.getAuthorSide() && draft, draft);
+        shown.status() == InspectionStatus.DRAFT
+            || (atCutoff.exists() && atCutoff.status() == InspectionStatus.DRAFT);
+    return new Sight(viewer, asOf, shown.status(), viewer != row.getAuthorSide() && draft, draft);
+  }
+
+  /** 공유를 그만둔 뒤 상대가 시작한 점검인가(불변식 18). {@link Sight#hides}와 같은 판단이다. */
+  private static boolean startedAfter(Inspection row, PartySide viewer, Instant asOf) {
+    return viewer != row.getAuthorSide() && asOf != null && row.getCreatedAt().isAfter(asOf);
   }
 
   /**
@@ -109,6 +140,7 @@ public class InspectionSight {
    *   <li>응답: 보이는 범위를 고정하지 않았으면 지금 값이다. 고정했으면 그 시각까지의 행동과 보는 사람 측의 행동만으로 다시 계산해({@link #of}의 점검 상태와
    *       같은 방법), 고정 뒤 상대가 답하거나 보충한 것이 드러나지 않는다
    *   <li>판: 고정하지 않았거나 자기가 더한 항목이면 지금 판이다. 상대가 더한 항목은 고정한 시각까지 만든 판 가운데 마지막 것이다
+   *   <li>마지막 보충 시각: 응답과 같은 행동으로 본 값이다. 고정하지 않았으면 기록된 보충 가운데 마지막 것이다
    * </ul>
    *
    * <p><b>실패하면 닫힌 쪽으로</b>(#397 리뷰): 보는 사람 측의 행동을 더해 다시 계산할 수 없으면(순서가 맞지 않아 전이 규칙이 거절) 그 시각까지의 행동만으로
@@ -137,29 +169,39 @@ public class InspectionSight {
             .stream()
             .collect(Collectors.groupingBy(InspectionItemVersion::getInspectionItemId));
     Map<UUID, List<ActionEntry>> changes =
-        seen.asOf() == null
-            ? Map.of()
-            : recorded.stream()
-                .filter(entry -> entry.target() != null)
-                .filter(entry -> entry.target().kind() == TargetKind.INSPECTION_ITEM)
-                .filter(entry -> ITEM_CHANGES.contains(entry.type()))
-                .collect(Collectors.groupingBy(entry -> entry.target().id()));
+        recorded.stream()
+            .filter(entry -> entry.target() != null)
+            .filter(entry -> entry.target().kind() == TargetKind.INSPECTION_ITEM)
+            .filter(entry -> ITEM_CHANGES.contains(entry.type()))
+            .collect(Collectors.groupingBy(entry -> entry.target().id()));
     Map<UUID, ItemSight> out = new LinkedHashMap<>();
     for (InspectionItem item : shown) {
       List<InspectionItemVersion> all = byItem.getOrDefault(item.getId(), List.of());
+      List<ActionEntry> own = changes.getOrDefault(item.getId(), List.of());
+      if (seen.asOf() == null) {
+        out.put(
+            item.getId(),
+            new ItemSight(item.getStatus(), itemVersion(item, seen, all), lastSupplementAt(own)));
+        continue;
+      }
+      InspectionItemState state = itemState(item, seen, own);
       out.put(
           item.getId(),
-          new ItemSight(
-              itemStatus(item, seen, changes.getOrDefault(item.getId(), List.of())),
-              itemVersion(item, seen, all)));
+          new ItemSight(state.status(), itemVersion(item, seen, all), state.lastRerequestAt()));
     }
     return out;
   }
 
-  private AckState itemStatus(InspectionItem item, Sight seen, List<ActionEntry> changes) {
-    if (seen.asOf() == null) {
-      return item.getStatus();
-    }
+  private static Instant lastSupplementAt(List<ActionEntry> changes) {
+    return changes.stream()
+        .filter(entry -> entry.type() == ActionType.SUPPLEMENT_ITEM)
+        .map(ActionEntry::createdAt)
+        .max(Instant::compareTo)
+        .orElse(null);
+  }
+
+  private InspectionItemState itemState(
+      InspectionItem item, Sight seen, List<ActionEntry> changes) {
     Predicate<ActionEntry> beforeCutoff = e -> !e.createdAt().isAfter(seen.asOf());
     InspectionItemState state;
     try {
@@ -174,7 +216,7 @@ public class InspectionSight {
     if (!state.exists()) {
       throw new IllegalStateException("이 사람에게 보이지 않는 항목이에요: " + item.getId());
     }
-    return state.status();
+    return state;
   }
 
   private InspectionItemState foldItem(List<ActionEntry> changes, Predicate<ActionEntry> visible) {
@@ -200,8 +242,11 @@ public class InspectionSight {
    *
    * @param status 이 사람에게 보이는 항목 응답
    * @param version 이 사람에게 보이는 판
+   * @param lastSupplementAt 이 사람에게 보이는 마지막 보충 시각(응답과 같은 행동으로 본다). 없으면 null. 상세의 {@code
+   *     nextRerequestAt}이 쓴다(#396: 고정 뒤 상대의 보충 시각이 드러나지 않게)
    */
-  public record ItemSight(AckState status, InspectionItemVersion version) {}
+  public record ItemSight(
+      AckState status, InspectionItemVersion version, Instant lastSupplementAt) {}
 
   /** 지금 호실 단계에서 점검 확인 요청을 열 수 있나(03 K). */
   public boolean canOpenConfirm(UUID roomRecordId, PartySide side) {
@@ -247,12 +292,6 @@ public class InspectionSight {
     return stopped;
   }
 
-  private InspectionStatus folded(
-      Inspection row, List<ActionEntry> history, Predicate<ActionEntry> visible) {
-    InspectionState state = Replay.fold(rules, history.stream().filter(visible).toList());
-    return state.exists() ? state.status() : row.getStatus();
-  }
-
   /**
    * 한 사람에게 보이는 점검.
    *
@@ -271,7 +310,7 @@ public class InspectionSight {
 
     /** 공유를 그만둔 뒤 상대가 시작해 이 사람이 볼 수 없는 점검인가(불변식 18). 그 점검은 있는지도 알 수 없다. */
     public boolean hides(Inspection row) {
-      return viewer != row.getAuthorSide() && asOf != null && row.getCreatedAt().isAfter(asOf);
+      return startedAfter(row, viewer, asOf);
     }
 
     /**

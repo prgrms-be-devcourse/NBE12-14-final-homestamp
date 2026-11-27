@@ -19,10 +19,11 @@ import java.util.Objects;
 import java.util.UUID;
 
 /**
- * 호실 기록 만들기({@code CREATE_ROOM}) 한 요청의 저장. 요청 값(주소·별칭·입주일)을 들고 있어서 요청마다 하나 만든다.
+ * 호실 기록 만들기({@code CREATE_ROOM}) 한 요청의 저장. 요청 값(주소·별칭·입주일·상대 번호)을 들고 있어서 요청마다 하나 만든다.
  *
- * <p>{@link #save}는 호실 기록, 두 당사자 자리(만든 회원의 자리와 반대쪽 빈 자리), 템플릿에서 복사한 부위를 저장한다(06 ROOM-1a). 모두
- * pipeline의 트랜잭션 안이라 행동 기록까지 하나라도 실패하면 함께 되돌려진다.
+ * <p>{@link #save}는 호실 기록, 두 당사자 자리(만든 회원의 자리와 반대쪽 자리), 템플릿에서 복사한 부위를 저장한다(06 ROOM-1a). 반대쪽 자리는 상대
+ * 번호가 있으면 번호만({@code NUMBER_ONLY}), 없으면 비어 있음({@code EMPTY})이다(03 B). 모두 pipeline의 트랜잭션 안이라 행동 기록까지
+ * 하나라도 실패하면 함께 되돌려진다.
  *
  * <p>측과 회원은 {@code command.actor()}에서 읽는다. 호실을 만드는 요청은 {@code RoomGate}가 없어서 부르는 쪽이 {@code
  * Actor.member(id).withSide(side)}로 넘긴다(09 3-1).
@@ -37,7 +38,11 @@ public class NewRoomStateStore implements StateStore<RoomState> {
   private final String regionCode;
   private final String alias;
   private final LocalDate moveInDate;
+  private final String counterpartPhone;
 
+  /**
+   * @param counterpartPhone 정규화된 상대 번호. 없으면 null. 번호 모양과 내 번호 여부는 부르는 쪽이 먼저 본다
+   */
   public NewRoomStateStore(
       RoomRecordRepository rooms,
       PartyRepository parties,
@@ -46,7 +51,8 @@ public class NewRoomStateStore implements StateStore<RoomState> {
       ActionRequestContext requestContext,
       String regionCode,
       String alias,
-      LocalDate moveInDate) {
+      LocalDate moveInDate,
+      String counterpartPhone) {
     this.rooms = rooms;
     this.parties = parties;
     this.parts = parts;
@@ -55,6 +61,7 @@ public class NewRoomStateStore implements StateStore<RoomState> {
     this.regionCode = Objects.requireNonNull(regionCode);
     this.alias = Objects.requireNonNull(alias);
     this.moveInDate = moveInDate;
+    this.counterpartPhone = counterpartPhone;
   }
 
   /** 만들기 전이면 빈 상태, 같은 키로 다시 온 요청이면 처음 만든 호실의 지금 상태. */
@@ -83,7 +90,10 @@ public class NewRoomStateStore implements StateStore<RoomState> {
     RoomRecord room = rooms.save(new RoomRecord(regionCode, alias, moveInDate, side, at));
     UUID roomId = room.getId();
     parties.save(Party.creator(roomId, side, memberId, at));
-    parties.save(Party.empty(roomId, opposite(side), at));
+    parties.save(
+        counterpartPhone == null
+            ? Party.empty(roomId, opposite(side), at)
+            : Party.numberOnly(roomId, opposite(side), counterpartPhone, at));
     parts.saveAll(
         templates.findAllByOrderBySortOrder().stream()
             .map(template -> RoomPart.copyOf(roomId, template, at))

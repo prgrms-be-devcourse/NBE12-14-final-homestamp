@@ -1,6 +1,6 @@
 package com.chilsuitjo.back.notification.service;
 
-import com.chilsuitjo.back.auth.rule.PhoneNumber;
+import com.chilsuitjo.back.global.common.PhoneNumber;
 import java.util.HashSet;
 import java.util.Set;
 
