@@ -37,6 +37,7 @@ const body = (
   money: { status: "UNDECIDED" },
   photos: [],
   causeNotes: [],
+  progressNotes: [],
   availableActions: ["respond", "start"],
   ...patch,
 })
@@ -162,7 +163,7 @@ describe("수리 건 상세 응답을 화면 모델로 바꿔요", () => {
     ])
   })
 
-  test("행동은 서버가 준 것 중 화면에 버튼이 있는 것만(진행 상황 묻기·남기기는 아직 버튼이 없음)", () => {
+  test("행동은 서버가 준 것 중 화면에 버튼이 있는 것만", () => {
     const { availableActions } = repairFromDetail(
       body({
         availableActions: [
@@ -170,10 +171,16 @@ describe("수리 건 상세 응답을 화면 모델로 바꿔요", () => {
           "ask-progress",
           "progress-notes",
           "cause-notes",
+          "accept-all",
         ],
       }),
     )
-    expect(availableActions).toEqual(["respond", "cause-notes"])
+    expect(availableActions).toEqual([
+      "respond",
+      "ask-progress",
+      "progress-notes",
+      "cause-notes",
+    ])
   })
 })
 
@@ -453,14 +460,10 @@ describe("수리 건 API 중 연결한 것만 서버로 보내요", () => {
     expect(isConnected("POST", "/api/cause-notes/n1/respond")).toBe(true)
   })
 
-  test("하자 등록·사진 추가·다시 열기·진행 상황은 아직", () => {
+  test("하자 등록·사진 추가·다시 열기는 아직", () => {
     expect(isConnected("POST", "/api/rooms/r1/repair-cases")).toBe(false)
     expect(isConnected("POST", "/api/repair-cases/c1/photos")).toBe(false)
     expect(isConnected("POST", "/api/repair-cases/c1/reopen")).toBe(false)
-    expect(isConnected("POST", "/api/repair-cases/c1/ask-progress")).toBe(false)
-    expect(isConnected("POST", "/api/repair-cases/c1/progress-notes")).toBe(
-      false,
-    )
     expect(isConnected("GET", "/api/repair-cases/c1/extra")).toBe(false)
   })
 })
