@@ -9,6 +9,7 @@ import type {
 import type { RepairAction } from "./actions"
 import type { RepairCaseView } from "./repair-cases"
 import { seoulDate } from "./http-rooms"
+import { partLabelOf, type RoomPart } from "@/lib/room-parts"
 import { ERASED_PHOTO, UNAVAILABLE_PHOTO } from "@/lib/photos"
 
 // 수리 건 상세(GET /api/repair-cases/{id}, 06 4-6)의 서버 모양. 칸 이름은 백엔드 RepairCaseDetail과 같아요.
@@ -306,14 +307,18 @@ export function repairFromListItem(
   return { ...repairBase(b, roomId), lastActionAt: b.lastActionAt }
 }
 
-// urls: 사진 썸네일 주소(http-repair-cases가 view-urls로 받아 넘겨요). 없으면 사진은 "불러오지 못함" 표시예요
+// 상세 → 화면 모델. 부위 ID로 구역·이름을 찾고, 목록에 없으면 서버의 partName을 써요.
+// urls: 사진 썸네일 주소(http-repair-cases가 view-urls로 받아 넘겨요).
 export function repairFromDetail(
   b: RepairCaseDetailBody,
   urls: PhotoUrls = new Map(),
+  parts?: readonly RoomPart[],
 ): RepairCaseView {
   const photos = photosOf(b.photos, urls)
   const repair: Repair = {
     ...repairBase(b, b.roomRecordId),
+    roomPartId: b.content.roomPartId,
+    zone: partLabelOf(parts, b.content.roomPartId, b.content.partName),
     description: b.content.description ?? "",
     causes: causesOf(b.causeNotes, urls),
     progressNotes: progressNotesOf(b.progressNotes, urls),

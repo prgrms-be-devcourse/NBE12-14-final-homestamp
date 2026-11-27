@@ -27,6 +27,9 @@ export const CONNECTED_APIS: readonly {
   { method: "POST", path: /^\/api\/rooms$/ },
   { method: "GET", path: /^\/api\/rooms$/ },
   { method: "GET", path: /^\/api\/rooms\/[^/]+$/ },
+  // 부위 목록·부위 더하기(06 4-3, ROOM-3, #356). 숨김·다시 보이기·켜고 끔은 그 화면이 생길 때 더해요
+  { method: "GET", path: /^\/api\/rooms\/[^/]+\/parts$/ },
+  { method: "POST", path: /^\/api\/rooms\/[^/]+\/parts$/ },
   // 호실 경과(06 4장, REP-11, #359)
   { method: "GET", path: /^\/api\/rooms\/[^/]+\/timeline$/ },
   // 호실 기록 내려받기 목록과 사진 주소 받기(06 4장·4-5, DL-1·S-19, #321)
@@ -35,7 +38,7 @@ export const CONNECTED_APIS: readonly {
   // 사진 올리기: 업로드 표 받기(06 4-5, PHO-1, #365). S3에는 화면이 presigned POST로 직접 올려요
   { method: "POST", path: /^\/api\/rooms\/[^/]+\/upload-tickets$/ },
   // 입주 점검 시작·상세·확인 요청·항목 응답·남은 항목 모두 확인·보충(06 4-7, INSP-1, #357).
-  // 점검 ID는 위 호실 경과에서 찾아요. 항목 더하기·부위 사진은 부위 목록(#356) 연결 뒤에 더해요
+  // 점검 ID는 위 호실 경과에서 찾아요. 항목 더하기·부위 사진은 아직 연결 전이에요
   { method: "POST", path: /^\/api\/rooms\/[^/]+\/inspections$/ },
   { method: "GET", path: /^\/api\/inspections\/[^/]+$/ },
   {

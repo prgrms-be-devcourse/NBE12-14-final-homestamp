@@ -1,4 +1,5 @@
 import { formatWon } from "@/lib/money"
+import { PART_TEMPLATES, type RoomPart } from "@/lib/room-parts"
 export type Role = "임차인" | "임대인"
 // 하자 인정(GLOSSARY): 확인 기다림 / 맞아요 / 보충 요청됨(보류) / 이견 / 확인 없음
 export type Ack = "상대 미확인" | "확인 대기" | "확인됨" | "보충 요청" | "이견"
@@ -140,6 +141,8 @@ export interface FactCorrection<T = string | number> {
   // 요청할 때의 기록 모습 번호, 반영될 때 이전 내용에 달려 있던 이견(이력 보존)
   baseVersion?: number
   priorDispute?: string
+  // 부위 고치기면 새 부위의 roomPartId(to는 화면 글자 "구역 · 부위")
+  toPartId?: string
   photosFrom?: string[]
   photosTo?: string[]
   decidedBy?: Role
@@ -233,6 +236,8 @@ export interface Repair {
   roomId: string
   title: string
   zone: string
+  // 호실 부위 ID(06 4-3 roomPartId). zone은 그 부위의 화면 글자("구역 · 부위")예요. 이전 기록은 없을 수 있어요
+  roomPartId?: string
   description: string
   status: RepairStatus
   ack: Ack
@@ -281,6 +286,8 @@ export interface Inspection {
   kind: "in" | "out"
   title: string
   zone: string
+  // 호실 부위 ID(06 4-3 roomPartId). zone은 그 부위의 화면 글자("구역 · 부위")예요. 이전 기록은 없을 수 있어요
+  roomPartId?: string
   description: string
   photos: string[]
   ack: Ack
@@ -322,6 +329,8 @@ export interface PartPhoto {
   roomId: string
   kind: "in" | "out"
   zone: string
+  // 호실 부위 ID(06 4-3 roomPartId). zone은 그 부위의 화면 글자("구역 · 부위")예요. 이전 기록은 없을 수 있어요
+  roomPartId?: string
   title: string
   description: string
   photos: string[]
@@ -499,6 +508,8 @@ export interface DemoState {
   notices: Notice[]
   // 호실별 수리 건 목록의 기준 시각(06 4-6 목록 asOf, 호실 ID → ISO 또는 null). HTTP만 채워요(목업은 없음)
   repairListAsOf?: Record<string, string | null>
+  // 호실별 부위 목록(호실 ID → 부위). 목업만 채워요. 호실을 만들 때 기본 목록을 복사해요(lib/room-parts)
+  roomParts?: Record<string, RoomPart[]>
   // 호실마다 경과 기준 시각(06 4장 timeline asOf). 공유를 그만둔 뒤면 그 시각, 아니면 null. 목업은 비워 둬요
   timelineAsOf?: Record<string, string | null>
 }
@@ -775,28 +786,7 @@ export function createDemo(): DemoState {
   }
 }
 
-export const partGroups: Record<string, string[]> = {
-  현관: ["현관문·도어락", "신발장", "바닥"],
-  방: [
-    "벽",
-    "천장",
-    "바닥",
-    "창문·창틀",
-    "방충망",
-    "붙박이장",
-    "조명",
-    "콘센트·스위치",
-  ],
-  주방: ["싱크대·배수구", "수전", "가스레인지·인덕션", "후드", "수납장"],
-  욕실: [
-    "천장",
-    "벽·타일",
-    "바닥·배수구",
-    "변기",
-    "세면대·수전",
-    "샤워기·욕조",
-    "환풍기",
-  ],
-  "설비·가전": ["보일러", "에어컨", "냉장고", "세탁기", "인터폰"],
-  기타: ["기타"],
-}
+// 구역별 기본 부위 이름(V7 기본 목록). 호실마다 실제 부위는 부위 목록 API(roomPartId)로 받아요
+export const partGroups: Record<string, string[]> = PART_TEMPLATES.reduce<
+  Record<string, string[]>
+>((g, t) => ({ ...g, [t.zone]: [...(g[t.zone] || []), t.name] }), {})
