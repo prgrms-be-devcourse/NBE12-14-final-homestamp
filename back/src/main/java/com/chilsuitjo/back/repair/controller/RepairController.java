@@ -8,9 +8,12 @@ import com.chilsuitjo.back.global.response.CreatedResponse;
 import com.chilsuitjo.back.global.security.LoginMember;
 import com.chilsuitjo.back.proposal.dto.ProposalRequest;
 import com.chilsuitjo.back.proposal.dto.ProposalResult;
+import com.chilsuitjo.back.repair.dto.AddPhotosRequest;
 import com.chilsuitjo.back.repair.dto.ConfirmCloseRequest;
 import com.chilsuitjo.back.repair.dto.DefectAckChanged;
 import com.chilsuitjo.back.repair.dto.DefectAckResponse;
+import com.chilsuitjo.back.repair.dto.PhotosAdded;
+import com.chilsuitjo.back.repair.dto.PhotosAddedResponse;
 import com.chilsuitjo.back.repair.dto.ProgressAskResponse;
 import com.chilsuitjo.back.repair.dto.ProgressAsked;
 import com.chilsuitjo.back.repair.dto.ProgressNoteCreated;
@@ -123,6 +126,21 @@ public class RepairController {
     DefectAckChanged changed = repairs.supplement(id, memberId, idempotencyKey, request);
     return withReplayed(ResponseEntity.ok(), changed.replayed())
         .body(new DefectAckResponse(changed.id(), changed.defectAck()));
+  }
+
+  /**
+   * 사진 추가(REP-7g). 처음 성공과 다시 온 요청 모두 200과 붙인 사진 ID다. 다시 온 요청이면 {@code Idempotent-Replayed: true}를
+   * 붙인다. 덧붙이기라 같이 확인한 내용은 바뀌지 않는다.
+   */
+  @PostMapping("/api/repair-cases/{id}/photos")
+  public ResponseEntity<PhotosAddedResponse> addPhotos(
+      @PathVariable UUID id,
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey,
+      @RequestBody AddPhotosRequest request) {
+    PhotosAdded added = repairs.addPhotos(id, memberId, idempotencyKey, request);
+    return withReplayed(ResponseEntity.ok(), added.replayed())
+        .body(new PhotosAddedResponse(added.photoIds()));
   }
 
   /**
