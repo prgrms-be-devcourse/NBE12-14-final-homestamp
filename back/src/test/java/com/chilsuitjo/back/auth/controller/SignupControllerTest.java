@@ -103,9 +103,6 @@ class SignupControllerTest {
     String phone = newPhone();
     String email = newEmail();
     Map<String, Object> body = body(email, ticket(phone, SIGNUP));
-    body.put("ageTextVersion", "2026-11-12");
-    body.put("termsTextVersion", "2026-11-13");
-    body.put("privacyNoticeTextVersion", "2026-11-14");
 
     String response =
         signUp(body)
@@ -134,10 +131,32 @@ class SignupControllerTest {
 
     assertThat(acknowledgements(id))
         .containsOnly(
-            Map.entry("AGE_14_CONFIRMED", "2026-11-12"),
-            Map.entry("TERMS_AGREED", "2026-11-13"),
-            Map.entry("PRIVACY_NOTICE_ACK", "2026-11-14"));
+            Map.entry("AGE_14_CONFIRMED", "v1"),
+            Map.entry("TERMS_AGREED", "v1"),
+            Map.entry("PRIVACY_NOTICE_ACK", "v1"));
     assertThat(response).doesNotContain(phone).doesNotContain("abc12345").doesNotContain(hash);
+  }
+
+  // CONS-4 가입 문구 판은 지금 판(terms.version.*, 기본 v1)이어야 한다
+
+  @Test
+  void CONS_4_지금_판이_아닌_문구로_가입하면_VERSION_CONFLICT이고_회원과_인증_표가_남지_않는다() throws Exception {
+    String phone = newPhone();
+    String ticket = ticket(phone, SIGNUP);
+    Map<String, Object> body = body(newEmail(), ticket);
+    body.put("termsTextVersion", "2026-11-13");
+
+    signUp(body)
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value(ErrorCode.VERSION_CONFLICT.name()));
+
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM state.member WHERE phone = ?", Integer.class, phone))
+        .isZero();
+    // 인증 표는 쓰지 않았으므로 지금 판으로 다시 보내면 가입된다
+    body.put("termsTextVersion", "v1");
+    signUp(body).andExpect(status().isCreated());
   }
 
   // ACC-1a·CONS-1a 확인 항목

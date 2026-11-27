@@ -29,6 +29,7 @@ public class MemberService {
   private final MemberRepository members;
   private final MemberAcknowledgementRepository acknowledgements;
   private final Clock clock;
+  private final TermsVersions termsVersions;
 
   /**
    * 이 이메일로 가입할 수 있는지 본다(06 ACC-1c). 대소문자만 다른 이메일도 같은 이메일이다.
@@ -46,14 +47,14 @@ public class MemberService {
   }
 
   /**
-   * 가입 확인 항목 세 개가 모두 체크됐는지와 문구 판을 본다(06 ACC-1a, CONS-1a). 부르는 쪽(auth {@code SignupService})이 인증 표와
-   * 이메일보다 먼저 부른다. 아무것도 쓰지 않는다.
+   * 가입 확인 항목 세 개가 모두 체크됐는지와 문구 판을 본다(06 ACC-1a, CONS-1a). 판은 지금 판({@link TermsVersions})과 같아야
+   * 한다(CONS-4). 부르는 쪽(auth {@code SignupService})이 인증 표와 이메일보다 먼저 부른다. 아무것도 쓰지 않는다.
    *
    * @throws BusinessException {@code AGE_CONFIRM_REQUIRED}, {@code TERMS_REQUIRED}, {@code
-   *     VALIDATION_FAILED}(문구 판이 비었거나 칸보다 김)
+   *     VALIDATION_FAILED}(문구 판이 비었거나 칸보다 김), {@code VERSION_CONFLICT}(지금 판이 아님. 화면이 옛 문구를 보여 줌)
    */
   public void requireSignupAcknowledgements(SignupRequest request) {
-    request.acknowledgements();
+    termsVersions.requireCurrent(request.acknowledgements().textVersions());
   }
 
   /**

@@ -2,6 +2,7 @@ package com.chilsuitjo.back.member.service;
 
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
+import com.chilsuitjo.back.member.dto.AgreementsRequest;
 import com.chilsuitjo.back.member.dto.MeResponse;
 import com.chilsuitjo.back.member.dto.MeUpdateRequest;
 import com.chilsuitjo.back.member.entity.Member;
@@ -24,6 +25,7 @@ public class MeService {
   private static final Logger log = LoggerFactory.getLogger(MeService.class);
 
   private final MemberRepository members;
+  private final TermsService terms;
 
   /**
    * 내 정보.
@@ -35,7 +37,7 @@ public class MeService {
    */
   @Transactional(readOnly = true)
   public MeResponse me(UUID memberId) {
-    return MeResponse.from(activeMember(memberId));
+    return MeResponse.from(activeMember(memberId), terms.pending(memberId));
   }
 
   /**
@@ -44,11 +46,19 @@ public class MeService {
    *
    * <p>같은 회원의 수정이 동시에 오면 {@code member.version}이 늦은 쪽을 {@code VERSION_CONFLICT}로 거절한다.
    *
-   * @throws BusinessException {@code LOGIN_REQUIRED}(탈퇴했거나 없는 회원의 남은 토큰)
+   * <p>바뀐 약관을 아직 확인하지 않았으면 문자 끄기만 하는 요청({@link MeUpdateRequest#onlyTurnsSmsOff()})만 받는다(CONS-4, 문자
+   * 그만 받기 NOTI-8). 이름 바꾸기·문자 켜기가 섞이면 {@code TERMS_UPDATE_REQUIRED}다. 본문을 봐야 해서 {@code
+   * TermsGateInterceptor}는 이 주소를 빼 두고 여기서 판단한다.
+   *
+   * @throws BusinessException {@code LOGIN_REQUIRED}(탈퇴했거나 없는 회원의 남은 토큰), {@code
+   *     TERMS_UPDATE_REQUIRED}
    */
   @Transactional
   public MeResponse update(UUID memberId, MeUpdateRequest request) {
     Member member = activeMember(memberId);
+    if (!request.onlyTurnsSmsOff()) {
+      terms.requireUpToDate(memberId);
+    }
     if (request.displayName() != null && !request.displayName().equals(member.getDisplayName())) {
       member.changeDisplayName(request.displayName());
       logNameChangeAfterCommit(memberId);
@@ -58,7 +68,19 @@ public class MeService {
     }
     // 응답 내용이 커밋될 내용과 같도록, 버전 충돌은 응답을 만들기 전에 드러낸다
     members.flush();
-    return MeResponse.from(member);
+    return MeResponse.from(member, terms.pending(memberId));
+  }
+
+  /**
+   * 바뀐 문구를 다시 확인하고 내 정보를 돌려준다({@code POST /api/me/agreements}, CONS-4). 확인 전에도 부를 수 있다.
+   *
+   * @throws BusinessException {@code VALIDATION_FAILED}(같은 종류 두 번), {@code VERSION_CONFLICT}(지금 판이
+   *     아님), {@code LOGIN_REQUIRED}
+   */
+  @Transactional
+  public MeResponse acknowledge(UUID memberId, AgreementsRequest request) {
+    terms.acknowledge(memberId, request.textVersions());
+    return MeResponse.from(activeMember(memberId), terms.pending(memberId));
   }
 
   /**
