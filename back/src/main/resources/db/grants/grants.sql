@@ -1,6 +1,6 @@
 -- HomeStamp DB grants: one DO block executed over JDBC (no psql meta-commands).
 --
--- Executor contract (see DatabaseGrantsIntegrationTest.GrantsJdbcExecutor):
+-- Executor contract (see com.chilsuitjo.back.global.config.migration.DatabaseGrants, run by --apply-grants):
 --   1. connect as the migration login (LOGIN NOINHERIT, owner membership SET TRUE / INHERIT FALSE / ADMIN FALSE)
 --   2. autocommit off, then SET LOCAL ROLE "<owner>" with a validated identifier
 --   3. SELECT set_config('homestamp.grants.{app,purge,human}_role', ?, true) via PreparedStatement
@@ -209,6 +209,10 @@ BEGIN
           AND (rolsuper OR rolcreatedb OR rolcreaterole)
     ) THEN
         RAISE EXCEPTION 'app, purge, and human roles must not have administrative attributes';
+    END IF;
+    -- Human is the NOLOGIN read group (decisions 2026-11-25 "Human 그룹"); people log in as its members
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = human_role AND rolcanlogin) THEN
+        RAISE EXCEPTION 'human role must be a NOLOGIN read group';
     END IF;
     IF pg_has_role(app_role, owner_role, 'MEMBER')
        OR pg_has_role(purge_role, owner_role, 'MEMBER')
