@@ -1,4 +1,11 @@
-import type { Ack, CauseClaim, Repair, RepairStatus, Role } from "@/data/demo"
+import type {
+  Ack,
+  CauseClaim,
+  Repair,
+  RepairStatus,
+  RepairWait,
+  Role,
+} from "@/data/demo"
 import type { RepairAction } from "./actions"
 import type { RepairCaseView } from "./repair-cases"
 import { seoulDate } from "./http-rooms"
@@ -45,6 +52,8 @@ export interface RepairCaseDetailBody {
   money: { status: string }
   photos: unknown[]
   causeNotes: ServerCauseNote[]
+  // 종료 확인 요청 중 가장 최근 것. 요청이 없었으면 null(06 4-6)
+  closeRequest?: ServerCloseRequest | null
   availableActions: string[]
 }
 
@@ -60,8 +69,67 @@ const ACK: Record<AckState, Ack> = {
   UNCONFIRMED: "상대 미확인",
 }
 
+// 열린 응답 요청 하나(06 4-6 목록 waiting, 백엔드 RepairCaseList.Waiting). 금액 확인은 서버가 빼서 오지 않아요
+type ServerSoloReason =
+  | "UNCONFIRMED"
+  | "OPTED_OUT"
+  | "COUNTERPART_WITHDRAWN"
+  | "SHARING_STOPPED"
+  | "SMS_UNDELIVERED"
+  | "NOT_CONNECTED"
+  | "NO_COUNTERPART"
+interface ServerWaiting {
+  kind: string
+  answeringSide: ServerSide
+  status: "WAITING" | "UNCONFIRMED"
+  dueAt: string | null
+  soloReason: ServerSoloReason | null
+}
+interface ServerCloseRequest {
+  status: "WAITING" | "ANSWERED" | "UNCONFIRMED" | "WITHDRAWN" | "CLOSED"
+  dueAt: string | null
+  soloReason: ServerSoloReason | null
+}
+
+// 요청 종류의 화면 이름('내 차례 · ○○'). lib/turn의 상태로 세는 이름과 같은 글자예요
+const WAIT_KIND: Record<string, string> = {
+  DEFECT_CONFIRM: "하자 확인",
+  CLOSE_CONFIRM: "종료 확인",
+  SITUATION_CHECK: "바뀐 상황 확인",
+  PROGRESS_CHECK: "진행 상황 답하기",
+  CORRECTION_CONFIRM: "고친 내용 확인",
+  PROPOSAL: "비용 제안 응답",
+}
+
+// 확인 없음의 이유(03 4장 "'확인 없음' 화면 표시"). lib/repair-rules의 soloReasonText와 같은 말이에요
+const SOLO_REASON_TEXT: Record<ServerSoloReason, string> = {
+  UNCONFIRMED: "72시간 동안 답이 오지 않았어요",
+  OPTED_OUT: "문자를 그만 받기로 했어요",
+  COUNTERPART_WITHDRAWN: "탈퇴했어요",
+  SHARING_STOPPED: "공유를 그만뒀어요",
+  SMS_UNDELIVERED: "문자가 전달되지 않았어요",
+  NOT_CONNECTED: "아직 연결되지 않았어요",
+  NO_COUNTERPART: "아직 상대를 초대하기 전이에요",
+}
+const soloText = (r: ServerSoloReason | null) =>
+  r ? (SOLO_REASON_TEXT[r] ?? undefined) : undefined
+
+function waitOf(w: ServerWaiting): RepairWait {
+  const unconfirmed = w.status === "UNCONFIRMED"
+  return {
+    // 모르는 종류가 와도 화면이 깨지지 않게 일반 이름으로 보여요
+    kind: WAIT_KIND[w.kind] ?? "확인 요청",
+    by: toRole(w.answeringSide),
+    unconfirmed,
+    ...(!unconfirmed && w.dueAt ? { dueAt: w.dueAt } : {}),
+    ...(unconfirmed && soloText(w.soloReason)
+      ? { reason: soloText(w.soloReason) }
+      : {}),
+  }
+}
+
 // 호실의 수리 건 목록(GET /api/rooms/{id}/repair-cases, 06 4-6)의 서버 모양. 칸 이름은 백엔드 RepairCaseList와 같아요.
-// 열린 응답 요청(waiting)은 응답 요청 조회 포트(#266) 전이라 지금은 늘 빈 목록이에요(#283)
+// waiting은 두 측의 열린 응답 요청이 연 시각 순으로 와요. 공유를 그만둔 뒤(asOf 있음)에는 빈 목록이에요
 export interface RepairCaseListItemBody {
   id: string
   registeredBy: ServerSide
@@ -73,7 +141,7 @@ export interface RepairCaseListItemBody {
   closedBy: RepairCaseDetailBody["closedBy"]
   defect: { ack: AckState }
   money: { status: string }
-  waiting: unknown[]
+  waiting: ServerWaiting[]
 }
 export interface RepairCasePageBody {
   asOf: string | null
@@ -203,7 +271,11 @@ export function repairFromListItem(
   b: RepairCaseListItemBody,
   roomId: string,
 ): Repair {
-  return { ...repairBase(b, roomId), lastActionAt: b.lastActionAt }
+  return {
+    ...repairBase(b, roomId),
+    lastActionAt: b.lastActionAt,
+    waiting: (b.waiting ?? []).map(waitOf),
+  }
 }
 
 export function repairFromDetail(b: RepairCaseDetailBody): RepairCaseView {
@@ -211,6 +283,17 @@ export function repairFromDetail(b: RepairCaseDetailBody): RepairCaseView {
     ...repairBase(b, b.roomRecordId),
     description: b.content.description ?? "",
     causes: causesOf(b.causeNotes),
+    // 종료 확인 대기에서 상대가 기한 안에 답하지 않았으면 "확인 없음(날짜부터) · 이유"(03 4장)
+    ...(b.status === "CLOSE_WAIT" && b.closeRequest?.status === "UNCONFIRMED"
+      ? {
+          closeUnconfirmed: {
+            ...(b.closeRequest.dueAt ? { since: b.closeRequest.dueAt } : {}),
+            ...(soloText(b.closeRequest.soloReason)
+              ? { reason: soloText(b.closeRequest.soloReason) }
+              : {}),
+          },
+        }
+      : {}),
     ...(b.closeObjection
       ? {
           closeObjection: {

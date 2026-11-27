@@ -21,7 +21,7 @@ import { Status } from "@/components/common/blocks"
 import { EmptyState } from "@/components/common/states"
 import type { Event, Notice, Repair, Role, Room } from "@/data/demo"
 import type { Page } from "@/lib/router"
-import { myTurn } from "@/lib/turn"
+import { myTurn, theirWaits } from "@/lib/turn"
 import { cn } from "cn"
 import { plainText } from "@/lib/plain-words"
 import {
@@ -106,7 +106,9 @@ export function RepairListItem({
   role?: Role
 }) {
   const turn = role ? myTurn(r, role) : undefined
-  const label = `${turn ? `내 차례 ${turn} · ` : ""}${r.photos.length ? "" : "상태 사진 예시 "}${r.title} ${r.zone} ${r.date} ${r.status} 비용 · ${moneyLabel(r)}`
+  // 상대의 답을 기다리는 요청(서버 목록 waiting, 06 4-6). 목업은 없음
+  const waits = role ? theirWaits(r, role) : []
+  const label = `${turn ? `내 차례 ${turn} · ` : ""}${r.photos.length ? "" : "상태 사진 예시 "}${r.title} ${r.zone} ${r.date} ${r.status} 비용 · ${moneyLabel(r)}${waits.map((w) => ` · ${w}`).join("")}`
   const body = (
     <>
       <span className={rowMain}>
@@ -118,6 +120,11 @@ export function RepairListItem({
         <span className="mt-1 flex flex-wrap gap-1">
           <StatusTag>{`수리 · ${r.status}`}</StatusTag>
           <StatusTag>{`비용 · ${moneyLabel(r)}`}</StatusTag>
+          {waits.map((w) => (
+            <StatusTag key={w} raw className="whitespace-normal">
+              {w}
+            </StatusTag>
+          ))}
           {extra}
         </span>
       </span>
@@ -168,9 +175,9 @@ export function RepairListItem({
 
 // 작은 상태 꼬리표(수리 줄 · 수리 상세 세 줄 요약). 글자와 색 규칙은 Status와 같고(plainText · 이견/대기/완료 색), 크기만 작게.
 const tagTone = (t: string) =>
-  /이견|미확인/.test(t)
+  /이견|미확인|확인 없음/.test(t)
     ? "bg-[#fff0ed] text-[#cc7869]"
-    : /대기|미정|초대/.test(t)
+    : /대기|기다림|미정|초대/.test(t)
       ? "bg-[#fff6e4] text-[#bc9146]"
       : /완료|합의됨|확인됨|연결됨/.test(t)
         ? "bg-[#eaf7f0] text-[#3a9271]"

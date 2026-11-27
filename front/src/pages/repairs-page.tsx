@@ -7,15 +7,9 @@ import { PhotoGallery } from "@/features/photo/photo-gallery"
 import { RepairListItem } from "@/components/common/home-dashboard"
 import type { Event, Repair, Role } from "@/data/demo"
 import { daysSince, lastActivity } from "@/lib/activity"
-import { seoulDate } from "@/api/http-rooms"
 import { myTurn } from "@/lib/turn"
 import { plainText } from "@/lib/plain-words"
-
-// 서버 시각(ISO) → "11월 26일"(한국 날짜)
-const monthDay = (iso: string) => {
-  const [, m, d] = seoulDate(iso).split("-")
-  return `${Number(m)}월 ${Number(d)}일`
-}
+import { monthDay } from "@/lib/words"
 
 // 하자·수리 목록과 수리비(돈) 목록. 같은 목록을 탭과 검색으로 걸러 보여 줘요.
 export function RepairsPage({
