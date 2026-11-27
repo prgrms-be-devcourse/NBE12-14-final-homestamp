@@ -95,11 +95,17 @@ function newRequest(
   from: string,
   to: string,
   reason: string,
+  toPartId?: string,
 ) {
   const list = i.corrections || []
   if (
     list.some(
-      (c) => c.status === "확인 대기" && c.field === field && c.to === to,
+      (c) =>
+        c.status === "확인 대기" &&
+        c.field === field &&
+        (field === "부위" && toPartId && c.toPartId
+          ? c.toPartId === toPartId
+          : c.to === to),
     )
   )
     throw new Error("같은 내용으로 고친 내용이 이미 확인을 기다리고 있어요.")
@@ -150,7 +156,12 @@ export function requestItemEdits(
   if (!title || !description) throw new Error("제목과 설명을 입력해 주세요.")
   const waiting = (field: string, to: string) =>
     i.corrections?.some(
-      (c) => c.status === "확인 대기" && c.field === field && c.to === to,
+      (c) =>
+        c.status === "확인 대기" &&
+        c.field === field &&
+        (field === "부위" && next.roomPartId && c.toPartId
+          ? c.toPartId === next.roomPartId
+          : c.to === to),
     )
   const partChanged =
     next.roomPartId && i.roomPartId
@@ -194,14 +205,16 @@ export function requestItemEdits(
   if (!isItemStamped(d, i)) {
     // 확인 요청은 보냈지만 상대가 이 항목에 아직 답하지 않았고 점검도 잠기기 전: 바로 고쳐지고 이력에 '확인 전에 고침'으로 남아요.
     return changes.map(([field, from, to]) => {
-      const c = withPart(newRequest(i, role, field, from, to, reason))
+      const c = withPart(
+        newRequest(i, role, field, from, to, reason, next.roomPartId),
+      )
       apply(i, c, "확인 전")
       return c
     })
   }
   if (!reason.trim()) throw new Error("왜 바꾸는지 적어 주세요.")
   return changes.map(([field, from, to]) =>
-    withPart(newRequest(i, role, field, from, to, reason)),
+    withPart(newRequest(i, role, field, from, to, reason, next.roomPartId)),
   )
 }
 // 빠진 하자 추가: 누구든(상대 쪽도) 요청, 상대 쪽 확인이 있어야 항목이 돼요(미응답이어도 혼자 반영하지 않음)

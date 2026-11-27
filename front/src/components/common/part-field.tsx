@@ -62,15 +62,17 @@ export function PartField({
     defaulted.current = true
     const current = value ? loaded.find((x) => x.id === value) : undefined
     if (current && isPickable(current)) return
-    // 값이 없거나 고를 수 없는 부위면 기본 부위로, 그것도 없으면 비워요
-    const p = defaultPart
-      ? loaded.find(
-          (x) =>
-            x.zone === defaultPart.zone &&
-            x.name === defaultPart.name &&
-            isPickable(x),
-        )
-      : undefined
+    // ID가 있으면 그 부위만 유지해요. 고를 수 없는 ID를 같은 이름의 다른 부위로 바꾸지 않아요.
+    // ID가 없는 이전 기록이나 새 기록만 구역·이름으로 기본 부위를 찾아요.
+    const p =
+      !value && defaultPart
+        ? loaded.find(
+            (x) =>
+              x.zone === defaultPart.zone &&
+              x.name === defaultPart.name &&
+              isPickable(x),
+          )
+        : undefined
     if (p || value) onChange(p)
   }, [loaded, value, defaultPart, onChange])
 

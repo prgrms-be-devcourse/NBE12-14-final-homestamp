@@ -144,6 +144,37 @@ describe("점검 항목 부위 고치기(roomPartId)", () => {
     expect(c).toMatchObject({ field: "부위", toPartId: "p-room-2" })
     expect(d.inspections[0].roomPartId).toBe("p-room-2")
   })
+  test("같은 이름의 다른 부위로 다시 고치면 대기 중인 부위 고치기를 대체해요", () => {
+    const d = item({ publication: "requested", ack: "확인됨" })
+    const [first] = requestItemEdits(
+      d,
+      "임차인",
+      "i1",
+      next("방 · 천장", "p-room-2"),
+      "부위 수정",
+    )
+    expect(first.toPartId).toBe("p-room-2")
+    expect(first.status).toBe("확인 대기")
+    expect(() =>
+      requestItemEdits(
+        d,
+        "임차인",
+        "i1",
+        next("방 · 천장", "p-room-2"),
+        "같은 부위",
+      ),
+    ).toThrow("바뀐 내용이 없어요.")
+    const [second] = requestItemEdits(
+      d,
+      "임차인",
+      "i1",
+      next("방 · 천장", "p-room-3"),
+      "다른 부위",
+    )
+    expect(first.status).toBe("대체됨")
+    expect(second).toMatchObject({ status: "확인 대기", toPartId: "p-room-3" })
+    expect(d.inspections[0].roomPartId).toBe("p-room")
+  })
 })
 
 describe("HTTP 부위 API", () => {
@@ -219,14 +250,18 @@ describe("HTTP 부위 API", () => {
     })
     let part = "p-bath"
     const request = (async () => detail(part)) as unknown as HttpRequest
-    const api = createHttpRepairCases(request, async () => serverParts)
+    const api = createHttpRepairCases(
+      request,
+      undefined,
+      async () => serverParts,
+    )
     expect((await api.get(tenant, "c1")).repair).toMatchObject({
       roomPartId: "p-bath",
       zone: "욕실 · 천장",
     })
     part = "p-room"
     expect((await api.get(tenant, "c1")).repair.zone).toBe("방 · 천장")
-    const failing = createHttpRepairCases(request, async () => {
+    const failing = createHttpRepairCases(request, undefined, async () => {
       throw new Error("down")
     })
     expect((await failing.get(tenant, "c1")).repair.zone).toBe("천장")
