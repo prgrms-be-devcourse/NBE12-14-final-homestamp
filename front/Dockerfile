@@ -16,6 +16,18 @@ COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY index.html vite.config.ts tsconfig.json tsconfig.app.json tsconfig.node.json ./
 COPY src/ ./src/
+# public/(Vite가 해시 없이 /site 맨 위에 그대로 복사)은 있을 때만 넣는다. COPY는 없는 폴더에서 실패하므로
+# .dockerignore로 거른 빌드 맥락을 읽기 전용으로 묶어 확인한다(맥락을 넓히지 않음). 빌드 결과의 예약 경로
+# (index.html·version.json·assets/: 배포가 assets/를 공용 불변 폴더로 낸다)와 링크·특수 파일은 거절한다
+RUN --mount=type=bind,target=/ctx set -eu; \
+    if [ -e /ctx/public ]; then \
+      [ -d /ctx/public ] && [ ! -L /ctx/public ] || { echo 'public은 폴더여야 합니다' >&2; exit 1; }; \
+      for p in index.html version.json assets; do \
+        [ ! -e "/ctx/public/$p" ] && [ ! -L "/ctx/public/$p" ] || { echo "public/$p는 빌드 결과의 예약 경로라 둘 수 없습니다" >&2; exit 1; }; \
+      done; \
+      if find /ctx/public ! -type f ! -type d | grep -q .; then echo 'public/에는 일반 파일과 폴더만 둡니다(링크·특수 파일 금지)' >&2; exit 1; fi; \
+      cp -R /ctx/public ./public; \
+    fi
 RUN set -eu; \
     case "${REVISION:-}" in \
       *[!0-9a-f]*|'') echo 'REVISION은 커밋 40자(소문자 16진수)입니다' >&2; exit 1 ;; \

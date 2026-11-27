@@ -9,7 +9,8 @@
 !tsconfig.node.json
 !src/
 !src/**
-# Vite가 그대로 /site에 복사하는 공개 파일(아직 없음). 생기면 check-front.sh의 허용 종류 검사를 받는다
+# 해시 없이 /site 맨 위에 복사되는 공개 파일(아직 없음). Dockerfile이 있을 때만 넣고(예약 경로·링크 거절),
+# check-front.sh의 허용 종류 검사를 받는다. 아래 비밀값 패턴은 public/ 안에도 걸린다
 !public/
 !public/**
 
