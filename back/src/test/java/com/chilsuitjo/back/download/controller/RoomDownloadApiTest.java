@@ -377,6 +377,33 @@ class RoomDownloadApiTest {
     assertThat(landlordSees).isEmpty();
   }
 
+  @Tag("invariant-18")
+  @Test
+  void 공유를_그만둬_닫힌_고친_내용은_그만둔_시각의_모습으로_남는다() throws Exception {
+    // 03 G: 공유 그만두기로 응답 요청이 닫히면 고친 내용도 "공유 중단으로 닫힘". 그 시각에는 확인 전이었다
+    UUID caseId = register(1);
+    respond(caseId, landlord, "ACK", null).andExpect(status().isOk());
+    UUID mine = correct(caseId, tenant, "title", "천장 물샘", "오타");
+    Timestamp stoppedAt = Timestamp.from(Instant.now());
+    jdbc.update(
+        "UPDATE state.party SET status = 'SHARING_STOPPED', sharing_stopped_at = ?"
+            + " WHERE room_record_id = ? AND side = 'TENANT'",
+        stoppedAt,
+        room);
+    // 공유 중단 처리(CONS-3)가 아직 없어 닫는 일을 직접 한다
+    jdbc.update(
+        "UPDATE state.correction_request SET status = 'CLOSED', closed_reason = 'SHARING_STOPPED',"
+            + " closed_at = ? WHERE id = ?",
+        stoppedAt,
+        mine);
+
+    String tenantSees = body(download(tenant).andExpect(status().isOk()));
+    assertThat((String) JsonPath.read(tenantSees, "$.record.pendingCorrections[0].id"))
+        .isEqualTo(mine.toString());
+    assertThat((String) JsonPath.read(tenantSees, "$.record.pendingCorrections[0].status"))
+        .isEqualTo("WAITING");
+  }
+
   /** 도장 뒤 수리 건 칸 하나를 고치고 고친 내용 ID를 돌려준다. */
   private UUID correct(UUID caseId, UUID memberId, String field, String value, String reason)
       throws Exception {

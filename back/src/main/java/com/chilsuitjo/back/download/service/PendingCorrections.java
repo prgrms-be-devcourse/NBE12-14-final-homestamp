@@ -9,6 +9,7 @@ import com.chilsuitjo.back.download.dto.RoomDownload.PendingCorrection;
 import com.chilsuitjo.back.download.dto.RoomDownload.Target;
 import com.chilsuitjo.back.download.rule.RecordVisibility;
 import com.chilsuitjo.back.global.common.AckState;
+import com.chilsuitjo.back.global.common.ClosedReason;
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.common.TargetKind;
 import java.time.Instant;
@@ -27,8 +28,11 @@ import org.springframework.stereotype.Component;
  * CorrectionReader})로 기록마다 읽는다.
  *
  * <p>보이는 범위는 수리 건 상세의 고친 내용과 같다(03 6-6 9번, 불변식 18): 기준 시각 뒤에 상대가 고친 것은 빼고, 응답은 기준 시각까지의 응답과 내 응답 중
- * 마지막으로 다시 정한다(맞아요 → 확인됨이라 빠짐, 보류·이견 → 거절, 없음 → 기다림). 기준 시각은 공유 중단({@code shared}), 없으면 상대가 탈퇴했을 때의
- * 중단 시각({@code departed})이다.
+ * 마지막으로 다시 정한다(맞아요 → 확인됨이라 빠짐, 보류·이견 → 거절, 없음 → 기다림). 기준 시각은 공유 중단({@code shared})과 상대가 탈퇴했을 때의 중단
+ * 시각({@code departed}) 중 이른 것이다.
+ *
+ * <p>공유 그만두기·탈퇴로 닫힌 고친 내용(03 G "공유 중단으로 닫힘")은 기준 시각에 아직 확인 전이었으므로, 그 시각 모습(기다림·거절)으로 담는다. 닫힌 것을 빼면
+ * 그만둔 뒤 받은 {@code 기록.json}에서 확인 전 고친 내용이 사라진다.
  */
 @Component
 @RequiredArgsConstructor
@@ -47,7 +51,7 @@ class PendingCorrections {
    */
   List<PendingCorrection> of(
       UUID roomRecordId, List<ActionEntry> all, PartySide viewer, RecordVisibility.Cutoff cutoff) {
-    Instant limit = cutoff.shared() != null ? cutoff.shared() : cutoff.departed();
+    Instant limit = earliest(cutoff.shared(), cutoff.departed());
     List<PendingCorrection> result = new ArrayList<>();
     for (Record record : records(roomRecordId, all)) {
       for (CorrectionView view : corrections.findByRecord(record.kind(), record.id())) {
@@ -100,15 +104,33 @@ class PendingCorrections {
     return records;
   }
 
+  /** 공유 그만두기·탈퇴로 닫힌 이유. 이렇게 닫힌 것은 기준 시각에 확인 전이었다. */
+  static final Set<ClosedReason> CLOSED_BY_STOP =
+      EnumSet.of(ClosedReason.SHARING_STOPPED, ClosedReason.COUNTERPART_WITHDRAWN);
+
+  private static Instant earliest(Instant a, Instant b) {
+    if (a == null) {
+      return b;
+    }
+    return b == null || a.isBefore(b) ? a : b;
+  }
+
   private static boolean hidden(PartySide side, Instant at, PartySide viewer, Instant limit) {
     return limit != null && side != viewer && at.isAfter(limit);
   }
 
   private record Shown(CorrectionStatus status, AckState answer, String reason, Instant at) {}
 
-  /** 보는 사람에게 보이는 응답. 가린 응답이 없으면 지금 값이다(수리 건 상세 {@code shownAnswer}와 같은 판단). */
+  /**
+   * 보는 사람에게 보이는 응답. 가린 응답이 없으면 지금 값이다(수리 건 상세 {@code shownAnswer}와 같은 판단). 공유 그만두기·탈퇴로 닫혔으면 닫히기 전
+   * 모습(보이는 마지막 응답)으로 되돌린다.
+   */
   private static Shown shown(CorrectionView view, PartySide viewer, Instant limit) {
     Shown now = new Shown(view.status(), view.answer(), view.answerReason(), view.answeredAt());
+    boolean closedByStop =
+        limit != null
+            && view.status() == CorrectionStatus.CLOSED
+            && CLOSED_BY_STOP.contains(view.closedReason());
     CorrectionView.Response last = null;
     boolean anyHidden = false;
     for (CorrectionView.Response response : view.responses()) {
@@ -118,7 +140,7 @@ class PendingCorrections {
         last = response;
       }
     }
-    if (!anyHidden) {
+    if (!anyHidden && !closedByStop) {
       return now;
     }
     if (last == null) {
