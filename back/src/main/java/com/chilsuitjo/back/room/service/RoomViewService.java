@@ -46,6 +46,9 @@ public class RoomViewService {
   /**
    * 호실 상세 {@code availableActions}에 넣는 행동과 이름(API 끝 단어, 06 4-0). 지금 API가 있는 행동만 둔다. 초대({@code
    * invite}, #163)·거주 종료({@code move-out}) 등은 그 API를 만드는 PR에서 더한다(decisions 2026-11-24).
+   *
+   * <p>{@code inspections}는 지금 <b>입주 점검 시작만</b> 뜻한다(#357). 같은 주소({@code POST
+   * /api/rooms/{id}/inspections})를 쓰는 퇴거 점검 시작은 이 이름에 들어가지 않고, 퇴거 점검 작업 때 이름을 따로 정한다.
    */
   private static final Map<ActionType, String> ACTION_NAMES = actionNames();
 
@@ -54,6 +57,7 @@ public class RoomViewService {
   private final RegionRepository regions;
   private final RoomGateReader gates;
   private final ActionReader actions;
+  private final InspectionStartCheck inspectionStarts;
 
   /**
    * 내가 당사자인 호실 기록, 새것부터 {@code size}개. 합류 전 기록도 쓴 사람에게는 보인다(03 3-1). {@code cursor}는 앞 쪽 응답의 {@code
@@ -95,7 +99,8 @@ public class RoomViewService {
    * 호실 상세. 없는 호실과 남의 호실은 같은 {@code NOT_FOUND}다(ROOM-2a).
    *
    * <p>{@code availableActions}는 실제 요청과 같은 판단으로 만든다: 잠그지 않는 {@link RoomGateReader#read}로 읽은 값의
-   * {@code RoomGate.rejection}(pipeline 3단계와 같음). 화면을 연 뒤 상태가 바뀌면 요청이 서버에서 다시 검사되어 거절된다.
+   * {@code RoomGate.rejection}(pipeline 3단계와 같음). 도메인 규칙이 있는 행동은 그 도메인의 같은 판단을 더 본다(입주 점검 시작은
+   * {@link InspectionStartCheck}). 화면을 연 뒤 상태가 바뀌면 요청이 서버에서 다시 검사되어 거절된다.
    *
    * <p>공유를 그만둔 뒤에는 그 시각을 {@code asOf}로 준다(03 3-1, 불변식 18, {@code RoomSeats.visibleCutoffFor}). 요약 칸
    * 가운데 상태(거주 종료·정산 완료)는 그 뒤에도 양쪽에 보이는 예외다.
@@ -110,6 +115,7 @@ public class RoomViewService {
     List<String> actions =
         ACTION_NAMES.entrySet().stream()
             .filter(action -> gate.rejection(action.getKey()).isEmpty())
+            .filter(action -> allowedByDomain(action.getKey(), roomRecordId, mine))
             .map(Map.Entry::getValue)
             .toList();
     Instant cutoff = seats.visibleCutoffFor(mine);
@@ -195,6 +201,14 @@ public class RoomViewService {
   private static Map<ActionType, String> actionNames() {
     Map<ActionType, String> names = new LinkedHashMap<>();
     names.put(ActionType.REGISTER, "repair-cases"); // 하자 등록(POST /api/rooms/{id}/repair-cases)
+    names.put(
+        ActionType.START_INSPECTION, "inspections"); // 입주 점검 시작만(POST /api/rooms/{id}/inspections)
     return names;
+  }
+
+  /** 호실 단위 거절 밖의 도메인 규칙. 실제 요청과 같은 판단이다(decisions 2026-11-24). 규칙이 없는 행동은 참이다. */
+  private boolean allowedByDomain(ActionType type, UUID roomRecordId, Party mine) {
+    return type != ActionType.START_INSPECTION
+        || inspectionStarts.canStartMoveIn(roomRecordId, mine.getSide());
   }
 }
