@@ -1,4 +1,4 @@
-package com.chilsuitjo.back.auth.rule;
+package com.chilsuitjo.back.global.common;
 
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
@@ -8,6 +8,8 @@ import com.chilsuitjo.back.global.error.ErrorCode;
  *
  * <p>국내 휴대폰 번호만 받는다: {@code 010}은 11자리, 예전 번호 {@code 011·016·017·018·019}는 10~11자리. {@code
  * 012}·{@code 013}·{@code 015} 같은 휴대폰이 아닌 {@code 01x} 번호와 유선 번호는 {@code VALIDATION_FAILED}다.
+ *
+ * <p>인증 번호(auth)와 초대 번호(room)를 같은 형식으로 맞춰야 비교할 수 있어서 여러 도메인이 쓰는 이곳에 둔다(#163).
  */
 public final class PhoneNumber {
 
