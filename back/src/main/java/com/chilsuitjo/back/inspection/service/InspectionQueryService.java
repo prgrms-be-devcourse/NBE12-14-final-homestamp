@@ -91,7 +91,7 @@ public class InspectionQueryService {
             .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
     PartySide viewer = gate.side();
     InspectionSight.Sight seen = sight.of(row, viewer);
-    if (hidden(row, viewer, seen)) {
+    if (seen.hides(row)) {
       throw new BusinessException(ErrorCode.NOT_FOUND);
     }
     List<InspectionDetail.Item> shownItems = visibleItems(row, roomRecordId, memberId, gate, seen);
@@ -120,13 +120,6 @@ public class InspectionQueryService {
         sideBySide);
   }
 
-  /** 공유를 그만둔 뒤 상대가 시작해 이 사람이 볼 수 없는 점검인가(불변식 18). 그 점검은 있는지도 알 수 없다. */
-  private static boolean hidden(Inspection row, PartySide viewer, InspectionSight.Sight seen) {
-    return viewer != row.getAuthorSide()
-        && seen.asOf() != null
-        && row.getCreatedAt().isAfter(seen.asOf());
-  }
-
   /**
    * 퇴거 점검 나란히 보기(06 INSP-3b). 같은 부위의 입주 점검 항목 · 수리 건 · 퇴거 점검 항목을 부위마다 모은다. 각 기록은 그 기록의 상세와 같은 판단으로
    * 보인다: 입주 항목은 입주 점검 상세의 {@code items}({@link InspectionSight}), 수리 건은 수리 건 목록과 같은 계산({@code
@@ -145,7 +138,7 @@ public class InspectionQueryService {
     if (moveInRow.isPresent()) {
       Inspection mi = moveInRow.get();
       InspectionSight.Sight seen = sight.of(mi, gate.side());
-      if (!hidden(mi, gate.side(), seen)) {
+      if (!seen.hides(mi)) {
         moveIn =
             new InspectionDetail.MoveIn(
                 mi.getId(),
