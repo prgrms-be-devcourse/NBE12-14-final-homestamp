@@ -6,6 +6,7 @@ import com.chilsuitjo.back.action.rule.AnswerPayload;
 import com.chilsuitjo.back.action.rule.AnswerSupport;
 import com.chilsuitjo.back.action.rule.Transitions;
 import com.chilsuitjo.back.global.common.AckState;
+import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import org.springframework.stereotype.Component;
@@ -31,6 +32,17 @@ public class SituationTransitions implements Transitions<SituationState> {
       throw new BusinessException(ErrorCode.INVALID_STATE);
     }
     return respond(now, action);
+  }
+
+  /**
+   * 응답 버튼을 켤지({@code canRespond}, 수리 건 상세의 진행 상황). {@link #apply}가 맞아요로 성공하는지와 같다: [상황이 바뀌었어요]로 남긴
+   * 진행 상황에 그 상대 측이, 아직 맞아요가 아닐 때.
+   */
+  public boolean canRespond(SituationState state, PartySide side) {
+    return state.exists()
+        && state.asksCheck()
+        && side != null
+        && AnswerSupport.canAnswer(state.answerable(), side);
   }
 
   /**

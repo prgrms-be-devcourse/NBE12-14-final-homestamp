@@ -46,6 +46,21 @@ class SituationTransitionsTest {
   }
 
   @Test
+  void 응답_버튼은_상황_변화_확인_요청에_상대_측이_맞아요_전일_때만_켜진다() {
+    // 수리 건 상세 progressNotes[].canRespond(06 4-6, #367)는 apply가 맞아요로 성공하는지와 같다
+    assertThat(rules.canRespond(asked(AckState.PENDING), PartySide.LANDLORD)).isTrue();
+    assertThat(rules.canRespond(asked(AckState.NEED_MORE), PartySide.LANDLORD)).isTrue();
+    assertThat(rules.canRespond(asked(AckState.ACK), PartySide.LANDLORD)).isFalse();
+    assertThat(rules.canRespond(asked(AckState.PENDING), PartySide.TENANT)).isFalse();
+    assertThat(rules.canRespond(asked(AckState.PENDING), null)).isFalse();
+    assertThat(
+            rules.canRespond(
+                new SituationState(true, PartySide.TENANT, false, AckState.PENDING),
+                PartySide.LANDLORD))
+        .isFalse();
+  }
+
+  @Test
   void 진행_상황을_남긴_측은_답할_수_없다() {
     assertError(
         ErrorCode.NOT_COUNTERPART_SIDE,

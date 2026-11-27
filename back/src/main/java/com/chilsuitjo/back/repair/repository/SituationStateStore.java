@@ -1,9 +1,12 @@
 package com.chilsuitjo.back.repair.repository;
 
 import com.chilsuitjo.back.action.dto.ActionCommand;
+import com.chilsuitjo.back.action.dto.ActionEntry;
 import com.chilsuitjo.back.action.dto.ActionTarget;
 import com.chilsuitjo.back.action.dto.DigestInput;
 import com.chilsuitjo.back.action.dto.SavedState;
+import com.chilsuitjo.back.action.rule.ActionType;
+import com.chilsuitjo.back.action.service.ActionReader;
 import com.chilsuitjo.back.action.service.ActionRequestContext;
 import com.chilsuitjo.back.action.service.StateStore;
 import com.chilsuitjo.back.global.common.AckState;
@@ -18,6 +21,7 @@ import com.chilsuitjo.back.notification.service.WaitService;
 import com.chilsuitjo.back.repair.entity.ProgressNote;
 import com.chilsuitjo.back.repair.entity.ProgressNoteResponse;
 import com.chilsuitjo.back.repair.entity.RepairCase;
+import com.chilsuitjo.back.repair.rule.RepairSight;
 import com.chilsuitjo.back.repair.rule.RepairState;
 import com.chilsuitjo.back.repair.rule.SituationState;
 import java.util.Optional;
@@ -42,6 +46,7 @@ public class SituationStateStore {
   private final RepairStateStore repairs;
   private final ActionRequestContext requestContext;
   private final WaitService waits;
+  private final ActionReader actions;
 
   /** 응답(맞아요·보류·이견)의 저장 방법. */
   public StateStore<SituationState> responding() {
@@ -64,8 +69,25 @@ public class SituationStateStore {
     return notes.findById(progressNoteId).map(RepairStateStore::progressDigest);
   }
 
-  /** 이 진행 상황의 지금 응답 상태. 답이 없으면 {@code PENDING}. */
-  SituationState state(ProgressNote note) {
+  /**
+   * 진행 상황의 마지막 응답 행동({@code RESPOND_SITUATION}). 행동은 {@code room_seq} 순이라 마지막 것이 지금 응답이다. 그 사람에게
+   * 보이는 응답만 본다(공유를 그만둔 뒤 상대가 남긴 응답은 보이지 않음, 03 불변식 18). 원인 설명과 같은 방식이다({@code
+   * CauseNoteStateStore.lastResponse}).
+   */
+  public Optional<ActionEntry> lastResponse(UUID progressNoteId, RepairSight visibleTo) {
+    ActionEntry last = null;
+    for (ActionEntry entry :
+        actions.findByTarget(ActionTarget.of(TargetKind.PROGRESS_NOTE, progressNoteId))) {
+      if (entry.type() == ActionType.RESPOND_SITUATION
+          && visibleTo.sees(entry.actorSide(), entry.createdAt())) {
+        last = entry;
+      }
+    }
+    return Optional.ofNullable(last);
+  }
+
+  /** 이 진행 상황의 지금 응답 상태(실제 기록 기준). 답이 없으면 {@code PENDING}. */
+  public SituationState state(ProgressNote note) {
     AckState answer =
         responses
             .findByProgressNoteId(note.getId())
