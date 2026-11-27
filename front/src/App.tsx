@@ -44,7 +44,7 @@ import { repairStub } from "@/api/http-repair-view"
 import { errorMessage } from "@/api/errors"
 import { createApi } from "@/api/create-api"
 import {
-  inspectionIdOf,
+  inspectionIdIn,
   noRequest,
   notInSpec,
   post,
@@ -713,7 +713,7 @@ function HomeStampApp({
     commit(
       post(
         endpoints.inspectionAction(
-          inspectionIdOf(roomId, sessKind),
+          inspectionIdIn(room, sessKind),
           "request-confirm",
         ),
       ),

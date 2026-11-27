@@ -337,15 +337,19 @@ export function withdraw(d: DemoState, role: Role, id: string, cid: string) {
   c.wait = undefined
 }
 // 남은 항목 모두 확인: 확인 창을 거쳐 항목마다 확인 행동으로 저장
+// 서버에서 받은 항목은 서버의 미응답(확인 기다림·상대 미확인)과 응답 버튼으로 정해요. 화면 목록이 서버 대상과 다르면
+// 서버가 VERSION_CONFLICT로 거절해요(06 4-7 confirm-all, #357 리뷰)
 export function confirmableItems(items: Inspection[], role: Role) {
-  return items.filter(
-    (i) =>
-      i.author !== role &&
-      i.ack === "확인 대기" &&
-      i.publication !== "draft" &&
-      !i.addRequest &&
-      !i.removed &&
-      !i.solo,
+  return items.filter((i) =>
+    i.server
+      ? i.server.availableActions.includes("respond") &&
+        (i.ack === "확인 대기" || i.ack === "상대 미확인")
+      : i.author !== role &&
+        i.ack === "확인 대기" &&
+        i.publication !== "draft" &&
+        !i.addRequest &&
+        !i.removed &&
+        !i.solo,
   )
 }
 // 잠긴 점검은 잠긴 채로 둬요: 항목이 다시 확인 대기가 되어도(고친 내용 반영, 보충하고 다시 요청) 점검 잠금은 풀리지 않게 상태를 고정해요.
@@ -444,7 +448,10 @@ export function confirmAll(
 ) {
   ids.forEach((id) => {
     const i = item(d, id)
-    if (i.author === role || i.ack !== "확인 대기")
+    // 서버 항목은 상대 미확인도 늦게 확인할 수 있어요(confirmableItems와 같은 대상)
+    const unanswered =
+      i.ack === "확인 대기" || (Boolean(i.server) && i.ack === "상대 미확인")
+    if (i.author === role || !unanswered)
       throw new Error("확인할 수 없는 항목이 있어요.")
     assertSeenVersion(i, seen[id])
     i.ack = "확인됨"
@@ -528,7 +535,8 @@ export function inspectionStatus(
 ): MoveInStatus {
   const m = sessionOf(room, kind)
   if (!m) return "없음"
-  if (m.status === "잠김") return "잠김"
+  // 서버에서 받은 점검은 서버 상태 그대로예요. 잠금은 서버가 정해요(#326)
+  if (m.server || m.status === "잠김") return m.status
   if (m.status === "확인 요청" && isInspectionLocked(items)) return "잠김"
   return m.status
 }
