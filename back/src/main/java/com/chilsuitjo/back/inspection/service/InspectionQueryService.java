@@ -22,6 +22,7 @@ import com.chilsuitjo.back.inspection.rule.InspectionItemState;
 import com.chilsuitjo.back.inspection.rule.InspectionItemTransitions;
 import com.chilsuitjo.back.inspection.rule.InspectionKind;
 import com.chilsuitjo.back.inspection.rule.InspectionState;
+import com.chilsuitjo.back.inspection.rule.InspectionStatus;
 import com.chilsuitjo.back.inspection.rule.InspectionTransitions;
 import com.chilsuitjo.back.photo.dto.PhotoCard;
 import com.chilsuitjo.back.photo.dto.PhotoTarget;
@@ -99,6 +100,8 @@ public class InspectionQueryService {
         row.getKind() == InspectionKind.MOVE_OUT
             ? sideBySide(roomRecordId, memberId, gate, shownItems)
             : null;
+    // 보이는 범위를 고정한 시각 뒤에 잠겼으면 이 사람에게는 잠기기 전 모습이라 잠긴 시각·이유도 보이지 않는다(불변식 18)
+    boolean shownLocked = seen.shownStatus() == InspectionStatus.LOCKED;
     return new InspectionDetail(
         row.getId(),
         roomRecordId,
@@ -107,8 +110,8 @@ public class InspectionQueryService {
         viewer,
         row.getAuthorSide(),
         row.isLate(),
-        row.getLockedAt(),
-        row.getLockReason(),
+        shownLocked ? row.getLockedAt() : null,
+        shownLocked ? row.getLockReason() : null,
         row.getCreatedAt(),
         seen.asOf(),
         shownItems,
@@ -145,7 +148,11 @@ public class InspectionQueryService {
       if (!hidden(mi, gate.side(), seen)) {
         moveIn =
             new InspectionDetail.MoveIn(
-                mi.getId(), seen.shownStatus(), mi.getLockedAt(), mi.isLate(), mi.getCreatedAt());
+                mi.getId(),
+                seen.shownStatus(),
+                seen.shownStatus() == InspectionStatus.LOCKED ? mi.getLockedAt() : null,
+                mi.isLate(),
+                mi.getCreatedAt());
         moveInItems = visibleItems(mi, roomRecordId, memberId, gate, seen);
       }
     }
