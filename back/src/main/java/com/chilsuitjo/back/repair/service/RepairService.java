@@ -21,14 +21,17 @@ import com.chilsuitjo.back.global.common.dto.RespondRequest;
 import com.chilsuitjo.back.global.common.dto.SupplementRequest;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
+import com.chilsuitjo.back.photo.rule.PhotoStage;
 import com.chilsuitjo.back.proposal.dto.AgendaRef;
 import com.chilsuitjo.back.proposal.dto.ProposalCommand;
 import com.chilsuitjo.back.proposal.dto.ProposalRequest;
 import com.chilsuitjo.back.proposal.dto.ProposalResult;
 import com.chilsuitjo.back.proposal.rule.AgendaKind;
 import com.chilsuitjo.back.proposal.service.ProposalService;
+import com.chilsuitjo.back.repair.dto.AddPhotosRequest;
 import com.chilsuitjo.back.repair.dto.ConfirmCloseRequest;
 import com.chilsuitjo.back.repair.dto.DefectAckChanged;
+import com.chilsuitjo.back.repair.dto.PhotosAdded;
 import com.chilsuitjo.back.repair.dto.ProgressAsked;
 import com.chilsuitjo.back.repair.dto.ProgressNoteCreated;
 import com.chilsuitjo.back.repair.dto.ProgressNoteRequest;
@@ -41,7 +44,9 @@ import com.chilsuitjo.back.repair.repository.RepairCaseRepository;
 import com.chilsuitjo.back.repair.repository.RepairStateStore;
 import com.chilsuitjo.back.repair.rule.RepairState;
 import com.chilsuitjo.back.repair.rule.RepairTransitions;
+import java.util.EnumSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -60,6 +65,9 @@ public class RepairService {
   /** 한 번에 붙이는 사진(업로드 표 1~10개, 06 4-0 업로드). 하자 등록은 요청 본문의 검증 표시가 같은 값으로 막는다. */
   static final int MAX_PHOTOS = 10;
 
+  /** 사진 추가로 고를 수 있는 단계(수리 전·수리 후, 06 REP-7g). 다른 단계는 하자 등록·진행 상황·원인 설명 등 각 행동이 정한다. */
+  static final Set<PhotoStage> ADDABLE_STAGES = EnumSet.of(PhotoStage.BEFORE, PhotoStage.AFTER);
+
   private final ActionPipeline pipeline;
   private final RepairStateStore store;
   private final RepairTransitions rules;
@@ -67,6 +75,7 @@ public class RepairService {
   private final ProposalService proposals;
   private final RoomGateReader gates;
   private final ProgressNoteRepository notes;
+  private final RepairQueryService queries;
 
   /**
    * 하자 등록(06 REP-1). pipeline 전에 사진이 없으면 {@code PHOTO_REQUIRED}(REP-1d), 제목·설명에 주민등록번호 형태가 있으면
@@ -177,6 +186,42 @@ public class RepairService {
             rules);
     return new DefectAckChanged(
         repairCaseId, result.state().defectAck(), result.action().replayed());
+  }
+
+  /**
+   * 사진 추가(06 REP-7g, 4-6 {@code POST /api/repair-cases/{id}/photos}). pipeline 전에 업로드 표가 0개·10개
+   * 초과·빈 표이거나 단계가 {@code BEFORE}·{@code AFTER}가 아니면 {@code VALIDATION_FAILED}. 덧붙이기라 같이 확인한 판·하자
+   * 인정·수리 진행은 그대로다. 거주 종료 뒤면 {@code ROOM_ENDED}, 정산 완료 뒤면 {@code SETTLED}(pipeline), 공유를 그만둔 사람이
+   * 그만두기 전 수리 건에 더하면 {@code SHARING_STOPPED}(저장 방법), 사진 검사에 실패하면 {@code PHOTO_CHECK_FAILED}·{@code
+   * UPLOAD_TICKET_*}(사진 번호와 함께, 아무것도 남지 않음)다. 같은 키로 다시 온 요청이면 처음 붙인 사진을 행동 기록에서 다시 읽는다.
+   */
+  public PhotosAdded addPhotos(
+      UUID repairCaseId, UUID memberId, String idempotencyKey, AddPhotosRequest request) {
+    if (request == null
+        || request.uploadTickets().isEmpty()
+        || request.uploadTickets().size() > MAX_PHOTOS
+        || request.uploadTickets().stream().anyMatch(t -> t == null || t.isBlank())
+        || !ADDABLE_STAGES.contains(request.stage())) {
+      throw new BusinessException(ErrorCode.VALIDATION_FAILED);
+    }
+    UUID roomRecordId = roomOf(repairCaseId);
+    PipelineResult<RepairState> result =
+        pipeline.execute(
+            new ActionCommand(
+                roomRecordId,
+                Actor.member(memberId),
+                ActionType.ADD_PHOTO,
+                idempotencyKey,
+                ActionTarget.repairCase(repairCaseId),
+                null,
+                null,
+                null,
+                Map.of()),
+            store.addingPhotos(request.stage(), request.uploadTickets()),
+            rules);
+    return new PhotosAdded(
+        queries.addedPhotoIds(repairCaseId, result.action().actionId()),
+        result.action().replayed());
   }
 
   /**
