@@ -100,7 +100,7 @@ class RepairDetailApiTest {
         stoppedAt,
         room);
     respond(caseId, landlord, "ACK", null).andExpect(status().isOk());
-    // 부담 상태를 바꾸는 행동은 아직 없어 행만 바꿔 둔다. 보이는 상태는 행동으로 다시 계산하므로 드러나지 않아야 한다
+    // 행만 바꿔 둔다. 보이는 부담은 제안 행동으로 다시 계산하므로(제안이 없으면 미정) 드러나지 않아야 한다
     jdbc.update("UPDATE state.repair_case SET money_status = 'NO_COST' WHERE id = ?", caseId);
 
     detail(caseId, tenant)
@@ -116,6 +116,24 @@ class RepairDetailApiTest {
         .andExpect(jsonPath("$.asOf").value(stoppedAt.toInstant().toString()))
         .andExpect(jsonPath("$.defect.ack").value("ACK"))
         .andExpect(jsonPath("$.money.status").value("UNDECIDED"));
+  }
+
+  @Test
+  void 공유를_그만두기_전_합의된_부담은_보이고_그_뒤_상대가_동의한_부담은_보이지_않는다() throws Exception {
+    // #289 리뷰: 다시 계산한 부담이 늘 미정이던 경우. 부담 제안 행동은 제안이 대상이라 돈 안건 장치가 다시 계산한다(03 3-1 "돈 포함")
+    UUID agreedBefore = register();
+    agree(propose(agreedBefore, tenant, "{\"lines\":[],\"noCost\":true}"), landlord);
+    UUID answeredAfter = register();
+    UUID waiting = propose(answeredAfter, tenant, "{\"lines\":[],\"noCost\":true}");
+    stopSharing(PartySide.TENANT, Timestamp.from(Instant.now()));
+    agree(waiting, landlord);
+
+    detail(agreedBefore, tenant).andExpect(jsonPath("$.money.status").value("NO_COST"));
+    detail(answeredAfter, tenant)
+        .andExpect(jsonPath("$.asOf").isNotEmpty())
+        .andExpect(jsonPath("$.money.status").value("PENDING"));
+    // 내가 남긴 동의는 나에게 보인다
+    detail(answeredAfter, landlord).andExpect(jsonPath("$.money.status").value("NO_COST"));
   }
 
   @Test
@@ -210,6 +228,30 @@ class RepairDetailApiTest {
         "UPDATE state.party SET status = 'WITHDRAWN' WHERE room_record_id = ? AND side = ?",
         room,
         side.name());
+  }
+
+  /** 부담 제안을 내고 제안 ID를 돌려준다. */
+  private UUID propose(UUID caseId, UUID memberId, String body) throws Exception {
+    String response =
+        mvc.perform(
+                post("/api/repair-cases/{id}/proposals", caseId)
+                    .with(loginAs(memberId))
+                    .header("Idempotency-Key", "pro-" + UUID.randomUUID())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(body))
+            .andExpect(status().isCreated())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    return UUID.fromString(response.replaceAll(".*\"id\":\"([^\"]+)\".*", "$1"));
+  }
+
+  private void agree(UUID proposalId, UUID memberId) throws Exception {
+    mvc.perform(
+            post("/api/proposals/{id}/agree", proposalId)
+                .with(loginAs(memberId))
+                .header("Idempotency-Key", "agr-" + UUID.randomUUID()))
+        .andExpect(status().isOk());
   }
 
   private ResultActions act(UUID caseId, UUID memberId, String action) throws Exception {

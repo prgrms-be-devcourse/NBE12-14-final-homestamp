@@ -22,17 +22,22 @@ import com.chilsuitjo.back.photo.dto.PhotoCard;
 import com.chilsuitjo.back.photo.dto.PhotoTarget;
 import com.chilsuitjo.back.photo.rule.PhotoTargetType;
 import com.chilsuitjo.back.photo.service.PhotoService;
+import com.chilsuitjo.back.proposal.dto.AgendaRef;
+import com.chilsuitjo.back.proposal.rule.AgendaKind;
+import com.chilsuitjo.back.proposal.service.ProposalService;
 import com.chilsuitjo.back.repair.dto.RepairCaseDetail;
 import com.chilsuitjo.back.repair.entity.CauseNote;
 import com.chilsuitjo.back.repair.entity.RepairCase;
 import com.chilsuitjo.back.repair.entity.RepairContent;
 import com.chilsuitjo.back.repair.repository.CauseNoteRepository;
 import com.chilsuitjo.back.repair.repository.CauseNoteStateStore;
+import com.chilsuitjo.back.repair.repository.RepairAgendaHeadStore;
 import com.chilsuitjo.back.repair.repository.RepairCaseRepository;
 import com.chilsuitjo.back.repair.repository.RepairContentRepository;
 import com.chilsuitjo.back.repair.repository.RepairStateStore;
 import com.chilsuitjo.back.repair.rule.CauseNoteTransitions;
 import com.chilsuitjo.back.repair.rule.ClosedBy;
+import com.chilsuitjo.back.repair.rule.MoneyStatus;
 import com.chilsuitjo.back.repair.rule.RepairSight;
 import com.chilsuitjo.back.repair.rule.RepairState;
 import com.chilsuitjo.back.repair.rule.RepairStatus;
@@ -100,6 +105,7 @@ public class RepairQueryService {
   private final CauseNoteStateStore causeStore;
   private final CauseNoteTransitions causeRules;
   private final CorrectionReader correctionReader;
+  private final ProposalService proposalService;
   private final Clock clock;
 
   /**
@@ -194,11 +200,27 @@ public class RepairQueryService {
             content.getTitle(),
             content.getDescription()),
         new RepairCaseDetail.Defect(shown.defectAck(), rules.nextRerequestAt(shown)),
-        new RepairCaseDetail.Money(shown.moneyStatus()),
+        new RepairCaseDetail.Money(moneyAsSeen(row, sight, shown)),
         photoCards,
         causeNotesOf(row, gate, viewer),
         corrections,
         List.copyOf(actions));
+  }
+
+  /**
+   * 보는 사람에게 보이는 수리비 부담 상태. 고정되지 않았으면 지금 값이다. 공유를 그만둔 뒤({@code asOf})에는 부담 제안 행동이 수리 건이 아니라 제안을 대상으로
+   * 해서 {@code RepairTransitions}로는 다시 계산되지 않으므로, 돈 안건 장치가 보이는 제안 행동만으로 다시 계산한 값을 쓴다({@code
+   * ProposalService.statusAsSeen}, 03 3-1 "돈 포함 모든 줄"). 수리 건 목록도 같은 함수를 쓴다(06 4-6 "상세와 같음").
+   */
+  private MoneyStatus moneyAsSeen(RepairCase row, RepairSight sight, RepairState shown) {
+    if (sight.asOf() == null) {
+      return shown.moneyStatus();
+    }
+    return RepairAgendaHeadStore.toMoneyStatus(
+        proposalService.statusAsSeen(
+            row.getRoomRecordId(),
+            new AgendaRef(AgendaKind.REPAIR_BURDEN, row.getId()),
+            sight::sees));
   }
 
   /**
