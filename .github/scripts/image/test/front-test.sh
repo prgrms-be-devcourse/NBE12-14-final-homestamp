@@ -91,6 +91,23 @@ mkdir -p "$W/broken" && (cd "$W/ctx" && tar cf - --exclude node_modules --exclud
 printf '\nconst broken: number = "x"\nexport default broken\n' >>"$W/broken/src/config.ts"
 expect "타입 오류(tsc -b) → 빌드 실패" "$([ "$(fb broken $R1 "$W/broken")" != 0 ] && echo fail)" fail
 grep -q 'error TS' "$W/build-broken.out" && ok "실패 원인이 타입 검사" || bad "실패 원인"
+[ -e "$W/ctx/public" ] && bad "기본 맥락에 public/이 있음(없는 경우 시험이 아님)" || ok "public/ 없는 맥락이 정상 빌드(위)"
+# public/: 있으면 해시 없이 /site 맨 위로. 예약 경로·링크는 빌드 실패, 비밀값 패턴은 들어오지 않음
+cpx() { mkdir -p "$W/$1" && (cd "$W/ctx" && tar cf - --exclude node_modules --exclude dist --exclude .env.production .) | (cd "$W/$1" && tar xf -); }
+cpx pub && mkdir -p "$W/pub/public/icons" && echo 'User-agent: *' >"$W/pub/public/robots.txt" && echo '<svg/>' >"$W/pub/public/icons/a.svg" && echo 'K=1' >"$W/pub/public/.env"
+expect "public/ 있는 빌드 → 0" "$(fb pub $R1 "$W/pub")" 0
+mkdir -p "$W/pubsite" && c="$(docker create --platform linux/amd64 $T-pub:local)" && docker cp -q "$c:/site" "$W/pubsite/" && docker rm "$c" >/dev/null
+[ -f "$W/pubsite/site/robots.txt" ] && [ -f "$W/pubsite/site/icons/a.svg" ] && ok "public 파일이 /site에 실제로 들어감" || bad "public 파일 누락"
+[ -e "$W/pubsite/site/.env" ] && bad "public/.env가 들어감" || ok "public/.env는 들어오지 않음(.dockerignore)"
+[ "$(cat "$W/pubsite/site/version.json")" = "{\"revision\":\"$R1\"}" ] && ls "$W"/pubsite/site/assets/*.js >/dev/null 2>&1 && ok "public이 있어도 version.json·assets 그대로" || bad "public과 예약 경로"
+expect "public 이미지 check-front → 0" "$(inr "'$HERE/check-front.sh' $T-pub:local $R1 >/dev/null 2>&1; echo \$?")" 0
+for r in index.html version.json assets/x.js; do
+  n="pr$(echo "$r" | tr -dc 'a-z')"; cpx "$n" && mkdir -p "$(dirname "$W/$n/public/$r")" && echo x >"$W/$n/public/$r"
+  expect "public/$r(예약 경로) → 빌드 실패" "$([ "$(fb "$n" $R1 "$W/$n")" != 0 ] && echo fail)" fail
+  grep -q '예약 경로' "$W/build-$n.out" && ok "public/$r 실패 원인이 예약 경로" || bad "public/$r 실패 원인"
+done
+cpx plink && mkdir -p "$W/plink/public" && ln -s ../package.json "$W/plink/public/p.txt"
+expect "public 안의 링크 → 빌드 실패" "$([ "$(fb plink $R1 "$W/plink")" != 0 ] && echo fail)" fail
 
 echo "== 내용 확인(check-front, docker create·export·cp)"
 ck() { inr "'$HERE/check-front.sh' $1 $2 >'$W/ck.out' 2>&1; echo \$?"; }
