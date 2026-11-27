@@ -855,7 +855,7 @@ class DeliveryResultPollerTest {
         List.of(
             linkedNotice(request, "RENOTIFY"),
             linkedNotice(request, "INFO"),
-            linkedNotice(request, "INVITE"));
+            linkedNotice(request, "SETTLEMENT_INVITE"));
     others.forEach(id -> fake.respondDelivery(id, DeliveryOutcome.DELIVERED));
 
     poller(FIRST_POLL, FIRST_POLL, fake).runOnce(50);
@@ -863,6 +863,36 @@ class DeliveryResultPollerTest {
     others.forEach(id -> assertThat(column(id, "status")).isEqualTo("DELIVERED"));
     assertThat(requestTime(request, "first_notified_at")).isNull();
     assertThat(requestTime(request, "renotify_due_at")).isNull();
+  }
+
+  @Test
+  void 요청이_걸린_초대_문자가_닿으면_기다림이_시작된다() {
+    // 같은 점검 초대는 초대 문자 한 통이 그 점검의 확인 요청 통지다(#370 A-7, InviteRequestLinker)
+    UUID request = linkedRequest("WAITING");
+    UUID id = linkedNotice(request, "INVITE");
+    fake.respondDelivery(id, DeliveryOutcome.DELIVERED);
+
+    poller(FIRST_POLL, FIRST_POLL, fake).runOnce(50);
+
+    assertThat(column(id, "status")).isEqualTo("DELIVERED");
+    assertThat(requestTime(request, "first_notified_at")).isNotNull();
+  }
+
+  @Test
+  void 요청이_걸린_초대_문자가_최종_실패면_기다림도_미확인도_되지_않는다() {
+    // 전달 실패는 미확인이 아니다(03 1-1): 요청은 기다림 시작 전 그대로 남는다
+    UUID request = linkedRequest("WAITING");
+    UUID id = linkedNotice(request, "INVITE");
+    fake.respondDelivery(id, DeliveryOutcome.FAILED);
+
+    poller(FIRST_POLL, FIRST_POLL, fake).runOnce(50);
+
+    assertThat(column(id, "status")).isEqualTo("FAILED");
+    assertThat(requestTime(request, "first_notified_at")).isNull();
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT status FROM state.response_request WHERE id = ?", String.class, request))
+        .isEqualTo("WAITING");
   }
 
   @Test

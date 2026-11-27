@@ -23,10 +23,11 @@ import org.springframework.transaction.annotation.Transactional;
  * 행동과 문자 취소가 호실 → 통지 순서라 교착이 없다, 09 3장 "잠금"), 통지를 닿음으로 바꾼 같은 트랜잭션에서 {@link #reached}를 부른다. 둘 중 하나가
  * 실패하면 함께 되돌아가 통지는 그대로 남고 다음 조회에서 다시 적는다.
  *
- * <p>요청 통지({@code REQUEST})만 기다림을 시작한다. 재통지({@code RENOTIFY})가 닿는 것은 미확인 기한(06 0-1 {@code
- * wait.unconfirmed})의 시작이라 기다림 타이머(d3)에서 다루고, 알림({@code INFO})은 답을 묻지 않는다. 초대 문자({@code
- * INVITE}·{@code SETTLEMENT_INVITE})에 요청을 걸지와 그때 무엇을 셀지(03 1-4 "연결 전 상대")는 요청 → 통지 연결(#100)에서 정하기
- * 전이라 시작하지 않는다. 지금 이것을 부르는 곳은 문자 전달 결과뿐이다. 링크 열람·알림 열람도 같은 메서드를 부르면 된다(빠른 쪽이 시작점).
+ * <p>요청 통지({@code REQUEST})와 요청이 걸린 초대 문자({@code INVITE})만 기다림을 시작한다. 초대 문자에 요청이 걸리는 것은 같은 점검 초대에서
+ * 문자 한 통이 초대이자 그 점검의 확인 요청 통지일 때뿐이다({@link InviteRequestLinker}, #370 A-7). 재통지({@code RENOTIFY})가
+ * 닿는 것은 미확인 기한(06 0-1 {@code wait.unconfirmed})의 시작이라 기다림 타이머(d3)에서 다루고, 알림({@code INFO})은 답을 묻지
+ * 않는다. 정산 초대({@code SETTLEMENT_INVITE})에는 요청을 걸지 않는다. 지금 이것을 부르는 곳은 문자 전달 결과뿐이다. 링크 열람·알림 열람도 같은
+ * 메서드를 부르면 된다(빠른 쪽이 시작점).
  */
 @Component
 public class NoticeWaitStart {
@@ -61,7 +62,8 @@ public class NoticeWaitStart {
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public boolean reached(Notice notice, Instant at) {
-    if (notice.getResponseRequestId() == null || notice.getKind() != NoticeKind.REQUEST) {
+    if (notice.getResponseRequestId() == null
+        || (notice.getKind() != NoticeKind.REQUEST && notice.getKind() != NoticeKind.INVITE)) {
       return false;
     }
     ResponseRequest request =
