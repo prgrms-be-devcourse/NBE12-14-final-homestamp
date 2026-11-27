@@ -47,6 +47,9 @@ public class InspectionItemTransitions implements Transitions<InspectionItemStat
   /**
    * 이 측이 지금 이 점검에 항목을 더할 수 있나(상세 조회의 {@code availableActions}, 06 4-0). {@link #apply}의 항목 더하기와 같은
    * 판단이다. 호실 단위 거절(정산 완료·공유 중단 등)은 여기서 보지 않는다({@code RoomGate.rejection}).
+   *
+   * <p>지금은 점검이 있고 측을 알면 늘 참이다: 작성 중·확인 요청·잠김 모두 누구든 더한다(INSP-1d·1e). 그래서 {@link #apply}는 이 판단을 따로
+   * 부르지 않는다. 막을 점검 상태가 생기면 여기와 {@code add}를 함께 고친다.
    */
   public static boolean canAdd(InspectionStatus inspectionStatus, PartySide side) {
     return inspectionStatus != null && side != null;
@@ -113,9 +116,6 @@ public class InspectionItemTransitions implements Transitions<InspectionItemStat
    */
   private static InspectionItemState add(InspectionItemState now, ActionEntry action) {
     if (now.exists() || action.actorSide() == null) {
-      throw new BusinessException(ErrorCode.INVALID_STATE);
-    }
-    if (now.inspectionStatus() != null && !canAdd(now.inspectionStatus(), action.actorSide())) {
       throw new BusinessException(ErrorCode.INVALID_STATE);
     }
     return new InspectionItemState(

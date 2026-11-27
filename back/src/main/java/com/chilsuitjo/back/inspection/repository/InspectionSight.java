@@ -69,7 +69,12 @@ public class InspectionSight {
 
   /** 지금 호실 단계에서 점검 확인 요청을 열 수 있나(03 K). */
   public boolean canOpenConfirm(UUID roomRecordId, PartySide side) {
-    return parties.read(roomRecordId, side).canOpen(RequestKind.INSPECTION_CONFIRM)
+    return canOpenConfirm(parties.read(roomRecordId, side), roomRecordId);
+  }
+
+  /** {@link #canOpenConfirm(UUID, PartySide)}와 같고, 이미 읽은 자리 사실을 쓴다(한 번만 읽기). */
+  public boolean canOpenConfirm(RoomParties room, UUID roomRecordId) {
+    return room.canOpen(RequestKind.INSPECTION_CONFIRM)
         && waits.canOpen(roomRecordId, RequestKind.INSPECTION_CONFIRM);
   }
 
