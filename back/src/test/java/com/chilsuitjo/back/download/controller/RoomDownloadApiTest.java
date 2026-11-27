@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -310,6 +311,111 @@ class RoomDownloadApiTest {
     mvc.perform(get("/api/rooms/{id}/download", room))
         .andExpect(status().isUnauthorized())
         .andExpect(jsonPath("$.code").value("LOGIN_REQUIRED"));
+  }
+
+  // ---- 확인 전 고친 내용(03 G "상태와 함께 따로 담는다") ----
+
+  @Test
+  void 확인_전_고친_내용은_상태와_함께_따로_담기고_확인되면_빠진다() throws Exception {
+    UUID caseId = register(1);
+    respond(caseId, landlord, "ACK", null).andExpect(status().isOk()); // 도장
+    UUID waiting = correct(caseId, tenant, "title", "천장 물샘", "오타");
+    UUID rejected = correct(caseId, tenant, "description", "물이 새요", "더 정확하게");
+    respondCorrection(rejected, landlord, "DISPUTE", "물은 안 새요").andExpect(status().isOk());
+
+    String mine = body(download(tenant).andExpect(status().isOk()));
+    List<String> ids = JsonPath.read(mine, "$.record.pendingCorrections[*].id");
+    assertThat(ids).containsExactly(waiting.toString(), rejected.toString());
+    assertThat((String) JsonPath.read(mine, "$.record.pendingCorrections[0].status"))
+        .isEqualTo("WAITING");
+    assertThat((String) JsonPath.read(mine, "$.record.pendingCorrections[0].field"))
+        .isEqualTo("title");
+    assertThat((String) JsonPath.read(mine, "$.record.pendingCorrections[0].newValue"))
+        .isEqualTo("천장 물샘");
+    assertThat((String) JsonPath.read(mine, "$.record.pendingCorrections[0].requestedBy"))
+        .isEqualTo("TENANT");
+    assertThat((String) JsonPath.read(mine, "$.record.pendingCorrections[0].target.id"))
+        .isEqualTo(caseId.toString());
+    assertThat((String) JsonPath.read(mine, "$.record.pendingCorrections[1].status"))
+        .isEqualTo("REJECTED");
+    assertThat((String) JsonPath.read(mine, "$.record.pendingCorrections[1].answer"))
+        .isEqualTo("DISPUTE");
+    assertThat((String) JsonPath.read(mine, "$.record.pendingCorrections[1].answerReason"))
+        .isEqualTo("물은 안 새요");
+
+    respondCorrection(waiting, landlord, "ACK", null).andExpect(status().isOk());
+    List<String> after =
+        JsonPath.read(
+            body(download(landlord).andExpect(status().isOk())),
+            "$.record.pendingCorrections[*].id");
+    assertThat(after).containsExactly(rejected.toString());
+  }
+
+  @Tag("invariant-18")
+  @Test
+  void 공유를_그만둔_뒤의_상대_응답은_확인_전_고친_내용에_보이지_않는다() throws Exception {
+    UUID caseId = register(1);
+    respond(caseId, landlord, "ACK", null).andExpect(status().isOk());
+    UUID mine = correct(caseId, tenant, "title", "천장 물샘", "오타");
+    jdbc.update(
+        "UPDATE state.party SET status = 'SHARING_STOPPED', sharing_stopped_at = ?"
+            + " WHERE room_record_id = ? AND side = 'TENANT'",
+        Timestamp.from(Instant.now()),
+        room);
+    respondCorrection(mine, landlord, "ACK", null).andExpect(status().isOk());
+
+    // 세입자에게는 그만둔 시각 기준으로 아직 기다림이다(수리 건 상세와 같음, 03 6-6 9번)
+    String tenantSees = body(download(tenant).andExpect(status().isOk()));
+    assertThat((String) JsonPath.read(tenantSees, "$.record.pendingCorrections[0].id"))
+        .isEqualTo(mine.toString());
+    assertThat((String) JsonPath.read(tenantSees, "$.record.pendingCorrections[0].status"))
+        .isEqualTo("WAITING");
+    // 자기 응답을 본 집주인에게는 확인돼 빠진다
+    List<String> landlordSees =
+        JsonPath.read(
+            body(download(landlord).andExpect(status().isOk())), "$.record.pendingCorrections");
+    assertThat(landlordSees).isEmpty();
+  }
+
+  /** 도장 뒤 수리 건 칸 하나를 고치고 고친 내용 ID를 돌려준다. */
+  private UUID correct(UUID caseId, UUID memberId, String field, String value, String reason)
+      throws Exception {
+    String json =
+        "{\"targetKind\":\"REPAIR_CASE\",\"targetId\":\""
+            + caseId
+            + "\",\"changes\":[{\"field\":\""
+            + field
+            + "\",\"newValue\":\""
+            + value
+            + "\"}],\"reason\":\""
+            + reason
+            + "\"}";
+    String body =
+        body(
+            mvc.perform(
+                    post("/api/corrections")
+                        .with(loginAs(memberId))
+                        .header("Idempotency-Key", "cor-" + UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.result").value("REQUESTED")));
+    return UUID.fromString(JsonPath.read(body, "$.correctionIds[0]"));
+  }
+
+  private ResultActions respondCorrection(
+      UUID correctionId, UUID memberId, String answer, String reason) throws Exception {
+    return mvc.perform(
+        post("/api/corrections/{id}/respond", correctionId)
+            .with(loginAs(memberId))
+            .header("Idempotency-Key", "cr-" + UUID.randomUUID())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(
+                "{\"answer\":\""
+                    + answer
+                    + "\",\"seenVersionNo\":1"
+                    + (reason == null ? "" : ",\"reason\":\"" + reason + "\"")
+                    + "}"));
   }
 
   // ---- 준비물 ----

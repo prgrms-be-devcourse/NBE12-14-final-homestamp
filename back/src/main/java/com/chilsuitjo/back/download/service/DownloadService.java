@@ -48,6 +48,7 @@ public class DownloadService {
   private final RoomAccessService access;
   private final CounterpartReader parties;
   private final ActionReader actions;
+  private final PendingCorrections pendingCorrections;
   private final Clock clock;
 
   /**
@@ -105,7 +106,8 @@ public class DownloadService {
             viewer.side(),
             viewer.roomStatus(),
             List.copyOf(recordActions),
-            List.copyOf(photos.values()));
+            List.copyOf(photos.values()),
+            pendingCorrections.of(roomRecordId, all, viewer.side(), cutoff));
     return new RoomDownload(record, batches(files), files.size());
   }
 
