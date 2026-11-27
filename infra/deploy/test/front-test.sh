@@ -245,6 +245,12 @@ id_g="$(cut -d/ -f2 <<<"$(cur)")"
 echo "$id_f" >"$V/state/last-good"
 sed -i.bak "/^$id_g success$/d" "$V/state/releases.log" 2>/dev/null || { grep -v "^$id_g success$" "$V/state/releases.log" >"$W/rl" && cat "$W/rl" >"$V/state/releases.log"; }
 printf 'id=%s\nimage=%s\ncommit=%s\nprev=releases/%s\nphase=switched\n' "$id_g" "$IMG_g" "$(rev_of g)" "$id_f" >"$V/state/in-progress"
+# 이전 릴리스(f)의 assets가 깨져 있으면 일반 배포와 같이 성공으로 마무리하지 않는다(리뷰 #378)
+chmod 000 "$(asset index f js)"
+expect "F7a 이전 판 assets 손상 → 마무리하지 않고 4" "$(deploy "$IMG_h")" 4
+grep -q '^phase=switched$' "$V/state/in-progress" && ok "F7a in-progress 그대로" || bad "F7a in-progress"
+expect "F7a last-good은 아직 f" "$(cat "$V/state/last-good")" "$id_f"
+chmod 644 "$(asset index f js)"
 expect "F7 다른 이미지(h) → 0(g를 확인해 성공으로 마무리 뒤 진행)" "$(deploy "$IMG_h")" 0
 grep -q "\"deploy_id\":\"$id_g\".*\"result\":\"success\".*마무리" "$V/state/history.jsonl" && ok "F7 g 마무리 기록" || bad "F7 g 기록"
 expect "F7 HTTPS로 h" "$(served_rev)" "{\"revision\":\"$(rev_of h)\"}"

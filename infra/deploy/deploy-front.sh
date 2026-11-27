@@ -411,6 +411,16 @@ check_target() { # <링크 값>: 그 상태가 실제로 나가는지(우리 릴
   fi
 }
 
+# 끝나지 않은 배포를 성공으로 마무리할 때도 일반 배포와 같은 기준: 이전 릴리스(우리가 설치한 것)의 assets도 그대로 나가야 한다.
+# 이전 manifest를 읽을 수 없으면 확인할 수 없으므로 통과로 보지 않는다(→ 4)
+resolve_prev_assets_ok() { # <이전 링크 값>
+  local pid
+  pid="$(managed_id "$1")"
+  [[ -z $pid ]] && return 0
+  manifest_ok "$pid" || { log "이전 릴리스($pid) manifest가 없거나 손상돼 이전 assets를 확인할 수 없습니다"; return 1; }
+  retry check_assets_once "$pid"
+}
+
 # ---- 0. 앞 배포 상태. 끝나지 않은 배포가 있으면 실제 응답으로 어느 쪽인지 확인해 마무리하고, 모르면 4(바꾸지 않음)
 step=resolve
 rm -rf "${incoming:?}"/* "$releases"/.tmp-* "$pool"/.tmp.* "$FRONT_ROOT"/.current.tmp.* 2>/dev/null || true
@@ -434,7 +444,8 @@ if [[ -f $STATE_DIR/in-progress ]]; then
   commit=$ip_commit
   if [[ $ip_phase == prepare && $cur == "$ip_prev" ]]; then
     record "$ip_id" "$ip_image" interrupted 143 '"install"' "전환 전에 멈춤(바뀐 것 없음, 다음 배포가 확인)"
-  elif [[ $ip_phase == switched && $cur == "releases/$ip_id" ]] && manifest_ok "$ip_id" && retry check_target "$cur"; then
+  elif [[ $ip_phase == switched && $cur == "releases/$ip_id" ]] && manifest_ok "$ip_id" && retry check_target "$cur" &&
+    resolve_prev_assets_ok "$ip_prev"; then
     printf '%s success\n' "$ip_id" >>"$STATE_DIR/releases.log"
     put "$STATE_DIR/last-good" "$ip_id"
     lg=$ip_id
