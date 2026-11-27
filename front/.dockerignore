@@ -9,6 +9,9 @@
 !tsconfig.node.json
 !src/
 !src/**
+# Vite가 그대로 /site에 복사하는 공개 파일(아직 없음). 생기면 check-front.sh의 허용 종류 검사를 받는다
+!public/
+!public/**
 
 # src 아래에 두더라도 비밀값·로컬 설정은 들어오지 않는다
 **/.env
