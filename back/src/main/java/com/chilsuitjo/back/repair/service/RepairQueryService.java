@@ -36,14 +36,17 @@ import com.chilsuitjo.back.proposal.rule.AgendaKind;
 import com.chilsuitjo.back.proposal.service.ProposalService;
 import com.chilsuitjo.back.repair.dto.RepairCaseDetail;
 import com.chilsuitjo.back.repair.entity.CauseNote;
+import com.chilsuitjo.back.repair.entity.ProgressNote;
 import com.chilsuitjo.back.repair.entity.RepairCase;
 import com.chilsuitjo.back.repair.entity.RepairContent;
 import com.chilsuitjo.back.repair.repository.CauseNoteRepository;
 import com.chilsuitjo.back.repair.repository.CauseNoteStateStore;
+import com.chilsuitjo.back.repair.repository.ProgressNoteRepository;
 import com.chilsuitjo.back.repair.repository.RepairAgendaHeadStore;
 import com.chilsuitjo.back.repair.repository.RepairCaseRepository;
 import com.chilsuitjo.back.repair.repository.RepairContentRepository;
 import com.chilsuitjo.back.repair.repository.RepairStateStore;
+import com.chilsuitjo.back.repair.repository.SituationStateStore;
 import com.chilsuitjo.back.repair.rule.CauseNoteTransitions;
 import com.chilsuitjo.back.repair.rule.ClosedBy;
 import com.chilsuitjo.back.repair.rule.MoneyStatus;
@@ -51,6 +54,7 @@ import com.chilsuitjo.back.repair.rule.RepairSight;
 import com.chilsuitjo.back.repair.rule.RepairState;
 import com.chilsuitjo.back.repair.rule.RepairStatus;
 import com.chilsuitjo.back.repair.rule.RepairTransitions;
+import com.chilsuitjo.back.repair.rule.SituationTransitions;
 import com.chilsuitjo.back.room.dto.RoomAccess;
 import com.chilsuitjo.back.room.service.RoomAccessService;
 import com.chilsuitjo.back.room.service.RoomQueryService;
@@ -119,6 +123,9 @@ public class RepairQueryService {
   private final CauseNoteRepository causeNoteRows;
   private final CauseNoteStateStore causeStore;
   private final CauseNoteTransitions causeRules;
+  private final ProgressNoteRepository progressNoteRows;
+  private final SituationStateStore situationStore;
+  private final SituationTransitions situationRules;
   private final CorrectionReader correctionReader;
   private final ProposalService proposalService;
   private final WaitQuery waits;
@@ -243,6 +250,7 @@ public class RepairQueryService {
         new RepairCaseDetail.Money(moneyAsSeen(row, sight, shown)),
         photoCards,
         causeNotesOf(row, gate, viewer),
+        progressNotesOf(row, gate, viewer),
         closeRequestOf(row, sight, shown),
         corrections,
         List.copyOf(actions));
@@ -471,6 +479,56 @@ public class RepairQueryService {
       boolean canRespond =
           canAnswer && causeRules.canRespond(causeStore.responseState(note), gate.side());
       result.add(causeNoteView(note, visibility, cards, canRespond, previous));
+    }
+    return List.copyOf(result);
+  }
+
+  /**
+   * 진행 상황(06 REP-6). 남긴 순서로 주고, 공유를 그만둔 뒤에는 그 시각까지의 진행 상황·응답과 보는 사람 자신의 것만 보인다(03 6-6 9번, 불변식 18,
+   * 원인 설명과 같은 기준). 응답 버튼({@code canRespond})은 실제 요청과 같은 판단이다: 호실 단위 거절은 {@code RoomGate.rejection},
+   * 응답 규칙은 {@code SituationTransitions.canRespond}(지금 답은 보이는 범위가 아니라 실제 기록으로 본다).
+   */
+  private List<RepairCaseDetail.ProgressNote> progressNotesOf(
+      RepairCase row, RoomGate gate, RoomAccess viewer) {
+    RepairSight visibility = store.sightFor(row, gate.side());
+    List<ProgressNote> visible =
+        progressNoteRows.findByRepairCaseIdOrderByCreatedAtAscIdAsc(row.getId()).stream()
+            .filter(note -> visibility.sees(note.getSide(), note.getCreatedAt()))
+            .toList();
+    if (visible.isEmpty()) {
+      return List.of();
+    }
+    List<PhotoTarget> targets =
+        visible.stream()
+            .<PhotoTarget>map(n -> new PhotoTarget.Ref(PhotoTargetType.PROGRESS_NOTE, n.getId()))
+            .toList();
+    Map<PhotoTarget, List<PhotoCard>> cards = photos.cards(viewer, targets);
+    boolean canAnswer =
+        gate.side() != null && gate.rejection(ActionType.RESPOND_SITUATION).isEmpty();
+    List<RepairCaseDetail.ProgressNote> result = new ArrayList<>();
+    for (ProgressNote note : visible) {
+      RepairCaseDetail.ProgressResponse response =
+          situationStore
+              .lastResponse(note.getId(), visibility)
+              .map(entry ->
+                  new RepairCaseDetail.ProgressResponse(
+                      AckState.valueOf(entry.payloadAs(AnswerPayload.class).answer().name()),
+                      entry.reason(),
+                      entry.createdAt()))
+              .orElse(null);
+      boolean canRespond =
+          canAnswer && situationRules.canRespond(situationStore.state(note), gate.side());
+      result.add(
+          new RepairCaseDetail.ProgressNote(
+              note.getId(),
+              note.getSide(),
+              note.getText(),
+              note.isAsksCheck(),
+              note.getCreatedAt(),
+              cards.getOrDefault(
+                  new PhotoTarget.Ref(PhotoTargetType.PROGRESS_NOTE, note.getId()), List.of()),
+              response,
+              canRespond));
     }
     return List.copyOf(result);
   }

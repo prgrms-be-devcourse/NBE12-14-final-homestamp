@@ -14,6 +14,8 @@ export type RepairAction =
   | "reopen" // 다시 열기
   | "photos" // 사진 추가(수리 후 사진 포함)
   | "cause-notes" // 원인 설명 남기기·동의/이견(거주 중)
+  | "ask-progress" // 진행 상황 묻기(시작 전·처리 중, 7일에 한 번)
+  | "progress-notes" // 진행 상황 남기기(+ 상황이 바뀌었어요)
   | "corrections" // 고치기
   | "recur" // 같은 곳 재발 · 새 수리 건
 
