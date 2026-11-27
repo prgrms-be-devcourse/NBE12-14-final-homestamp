@@ -16,10 +16,14 @@ export interface HttpClientOptions {
   getSession?: () => number
   // 재발급한 토큰으로 다시 보낸 요청도 401 LOGIN_REQUIRED면(탈퇴한 회원의 남은 토큰 등) 그 요청의 세션을 끝내요
   endSession?: (e: ApiError, session: number) => void
+  // 바뀐 약관을 확인하기 전이라 거절된 403 TERMS_UPDATE_REQUIRED(CONS-4a). 요청은 오류로 끝내고 다시 보내지 않아요
+  termsRequired?: (e: ApiError, session: number) => void
 }
 // 액세스 토큰이 없거나 맞지 않아 거절된 401(06 4-10 LOGIN_REQUIRED)
 const isLoginRequired = (e: ApiError) =>
   e.status === 401 && e.code === "LOGIN_REQUIRED"
+const isTermsRequired = (e: ApiError) =>
+  e.status === 403 && e.code === "TERMS_UPDATE_REQUIRED"
 export type RequestOptions = {
   body?: unknown
   idempotent?: boolean
@@ -47,6 +51,7 @@ export function createHttpClient({
   refresh,
   getSession = () => 0,
   endSession,
+  termsRequired,
 }: HttpClientOptions) {
   return async function request<T>(
     method: "GET" | "POST",
@@ -84,6 +89,7 @@ export function createHttpClient({
     let res = await send(token)
     if (!res.ok) {
       const error = await toApiError(res)
+      if (isTermsRequired(error)) termsRequired?.(error, session)
       // 토큰을 붙여 보냈는데 만료로 거절됐을 때만 재발급해요. 재발급 요청 자신은 다시 보내지 않아요.
       const expired =
         refresh && token && path !== endpoints.refresh && isLoginRequired(error)
@@ -99,6 +105,7 @@ export function createHttpClient({
         const again = await toApiError(res)
         // 새 토큰으로도 로그인이 필요하다면 이어 갈 수 없는 세션이라 끝내요(재발급을 되풀이하지 않아요)
         if (isLoginRequired(again)) endSession?.(again, session)
+        if (isTermsRequired(again)) termsRequired?.(again, session)
         throw again
       }
     }

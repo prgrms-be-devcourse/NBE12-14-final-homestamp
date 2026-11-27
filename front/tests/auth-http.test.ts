@@ -37,6 +37,7 @@ const ME = {
   displayName: "정서윤",
   phone: "01012345678",
   smsEnabled: true,
+  pendingAcknowledgements: [],
 }
 
 function setup() {
@@ -61,6 +62,7 @@ describe("createHttpAuth", () => {
       email: ME.email,
       name: "정서윤",
       phone: "01012345678",
+      pendingAcknowledgements: [],
     })
     expect(calls.map((c) => c.key)).toEqual([
       "POST /api/auth/login",

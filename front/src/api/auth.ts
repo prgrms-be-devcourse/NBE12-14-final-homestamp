@@ -25,6 +25,9 @@ export interface Session {
   // 쓰던 세션이 끝났을 때 알려요: 재발급이 LOGIN_REQUIRED·REFRESH_REUSED이거나,
   // 재발급한 토큰으로 다시 보낸 요청도 LOGIN_REQUIRED일 때. 돌려준 함수로 그만 들어요.
   onEnd(listener: (e: ApiError) => void): () => void
+  // 바뀐 약관을 확인하기 전이라 상태를 바꾸는 요청이 403 TERMS_UPDATE_REQUIRED로 거절됐을 때 알려요(CONS-4a).
+  // 그 요청은 오류로 끝나고 다시 보내지 않아요. 돌려준 함수로 그만 들어요.
+  onTermsRequired(listener: (e: ApiError) => void): () => void
 }
 export function createSession(baseUrl: string): Session {
   let accessToken: string | undefined
@@ -32,6 +35,7 @@ export function createSession(baseUrl: string): Session {
   // 진행 중인 재발급과 그것을 시작한 세션
   let refreshing: { session: number; done: Promise<void> } | undefined
   const listeners = new Set<(e: ApiError) => void>()
+  const termsListeners = new Set<(e: ApiError) => void>()
   const token = {
     get: () => accessToken,
     set: (t?: string) => {
@@ -77,6 +81,10 @@ export function createSession(baseUrl: string): Session {
     getSession: () => current,
     refresh,
     endSession: end,
+    // 그 요청을 보낸 세션이 아직 지금 세션일 때만 알려요(로그아웃·계정 전환 뒤 늦게 온 거절로 확인 화면을 열지 않게)
+    termsRequired: (e, session) => {
+      if (session === current) termsListeners.forEach((l) => l(e))
+    },
   })
   return {
     request,
@@ -85,6 +93,10 @@ export function createSession(baseUrl: string): Session {
     onEnd(listener) {
       listeners.add(listener)
       return () => void listeners.delete(listener)
+    },
+    onTermsRequired(listener) {
+      termsListeners.add(listener)
+      return () => void termsListeners.delete(listener)
     },
   }
 }
@@ -100,6 +112,16 @@ export interface Account {
   email: string
   name: string
   phone: string
+  // 다시 확인해야 할 문구(06 4-1 GET /api/me, CONS-4). 비어 있지 않으면 로그인 뒤 확인 화면을 먼저 띄워요
+  pendingAcknowledgements: PendingAcknowledgement[]
+}
+// 확인 항목 종류(05 member_acknowledgement.kind). 처리방침은 확인 대상이 아니에요(CONS-1a)
+export type AcknowledgementKind =
+  "AGE_14_CONFIRMED" | "TERMS_AGREED" | "PRIVACY_NOTICE_ACK"
+// 서버가 준 판 그대로 다시 확인에 보내요(화면이 판을 만들지 않아요)
+export interface PendingAcknowledgement {
+  kind: AcknowledgementKind
+  textVersion: string
 }
 export interface PhoneVerification {
   verificationId: string
@@ -130,6 +152,13 @@ export interface AuthApi {
   getToken(): string | undefined
   // 쓰던 세션이 끝났을 때(토큰 만료 뒤 재발급도 실패) 알려요. 화면은 로그인으로 보내요. 돌려준 함수로 그만 들어요.
   onSessionEnd(listener: (e: Error) => void): () => void
+  // 내 정보를 다시 불러와요(다시 확인할 문구가 바뀌었을 수 있을 때)
+  reload(): Promise<Account>
+  // 바뀐 문구 다시 확인(06 4-1 POST /api/me/agreements, CONS-4). 서버가 준 판 그대로 보내고 바뀐 내 정보를 받아요.
+  // 그사이 판이 바뀌었으면 VERSION_CONFLICT라 화면이 reload로 다시 불러와요
+  acknowledge(items: PendingAcknowledgement[]): Promise<Account>
+  // 상태를 바꾸는 요청이 403 TERMS_UPDATE_REQUIRED로 거절됐을 때 알려요. 화면은 확인 화면을 열어요(CONS-4a)
+  onTermsRequired(listener: (e: Error) => void): () => void
 }
 
 // 임시(개발용) 고정 인증번호. 서버 없이 개발할 때(createLocalAuth)만 쓰여요.
@@ -200,24 +229,26 @@ interface MeResponse {
   displayName: string
   phone: string | null
   smsEnabled: boolean
+  pendingAcknowledgements: PendingAcknowledgement[]
 }
 export function createHttpAuth({
   request,
   token,
   refresh,
   onEnd,
+  onTermsRequired,
 }: Session): AuthApi {
   // 내 정보(06 4-1 GET /api/me). 서버의 displayName을 화면의 name으로 바꿔요.
   // phone은 다른 계정이 같은 번호를 인증하면(ACC-3a) null이라, 화면이 "번호 없음"으로 쓰는 ""로 바꿔요.
-  const me = async (): Promise<Account> => {
-    const r = await request<MeResponse>("GET", endpoints.me)
-    return {
-      id: r.id,
-      email: r.email,
-      name: r.displayName,
-      phone: r.phone ?? "",
-    }
-  }
+  const toAccount = (r: MeResponse): Account => ({
+    id: r.id,
+    email: r.email,
+    name: r.displayName,
+    phone: r.phone ?? "",
+    pendingAcknowledgements: r.pendingAcknowledgements ?? [],
+  })
+  const me = async (): Promise<Account> =>
+    toAccount(await request<MeResponse>("GET", endpoints.me))
   // 로그아웃: 서버가 액세스 토큰에 담긴 토큰 묶음을 폐기하고 리프레시 쿠키를 지워요.
   const revoke = () =>
     request<void>("POST", endpoints.logout, { idempotent: false })
@@ -227,6 +258,21 @@ export function createHttpAuth({
     mode: "http",
     getToken: token.get,
     onSessionEnd: onEnd,
+    onTermsRequired,
+    reload: me,
+    // 다시 확인(06 4-1): 행동 기록이 아니라 Idempotency-Key를 보내지 않아요(06 4-0). 200 + 내 정보
+    async acknowledge(items) {
+      const r = await request<MeResponse>("POST", endpoints.agreements, {
+        body: {
+          acknowledgements: items.map(({ kind, textVersion }) => ({
+            kind,
+            textVersion,
+          })),
+        },
+        idempotent: false,
+      })
+      return toAccount(r)
+    },
     // 인증 문자(06 4-1): 서버는 201 + 인증 ID(id)만 줘요. 만료 시각은 받은 때부터 verify.code.ttl(5분)로 계산해요.
     // 가입·인증 문자는 행동 기록을 남기지 않아 Idempotency-Key를 보내지 않아요(06 4-0).
     async requestPhoneCode(phone) {
@@ -330,7 +376,7 @@ export function createHttpAuth({
 /* ── 서버 없이 개발할 때: 브라우저 메모리 계정 저장소 ──
    문자를 실제로 보내지 않으므로 delivered=false를 돌려주고, 화면은 '문자를 보내지 않았어요'를 그대로 알립니다.
    인증번호는 개발자 콘솔에만 남깁니다. 규칙(5분·5회, 이메일·번호 중복, 비밀번호)은 명세와 같게 검사해요. */
-interface LocalAccount extends Account {
+interface LocalAccount extends Omit<Account, "pendingAcknowledgements"> {
   password: string
 }
 export function createLocalAuth(): AuthApi {
@@ -355,17 +401,30 @@ export function createLocalAuth(): AuthApi {
   const fail = (code: string, detail: string, status = 400): never => {
     throw new ApiError({ status, code, detail })
   }
+  // 서버 없이 개발할 때는 문구 판이 바뀌지 않아 다시 확인할 문구가 없어요(가입 판 = 지금 판, ACK_TEXT_VERSIONS)
   const strip = (a: LocalAccount): Account => ({
     id: a.id,
     email: a.email,
     name: a.name,
     phone: a.phone,
+    pendingAcknowledgements: [],
   })
+  const signedIn = () =>
+    current ??
+    fail("LOGIN_REQUIRED", "로그인이 필요해요. 다시 로그인해 주세요.", 401)
   return {
     mode: "mock",
     getToken: () => current?.id,
     // 서버 없이 개발할 때는 토큰이 만료되지 않아요
     onSessionEnd: () => () => undefined,
+    // 서버 없이 개발할 때는 약관 확인 전 막기가 없어요
+    onTermsRequired: () => () => undefined,
+    async reload() {
+      return signedIn()
+    },
+    async acknowledge() {
+      return signedIn()
+    },
     async requestPhoneCode(phone) {
       const n = normalizePhone(phone)
       if (!isMobilePhone(n)) fail("VALIDATION_FAILED", MOBILE_PHONE_MESSAGE)
