@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.chilsuitjo.back.TestcontainersConfiguration;
 import com.chilsuitjo.back.global.error.ErrorCode;
+import com.chilsuitjo.back.notification.service.PhoneHmacs;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -41,6 +42,7 @@ class RoomInviteApiTest {
 
   @Autowired private MockMvc mvc;
   @Autowired private JdbcTemplate jdbc;
+  @Autowired private PhoneHmacs phoneHmacs;
 
   private UUID me;
   private String myPhone;
@@ -204,6 +206,29 @@ class RoomInviteApiTest {
         .andExpect(jsonPath("$.code").value(ErrorCode.SELF_INVITE.name()));
 
     assertNothingSaved(room, counterpart);
+  }
+
+  @Test
+  void 수신_거부한_번호면_PHONE_OPTED_OUT이고_아무것도_남지_않는다() throws Exception {
+    UUID room = room("LIVING", "TENANT");
+    seat(room, "TENANT", me, "CONNECTED", null);
+    UUID counterpart = seat(room, "LANDLORD", null, "NUMBER_ONLY", phone);
+    // 실제 SmsOptOuts(JpaSmsOptOuts)가 읽는 행. 형식만 다른 번호(하이픈)로 보내도 같은 번호로 본다
+    String hmac = phoneHmacs.phoneHmac(phone);
+    jdbc.update("INSERT INTO state.sms_opt_out (phone_hmac, created_at) VALUES (?, now())", hmac);
+    try {
+      invite(room, me, key(), body(dashed(phone), "v1", null))
+          .andExpect(status().isConflict())
+          .andExpect(jsonPath("$.code").value(ErrorCode.PHONE_OPTED_OUT.name()));
+
+      assertNothingSaved(room, counterpart);
+      assertThat(
+              jdbc.queryForObject(
+                  "SELECT invite_phone FROM state.party WHERE id = ?", String.class, counterpart))
+          .isEqualTo(phone);
+    } finally {
+      jdbc.update("DELETE FROM state.sms_opt_out WHERE phone_hmac = ?", hmac);
+    }
   }
 
   @Test

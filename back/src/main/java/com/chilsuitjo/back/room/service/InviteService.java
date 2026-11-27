@@ -35,10 +35,11 @@ import org.springframework.stereotype.Service;
  *
  * <p>오류: 판이 없으면 {@code CONSENT_REQUIRED}, 번호·기록 모양이 틀리면 {@code VALIDATION_FAILED}(여기서 먼저), 당사자가 아니면
  * {@code NOT_FOUND}, 정산 완료·합류 전 기록·공유 중단이면 pipeline 거절, 만든 측이 아니거나 거주 종료이거나 비어 있음·번호만 자리가 아니면
- * {@code INVALID_STATE}, 내 인증 번호면 {@code SELF_INVITE}({@code PartyTransitions}).
+ * {@code INVALID_STATE}, 내 인증 번호면 {@code SELF_INVITE}, 수신 거부 목록에 있는 번호면 {@code
+ * PHONE_OPTED_OUT}({@code PartyTransitions}).
  *
- * <p>아직 하지 않는 것(#163): 수신 거부 번호 거절({@code PHONE_OPTED_OUT}, D의 {@code SmsOptOuts} 뒤), 기록 링크의 확인 요청
- * 열기(D의 메서드 뒤. 그전까지 점검 확인 요청은 점검의 확인 요청 보내기가 연결 전 상대에게 연다).
+ * <p>아직 하지 않는 것(#163): 기록 링크의 확인 요청 열기(#163 D 추천의 D 메서드·inspection 읽기 포트 뒤. 그전까지 점검 확인 요청은 점검의 확인
+ * 요청 보내기가 연결 전 상대에게 연다).
  */
 @Service
 @RequiredArgsConstructor

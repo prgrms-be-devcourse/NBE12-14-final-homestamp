@@ -15,6 +15,7 @@ import com.chilsuitjo.back.notification.dto.SmsNoticeCommand;
 import com.chilsuitjo.back.notification.rule.NoticeKind;
 import com.chilsuitjo.back.notification.service.InviteLinks;
 import com.chilsuitjo.back.notification.service.NoticeOutbox;
+import com.chilsuitjo.back.notification.service.SmsOptOuts;
 import com.chilsuitjo.back.room.entity.Party;
 import com.chilsuitjo.back.room.entity.RoomRecord;
 import com.chilsuitjo.back.room.rule.PartyState;
@@ -40,12 +41,13 @@ public class PartyStateStore {
   private final MemberQueryService members;
   private final InviteLinks inviteLinks;
   private final NoticeOutbox noticeOutbox;
+  private final SmsOptOuts smsOptOuts;
   private final ActionRequestContext requestContext;
 
   /**
    * 초대({@code INVITE})의 저장 방법. 자리를 초대됨으로 바꾸고, 같은 트랜잭션에서 초대 링크를 만들고 초대 문자를 아웃박스에 넣는다(06 ROOM-4c,
-   * #236 {@code InviteLinks}). 수신 거부 확인({@code PHONE_OPTED_OUT})은 아직 없다(#163 1-3, D의 {@code
-   * SmsOptOuts} 뒤).
+   * #236 {@code InviteLinks}). 초대할 번호가 수신 거부 목록에 있는지는 {@code load}에서 {@code SmsOptOuts}로 읽고
+   * 규칙({@code PartyTransitions})이 {@code PHONE_OPTED_OUT}으로 막는다(#163 1-3, #330).
    *
    * @param phone 초대할 번호(정규화된 번호)
    * @param record 기록 링크면 그 기록(지금은 점검만), 호실 초대 화면이면 {@code null}
@@ -113,7 +115,8 @@ public class PartyStateStore {
 
     /**
      * 만든 측인지는 행동하는 회원의 측(pipeline이 잠금에서 채움)과 {@code created_by_side}로 보고, 대상 자리가 그 반대편인지도 함께 본다. 내
-     * 번호인지는 행동하는 회원의 인증 번호와 비교한다(06 ROOM-4a). 인증 번호가 없으면 내 번호가 아니다.
+     * 번호인지는 행동하는 회원의 인증 번호와 비교한다(06 ROOM-4a). 인증 번호가 없으면 내 번호가 아니다. 수신 거부는 호실을 잠근 뒤 같은 트랜잭션에서 읽고,
+     * 조회 실패는 잡지 않고 올린다("거부 없음"으로 바꾸지 않음, {@code SmsOptOuts}). 문자 보내기 직전 다시 확인하는 것은 D 몫이다(#163).
      */
     @Override
     public PartyState load(ActionCommand command) {
@@ -129,7 +132,9 @@ public class PartyStateStore {
           byCreatorSide,
           room.getStatus() == RoomStatus.LIVING,
           selfInvite,
-          null);
+          null,
+          null,
+          smsOptOuts.isOptedOut(phone));
     }
 
     /**
