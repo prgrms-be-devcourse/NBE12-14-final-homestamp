@@ -474,6 +474,38 @@ class InspectionAnswerApiTest {
   }
 
   @Test
+  void 상대가_더한_항목만_있으면_상대가_하자_기록_없음으로_기준_측_요청을_닫는다() throws Exception {
+    // #291 리뷰: 기준 측 항목 0개에 상대만 더한 점검. 상대 자신의 항목은 "하자 기록 없음" 판단에 세지 않는다
+    UUID inspection = created(start());
+    UUID theirs = created(addItemAs(landlord, inspection, "other", "[]"));
+    respond(tenant, theirs, "a1", "ACK", null, 1).andExpect(status().isOk());
+    requestConfirm(inspection);
+    assertThat(confirmRequest(inspection, PartySide.TENANT)).contains(RequestStatus.WAITING);
+
+    detail(landlord, inspection).andExpect(jsonPath("$.availableActions", hasItem("confirm-all")));
+    confirmAll(landlord, inspection, "none", "[]").andExpect(status().isOk());
+    assertThat(confirmRequest(inspection, PartySide.TENANT)).contains(RequestStatus.ANSWERED);
+  }
+
+  @Test
+  void 확인_요청_중_상대가_먼저_더해도_하자_기록_없음을_확인할_수_있다() throws Exception {
+    UUID inspection = created(start());
+    requestConfirm(inspection);
+    UUID theirs = created(addItemAs(landlord, inspection, "other", "[]"));
+    assertThat(confirmRequest(inspection, PartySide.LANDLORD)).contains(RequestStatus.WAITING);
+
+    confirmAll(landlord, inspection, "none", "[]").andExpect(status().isOk());
+    assertThat(confirmRequest(inspection, PartySide.TENANT)).contains(RequestStatus.ANSWERED);
+    // 상대가 더한 쪽 요청은 기준 측이 답할 때까지 남는다
+    assertThat(confirmRequest(inspection, PartySide.LANDLORD)).contains(RequestStatus.WAITING);
+    // 기준 측 항목이 있으면 그대로 "하자 기록 없음"이 아니다(기준 측은 상대 항목에 답해야 한다)
+    confirmAll(tenant, inspection, "tenant-none", "[]")
+        .andExpect(jsonPath("$.code").value("VERSION_CONFLICT"));
+    confirmAll(tenant, inspection, "tenant-all", seen(theirs)).andExpect(status().isOk());
+    assertThat(confirmRequest(inspection, PartySide.LANDLORD)).contains(RequestStatus.ANSWERED);
+  }
+
+  @Test
   void INSP_1e_잠긴_뒤_추가는_표시가_남고_잠금과_보충_제한은_그대로다() throws Exception {
     UUID inspection = requestedWith(1);
     lock(inspection);

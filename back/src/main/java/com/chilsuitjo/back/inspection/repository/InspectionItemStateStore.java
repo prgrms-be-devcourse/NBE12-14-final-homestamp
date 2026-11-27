@@ -175,7 +175,8 @@ public class InspectionItemStateStore {
 
   /**
    * 모두 확인을 판단할 상태. 이 사람에게 보이는 항목 가운데 상대가 더했고 아직 답하지 않은 것(확인 기다림·상대 미확인)이 대상이다. 상세 조회의 {@code
-   * confirm-all} 버튼도 같은 값을 쓴다. "항목이 없는 점검"은 보이는 항목이 아니라 점검의 전체 항목 수로 본다(#272 리뷰).
+   * confirm-all} 버튼도 같은 값을 쓴다. "항목이 없는 점검"은 보이는 항목이 아니라 상대가 더한 항목 전체로 본다(#272·#291 리뷰, {@link
+   * ConfirmAllState#noItems}).
    */
   public ConfirmAllState confirmAll(Inspection row, PartySide actor) {
     return confirmAll(row, actor, sight.of(row, actor));
@@ -196,11 +197,12 @@ public class InspectionItemStateStore {
     boolean confirmedNoItems =
         actions.findByTarget(ActionTarget.inspection(row.getId())).stream()
             .anyMatch(e -> e.type() == ActionType.CONFIRM_ALL && e.actorSide() == actor);
+    int othersItems = (int) all.stream().filter(item -> item.getAddedBySide() != actor).count();
     return new ConfirmAllState(
         row.getStatus(),
         row.getAuthorSide(),
         unanswered,
-        all.size(),
+        othersItems,
         seen.draftHidden(),
         confirmedNoItems);
   }
