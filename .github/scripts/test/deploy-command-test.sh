@@ -31,6 +31,9 @@ echo "끝: result=${FAKE_RESULT:-success} exit=${FAKE_EXIT:-0}"
 exit "${FAKE_EXIT:-0}"
 FAKE
   chmod 0750 /opt/homestamp/deploy/deploy.sh
+  mkdir -p /opt/homestamp/nginx && chmod 0755 /opt/homestamp/nginx
+  printf '#!/bin/bash\nexit 0\n' >/opt/homestamp/nginx/switch-upstream.sh
+  chmod 0750 /opt/homestamp/nginx/switch-upstream.sh
   printf 'IMAGE_REPOSITORY=ghcr.io/example/app\nBLUE_PORT=8081\n' >/opt/homestamp/deploy/deploy.env
   chmod 0640 /opt/homestamp/deploy/deploy.env
   SHA="$(sha256sum /opt/homestamp/deploy/deploy.sh | cut -d' ' -f1)"
@@ -70,6 +73,26 @@ setup; render "$SHA"; chmod 0757 /opt/homestamp/deploy; run "남이 쓸 수 있�
 setup; render "$SHA"; chown 1000 /opt/homestamp/deploy/deploy.env; run "root 아닌 deploy.env" 21 "$D"
 setup; render "$SHA"; mv /opt/homestamp/deploy/deploy.sh /opt/homestamp/real.sh; ln -s /opt/homestamp/real.sh /opt/homestamp/deploy/deploy.sh; run "심볼릭 링크 deploy.sh" 21 "$D"
 setup; render "$SHA"; printf 'BLUE_PORT=8081\n' >/opt/homestamp/deploy/deploy.env; run "IMAGE_REPOSITORY 없음" 2 "$D"
+
+# 전환기(SWITCH_CMD): deploy.sh가 root로 부르는 파일
+env_with() { printf 'IMAGE_REPOSITORY=ghcr.io/example/app\n' >/opt/homestamp/deploy/deploy.env; printf '%s\n' "$@" >>/opt/homestamp/deploy/deploy.env; }
+sw=/opt/homestamp/nginx/switch-upstream.sh
+setup; render "$SHA"; rm "$sw"; run "전환기 없음" 21 "$D"; [[ -e /tmp/ran ]] && bad "실행됨" || ok "실행 안 됨"
+setup; render "$SHA"; mv "$sw" /opt/homestamp/real-switch.sh; ln -s /opt/homestamp/real-switch.sh "$sw"; run "전환기가 링크" 21 "$D"
+setup; render "$SHA"; rm "$sw"; mkdir "$sw"; run "전환기가 폴더" 21 "$D"
+setup; render "$SHA"; chmod 0640 "$sw"; run "전환기 실행 권한 없음" 21 "$D"
+setup; render "$SHA"; chmod 0770 "$sw"; run "전환기 그룹 쓰기" 21 "$D"
+setup; render "$SHA"; chown 1000 "$sw"; run "전환기 root 아닌 소유" 21 "$D"
+setup; render "$SHA"; chmod 0777 /opt/homestamp/nginx; run "전환기 폴더 남 쓰기" 21 "$D"
+setup; render "$SHA"; mv /opt/homestamp/nginx /opt/homestamp/real-nginx; ln -s /opt/homestamp/real-nginx /opt/homestamp/nginx; run "전환기 폴더가 링크" 21 "$D"
+setup; render "$SHA"; chmod 0757 /opt; run "/opt 남 쓰기" 21 "$D"; chmod 0755 /opt
+setup; render "$SHA"; env_with "SWITCH_CMD=/usr/bin/true"; run "SWITCH_CMD가 /opt/homestamp 밖" 21 "$D"
+setup; render "$SHA"; env_with "SWITCH_CMD=/opt/homestamp/nginx/../deploy/deploy.sh"; run "SWITCH_CMD에 .." 21 "$D"
+setup; render "$SHA"; env_with "SWITCH_CMD="; run "SWITCH_CMD가 비어 있음(deploy.sh도 거절)" 2 "$D"
+setup; render "$SHA"; env_with "SWITCH_CMD=/usr/bin/true" "SWITCH_CMD=$sw"; run "마지막 SWITCH_CMD 줄을 씀(deploy.sh와 같음)" 0 "$D"
+setup; render "$SHA"; env_with "SWITCH_CMD=$sw" "SWITCH_CMD=/usr/bin/true"; run "마지막 줄이 밖이면 거절" 21 "$D"
+setup; render "$SHA"; env_with "#SWITCH_CMD=/usr/bin/true"; run "주석 줄은 무시하고 기본값" 0 "$D"
+setup; render "$SHA"; cp "$sw" /opt/homestamp/nginx/other.sh; env_with "SWITCH_CMD=/opt/homestamp/nginx/other.sh"; run "/opt/homestamp 아래 다른 안전한 파일" 0 "$D"
 
 echo "passed=$passed failed=$failed"
 [[ $failed == 0 ]]
