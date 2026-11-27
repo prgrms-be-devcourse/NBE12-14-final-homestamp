@@ -28,7 +28,7 @@ import com.chilsuitjo.back.photo.dto.PhotoTarget;
 import com.chilsuitjo.back.photo.rule.PhotoTargetType;
 import com.chilsuitjo.back.photo.service.PhotoService;
 import com.chilsuitjo.back.repair.dto.RepairCaseSummary;
-import com.chilsuitjo.back.repair.service.RepairQueryService;
+import com.chilsuitjo.back.repair.service.RepairListService;
 import com.chilsuitjo.back.room.service.RoomAccessService;
 import com.chilsuitjo.back.room.service.RoomQueryService;
 import java.time.Clock;
@@ -56,7 +56,7 @@ public class InspectionQueryService {
   private final InspectionItemVersionRepository versions;
   private final RoomGateReader gates;
   private final RoomQueryService rooms;
-  private final RepairQueryService repairs;
+  private final RepairListService repairs;
   private final PhotoService photos;
   private final RoomAccessService access;
   private final InspectionStateStore store;
@@ -126,8 +126,8 @@ public class InspectionQueryService {
 
   /**
    * 퇴거 점검 나란히 보기(06 INSP-3b). 같은 부위의 입주 점검 항목 · 수리 건 · 퇴거 점검 항목을 부위마다 모은다. 각 기록은 그 기록의 상세와 같은 판단으로
-   * 보인다: 입주 항목은 입주 점검 상세의 {@code items}({@link InspectionSight}), 수리 건은 수리 건 상세({@code
-   * RepairQueryService.summaries}), 퇴거 항목은 이 상세의 {@code items}. 입주 점검이 없거나 이 사람이 볼 수 없으면 입주 칸은 비어
+   * 보인다: 입주 항목은 입주 점검 상세의 {@code items}({@link InspectionSight}), 수리 건은 수리 건 목록과 같은 계산({@code
+   * RepairListService.summaries}), 퇴거 항목은 이 상세의 {@code items}. 입주 점검이 없거나 이 사람이 볼 수 없으면 입주 칸은 비어
    * 있다(화면은 "입주 점검에 기록 없음", 03 H).
    *
    * <p>표시는 기록이 있다는 사실만 본다: 입주 항목이 있으면 "입주 기존 하자", 없고 수리 건이 있으면 "거주 중 하자", 퇴거 항목만 있으면 표시하지 않는다(03 원칙
