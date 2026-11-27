@@ -181,6 +181,7 @@ test("서버 점검을 화면 모델로 바꾼다: 상태·작성 측·항목 �
     author: "임대인",
     publication: "requested",
     version: 2,
+    roomPartId: "part-1",
     server: { availableActions: ["respond"], addedAfterLock: false },
   })
   // 화면에 버튼이 없는 행동 이름은 빼요

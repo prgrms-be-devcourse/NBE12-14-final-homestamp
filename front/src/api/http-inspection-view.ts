@@ -143,7 +143,8 @@ export function inspectionFromDetail(b: InspectionDetailBody): {
         : "requested",
     version: i.version.no,
     reaskedAt: reaskedAtOf(i.nextRerequestAt),
-    // 부위 ID(version.roomPartId)는 공통 부위 모델(#356)이 항목의 roomPartId로 채워요
+    // 부위 ID(06 4-7 version.roomPartId). 부위 고치기 창이 지금 부위로 써요(#356)
+    roomPartId: i.version.roomPartId,
     server: {
       availableActions: only(ITEM_ACTIONS, i.availableActions),
       addedAfterLock: i.addedAfterLock,
