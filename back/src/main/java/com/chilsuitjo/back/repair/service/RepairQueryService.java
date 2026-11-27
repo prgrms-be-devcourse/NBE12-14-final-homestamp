@@ -153,7 +153,9 @@ public class RepairQueryService {
         contents
             .findByRepairCaseIdAndNo(row.getId(), shown.contentNo())
             .orElseThrow(() -> new IllegalStateException("보이는 판이 없어요: " + row.getId()));
-    String partName = rooms.findPart(roomRecordId, content.getRoomPartId()).name();
+    // 공유를 그만둔 뒤에는 부위 목록(GET /api/rooms/{id}/parts)과 같게 그 시각의 이름(03 불변식 18, #183)
+    String partName =
+        rooms.findPartAsSeenBy(roomRecordId, content.getRoomPartId(), memberId).name();
     List<String> actions =
         new ArrayList<>(
             rules.available(state, gate.side(), clock.instant()).stream()
@@ -164,7 +166,7 @@ public class RepairQueryService {
     if (gate.side() != null && gate.rejection(ActionType.NOTE_CAUSE).isEmpty()) {
       actions.add(CAUSE_NOTES);
     }
-    List<RepairCaseDetail.Correction> corrections = correctionsOf(row, gate, sight);
+    List<RepairCaseDetail.Correction> corrections = correctionsOf(row, gate, memberId, sight);
     if (corrections.stream()
         .anyMatch(c ->
             c.status() == CorrectionStatus.WAITING && c.availableActions().contains(RESPOND))) {
@@ -209,7 +211,7 @@ public class RepairQueryService {
    * 상대가 탈퇴했으면 중단 동안 탈퇴자가 고친 것만 빼고 응답은 지금 값이다({@link RepairSight}, 상세 Javadoc).
    */
   private List<RepairCaseDetail.Correction> correctionsOf(
-      RepairCase row, RoomGate gate, RepairSight sight) {
+      RepairCase row, RoomGate gate, UUID memberId, RepairSight sight) {
     Instant asOf = sight.asOf();
     PartySide viewer = gate.side();
     boolean closedByBoth =
@@ -235,7 +237,8 @@ public class RepairQueryService {
       String newPartName =
           RepairCorrectable.ROOM_PART_ID.equals(view.field()) && view.newValue() != null
               ? rooms
-                  .findPart(row.getRoomRecordId(), UUID.fromString(view.newValue().toString()))
+                  .findPartAsSeenBy(
+                      row.getRoomRecordId(), UUID.fromString(view.newValue().toString()), memberId)
                   .name()
               : null;
       result.add(
