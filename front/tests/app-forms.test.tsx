@@ -20,6 +20,13 @@ test("하자 등록 창: 홈에서 열고, 사진 없이 보내면 안내하고,
   fireEvent.click(screen.getByRole("button", { name: /하자 등록/ }))
   const dialog = await screen.findByRole("dialog")
   expect(within(dialog).getByText("새 하자 기록")).toBeTruthy()
+  // 부위 목록을 받으면 기본 부위(욕실 · 천장)를 골라 둬요
+  await expect
+    .poll(
+      () =>
+        within(dialog).queryByRole("combobox", { name: "부위" })?.textContent,
+    )
+    .toMatch(/^천장/)
   fireEvent.change(within(dialog).getByLabelText("기록 제목"), {
     target: { value: "천장 물 자국" },
   })

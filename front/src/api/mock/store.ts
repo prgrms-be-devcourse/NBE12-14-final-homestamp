@@ -1,6 +1,7 @@
 import { createDemo, other, uid, type DemoState, type Role } from "@/data/demo"
 import { canAccessRoom } from "@/lib/workflows"
 import type { ActionOptions } from "../records"
+import { copyDefaultParts } from "@/lib/room-parts"
 
 // Mock 저장소: API가 연결되기 전까지 브라우저 메모리에 기록을 둡니다(새로고침하면 초기화).
 // 화면 하나(App 마운트)마다 저장소 하나라서, 테스트끼리 상태가 섞이지 않아요.
@@ -10,8 +11,16 @@ export interface MockStore {
   setState: (next: DemoState | ((d: DemoState) => DemoState)) => void
   subscribe: (l: Listener) => () => void
 }
+// 호실의 부위 목록(없으면 기본 목록을 복사해 둬요, ROOM-1a). 서버처럼 호실마다 새 부위 ID예요
+export function ensureRoomParts(d: DemoState, roomId: string) {
+  d.roomParts = { ...d.roomParts }
+  d.roomParts[roomId] ??= copyDefaultParts()
+  return d.roomParts[roomId]
+}
 export function createMockStore(seed: () => DemoState = createDemo): MockStore {
   let state = seed()
+  // 시작 데이터의 호실도 서버처럼 만들 때 부위가 복사된 것으로 둬요
+  state.rooms.forEach((r) => ensureRoomParts(state, r.id))
   const listeners = new Set<Listener>()
   return {
     getState: () => state,
