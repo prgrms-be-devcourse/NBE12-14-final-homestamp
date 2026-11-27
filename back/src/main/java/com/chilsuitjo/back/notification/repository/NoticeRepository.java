@@ -2,6 +2,7 @@ package com.chilsuitjo.back.notification.repository;
 
 import com.chilsuitjo.back.notification.entity.Notice;
 import com.chilsuitjo.back.notification.rule.NoticeChannel;
+import com.chilsuitjo.back.notification.rule.NoticeKind;
 import jakarta.persistence.LockModeType;
 import java.time.Instant;
 import java.util.Collection;
@@ -19,6 +20,22 @@ public interface NoticeRepository extends JpaRepository<Notice, UUID> {
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("SELECT n FROM Notice n WHERE n.id = :id")
   Optional<Notice> findForUpdate(@Param("id") UUID id);
+
+  /**
+   * 이 호실의 응답 요청들에 걸린 통지 중 종류가 {@code kinds}인 것(만든 순서, 같으면 ID). 호실도 함께 걸러 다른 호실의 통지는 들어가지 않는다. 잠그지
+   * 않는다(읽기 전용 조회).
+   */
+  @Query(
+      """
+      SELECT n FROM Notice n
+      WHERE n.roomRecordId = :roomRecordId AND n.responseRequestId IN :requestIds
+        AND n.kind IN :kinds
+      ORDER BY n.createdAt, n.id
+      """)
+  List<Notice> findForRequests(
+      @Param("roomRecordId") UUID roomRecordId,
+      @Param("requestIds") Collection<UUID> requestIds,
+      @Param("kinds") Collection<NoticeKind> kinds);
 
   /**
    * 전달 결과 조회를 시작할 통지 여러 건을 ID 순서로 잠근다. 여러 통지를 잠그는 다른 곳({@link #lockByLinks}, 문자 취소)과 같은 순서라 서로 상대가
