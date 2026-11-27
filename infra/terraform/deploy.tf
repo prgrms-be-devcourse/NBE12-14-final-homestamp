@@ -43,7 +43,7 @@ resource "aws_ssm_document" "deploy" {
         StringEquals = ["platformType", "Linux"]
       }
       inputs = {
-        # deploy.sh 상한: --migrate 900 + --apply-grants 300 + 헬스 120 = 1320초에 이미지 받기·멈춤·전환·되돌리기를 더한 여유(#205)
+        # deploy.sh 기본 설정 최장 약 1490초(런북 배포-자동화.md "시간 제한") + 이미지 받기 여유. 설정을 바꾸면 함께 본다
         timeoutSeconds = "2400"
         runCommand     = split("\n", trimspace(templatefile("${path.module}/ssm/deploy-command.sh.tftpl", { expected_sha256 = var.deploy_script_sha256 })))
       }
