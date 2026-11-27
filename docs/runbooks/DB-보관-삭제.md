@@ -67,8 +67,8 @@ psql -X -v ON_ERROR_STOP=1 \
 | 단계 | 실행 주체 | 방식 | 상태 |
 |---|---|---|---|
 | 1. Role Bootstrap | 신뢰된 DB 관리자(Migration 계정 아님) | `psql`로 `bootstrap_roles.sql` | 최초 한 번, 역할이 바뀔 때 |
-| 2. Migration | Migration 로그인 → `SET ROLE` Owner | 앱 이미지 `--migrate`(Flyway) | #173 Draft |
-| 3. GRANT | Migration 로그인 → `SET LOCAL ROLE` Owner | 앱 이미지 `--apply-grants`(JDBC 리소스 `db/grants/grants.sql`, 아래 "실행 방식") | 구현(#173, 로컬 PostgreSQL 18.6·UID 10002 CLI 검증). 운영 실행 전 |
+| 2. Migration | Migration 로그인 → `SET ROLE` Owner | 앱 이미지 `--migrate`(Flyway) | 구현(#173 병합) |
+| 3. GRANT | Migration 로그인 → `SET LOCAL ROLE` Owner | 앱 이미지 `--apply-grants`(JDBC 리소스 `db/grants/grants.sql`, 아래 "실행 방식") | 구현(#299, 로컬 PostgreSQL 18.6·UID 10002 CLI 검증). 운영 실행 전 |
 | 4. Green 시작 | 배포 스크립트 | 2·3이 모두 종료 코드 0일 때만 | 배포 스크립트 미구현 |
 
 Bootstrap의 `psql` 실행과 GRANT의 JDBC 실행은 다른 절차다. GRANT를 `psql`로 실행하지 않는다(`psql` 변수와 메타 명령을 쓰지 않는 SQL이고, 잠금·`set_config`를 실행기가 같은 트랜잭션에서 준비해야 한다).
