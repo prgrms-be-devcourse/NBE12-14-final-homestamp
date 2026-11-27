@@ -1,5 +1,6 @@
 package com.chilsuitjo.back.link.repository;
 
+import com.chilsuitjo.back.global.common.LinkInvalidReason;
 import com.chilsuitjo.back.link.entity.Link;
 import com.chilsuitjo.back.link.rule.LinkKind;
 import jakarta.persistence.LockModeType;
@@ -19,6 +20,8 @@ public interface LinkRepository extends JpaRepository<Link, UUID> {
   Optional<Link> findByTokenHash(String tokenHash);
 
   boolean existsByIdAndKindAndInvalidatedAtIsNotNull(UUID id, LinkKind kind);
+
+  boolean existsByIdAndKindAndInvalidatedReason(UUID id, LinkKind kind, LinkInvalidReason reason);
 
   @Query("select l.roomRecordId from Link l where l.id = :id")
   Optional<UUID> findRoomRecordIdById(@Param("id") UUID id);

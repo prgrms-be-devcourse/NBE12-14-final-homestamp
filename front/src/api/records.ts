@@ -1,4 +1,4 @@
-import type { DemoState, RecordTarget, Role } from "@/data/demo"
+import type { DemoState, RecordTarget, Role, Room } from "@/data/demo"
 import type { Session } from "./types"
 
 // 호실 기록 API: 화면이 읽는 기록과, 기록을 바꾸는 요청이 모두 이곳을 지나요.
@@ -65,9 +65,14 @@ export const noRequest = (why: string): NoRequest => ({ none: why })
 // 요청 본문의 호실 쪽 값(06 4-3 side, 05 party.side). 화면의 임차인·임대인을 서버 값으로 바꿔요
 export const roomSide = (r: Role): "TENANT" | "LANDLORD" =>
   r === "임차인" ? "TENANT" : "LANDLORD"
-// 지금 화면 모델에는 점검·정산의 서버 ID가 없어, 서버가 ID를 주기 전까지 호실 ID로 대신해요.
+// 목업에는 점검·정산의 서버 ID가 없어 호실 ID로 대신해요(목업은 주소로 보내지 않아요).
+// 아직 서버에 연결하지 않은 점검 행동(항목 더하기·부위 사진, #356)도 이 자리표를 써요.
 export const inspectionIdOf = (roomId: string, kind: "in" | "out") =>
   `${roomId}:${kind}`
+// 점검 주소에 쓸 ID. 서버에서 받은 점검이면 서버 점검 ID(06 4-7, #357), 목업이면 자리표예요.
+export const inspectionIdIn = (room: Room, kind: "in" | "out") =>
+  (kind === "in" ? room.moveIn : room.moveOut)?.server?.id ??
+  inspectionIdOf(room.id, kind)
 export const settlementIdOf = (roomId: string) => roomId
 // 사진도 화면 모델에서는 기록 안의 자리(b:0, a:기록:0)로만 알아서, 서버의 사진 ID가 생기기 전까지 이것으로 대신해요.
 export const photoIdOf = (recordId: string, key: string) => `${recordId}:${key}`

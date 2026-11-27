@@ -11,7 +11,6 @@ import {
 } from "@/components/ui/dialog"
 import { Panel } from "@/components/common/blocks"
 import {
-  partGroups,
   type Role,
   type Repair,
   type DemoState,
@@ -44,7 +43,7 @@ import { repairStub } from "@/api/http-repair-view"
 import { errorMessage } from "@/api/errors"
 import { createApi } from "@/api/create-api"
 import {
-  inspectionIdOf,
+  inspectionIdIn,
   noRequest,
   notInSpec,
   post,
@@ -230,7 +229,7 @@ export default function App() {
       />
     )
   return (
-    <ApiProvider api={api}>
+    <ApiProvider api={api} accountId={account?.id}>
       <HomeStampApp
         key={account?.id ?? "guest"}
         account={account}
@@ -713,7 +712,7 @@ function HomeStampApp({
     commit(
       post(
         endpoints.inspectionAction(
-          inspectionIdOf(roomId, sessKind),
+          inspectionIdIn(room, sessKind),
           "request-confirm",
         ),
       ),
@@ -741,13 +740,12 @@ function HomeStampApp({
   }
   // 같은 곳 재발: 이전 수리 건과 그 부위로 하자 등록 창을 열어요
   function recur(prev: Repair) {
-    const [z, p] = prev.zone.split(" · ")
     open("repair")
     setRepairPrefill({
       recurrenceOf: prev.id,
       recurrenceTitle: prev.title,
-      zone: partGroups[z] ? z : "기타",
-      part: p || "기타",
+      roomPartId: prev.roomPartId,
+      zone: prev.zone,
     })
   }
   function patchRepair(

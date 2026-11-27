@@ -1,4 +1,5 @@
 import {
+  inspectionIdIn,
   inspectionIdOf,
   notInSpec,
   photoIdOf,
@@ -11,7 +12,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { Choice, Status } from "@/components/common/blocks"
+import { Status } from "@/components/common/blocks"
 import { WaitStatus } from "@/components/common/wait-status"
 import { ActionDialog } from "@/components/common/action-dialog"
 import {
@@ -20,7 +21,6 @@ import {
   CorrectionRow,
 } from "@/components/common/correction-box"
 import {
-  partGroups,
   type DemoState,
   type FactCorrection,
   type Inspection,
@@ -63,6 +63,9 @@ import {
   Pencil,
 } from "lucide-react"
 import { MoreMenu } from "@/components/common/more-menu"
+import { PartField } from "@/components/common/part-field"
+import { ZONE_PART_ERROR } from "@/lib/record-commands"
+import { partLabel, splitPartLabel, type RoomPart } from "@/lib/room-parts"
 
 export type OnInspectionAct = (
   request: RecordRequest,
@@ -78,63 +81,6 @@ function check(db: DemoState, update: (d: DemoState) => void) {
   } catch (e) {
     return e instanceof Error ? e.message : "처리할 수 없어요."
   }
-}
-
-function PartPicker({
-  zone,
-  part,
-  setZone,
-  setPart,
-}: {
-  zone: string
-  part: string
-  setZone: (v: string) => void
-  setPart: (v: string) => void
-}) {
-  return (
-    <>
-      <div className="form-grid">
-        <div className="field">
-          <label>구역</label>
-          <Choice
-            label="구역"
-            value={zone}
-            values={Object.keys(partGroups)}
-            onChange={(v) => {
-              setZone(v)
-              setPart(partGroups[v][0])
-            }}
-          />
-        </div>
-        <div className="field">
-          <label>부위</label>
-          <Choice
-            label="부위"
-            value={part}
-            values={Array.from(new Set([...(partGroups[zone] || []), "기타"]))}
-            onChange={setPart}
-          />
-        </div>
-      </div>
-      {zone === "기타" && (
-        <div className="field">
-          <label htmlFor="ic-zone">구역 이름</label>
-          <Input id="ic-zone" name="customZone" />
-        </div>
-      )}
-      {part === "기타" && (
-        <div className="field">
-          <label htmlFor="ic-part">부위 이름</label>
-          <Input id="ic-part" name="customPart" />
-        </div>
-      )}
-    </>
-  )
-}
-const pickedZone = (f: FormData, zone: string, part: string) => {
-  const z = zone === "기타" ? String(f.get("customZone") || "").trim() : zone
-  const p = part === "기타" ? String(f.get("customPart") || "").trim() : part
-  return z && p ? `${z} · ${p}` : ""
 }
 
 // 점검 항목 카드 안의 고치기(도장 전이면 바로, 도장 뒤에는 상대 확인)와 사진 추가, 빠진 하자 추가 응답
@@ -167,8 +113,10 @@ export function InspectionItemCorrections({
   ) => readonly CorrectionAction[]
 }) {
   const [mode, setMode] = useState<"edit" | "photos" | null>(null)
-  const [zone, setZone] = useState("욕실")
-  const [part, setPart] = useState("천장")
+  // 고치기 창의 부위: 기다리는 부위 고치기가 있으면 그 부위, 없으면 지금 부위(roomPartId, 06 4-7)
+  // pick은 부위 칸이 넘긴 부위예요. 처음 부위 start는 부위 칸이 고를 수 있는지 본 뒤에 넘겨요(#402)
+  const [start, setStart] = useState({ id: "", label: "" })
+  const [pick, setPick] = useState<RoomPart>()
   const [photos, setPhotos] = useState<string[]>([])
   const [error, setError] = useState("")
   const run = (
@@ -321,11 +269,19 @@ export function InspectionItemCorrections({
                   label: "고치기",
                   icon: Pencil,
                   onSelect: () => {
-                    const [z, p] = String(
-                      pendingValue(i.corrections, "부위") ?? i.zone,
-                    ).split(" · ")
-                    setZone(partGroups[z] ? z : "기타")
-                    setPart(p || "기타")
+                    const pending = i.corrections?.find(
+                      (c) => c.status === "확인 대기" && c.field === "부위",
+                    )
+                    const id = pending
+                      ? (pending.toPartId ?? "")
+                      : (i.roomPartId ?? "")
+                    setStart({
+                      id,
+                      label: String(
+                        pendingValue(i.corrections, "부위") ?? i.zone,
+                      ),
+                    })
+                    setPick(undefined)
                     setError("")
                     setMode("edit")
                   },
@@ -464,12 +420,12 @@ export function InspectionItemCorrections({
         submitLabel={direct ? "고치기" : "확인 요청"}
         onClose={() => setMode(null)}
         onSubmit={(f) => {
-          const to = pickedZone(f, zone, part)
-          if (!to) return "구역과 부위를 입력해 주세요."
+          if (!pick) return ZONE_PART_ERROR
           const next = {
             title: String(f.get("title") || ""),
             description: String(f.get("text") || ""),
-            zone: to,
+            zone: partLabel(pick),
+            roomPartId: pick.id,
           }
           return run(
             post(endpoints.corrections, {
@@ -517,11 +473,15 @@ export function InspectionItemCorrections({
             required
           />
         </div>
-        <PartPicker
-          zone={zone}
-          part={part}
-          setZone={setZone}
-          setPart={setPart}
+        <PartField
+          key={start.id + start.label}
+          roomId={i.roomId}
+          value={pick?.id ?? ""}
+          onChange={setPick}
+          defaultPart={{
+            ...splitPartLabel(start.label),
+            id: start.id || undefined,
+          }}
         />
         {!draft && (
           <div className="field">
@@ -606,8 +566,7 @@ export function MissingDefectDialog({
   onClose: () => void
   onAct: OnInspectionAct
 }) {
-  const [zone, setZone] = useState("욕실")
-  const [part, setPart] = useState("천장")
+  const [part, setPart] = useState<RoomPart>()
   const [photos, setPhotos] = useState<string[]>([])
   const [error, setError] = useState("")
   return (
@@ -622,10 +581,10 @@ export function MissingDefectDialog({
         onClose()
       }}
       onSubmit={(f) => {
-        const z = pickedZone(f, zone, part)
-        if (!z) return "구역과 부위를 입력해 주세요."
+        if (!part) return ZONE_PART_ERROR
         const data = {
-          zone: z,
+          roomPartId: part.id,
+          zone: partLabel(part),
           title: String(f.get("title") || ""),
           description: String(f.get("description") || ""),
           photos: [...photos],
@@ -655,7 +614,12 @@ export function MissingDefectDialog({
         setPhotos([])
       }}
     >
-      <PartPicker zone={zone} part={part} setZone={setZone} setPart={setPart} />
+      <PartField
+        roomId={room.id}
+        value={part?.id ?? ""}
+        onChange={setPart}
+        defaultPart={{ zone: "욕실", name: "천장" }}
+      />
       <div className="field">
         <label htmlFor="im-title">하자 제목</label>
         <Input id="im-title" name="title" maxLength={80} required />
@@ -701,11 +665,13 @@ export function MissingDefectDialog({
 
 // 남은 항목 모두 확인(확인 창 → 항목마다 확인 행동)
 export function ConfirmAllItems({
+  room,
   items,
   db,
   role,
   onAct,
 }: {
+  room: Room
   items: Inspection[]
   db: DemoState
   role: Role
@@ -735,10 +701,13 @@ export function ConfirmAllItems({
           onAct(
             post(
               endpoints.inspectionAction(
-                inspectionIdOf(items[0].roomId, items[0].kind),
+                inspectionIdIn(room, items[0].kind),
                 "confirm-all",
               ),
-              { seen },
+              // 06 4-7: 화면이 본 미응답 항목과 판 번호(지금 서버의 미응답 항목과 다르면 VERSION_CONFLICT)
+              {
+                items: ids.map((id) => ({ id, seenVersionNo: seen[id] ?? 1 })),
+              },
             ),
             `남은 점검 항목 모두 확인 · ${ids.length}개`,
             update,

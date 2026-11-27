@@ -24,6 +24,13 @@ public class FakeInviteLinks implements InviteLinks {
   }
 
   @Override
+  public boolean isReinvited(UUID linkId) {
+    return issued.stream()
+        .anyMatch(
+            link -> link.id.equals(linkId) && link.invalidReason == LinkInvalidReason.REINVITED);
+  }
+
+  @Override
   public UUID issueInvite(
       UUID roomRecordId, UUID recipientPartyId, RequestTarget record, UUID issuedByMemberId) {
     Objects.requireNonNull(roomRecordId, "roomRecordId");

@@ -2,6 +2,8 @@ package com.chilsuitjo.back.notification.repository;
 
 import com.chilsuitjo.back.notification.entity.Notice;
 import com.chilsuitjo.back.notification.rule.NoticeChannel;
+import com.chilsuitjo.back.notification.rule.NoticeKind;
+import com.chilsuitjo.back.notification.rule.NoticeStatus;
 import jakarta.persistence.LockModeType;
 import java.time.Instant;
 import java.util.Collection;
@@ -23,6 +25,22 @@ public interface NoticeRepository extends JpaRepository<Notice, UUID> {
   /** 응답 요청에 걸린 통지의 호실. 잠그기 전에 읽어 호실을 먼저 잠그려고 쓴다(호실 → 통지 → 요청, 09 3장 "잠금"). 칸은 만든 뒤 바뀌지 않는다. */
   @Query("SELECT n.roomRecordId FROM Notice n WHERE n.id = :id AND n.responseRequestId IS NOT NULL")
   Optional<UUID> findRequestRoomId(@Param("id") UUID id);
+
+  /**
+   * 이 호실의 응답 요청들에 걸린 통지 중 종류가 {@code kinds}인 것(만든 순서, 같으면 ID). 호실도 함께 걸러 다른 호실의 통지는 들어가지 않는다. 잠그지
+   * 않는다(읽기 전용 조회).
+   */
+  @Query(
+      """
+      SELECT n FROM Notice n
+      WHERE n.roomRecordId = :roomRecordId AND n.responseRequestId IN :requestIds
+        AND n.kind IN :kinds
+      ORDER BY n.createdAt, n.id
+      """)
+  List<Notice> findForRequests(
+      @Param("roomRecordId") UUID roomRecordId,
+      @Param("requestIds") Collection<UUID> requestIds,
+      @Param("kinds") Collection<NoticeKind> kinds);
 
   /**
    * 전달 결과 조회를 시작할 통지 여러 건을 ID 순서로 잠근다. 여러 통지를 잠그는 다른 곳({@link #lockByLinks}, 문자 취소)과 같은 순서라 서로 상대가
@@ -74,4 +92,15 @@ public interface NoticeRepository extends JpaRepository<Notice, UUID> {
       @Param("roomRecordId") UUID roomRecordId,
       @Param("linkIds") Collection<UUID> linkIds,
       @Param("channel") NoticeChannel channel);
+
+  /**
+   * 이 요청에 걸린 통지 중 상태가 {@code statuses}인 것의 링크 ID(아직 닿지 않은 통지가 쓸 수 있는 문자인지 볼 때). 링크가 없는 통지는 {@code
+   * null}로 들어간다.
+   */
+  @Query(
+      "select n.linkId from Notice n where n.responseRequestId = :requestId"
+          + " and n.status in :statuses")
+  List<UUID> findLinkIdsByRequestAndStatusIn(
+      @Param("requestId") UUID responseRequestId,
+      @Param("statuses") Collection<NoticeStatus> statuses);
 }

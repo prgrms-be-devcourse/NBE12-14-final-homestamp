@@ -133,6 +133,21 @@ class ResponseRequestLookupImpl implements ResponseRequestLookup {
   }
 
   @Override
+  public List<ResponseRequest> findRequestedBy(UUID roomRecordId, PartySide requestedBySide) {
+    return entityManager
+        .createQuery(
+            """
+            select r from ResponseRequest r
+            where r.roomRecordId = :roomRecordId and r.requestedBySide = :side
+            order by r.createdAt, r.id
+            """,
+            ResponseRequest.class)
+        .setParameter("roomRecordId", Objects.requireNonNull(roomRecordId))
+        .setParameter("side", Objects.requireNonNull(requestedBySide))
+        .getResultList();
+  }
+
+  @Override
   public List<ResponseRequest> findInRoom(
       UUID roomRecordId, Set<RequestKind> kinds, Set<RequestStatus> statuses) {
     if (kinds.isEmpty() || statuses.isEmpty()) {
