@@ -1,6 +1,11 @@
 import type { RecordRequest } from "@/api/records"
 import { useRef, type ReactNode } from "react"
-import { ClipboardCheck, MessageSquareText, ShieldCheck } from "lucide-react"
+import {
+  ClipboardCheck,
+  MessageSquareText,
+  ShieldCheck,
+  StickyNote,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Empty, Status, Timeline } from "@/components/common/blocks"
 import { Fold } from "@/components/common/fold"
@@ -45,6 +50,7 @@ import {
 } from "@/features/repair/repair-records"
 import { CostAgreement } from "@/features/proposal/repair-discussions"
 import { CauseNotes } from "@/features/repair/cause-notes"
+import { ProgressNotes } from "@/features/repair/progress-notes"
 import { RepairPayments } from "@/features/payment/repair-payments"
 import { afterMasks, beforeMasks, type maskOf } from "@/lib/photo-privacy"
 import { safeSharedText } from "@/lib/service-rules"
@@ -142,10 +148,12 @@ export function RepairDetailPage({
     if (!e) onNotify("기록했어요.")
     return e
   }
-  // 서버 경과에서 원인 설명·고친 내용 응답은 그 기록이 대상이라(06 4장 timeline target) 이 수리 건의 ID로 찾아 붙여요(#359)
+  // 서버 경과에서 원인 설명·고친 내용·진행 상황(바뀐 상황 응답 RESPOND_SITUATION) 응답은 그 기록이 대상이라
+  // (06 4장 timeline target) 이 수리 건의 ID로 찾아 붙여요(#359, #379 리뷰)
   const ownRefs = new Set([
     ...(r.causes || []).map((c) => c.id),
     ...(r.corrections || []).map((c) => c.id),
+    ...(r.progressNotes || []).map((n) => n.id),
   ])
   const evs = db.events.filter(
     (e) =>
@@ -393,6 +401,24 @@ export function RepairDetailPage({
               repair={r}
               role={role}
               readOnly={!has("cause-notes")}
+              onCommand={command}
+            />
+          </Fold>
+        ) : undefined
+      }
+      progress={
+        !isGuest ? (
+          <Fold
+            title="진행 상황"
+            count={r.progressNotes?.length ?? 0}
+            icon={<StickyNote size={16} />}
+            className="mt-0 rounded-[18px] shadow-[0_1px_2px_#1720330a]"
+          >
+            <ProgressNotes
+              repair={r}
+              role={role}
+              canNote={has("progress-notes")}
+              canAsk={has("ask-progress")}
               onCommand={command}
             />
           </Fold>

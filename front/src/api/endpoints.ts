@@ -59,6 +59,8 @@ export const endpoints = {
   repairCase: (cid: string) => `/api/repair-cases/${id(cid)}`,
   // 원인 설명 응답(06 4장 POST /api/cause-notes/{id}/respond)
   causeNoteRespond: (nid: string) => `/api/cause-notes/${id(nid)}/respond`,
+  progressNoteRespond: (nid: string) =>
+    `/api/progress-notes/${id(nid)}/respond`,
   repairAction: (
     cid: string,
     // 06 4장 수리 건 행동(하자 응답은 /respond 하나: ACK·NEED_MORE·DISPUTE)

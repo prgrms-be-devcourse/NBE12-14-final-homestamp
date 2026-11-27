@@ -58,6 +58,26 @@ export interface CauseClaim {
   // 서버가 이 설명에 지금 응답할 수 있다고 했는지(06 4-6 causeNotes[].canRespond). 목업은 비워 둬요
   canRespond?: boolean
 }
+// 진행 상황(REP-6, 08 5-2). 원래 하자 기록은 그대로 두고 지금 상황을 더해요. 고칠 수 없어요
+export interface ProgressNote {
+  id: string
+  by: Role
+  text: string
+  // [상황이 바뀌었어요]를 켜서 상대에게 확인을 요청했는지(REP-6d)
+  asksCheck: boolean
+  at: string
+  // 진행 상황 사진(단계 PROGRESS). 화면은 썸네일 주소나 정해진 표시예요
+  photos: string[]
+  // 상대의 지금 답. [상황이 바뀌었어요]가 아니거나 답 전이면 없어요
+  response?: {
+    by: Role
+    answer: "맞아요" | "보류" | "이견"
+    reason: string
+    at: string
+  }
+  // 보는 사람이 지금 답할 수 있는지(서버 canRespond)
+  canRespond?: boolean
+}
 export interface AfterRecord {
   id: string
   title: string
@@ -223,6 +243,9 @@ export interface Repair {
   proposal?: Proposal
   proposalHistory?: Proposal[]
   causes?: CauseClaim[]
+  progressNotes?: ProgressNote[]
+  // 마지막으로 진행 상황을 물은 시각(목업만, 7일에 한 번)
+  progressAskedAt?: string
   afterRecords?: AfterRecord[]
   closeBy?: Role
   soloClosed?: Role
