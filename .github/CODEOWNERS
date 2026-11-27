@@ -20,6 +20,7 @@
 /back/src/*/java/com/chilsuitjo/back/repair/          @yoo-sihun
 /back/src/*/java/com/chilsuitjo/back/correction/      @yoo-sihun
 /back/src/*/java/com/chilsuitjo/back/download/        @yoo-sihun
+/back/src/*/java/com/chilsuitjo/back/timeline/        @yoo-sihun
 
 # C: 돈과 증빙
 /back/src/*/java/com/chilsuitjo/back/proposal/        @jinni1
