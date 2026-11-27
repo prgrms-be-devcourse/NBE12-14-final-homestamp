@@ -11,6 +11,7 @@ import com.chilsuitjo.back.notification.rule.DeliveryPollSchedule;
 import com.chilsuitjo.back.notification.rule.NoticeKind;
 import com.chilsuitjo.back.notification.service.DeliveryPollClaimer;
 import com.chilsuitjo.back.notification.service.DeliveryResultPoller;
+import com.chilsuitjo.back.notification.service.FakeSmsOptOuts;
 import com.chilsuitjo.back.notification.service.InMemoryRecipientDirectory;
 import com.chilsuitjo.back.notification.service.InviteLinks;
 import com.chilsuitjo.back.notification.service.NoticeOutbox;
@@ -163,6 +164,7 @@ class DeliveryCheckDueSettingChangeTest {
             notices,
             inviteLinks,
             recipients,
+            new FakeSmsOptOuts(),
             gateway,
             clock,
             transactionManager,
