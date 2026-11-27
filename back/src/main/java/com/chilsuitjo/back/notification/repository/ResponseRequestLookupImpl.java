@@ -133,6 +133,26 @@ class ResponseRequestLookupImpl implements ResponseRequestLookup {
   }
 
   @Override
+  public List<ResponseRequest> findInRoom(
+      UUID roomRecordId, Set<RequestKind> kinds, Set<RequestStatus> statuses) {
+    if (kinds.isEmpty() || statuses.isEmpty()) {
+      throw new IllegalArgumentException("종류와 상태는 비울 수 없어요");
+    }
+    return entityManager
+        .createQuery(
+            """
+            select r from ResponseRequest r
+            where r.roomRecordId = :roomRecordId and r.kind in :kinds and r.status in :statuses
+            order by r.createdAt, r.id
+            """,
+            ResponseRequest.class)
+        .setParameter("roomRecordId", Objects.requireNonNull(roomRecordId))
+        .setParameter("kinds", kinds)
+        .setParameter("statuses", statuses)
+        .getResultList();
+  }
+
+  @Override
   public Optional<ResponseRequest> findLatest(RequestKind kind, RequestTarget target) {
     if (kind == RequestKind.INSPECTION_CONFIRM) {
       throw new IllegalArgumentException("점검 확인은 방향이 둘이라 가장 최근 하나가 정해지지 않아요");
