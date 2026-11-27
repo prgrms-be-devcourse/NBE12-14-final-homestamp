@@ -22,7 +22,9 @@ import com.chilsuitjo.back.notification.service.WaitService;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.time.Instant;
+import java.util.EnumSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
@@ -236,13 +238,46 @@ class JpaWaitServiceTest extends SchemaTestSupport {
   }
 
   @Test
-  void 일괄_닫기는_범위가_정해지기_전이라_조용히_넘어가지_않는다() {
+  void 정하지_않은_범위의_호실_전체_닫기는_조용히_넘기지_않고_예외다() {
     UUID room = room();
 
-    assertThatThrownBy(() ->
-            waits.closeAll(
-                room, ClosedReason.ROOM_ENDED, java.util.Set.of(RequestKind.DEFECT_CONFIRM)))
+    assertThatThrownBy(
+            () -> closeAll(room, ClosedReason.SHARING_STOPPED, Set.of(RequestKind.DEFECT_CONFIRM)))
         .isInstanceOf(UnsupportedOperationException.class);
+    assertThatThrownBy(
+            () -> closeAll(room, ClosedReason.ROOM_ENDED, Set.of(RequestKind.CLOSE_CONFIRM)))
+        .isInstanceOf(UnsupportedOperationException.class);
+    assertThatThrownBy(() ->
+            closeAll(room, ClosedReason.COUNTERPART_WITHDRAWN, Set.of(RequestKind.DEFECT_CONFIRM)))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void 탈퇴는_그_호실의_열린_요청을_양방향_모두_닫는다() {
+    UUID room = room();
+    UUID otherRoom = room();
+    RequestHandle mine = open(room, RequestKind.DEFECT_CONFIRM, repairCase(room), PartySide.TENANT);
+    RequestHandle theirs =
+        open(room, RequestKind.CLOSE_CONFIRM, repairCase(room), PartySide.LANDLORD);
+    setStatus(theirs.requestId(), "UNCONFIRMED");
+    RequestHandle answered =
+        open(room, RequestKind.DEFECT_CONFIRM, repairCase(room), PartySide.LANDLORD);
+    setStatus(answered.requestId(), "ANSWERED");
+    RequestHandle elsewhere =
+        open(otherRoom, RequestKind.DEFECT_CONFIRM, repairCase(otherRoom), PartySide.TENANT);
+
+    int closed =
+        closeAll(room, ClosedReason.COUNTERPART_WITHDRAWN, EnumSet.allOf(RequestKind.class));
+
+    assertThat(closed).isEqualTo(2);
+    assertThat(row(mine.requestId()))
+        .containsEntry("status", "CLOSED")
+        .containsEntry("closed_reason", "COUNTERPART_WITHDRAWN");
+    assertThat(((java.sql.Timestamp) row(mine.requestId()).get("closed_at")).toInstant())
+        .isEqualTo(LATER);
+    assertThat(status(theirs)).isEqualTo("CLOSED");
+    assertThat(status(answered)).isEqualTo("ANSWERED");
+    assertThat(status(elsewhere)).isEqualTo("WAITING");
   }
 
   @Test
@@ -322,6 +357,10 @@ class JpaWaitServiceTest extends SchemaTestSupport {
           waits.withdrawn(target, RequestKind.CORRECTION_CONFIRM, side);
           return null;
         });
+  }
+
+  private int closeAll(UUID room, ClosedReason reason, Set<RequestKind> kinds) {
+    return at(LATER, () -> waits.closeAll(room, reason, kinds));
   }
 
   private <T> T at(Instant at, Supplier<T> work) {

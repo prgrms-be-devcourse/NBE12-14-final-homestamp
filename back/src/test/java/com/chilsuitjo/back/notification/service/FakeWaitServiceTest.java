@@ -21,6 +21,7 @@ import com.chilsuitjo.back.notification.rule.RequestStatus;
 import com.chilsuitjo.back.notification.rule.RoomPhase;
 import com.chilsuitjo.back.notification.rule.SoloReason;
 import java.time.Clock;
+import java.util.EnumSet;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -397,25 +398,24 @@ class FakeWaitServiceTest {
   }
 
   @Test
-  void 호실의_열린_요청_중_고른_종류만_한꺼번에_닫는다() {
+  void 탈퇴는_호실의_열린_요청을_모두_닫고_정하지_않은_이유는_운영과_같이_예외다() {
     RequestTarget progressNote = RequestTarget.of(TargetKind.PROGRESS_NOTE, UUID.randomUUID());
     waits.open(defectConfirm());
     waits.open(
         new OpenRequestCommand(
             roomRecordId, RequestKind.SITUATION_CHECK, progressNote, PartySide.TENANT));
-    waits.open(
-        new OpenRequestCommand(
-            roomRecordId, RequestKind.CORRECTION_CONFIRM, repairCase, PartySide.TENANT));
 
+    assertThatThrownBy(() ->
+            waits.closeAll(
+                roomRecordId, ClosedReason.ROOM_ENDED, Set.of(RequestKind.DEFECT_CONFIRM)))
+        .isInstanceOf(UnsupportedOperationException.class);
     int closed =
         waits.closeAll(
-            roomRecordId,
-            ClosedReason.ROOM_ENDED,
-            Set.of(RequestKind.DEFECT_CONFIRM, RequestKind.SITUATION_CHECK));
+            roomRecordId, ClosedReason.COUNTERPART_WITHDRAWN, EnumSet.allOf(RequestKind.class));
 
     assertThat(closed).isEqualTo(2);
-    assertThat(waits.statusOf(repairCase, RequestKind.CORRECTION_CONFIRM))
-        .contains(RequestStatus.WAITING);
+    assertThat(waits.closedReasonOf(repairCase, RequestKind.DEFECT_CONFIRM))
+        .contains(ClosedReason.COUNTERPART_WITHDRAWN);
   }
 
   @Test

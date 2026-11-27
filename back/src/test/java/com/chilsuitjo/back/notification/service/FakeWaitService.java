@@ -8,6 +8,7 @@ import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.dto.RequestView;
 import com.chilsuitjo.back.notification.dto.SoloCheck;
 import com.chilsuitjo.back.notification.dto.SoloQuery;
+import com.chilsuitjo.back.notification.rule.CloseAllScope;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.rule.RequestStatus;
 import com.chilsuitjo.back.notification.rule.SoloReason;
@@ -167,12 +168,14 @@ public class FakeWaitService implements WaitService, WaitQuery {
 
   @Override
   public int closeAll(UUID roomRecordId, ClosedReason reason, Set<RequestKind> kinds) {
+    // 운영(JpaWaitService)과 같은 범위만 닫는다. 정해지지 않은 이유는 같은 예외다(#113)
+    Set<RequestStatus> statuses = CloseAllScope.statuses(reason, kinds);
     int closed = 0;
     for (Map.Entry<Key, Request> entry : requests.entrySet()) {
       Request request = entry.getValue();
       if (request.roomRecordId().equals(roomRecordId)
           && kinds.contains(entry.getKey().kind())
-          && request.status().isOpen()) {
+          && statuses.contains(request.status())) {
         write(entry.getKey(), request.closed(reason, clock.instant()));
         closed++;
       }
