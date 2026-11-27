@@ -15,6 +15,7 @@ import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -103,6 +104,45 @@ public class AuthTokenService {
     Objects.requireNonNull(memberId);
     lockFamily(Objects.requireNonNull(familyId));
     tokens.revokeFamily(memberId, familyId, clock.instant());
+  }
+
+  /**
+   * 그 회원의 모든 기기(묶음)의 리프레시 토큰을 폐기한다(06 ACC-5b 비밀번호 재설정). 부르는 쪽 트랜잭션 안에서만 부른다.
+   *
+   * @see #revokeOthers
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public void revokeAll(UUID memberId) {
+    revokeFamiliesExcept(Objects.requireNonNull(memberId), null);
+  }
+
+  /**
+   * 지금 기기(묶음 {@code keepFamilyId})를 뺀 그 회원의 모든 리프레시 토큰을 폐기한다(06 ACC-4a 비밀번호 변경). 부르는 쪽 트랜잭션 안에서만
+   * 부른다.
+   *
+   * <p>묶음마다 잠금을 ID 순으로 잡고 폐기해, 그 묶음에서 진행 중인 재발급이 만든 새 토큰까지 폐기한다({@link #logout}과 같은 이유). 폐기한 묶음의
+   * 토큰이 다시 오면 재발급 규칙대로 {@code REFRESH_REUSED}다. 이미 낸 액세스 토큰은 만료까지 쓸 수 있다(서버에 저장하지 않음, 04 4-1).
+   *
+   * <p>부르는 쪽은 먼저 회원 행의 비밀번호를 고치고(UPDATE, 행 잠금) 이 메서드를 부른다. 그래서 옛 비밀번호로 확인한 로그인은 둘 중 하나다: 회원 행 공유
+   * 잠금을 먼저 잡았으면 그 로그인이 커밋된 뒤 목록을 읽어 새 묶음까지 폐기하고, 늦었으면 로그인이 바뀐 해시를 보고 {@code LOGIN_FAILED}다( {@code
+   * MemberLoginService#confirmUnchanged}, #262).
+   *
+   * <p>잠금 순서: 회원 행 → 묶음(ID 오름차순) → 토큰 행. 재발급·로그아웃은 묶음 하나 → 토큰 행이고 회원 행을 잡지 않으며, 로그인은 회원 행(공유)만 잡고
+   * 묶음 잠금을 잡지 않아 서로 거꾸로 기다리는 길이 없다.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public void revokeOthers(UUID memberId, UUID keepFamilyId) {
+    revokeFamiliesExcept(Objects.requireNonNull(memberId), Objects.requireNonNull(keepFamilyId));
+  }
+
+  private void revokeFamiliesExcept(UUID memberId, UUID keepFamilyId) {
+    for (UUID familyId : tokens.findActiveFamilyIds(memberId)) {
+      if (familyId.equals(keepFamilyId)) {
+        continue;
+      }
+      lockFamily(familyId);
+      tokens.revokeFamily(memberId, familyId, clock.instant());
+    }
   }
 
   /**
