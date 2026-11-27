@@ -8,6 +8,10 @@ import com.chilsuitjo.back.global.common.AckState;
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Objects;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
@@ -23,10 +27,34 @@ import org.springframework.stereotype.Component;
  *       보류·이견도 맞아요로 못 바꿈) → 거뒀거나 그 밖에 닫혔으면 {@code INVALID_STATE} → 그 뒤는 {@code
  *       AnswerSupport.answer}(본 번호, 맞아요는 끝, 보류·이견에서는 맞아요로만, 사유)
  *   <li>거두기({@code WITHDRAW_CORRECTION}): 고친 측 → 기다리는 고친 내용만({@code INVALID_STATE})
+ *   <li>[사진 더해서 다시 요청]({@code RESUBMIT_CORRECTION}): 고친 측 → 처리 완료로 닫혔으면 {@code CLOSED_BY_BOTH} → 그
+ *       칸의 마지막 고친 내용만({@code INVALID_STATE}) → 앞모습과 같아졌으면 {@code SAME_VALUE} → 그 뒤는 {@code
+ *       AnswerSupport.rerequest}(보류·이견이고 요청을 열 수 있을 때, 같은 기록의 다시 요청끼리 7일에 한 번). 근거(사진·설명)는 서비스가
+ *       pipeline 전에 본다
  * </ul>
  */
 @Component
 public class CorrectionTransitions implements Transitions<CorrectionState> {
+
+  /** 한 기록에 다시 요청하는 간격({@code rerequest.interval}, 06 0-1). */
+  private final Duration rerequestInterval;
+
+  public CorrectionTransitions(@Value("${app.rerequest.interval:7d}") Duration rerequestInterval) {
+    this.rerequestInterval = Objects.requireNonNull(rerequestInterval, "rerequestInterval");
+  }
+
+  /** 화면의 [사진 더해서 다시 요청] 버튼. {@link #apply}의 다시 요청과 같다(근거는 더한다고 봄). 호실 단위 거절은 부르는 쪽이 본다. */
+  public boolean canResubmit(CorrectionState now, PartySide side, Instant at) {
+    return now.status() == CorrectionStatus.REJECTED
+        && now.latestOfField()
+        && AnswerSupport.canRerequest(
+            now.answerable(), side, now.canOpenRequest(), at, rerequestInterval);
+  }
+
+  /** 다음에 다시 요청할 수 있는 시각. 다시 요청한 적이 없으면 null. */
+  public Instant nextRerequestAt(Instant lastRerequestAt) {
+    return lastRerequestAt == null ? null : lastRerequestAt.plus(rerequestInterval);
+  }
 
   /**
    * 화면의 응답 버튼(06 4-0 "할 수 있는 행동"). {@link #apply}의 응답 순서와 같다: 고친 측의 반대 측이고, 기다림·미확인이거나 보류·이견(맞아요로
@@ -59,8 +87,33 @@ public class CorrectionTransitions implements Transitions<CorrectionState> {
       case CORRECT -> correct(now, action);
       case RESPOND_CORRECTION -> respond(now, action);
       case WITHDRAW_CORRECTION -> withdraw(now, action);
+      case RESUBMIT_CORRECTION -> resubmit(now, action);
       default -> throw new BusinessException(ErrorCode.INVALID_STATE);
     };
+  }
+
+  private CorrectionState resubmit(CorrectionState now, ActionEntry action) {
+    if (action.actorSide() != now.owner()) {
+      throw new BusinessException(ErrorCode.NOT_COUNTERPART_SIDE);
+    }
+    if (now.closedByBoth()) {
+      throw new BusinessException(ErrorCode.CLOSED_BY_BOTH);
+    }
+    if (now.status() != CorrectionStatus.REJECTED || !now.latestOfField()) {
+      throw new BusinessException(ErrorCode.INVALID_STATE);
+    }
+    if (now.sameValue()) {
+      throw new BusinessException(ErrorCode.SAME_VALUE);
+    }
+    AnswerSupport.Rerequested result =
+        AnswerSupport.rerequest(
+            now.answerable(),
+            action.actorSide(),
+            true,
+            now.canOpenRequest(),
+            action.createdAt(),
+            rerequestInterval);
+    return now.withAnswer(result.state());
   }
 
   private static CorrectionState correct(CorrectionState now, ActionEntry action) {

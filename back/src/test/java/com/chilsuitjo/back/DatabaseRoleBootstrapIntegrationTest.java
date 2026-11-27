@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.chilsuitjo.back.global.config.migration.DatabaseGrants;
+import com.chilsuitjo.back.global.config.migration.GrantRoles;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -249,10 +251,12 @@ class DatabaseRoleBootstrapIntegrationTest {
     }
   }
 
-  private static final DatabaseGrantsIntegrationTest.GrantsJdbcExecutor.Roles GRANT_ROLES =
-      new DatabaseGrantsIntegrationTest.GrantsJdbcExecutor.Roles(OWNER, APP, PURGE, HUMAN);
+  private static final GrantRoles GRANT_ROLES = new GrantRoles(OWNER, APP, PURGE, HUMAN);
 
-  /** #173 `--migrate`와 같은 Flyway 계약으로 Migration을 적용하고, #156 JDBC 실행 계약으로 GRANT를 적용한다. */
+  /**
+   * #173 `--migrate`와 같은 Flyway 계약으로 Migration을 적용하고, 운영 GRANT 실행기({@link DatabaseGrants})로 GRANT를
+   * 적용한다.
+   */
   private static void migrateAndApplyGrants(PostgreSQLContainer postgres) throws Exception {
     Flyway.configure()
         .dataSource(postgres.getJdbcUrl(), MIGRATION, FAKE_PASSWORD)
@@ -270,10 +274,10 @@ class DatabaseRoleBootstrapIntegrationTest {
     assertEquals(OWNER, observed.currentUser());
   }
 
-  private static DatabaseGrantsIntegrationTest.GrantsJdbcExecutor.Observed applyGrants(
-      PostgreSQLContainer postgres) throws Exception {
+  private static DatabaseGrants.Observed applyGrants(PostgreSQLContainer postgres)
+      throws Exception {
     try (Connection connection = roleConnection(postgres, MIGRATION)) {
-      return DatabaseGrantsIntegrationTest.GrantsJdbcExecutor.apply(connection, GRANT_ROLES);
+      return DatabaseGrants.apply(connection, GRANT_ROLES);
     }
   }
 
@@ -285,20 +289,29 @@ class DatabaseRoleBootstrapIntegrationTest {
     assertEquals(first, aclSnapshot(postgres), "GRANT 재실행 결과가 같다");
 
     executeAsAdmin(postgres, "GRANT SELECT ON state.member TO " + HUMAN);
+    // COMMIT 시점 오류(테스트 전용, 운영 코드에 훅 없음): 권한 변경 중 event trigger가 표시 행을 넣고 지연 trigger가 COMMIT에서 실패
+    executeAsAdmin(
+        postgres,
+        "CREATE SCHEMA hscommit; CREATE TABLE hscommit.mark (id int);"
+            + " CREATE FUNCTION hscommit.fail_at_commit() RETURNS trigger LANGUAGE plpgsql AS $$"
+            + " BEGIN RAISE EXCEPTION 'injected commit failure'; END $$;"
+            + " CREATE CONSTRAINT TRIGGER hscommit_fail AFTER INSERT ON hscommit.mark"
+            + " DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION hscommit.fail_at_commit();"
+            + " CREATE FUNCTION hscommit.mark_once() RETURNS event_trigger LANGUAGE plpgsql"
+            + " SECURITY DEFINER SET search_path = pg_catalog AS $$ BEGIN INSERT INTO hscommit.mark"
+            + " SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM hscommit.mark); END $$;"
+            + " CREATE EVENT TRIGGER hscommit_mark ON ddl_command_end"
+            + " WHEN TAG IN ('GRANT', 'REVOKE', 'ALTER DEFAULT PRIVILEGES')"
+            + " EXECUTE FUNCTION hscommit.mark_once()");
     try (Connection connection = roleConnection(postgres, MIGRATION)) {
       SQLException failure =
-          assertThrows(
-              SQLException.class,
-              () ->
-                  DatabaseGrantsIntegrationTest.GrantsJdbcExecutor.apply(
-                      connection,
-                      GRANT_ROLES,
-                      c -> {
-                        throw new SQLException("COMMIT 전 실패", "P0001");
-                      }));
-      assertEquals("P0001", failure.getSQLState());
+          assertThrows(SQLException.class, () -> DatabaseGrants.apply(connection, GRANT_ROLES));
+      assertTrue(
+          String.valueOf(failure.getMessage()).contains("injected commit failure"),
+          failure.getMessage());
       assertTrue(connection.getAutoCommit(), "자동 커밋 설정을 되돌린다");
     }
+    executeAsAdmin(postgres, "DROP EVENT TRIGGER hscommit_mark; DROP SCHEMA hscommit CASCADE");
     try (Connection connection = adminConnection(postgres)) {
       assertEquals(
           "true",

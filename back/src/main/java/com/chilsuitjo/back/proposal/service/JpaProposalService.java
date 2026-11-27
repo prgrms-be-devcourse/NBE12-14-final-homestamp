@@ -1,11 +1,14 @@
 package com.chilsuitjo.back.proposal.service;
 
 import com.chilsuitjo.back.action.dto.ActionCommand;
+import com.chilsuitjo.back.action.dto.ActionEntry;
 import com.chilsuitjo.back.action.dto.ActionTarget;
 import com.chilsuitjo.back.action.dto.Actor;
 import com.chilsuitjo.back.action.dto.PipelineResult;
 import com.chilsuitjo.back.action.rule.ActionType;
 import com.chilsuitjo.back.action.service.ActionPipeline;
+import com.chilsuitjo.back.action.service.ActionReader;
+import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.common.ResidentIdGuard;
 import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.global.error.BusinessException;
@@ -16,16 +19,24 @@ import com.chilsuitjo.back.proposal.dto.MoneyLine;
 import com.chilsuitjo.back.proposal.dto.ProposalCommand;
 import com.chilsuitjo.back.proposal.dto.ProposalResult;
 import com.chilsuitjo.back.proposal.entity.Proposal;
+import com.chilsuitjo.back.proposal.repository.ProposalLineRepository;
 import com.chilsuitjo.back.proposal.repository.ProposalRepository;
 import com.chilsuitjo.back.proposal.repository.ProposalStateStore;
 import com.chilsuitjo.back.proposal.rule.AgendaKind;
+import com.chilsuitjo.back.proposal.rule.AgendaState;
+import com.chilsuitjo.back.proposal.rule.AgendaStatus;
 import com.chilsuitjo.back.proposal.rule.LineKind;
 import com.chilsuitjo.back.proposal.rule.ProposalState;
 import com.chilsuitjo.back.proposal.rule.ProposalTransitions;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.BiPredicate;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -51,6 +62,73 @@ public class JpaProposalService implements ProposalService {
   private final ActionPipeline pipeline;
   private final ProposalStateStore stateStore;
   private final ProposalTransitions rules;
+  private final ActionReader actionReader;
+  private final ProposalLineRepository lines;
+
+  /** 다시 쌓는 제안 행동. 다른 안·거둠·바꾸기는 그 기능을 만들 때 더한다({@link ProposalTransitions}와 같음). */
+  private static final Set<ActionType> AGENDA_ACTIONS =
+      Set.of(ActionType.PROPOSE, ActionType.AGREE, ActionType.DISPUTE_PROPOSAL);
+
+  /**
+   * {@inheritDoc}
+   *
+   * <p>{@code ProposalStateStore}가 잠근 뒤 만드는 상태를 행동마다 똑같이 만든다: 제안이면 그 안의 합계·비용 없음을 {@code Draft}로
+   * 넘기고, 저장 때처럼 head의 기다리는 안을 그 안으로 채운다. 기준 금액은 null로 둬 합계 검사를 건너뛴다(그때 이미 통과한 행동이다). 부르는 쪽의 읽기 트랜잭션
+   * 안에서 돈다(클래스 설명대로 여기에는 두지 않음).
+   */
+  @Override
+  public AgendaStatus statusAsSeen(
+      UUID roomRecordId, AgendaRef agenda, BiPredicate<PartySide, Instant> sees) {
+    if (agenda.kind() != AgendaKind.REPAIR_BURDEN) {
+      throw new IllegalStateException("아직 이 안건은 다시 계산하지 않아요: " + agenda.kind());
+    }
+    Map<UUID, Proposal> byId = new HashMap<>();
+    List<ActionEntry> history = new ArrayList<>();
+    for (Proposal proposal :
+        proposalRepository.findByRoomRecordIdAndRepairCaseIdOrderByCreatedAtAscIdAsc(
+            roomRecordId, agenda.targetId())) {
+      byId.put(proposal.getId(), proposal);
+      for (ActionEntry entry :
+          actionReader.findByTarget(ActionTarget.of(TargetKind.PROPOSAL, proposal.getId()))) {
+        if (AGENDA_ACTIONS.contains(entry.type())
+            && sees.test(entry.actorSide(), entry.createdAt())) {
+          history.add(entry);
+        }
+      }
+    }
+    history.sort(Comparator.comparingLong(ActionEntry::roomSeq));
+    AgendaState head = new AgendaState(roomRecordId, agenda, AgendaStatus.NONE, null, null, null);
+    ProposalState.Waiting waiting = null;
+    for (ActionEntry entry : history) {
+      if (entry.type() == ActionType.PROPOSE) {
+        Proposal proposal = byId.get(entry.target().id());
+        long total = proposal.isNoCost() ? 0 : lines.sumAmount(proposal.getId());
+        AgendaState next =
+            rules
+                .apply(
+                    new ProposalState(
+                        head, waiting, new ProposalState.Draft(total, proposal.isNoCost())),
+                    entry)
+                .head();
+        head =
+            new AgendaState(
+                roomRecordId,
+                agenda,
+                next.status(),
+                proposal.getId(),
+                next.agreedProposalId(),
+                null);
+        waiting =
+            new ProposalState.Waiting(
+                proposal.getId(), proposal.getProposedBySide(), total, proposal.isNoCost());
+      } else {
+        // 동의·이견은 기다림을 끝낸다(기다리는 안을 비움, ProposalTransitions 설명)
+        head = rules.apply(new ProposalState(head, waiting), entry).head();
+        waiting = null;
+      }
+    }
+    return head.status();
+  }
 
   /**
    * {@inheritDoc}

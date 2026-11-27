@@ -317,28 +317,51 @@ class InspectionTransitionsTest {
   }
 
   @Test
-  void 현재_구현_범위의_한계로_작성_중에는_상대가_항목을_더할_수_없다() {
-    assertThatThrownBy(() ->
-            itemRules.apply(
-                InspectionItemState.newIn(InspectionStatus.DRAFT, PartySide.TENANT),
-                entry(ActionType.ADD_ITEM, PartySide.LANDLORD, Map.of())))
-        .hasMessage(ErrorCode.INVALID_STATE.name());
-    assertThat(
-            InspectionItemTransitions.canAdd(
-                InspectionStatus.DRAFT, PartySide.TENANT, PartySide.LANDLORD))
-        .isFalse();
+  void INSP_1d_상대도_작성_중에_항목을_더하고_기준_측이_작성_중에도_답한다() {
+    InspectionItemState added =
+        itemRules.apply(
+            InspectionItemState.newIn(InspectionStatus.DRAFT, PartySide.TENANT),
+            entry(ActionType.ADD_ITEM, PartySide.LANDLORD, Map.of()));
+
+    assertThat(added.status()).isEqualTo(AckState.PENDING);
+    assertThat(added.addedBy()).isEqualTo(PartySide.LANDLORD);
+    assertThat(InspectionItemTransitions.canAdd(InspectionStatus.DRAFT, PartySide.LANDLORD))
+        .isTrue();
+    // 상대가 더한 항목은 기준 측이 작성 중에도 답한다(03 H, 6-6 2번, #286)
+    assertThat(InspectionItemTransitions.canRespond(added, PartySide.TENANT)).isTrue();
+    assertThat(InspectionItemTransitions.canRespond(added, PartySide.LANDLORD)).isFalse();
   }
 
   @Test
-  void 확인_요청_뒤의_항목_더하기는_아직_INVALID_STATE() {
-    // 상대가 더하기·잠긴 뒤 추가는 후속 작업(INSP-1d·1e)
+  void 작성_중_기준_측이_쓴_항목은_확인_요청_전에는_답할_수_없다() {
+    InspectionItemState own =
+        new InspectionItemState(
+            InspectionStatus.DRAFT,
+            PartySide.TENANT,
+            AckState.PENDING,
+            PartySide.TENANT,
+            1,
+            null,
+            null,
+            false);
+
+    assertThat(InspectionItemTransitions.canRespond(own, PartySide.LANDLORD)).isFalse();
+  }
+
+  @Test
+  void INSP_1e_확인_요청_뒤와_잠긴_뒤에도_누구든_더한다() {
     for (InspectionStatus status : List.of(InspectionStatus.REQUESTED, InspectionStatus.LOCKED)) {
-      assertThatThrownBy(() ->
-              itemRules.apply(
-                  InspectionItemState.newIn(status, PartySide.TENANT),
-                  entry(ActionType.ADD_ITEM, PartySide.TENANT, Map.of())))
-          .hasMessage(ErrorCode.INVALID_STATE.name());
+      for (PartySide side : PartySide.values()) {
+        InspectionItemState added =
+            itemRules.apply(
+                InspectionItemState.newIn(status, PartySide.TENANT),
+                entry(ActionType.ADD_ITEM, side, Map.of()));
+        assertThat(added.status()).isEqualTo(AckState.PENDING);
+        // 점검 상태는 바뀌지 않는다(잠긴 뒤 추가여도 잠금 그대로)
+        assertThat(added.inspectionStatus()).isEqualTo(status);
+      }
     }
+    assertThat(InspectionItemTransitions.canAdd(null, PartySide.TENANT)).isFalse();
   }
 
   @Test

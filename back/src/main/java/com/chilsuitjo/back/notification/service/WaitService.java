@@ -22,6 +22,10 @@ public interface WaitService {
   /**
    * 확인 요청을 연다. 같은 대상·종류에 열린 요청이 있으면 새로 만들지 않고 그것을 돌려준다(기록당 확인 요청은 하나).
    *
+   * <p><b>점검 확인</b>({@code INSPECTION_CONFIRM})은 요청한 측({@code requestedBySide})까지 같아야 같은 요청이다. 기준
+   * 측과 상대가 각자 더한 항목을 서로 묻기 때문에 한 점검에 두 방향 요청이 따로 열린다(05 {@code inspection_item}의 점검 × 요청 방향 부분
+   * 유니크).
+   *
    * <p><b>제안의 역제안</b>(상대의 안이 기다리는 중에 낸 안, 05 {@code proposal} ③): 이전 안의 요청은 답함, 다른 안에 새 요청이다. 그래서
    * 역제안을 남기는 {@code save}는 먼저 {@link #answered}(안건, {@code PROPOSAL}, 역제안한 측)로 이전 요청을 닫고 이 메서드를
    * 부른다. 안건마다 기다리는 요청이 하나라서({@code ux_proposal_waiting}) 이 순서여야 한다. 상대 쪽 제안 요청이 열린 채로 부르면 {@code

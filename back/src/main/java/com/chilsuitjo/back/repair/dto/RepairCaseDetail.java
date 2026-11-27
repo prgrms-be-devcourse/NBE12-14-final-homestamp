@@ -31,7 +31,9 @@ import java.util.UUID;
  * @param solo 혼자 진행 가능으로 바뀐 수리 건인지(ROOM-7)
  * @param createdAt 등록한 시각
  * @param asOf 공유를 그만둬 보이는 범위를 고정한 시각(화면의 "○월 ○일 기준", 03 6-6 9번). 이때 {@code status}·{@code
- *     content}·{@code defect}·{@code money}는 그 시각까지의 행동과 보는 사람 자신의 행동으로 다시 계산한 값이다. 고정되지 않았으면 null
+ *     content}·{@code defect}·{@code money}는 그 시각까지의 행동과 보는 사람 자신의 행동으로 다시 계산한 값이다. 고정되지 않았으면 null.
+ *     상대가 탈퇴했으면 남은 공유 중단 시각이 있어도 null이고 상태는 지금 값이다(06 CONS-3p, 호실 상세와 같음). 이때는 중단 동안 탈퇴자가 남긴 내용(원인
+ *     설명·진행 상황·고친 내용·사진)만 가린다(03 6-4, {@code RepairSight})
  * @param content 보이는 판(고정되지 않았으면 지금 판)
  * @param defect 하자 인정
  * @param money 수리비 부담
@@ -79,7 +81,10 @@ public record RepairCaseDetail(
    * @param answerReason 보류·이견의 사유. 그 밖에는 null
    * @param answeredAt 마지막 응답 시각. 없으면 null
    * @param closedReason 닫혔으면 이유(예: {@code CLOSED_BY_BOTH} "처리 완료로 닫힘")
-   * @param availableActions 이 고친 내용에 지금 누를 수 있는 행동({@code respond}·{@code withdraw})
+   * @param photos 다시 보낼 때 더한 근거 사진(대상 {@code CORRECTION_REQUEST}, 단계 {@code BEFORE}). 처음 고친 내용이면 빈
+   *     목록
+   * @param availableActions 이 고친 내용에 지금 누를 수 있는 행동({@code respond}·{@code withdraw}·{@code
+   *     resubmit})
    */
   public record Correction(
       UUID id,
@@ -94,6 +99,7 @@ public record RepairCaseDetail(
       Instant answeredAt,
       ClosedReason closedReason,
       Instant createdAt,
+      List<PhotoCard> photos,
       List<String> availableActions) {}
 
   /**

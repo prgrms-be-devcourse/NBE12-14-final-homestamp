@@ -82,6 +82,12 @@ class MigrationRunnerIntegrationTest {
   static final String SECRET_DIR = "/run/secrets/homestamp-migration/";
   // 기대 이력은 운영 Migration 폴더(db/migration)의 V 파일에서 구한다. 새 V 파일이 생겨도 이 테스트를 고치지 않는다
   static final List<String> MIGRATION_VERSIONS = migrationVersions();
+  static final String G_APP = "homestamp_app";
+  static final String G_PURGE = "homestamp_purge";
+  // Human은 NOLOGIN 읽기 그룹(#185). 사람 계정은 그 그룹의 멤버로 만든다
+  static final String G_HUMAN = "homestamp_human_read";
+  static final String G_PERSON = "homestamp_person_a";
+  static final List<String> GRANT_LOGINS = List.of(G_APP, G_PURGE);
 
   static final Network INTERNAL =
       Network.builder().createNetworkCmdModifier(cmd -> cmd.withInternal(true)).build();
@@ -536,6 +542,7 @@ class MigrationRunnerIntegrationTest {
     Cli first = cli(db, MIGRATION, PASSWORD, Map.of());
     report("cli normal exit=" + first.exit() + " " + first.summary());
     assertThat(first.exit()).isZero();
+    assertThat(first.logs()).as("JDBC 주소를 로그에 남기지 않는다").doesNotContain("jdbc:postgresql");
     assertThat(history(db)).hasSize(MIGRATION_VERSIONS.size());
 
     Map<String, String> attack = new LinkedHashMap<>();
@@ -689,6 +696,451 @@ class MigrationRunnerIntegrationTest {
   @ImportAutoConfiguration({DataSourceAutoConfiguration.class, FlywayAutoConfiguration.class})
   static class FlywayOnlyConfiguration {}
 
+  // ---------------------------------------------------------------- --apply-grants (in-process)
+
+  @Test
+  void apply_grants는_검증만_하고_migrate없이_한_트랜잭션으로_GRANT하며_재실행은_같다() throws Exception {
+    String db = "hs_g_main";
+    prepareDatabase(db);
+    migrate(db, MIGRATION, OWNER);
+    List<String> objects = snapshot(db);
+    List<String> historyBefore = history(db);
+    int logStart = POSTGRES.getLogs().length();
+
+    applyGrants(db);
+
+    String log = POSTGRES.getLogs().substring(logStart);
+    List<String> executed = statements(log, db, MIGRATION);
+    report("apply_grants verbs=" + statementVerbs(log, db, MIGRATION));
+    // migrate가 아니다: 스키마 객체·이력은 그대로, DDL은 GRANT·REVOKE·ALTER DEFAULT PRIVILEGES(DO 블록 안)만
+    assertThat(snapshot(db)).isEqualTo(objects);
+    assertThat(history(db)).isEqualTo(historyBefore);
+    assertThat(ddlAudit(log, db))
+        .allSatisfy(row -> {
+          assertThat(row[0] + "/" + row[1]).isEqualTo(MIGRATION + "/" + OWNER);
+          assertThat(row[2]).isIn("GRANT", "REVOKE", "ALTER DEFAULT PRIVILEGES");
+        });
+    assertThat(executed).anyMatch(s -> s.startsWith("-- HomeStamp DB grants"));
+    assertThat(executed)
+        .noneMatch(s -> s.matches("(?is)\\s*(CREATE|ALTER TABLE|INSERT|UPDATE|DELETE).*"));
+    // 실제 권한: 이미지의 역할 설정 이름에 #156 정책이 들어갔다
+    assertThat(
+            one(
+                db,
+                "SELECT has_table_privilege('homestamp_app','record.action','INSERT')||'|'"
+                    + "||has_table_privilege('homestamp_app','record.action','UPDATE')||'|'"
+                    + "||has_function_privilege('homestamp_purge','state.purge_room_record(uuid)','EXECUTE')||'|'"
+                    + "||has_column_privilege('"
+                    + G_HUMAN
+                    + "','state.member','status','SELECT')||'|'"
+                    + "||has_column_privilege('"
+                    + G_HUMAN
+                    + "','state.member','password_hash','SELECT')||'|'"
+                    + "||has_column_privilege('"
+                    + G_HUMAN
+                    + "','record.cause_note','expert_name','SELECT')"))
+        .isEqualTo("true|false|true|true|false|false");
+    List<String> acl = acl(db);
+    applyGrants(db);
+    assertThat(acl(db)).as("재실행 결과가 같다").isEqualTo(acl);
+    loginWithoutSetRole(db);
+  }
+
+  @Test
+  void Human은_읽기_그룹에만_권한을_받고_사람_계정은_그룹으로_같은_최소_권한을_쓴다() throws Exception {
+    String db = "hs_g_human_group";
+    prepareDatabase(db);
+    migrate(db, MIGRATION, OWNER);
+    MigrationMode.run(
+        new String[] {"--apply-grants"},
+        new Properties(),
+        new MigrationSettings(files(migrationUrl(db), MIGRATION, PASSWORD, OWNER)));
+    for (String role : List.of(G_HUMAN, G_PERSON)) {
+      assertThat(
+              one(
+                  db,
+                  "SELECT has_column_privilege('"
+                      + role
+                      + "','state.member','status','SELECT')||'|'"
+                      + "||has_column_privilege('"
+                      + role
+                      + "','state.member','phone','SELECT')||'|'"
+                      + "||has_table_privilege('"
+                      + role
+                      + "','record.action','SELECT')||'|'"
+                      + "||has_table_privilege('"
+                      + role
+                      + "','record.action','INSERT')"))
+          .as(role)
+          .isEqualTo("true|false|true|false");
+    }
+    // 사람 계정에는 직접 권한이 없다(그룹 멤버십으로만 읽는다)
+    assertThat(
+            one(
+                db,
+                "SELECT count(*) FROM information_schema.role_table_grants WHERE grantee = '"
+                    + G_PERSON
+                    + "'"))
+        .isEqualTo("0");
+  }
+
+  @Test
+  void 이력이_이미지와_다르면_GRANT_SQL을_실행하지_않고_권한을_바꾸지_않는다() throws Exception {
+    String db = "hs_g_drift";
+    prepareDatabase(db);
+    migrate(db, MIGRATION, OWNER);
+    applyGrants(db);
+    List<String> acl = acl(db);
+    admin(db, "REVOKE INSERT ON record.action FROM " + G_APP); // GRANT가 돌면 되돌아오는 표시
+    List<String> marked = acl(db);
+    assertThat(marked).isNotEqualTo(acl);
+
+    // 대기 중인 Migration: DB는 V7까지(V8 이력 삭제), 이미지는 V8까지
+    String v8 =
+        one(
+            db,
+            "SELECT installed_rank||','||version||','||description||','||type||','||script||','||checksum FROM public.flyway_schema_history WHERE version='8'");
+    admin(db, "DELETE FROM public.flyway_schema_history WHERE version = '8'");
+    assertGrantRejected(
+        db, "pending_V8", "Detected resolved migration not applied to database: 8", marked);
+    String[] row = v8.split(",");
+    admin(
+        db,
+        "INSERT INTO public.flyway_schema_history(installed_rank,version,description,type,script,checksum,installed_by,execution_time,success) VALUES ("
+            + row[0]
+            + ",'"
+            + row[1]
+            + "','"
+            + row[2]
+            + "','"
+            + row[3]
+            + "','"
+            + row[4]
+            + "',"
+            + row[5]
+            + ",'hs_owner',0,true)");
+
+    admin(db, historyRow("99", "test future"));
+    assertGrantRejected(db, "future_V99", ": 99", marked);
+    admin(db, "DELETE FROM public.flyway_schema_history WHERE version = '99'");
+
+    admin(
+        db, "UPDATE public.flyway_schema_history SET checksum = checksum + 1 WHERE version = '3'");
+    assertGrantRejected(
+        db, "checksum_V3", "Migration checksum mismatch for migration version 3", marked);
+    admin(
+        db, "UPDATE public.flyway_schema_history SET checksum = checksum - 1 WHERE version = '3'");
+
+    admin(db, historyRow("4.1", "test missing locally"));
+    assertGrantRejected(db, "missing_applied_4.1", ": 4.1", marked);
+    admin(db, "DELETE FROM public.flyway_schema_history WHERE version = '4.1'");
+
+    admin(db, "UPDATE public.flyway_schema_history SET success = false WHERE version = '8'");
+    assertGrantRejected(db, "failed_V8", "", marked);
+    admin(db, "UPDATE public.flyway_schema_history SET success = true WHERE version = '8'");
+
+    // 이력을 되돌리면 다시 성공하고 표시도 되돌아온다(검증이 하드코딩된 V8이 아니라 이미지 전체와의 비교임)
+    applyGrants(db);
+    assertThat(acl(db)).isEqualTo(acl);
+  }
+
+  void assertGrantRejected(String db, String name, String expectedDetail, List<String> acl)
+      throws Exception {
+    int logStart = POSTGRES.getLogs().length();
+    Throwable failure =
+        catchApply(
+            files(migrationUrl(db), MIGRATION, PASSWORD, OWNER), MigrationMode.MIGRATION_LOCATION);
+    String log = POSTGRES.getLogs().substring(logStart);
+    String described = MigrationMode.describe((RuntimeException) failure);
+    report(name + " described=" + described + " verbs=" + statementVerbs(log, db, MIGRATION));
+    assertThat(failure).isInstanceOf(org.flywaydb.core.api.exception.FlywayValidateException.class);
+    assertThat(described)
+        .contains("Flyway 검증 실패", expectedDetail)
+        .doesNotContain(PASSWORD, "jdbc:");
+    assertThat(statements(log, db, MIGRATION))
+        .noneMatch(s -> s.startsWith("-- HomeStamp DB grants"));
+    // 직전 관리자 REVOKE(표시용 DDL)의 로그가 늦게 흘러들 수 있어 Migration 로그인의 DDL만 본다
+    assertThat(ddlAudit(log, db, MIGRATION)).isEmpty();
+    assertThat(acl(db)).isEqualTo(acl);
+  }
+
+  @Test
+  void Migration이_하나도_적용되지_않은_DB나_위치_문제면_GRANT하지_않는다() throws Exception {
+    String db = "hs_g_fresh";
+    prepareDatabase(db);
+    List<String> acl = acl(db);
+    Path files = files(migrationUrl(db), MIGRATION, PASSWORD, OWNER);
+    Throwable fresh = catchApply(files, MigrationMode.MIGRATION_LOCATION);
+    report(db + " fresh=" + MigrationMode.describe((RuntimeException) fresh));
+    assertThat(fresh).isInstanceOf(org.flywaydb.core.api.exception.FlywayValidateException.class);
+    assertThat(MigrationMode.describe((RuntimeException) fresh)).contains(": 1");
+    assertThat(catchApply(files, "classpath:migration-test/missing"))
+        .satisfies(f ->
+            assertThat(MigrationMode.describe((RuntimeException) f))
+                .contains("migration-test/missing"));
+    assertThat(catchApply(files, "classpath:migration-test/empty"))
+        .hasMessage("적용하거나 검증할 Migration이 하나도 없다");
+    assertNothingCreated(db);
+    assertThat(acl(db)).isEqualTo(acl);
+
+    // 이력은 있는데 위치가 비어 있으면: 적용된 버전이 이미지에 없으므로 검증 실패
+    String applied = "hs_g_emptyloc";
+    prepareDatabase(applied);
+    migrate(applied, MIGRATION, OWNER);
+    List<String> appliedAcl = acl(applied);
+    Throwable empty =
+        catchApply(
+            files(migrationUrl(applied), MIGRATION, PASSWORD, OWNER),
+            "classpath:migration-test/empty");
+    report(applied + " empty_location=" + MigrationMode.describe((RuntimeException) empty));
+    assertThat(empty).isInstanceOf(org.flywaydb.core.api.exception.FlywayValidateException.class);
+    assertThat(acl(applied)).isEqualTo(appliedAcl);
+  }
+
+  @Test
+  void GRANT_SQL_사전_검사나_중간_오류는_종료_전에_전부_되돌리고_안전한_정보만_남긴다() throws Exception {
+    String db = "hs_g_fail";
+    prepareDatabase(db);
+    migrate(db, MIGRATION, OWNER);
+    applyGrants(db);
+    admin(db, "REVOKE INSERT ON record.action FROM " + G_APP);
+    List<String> before = acl(db);
+
+    // 1) 사전 검사: 분류되지 않은 새 테이블(Migration 없이 owner가 만든 것처럼) → P0001
+    admin(
+        db,
+        "CREATE TABLE state.hs_unclassified (id int); ALTER TABLE state.hs_unclassified OWNER TO "
+            + OWNER);
+    List<String> withTable = acl(db);
+    Throwable precheck =
+        catchApply(
+            files(migrationUrl(db), MIGRATION, PASSWORD, OWNER), MigrationMode.MIGRATION_LOCATION);
+    String described = MigrationMode.describe((RuntimeException) precheck);
+    report(db + " precheck=" + described);
+    assertThat(described)
+        .startsWith("GRANT SQL 실패(전체 ROLLBACK) sqlstate=P0001 message=")
+        .contains("unclassified")
+        .doesNotContain(PASSWORD, "jdbc:", "DO $$", "Where", "PL/pgSQL");
+    assertThat(acl(db)).isEqualTo(withTable);
+    admin(db, "DROP TABLE state.hs_unclassified");
+    assertThat(acl(db)).isEqualTo(before);
+
+    // 2) 권한 변경 중간 오류: 관리자 event trigger가 N번째 권한 변경에서 실패(테스트 전용) → 앞 변경까지 전부 ROLLBACK
+    admin(
+        db,
+        "CREATE SCHEMA hsfault; CREATE TABLE hsfault.counter (seen int NOT NULL, fail_at int NOT NULL);"
+            + " INSERT INTO hsfault.counter VALUES (0, 25);"
+            + " CREATE FUNCTION hsfault.count() RETURNS event_trigger LANGUAGE plpgsql SECURITY DEFINER"
+            + " SET search_path = pg_catalog AS $$ DECLARE n int; f int; BEGIN"
+            + " UPDATE hsfault.counter SET seen = seen + 1 RETURNING seen, fail_at INTO n, f;"
+            + " IF n = f THEN RAISE EXCEPTION 'injected failure at privilege change %', n; END IF; END $$;"
+            + " CREATE EVENT TRIGGER hsfault_change ON ddl_command_end"
+            + " WHEN TAG IN ('GRANT', 'REVOKE', 'ALTER DEFAULT PRIVILEGES') EXECUTE FUNCTION hsfault.count()");
+    Throwable middle =
+        catchApply(
+            files(migrationUrl(db), MIGRATION, PASSWORD, OWNER), MigrationMode.MIGRATION_LOCATION);
+    report(db + " middle=" + MigrationMode.describe((RuntimeException) middle));
+    assertThat(MigrationMode.describe((RuntimeException) middle))
+        .contains("sqlstate=P0001", "injected failure at privilege change 25");
+    assertThat(one(db, "SELECT seen FROM hsfault.counter")).isEqualTo("0");
+    admin(db, "DROP EVENT TRIGGER hsfault_change; DROP SCHEMA hsfault CASCADE");
+    assertThat(acl(db)).as("앞의 24개 변경까지 되돌아갔다").isEqualTo(before);
+
+    // 3) 검증과 GRANT 사이에 이력이 바뀌면(다른 배포) GRANT 트랜잭션 안에서 다시 확인해 실패
+    try (Connection c = DriverManager.getConnection(migrationUrl(db), MIGRATION, PASSWORD)) {
+      assertThatThrownBy(() ->
+              com.chilsuitjo.back.global.config.migration.DatabaseGrants.apply(
+                  c,
+                  new com.chilsuitjo.back.global.config.migration.GrantRoles(
+                      OWNER, G_APP, G_PURGE, G_HUMAN),
+                  "1:1:stale"))
+          .hasMessageContaining("Flyway 검증 뒤 Migration 이력이 바뀌었다");
+      assertThat(c.getAutoCommit()).isTrue();
+    }
+    assertThat(acl(db)).isEqualTo(before);
+  }
+
+  @Test
+  void 역할_설정이_잘못되면_DB에_닿기_전에_실패한다() throws Exception {
+    String db = "hs_g_roles";
+    prepareDatabase(db);
+    migrate(db, MIGRATION, OWNER);
+    List<String> acl = acl(db);
+    Path files = files(migrationUrl(db), MIGRATION, PASSWORD, OWNER);
+    Map<String, String> cases = new LinkedHashMap<>();
+    cases.put("grants-roles-test/bad-name.properties", "GRANT 역할 이름 형식이 올바르지 않다");
+    cases.put("grants-roles-test/unknown-key.properties", "GRANT 역할 설정에 모르는 키가 있다: owner-role");
+    cases.put("grants-roles-test/duplicate-key.properties", "GRANT 역할 설정 키가 중복됐다: app-role");
+    cases.put("grants-roles-test/missing-key.properties", "GRANT 역할 설정이 없다: purge-role");
+    cases.put("grants-roles-test/duplicate-name.properties", "GRANT 역할 이름이 겹친다");
+    cases.put("grants-roles-test/migration-login.properties", "GRANT 대상에 Migration 로그인을 넣지 않는다");
+    cases.put("grants-roles-test/empty-human.properties", "GRANT 역할 이름 형식이 올바르지 않다");
+    cases.put("grants-roles-test/no-such.properties", "GRANT 역할 설정 리소스가 없다");
+    int logStart = POSTGRES.getLogs().length();
+    for (Map.Entry<String, String> c : cases.entrySet()) {
+      Throwable failure = null;
+      try {
+        MigrationMode.run(
+            new String[] {"--apply-grants"},
+            new Properties(),
+            new MigrationSettings(files),
+            MigrationMode.MIGRATION_LOCATION,
+            c.getKey());
+      } catch (RuntimeException e) {
+        failure = e;
+      }
+      assertThat(failure).as(c.getKey()).isNotNull();
+      assertThat(MigrationMode.describe((RuntimeException) failure))
+          .as(c.getKey())
+          .isEqualTo(c.getValue());
+    }
+    assertThat(users(POSTGRES.getLogs().substring(logStart), db)).as("DB에 접속하지 않았다").isEmpty();
+    // Owner 이름이 역할 대상과 겹쳐도 실패
+    assertThatThrownBy(() ->
+            MigrationMode.run(
+                new String[] {"--apply-grants"},
+                new Properties(),
+                new MigrationSettings(files(migrationUrl(db), MIGRATION, PASSWORD, G_APP))))
+        .hasMessage("GRANT 역할 이름이 겹친다");
+    assertThat(acl(db)).isEqualTo(acl);
+  }
+
+  void applyGrants(String db) throws Exception {
+    MigrationMode.run(
+        new String[] {"--apply-grants"},
+        new Properties(),
+        new MigrationSettings(files(migrationUrl(db), MIGRATION, PASSWORD, OWNER)));
+  }
+
+  Throwable catchApply(Path files, String location) {
+    try {
+      MigrationMode.run(
+          new String[] {"--apply-grants"},
+          new Properties(),
+          new MigrationSettings(files),
+          location);
+    } catch (RuntimeException failure) {
+      return failure;
+    }
+    throw new AssertionError("GRANT가 실패해야 한다: " + location);
+  }
+
+  /** 권한 스냅샷: 4개 스키마의 테이블·컬럼·함수·스키마 ACL과 모든 기본 권한. */
+  static List<String> acl(String db) throws SQLException {
+    return list(
+        db,
+        "SELECT x FROM ("
+            + "SELECT 'rel '||c.oid::regclass||' '||coalesce(c.relacl::text,'-') x FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace"
+            + " WHERE n.nspname IN "
+            + SCHEMAS
+            + " AND c.relkind IN ('r','p','S','v','m')"
+            + " UNION ALL SELECT 'col '||a.attrelid::regclass||'.'||a.attname||' '||a.attacl::text FROM pg_attribute a"
+            + " JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace"
+            + " WHERE n.nspname IN "
+            + SCHEMAS
+            + " AND a.attnum>0 AND NOT a.attisdropped AND a.attacl IS NOT NULL"
+            + " UNION ALL SELECT 'fn '||p.oid::regprocedure||' '||coalesce(p.proacl::text,'-') FROM pg_proc p"
+            + " JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname IN "
+            + SCHEMAS
+            + " UNION ALL SELECT 'nsp '||nspname||' '||coalesce(nspacl::text,'-') FROM pg_namespace WHERE nspname IN "
+            + SCHEMAS
+            + " UNION ALL SELECT 'def '||defaclrole::regrole||' '||defaclnamespace||' '||defaclobjtype::text||' '||defaclacl::text FROM pg_default_acl"
+            + ") s ORDER BY x");
+  }
+
+  // ---------------------------------------------------------------- 실제 --apply-grants CLI (UID
+  // 10002, TLS)
+
+  @Test
+  void 실제_CLI의_apply_grants는_UID_10002로_성공_0_실패_1이고_환경변수로_대상을_바꾸지_못한다() throws Exception {
+    assumeTrue(Files.isRegularFile(JAR), "bootJar 먼저 빌드");
+    String db = "hs_g_cli";
+    prepareDatabase(db);
+    assertThat(cli(db, MIGRATION, PASSWORD, Map.of()).exit()).isZero(); // --migrate
+
+    Cli first = cli(db, MIGRATION, PASSWORD, Map.of(), OWNER, "--apply-grants");
+    report(
+        "cli apply_grants exit="
+            + first.exit()
+            + " granted="
+            + first.logs().contains("GRANT를 적용했다"));
+    assertThat(first.exit()).isZero();
+    assertThat(first.logs())
+        .contains("GRANT를 적용했다")
+        .doesNotContain(PASSWORD, " DEBUG ", "jdbc:postgresql");
+    List<String> acl = acl(db);
+
+    Map<String, String> attack = new LinkedHashMap<>();
+    attack.put("HOMESTAMP_GRANTS_APP_ROLE", "hs_app");
+    attack.put("APP_ROLE", "hs_app");
+    attack.put("SPRING_APPLICATION_JSON", "{\"app-role\":\"hs_app\",\"human-role\":\"hs_app\"}");
+    attack.put("SPRING_DATASOURCE_URL", "jdbc:postgresql://hs-attacker:5432/x");
+    attack.put("FLYWAY_LOCATIONS", "filesystem:/tmp");
+    Cli rerun = cli(db, MIGRATION, PASSWORD, attack, OWNER, "--apply-grants");
+    assertThat(rerun.exit()).isZero();
+    assertThat(acl(db)).as("재실행·공격 환경변수에도 같은 결과").isEqualTo(acl);
+    assertThat(one(db, "SELECT has_table_privilege('hs_app','record.action','SELECT')"))
+        .isEqualTo("f");
+
+    Map<String, Cli> failures = new LinkedHashMap<>();
+    failures.put(
+        "wrong_password",
+        cli(db, MIGRATION, "wrong-" + PASSWORD.length(), Map.of(), OWNER, "--apply-grants"));
+    failures.put(
+        "bad_owner_name", cli(db, MIGRATION, PASSWORD, Map.of(), "Hs-Owner", "--apply-grants"));
+    failures.put(
+        "both_arguments",
+        cli(db, MIGRATION, PASSWORD, Map.of(), OWNER, "--migrate", "--apply-grants"));
+    failures.put(
+        "extra_argument",
+        cli(db, MIGRATION, PASSWORD, Map.of(), OWNER, "--apply-grants", "--debug"));
+    failures.put(
+        "app_profile",
+        cli(
+            db,
+            MIGRATION,
+            PASSWORD,
+            Map.of("SPRING_PROFILES_ACTIVE", "prod"),
+            OWNER,
+            "--apply-grants"));
+    admin(db, historyRow("99", "test future"));
+    failures.put("future_V99", cli(db, MIGRATION, PASSWORD, Map.of(), OWNER, "--apply-grants"));
+    admin(db, "DELETE FROM public.flyway_schema_history WHERE version = '99'");
+    admin(db, "UPDATE public.flyway_schema_history SET version = '8.0.0.1' WHERE version = '8'");
+    failures.put("pending_V8", cli(db, MIGRATION, PASSWORD, Map.of(), OWNER, "--apply-grants"));
+    admin(db, "UPDATE public.flyway_schema_history SET version = '8' WHERE version = '8.0.0.1'");
+    admin(
+        db,
+        "CREATE TABLE state.hs_unclassified (id int); ALTER TABLE state.hs_unclassified OWNER TO "
+            + OWNER);
+    List<String> withTable = acl(db);
+    failures.put(
+        "precheck_unclassified", cli(db, MIGRATION, PASSWORD, Map.of(), OWNER, "--apply-grants"));
+    assertThat(acl(db)).isEqualTo(withTable);
+    admin(db, "DROP TABLE state.hs_unclassified");
+    for (Map.Entry<String, Cli> f : failures.entrySet()) {
+      Matcher m = Pattern.compile("GRANT를 실행하지 못했다: [^\\n]*").matcher(f.getValue().logs());
+      report(
+          "cli "
+              + f.getKey()
+              + " exit="
+              + f.getValue().exit()
+              + " reason=["
+              + (m.find() ? m.group() : "-")
+              + "]");
+      assertThat(f.getValue().exit()).as(f.getKey()).isEqualTo(1);
+      assertThat(f.getValue().logs())
+          .as(f.getKey())
+          .doesNotContain(
+              PASSWORD,
+              "hs-attacker",
+              "DO $$",
+              "-- HomeStamp DB grants",
+              "jdbc:postgresql"); // Flyway 접속 주소 줄도 남기지 않는다
+    }
+    assertThat(acl(db)).as("실패한 실행은 권한을 바꾸지 않았다").isEqualTo(acl);
+  }
+
   // ---------------------------------------------------------------- helpers
 
   record Cli(long exit, String logs) {
@@ -708,6 +1160,18 @@ class MigrationRunnerIntegrationTest {
   }
 
   static Cli cli(String db, String user, String password, Map<String, String> env) {
+    return cli(db, user, password, env, OWNER, "--migrate");
+  }
+
+  static Cli cli(
+      String db,
+      String user,
+      String password,
+      Map<String, String> env,
+      String owner,
+      String... arguments) {
+    List<String> command = new ArrayList<>(List.of("-jar", "/migration/app.jar"));
+    command.addAll(List.of(arguments));
     String url =
         "jdbc:postgresql://hs-pg:5432/"
             + db
@@ -722,10 +1186,10 @@ class MigrationRunnerIntegrationTest {
             .withCopyToContainer(secret(url), SECRET_DIR + "spring.datasource.url")
             .withCopyToContainer(secret(user), SECRET_DIR + "spring.datasource.username")
             .withCopyToContainer(secret(password), SECRET_DIR + "spring.datasource.password")
-            .withCopyToContainer(secret(OWNER), SECRET_DIR + "app.migration.owner-role")
+            .withCopyToContainer(secret(owner), SECRET_DIR + "app.migration.owner-role")
             .withCreateContainerCmdModifier(
                 cmd -> cmd.withUser("10002:10002").withEntrypoint("java"))
-            .withCommand("-jar", "/migration/app.jar", "--migrate")
+            .withCommand(command.toArray(String[]::new))
             .withStartupCheckStrategy(new UntilExited().withTimeout(Duration.ofMinutes(6)))) {
       container.start();
       Long exit =
@@ -830,6 +1294,14 @@ class MigrationRunnerIntegrationTest {
         s.execute("CREATE ROLE " + APP + " LOGIN" + attributes);
         s.execute("CREATE ROLE " + PURGE + " LOGIN" + attributes);
         s.execute("CREATE ROLE " + HUMAN + " LOGIN" + attributes);
+        // --apply-grants 대상: 이미지의 db/grants/roles.properties 이름. Human 그룹과 그 멤버인 사람 계정 하나
+        for (String role : GRANT_LOGINS) {
+          s.execute("CREATE ROLE " + role + " LOGIN" + attributes);
+        }
+        s.execute("CREATE ROLE " + G_HUMAN + " NOLOGIN" + attributes);
+        s.execute("CREATE ROLE " + G_PERSON + " LOGIN" + attributes);
+        s.execute(
+            "GRANT " + G_HUMAN + " TO " + G_PERSON + " WITH ADMIN FALSE, INHERIT TRUE, SET FALSE");
         s.execute(
             "GRANT " + OWNER + " TO " + MIGRATION + " WITH ADMIN FALSE, INHERIT FALSE, SET TRUE");
         s.execute("SET log_statement = 'none'");
@@ -995,6 +1467,18 @@ class MigrationRunnerIntegrationTest {
     Matcher m = LINE.matcher(log);
     while (m.find()) {
       if (m.group(2).equals(db) && m.group(5).startsWith("hsddl|")) {
+        String[] p = m.group(5).split("\\|", 5);
+        rows.add(new String[] {p[1], p[2], p[3], p.length > 4 ? p[4] : ""});
+      }
+    }
+    return rows;
+  }
+
+  static List<String[]> ddlAudit(String log, String db, String user) {
+    List<String[]> rows = new ArrayList<>();
+    Matcher m = LINE.matcher(log);
+    while (m.find()) {
+      if (m.group(1).equals(user) && m.group(2).equals(db) && m.group(5).startsWith("hsddl|")) {
         String[] p = m.group(5).split("\\|", 5);
         rows.add(new String[] {p[1], p[2], p[3], p.length > 4 ? p[4] : ""});
       }

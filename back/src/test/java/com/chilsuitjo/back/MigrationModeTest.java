@@ -92,6 +92,66 @@ class MigrationModeTest {
     assertThat(prepared.toString()).doesNotContain(PASSWORD);
   }
 
+  @Test
+  void apply_grants_인자만으로_GRANT_모드로_가고_다른_인자와_섞으면_실패한다() {
+    assertThat(MigrationMode.isRequested(new String[] {"--apply-grants"})).isTrue();
+    assertThat(prepare("--apply-grants").operation())
+        .isEqualTo(MigrationMode.Operation.APPLY_GRANTS);
+    assertThat(prepare("--migrate").operation()).isEqualTo(MigrationMode.Operation.MIGRATE);
+    for (String[] args :
+        new String[][] {
+          {"--migrate", "--apply-grants"},
+          {"--apply-grants", "--migrate"},
+          {"--apply-grants", "--apply-grants"},
+          {"--apply-grants", "--debug"},
+          {"--apply-grants", "--spring.profiles.active=prod"}
+        }) {
+      assertThatThrownBy(() -> prepare(args))
+          .as(String.join(" ", args))
+          .hasMessage("GRANT 실행 인자는 --apply-grants 하나만 받는다");
+    }
+  }
+
+  @Test
+  @ResourceLock("system-properties")
+  void apply_grants도_시스템_속성의_앱_프로필과_섞으면_실패한다() {
+    String saved = System.getProperty("spring.profiles.active");
+    System.setProperty("spring.profiles.active", "prod");
+    try {
+      assertThatThrownBy(() -> prepare("--apply-grants"))
+          .hasMessage("Migration 모드에는 앱 프로필을 함께 쓰지 않는다");
+    } finally {
+      if (saved == null) {
+        System.clearProperty("spring.profiles.active");
+      } else {
+        System.setProperty("spring.profiles.active", saved);
+      }
+    }
+  }
+
+  @Test
+  void apply_grants_실패는_GRANT_문구로_종료_코드_1이다() {
+    String error =
+        executeAndCaptureError(
+            new String[] {"--apply-grants", "--debug"}, new MigrationSettings(dir), 1);
+    assertThat(error).isEqualTo("GRANT를 실행하지 못했다: GRANT 실행 인자는 --apply-grants 하나만 받는다");
+    // DB에 닿지 못해도 주소·계정·비밀번호는 남지 않는다
+    String unreachable =
+        executeAndCaptureError(new String[] {"--apply-grants"}, new MigrationSettings(dir), 1);
+    assertThat(unreachable).startsWith("GRANT를 실행하지 못했다: ");
+    assertThat(unreachable).doesNotContain(PASSWORD, "homestamp_migration", "127.0.0.1", "jdbc:");
+  }
+
+  @Test
+  void 이미지의_역할_설정은_운영_규칙을_통과하고_Owner와_Migration_로그인과_겹치지_않는다() {
+    var roles =
+        com.chilsuitjo.back.global.config.migration.GrantRoles.fromImage(
+            "homestamp_owner", "homestamp_migration");
+    assertThat(roles.app()).isEqualTo("homestamp_app");
+    assertThat(roles.purge()).isEqualTo("homestamp_purge");
+    assertThat(roles.human()).isEqualTo("homestamp_human_read");
+  }
+
   /** execute가 남긴 오류 로그 한 줄(실패 원인)을 가로챈다. */
   static String executeAndCaptureError(
       String[] args, MigrationSettings settings, int expectedExit) {

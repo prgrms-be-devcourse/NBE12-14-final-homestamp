@@ -1,0 +1,11 @@
+[Unit]
+Description=HomeStamp certificate renew, daily
+
+[Timer]
+# 12:00 KST(서버는 UTC). 서버가 꺼져 놓쳤으면 켜질 때 따라잡는다(04 3-2 Persistent=true)
+OnCalendar=*-*-* 03:00:00 UTC
+Persistent=true
+RandomizedDelaySec=30m
+
+[Install]
+WantedBy=timers.target
