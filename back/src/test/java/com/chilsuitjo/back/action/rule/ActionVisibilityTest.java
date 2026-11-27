@@ -166,6 +166,38 @@ class ActionVisibilityTest {
   }
 
   @Test
+  void 공유_중단_뒤_내가_보낸_확인_요청은_보이지만_기준_측_초안은_드러나지_않는다() {
+    UUID inspection = UUID.randomUUID();
+    ActionEntry start = startInspection(1, inspection, PartySide.LANDLORD, T0);
+    ActionEntry item = addItem(2, inspection, PartySide.LANDLORD, T0.plusSeconds(1));
+    ActionEntry request = tenantRequest(3, inspection, AFTER);
+
+    assertThat(ActionVisibility.select(List.of(start, item, request), PartySide.TENANT, SHARED))
+        .containsExactly(start, request);
+  }
+
+  @Test
+  void 공유_중단_시각과_같은_때_내가_보낸_확인_요청이면_기준_측_초안이_드러난다() {
+    UUID inspection = UUID.randomUUID();
+    ActionEntry start = startInspection(1, inspection, PartySide.LANDLORD, T0);
+    ActionEntry item = addItem(2, inspection, PartySide.LANDLORD, T0.plusSeconds(1));
+    ActionEntry request = tenantRequest(3, inspection, CUTOFF);
+
+    assertThat(ActionVisibility.select(List.of(start, item, request), PartySide.TENANT, SHARED))
+        .containsExactly(start, item, request);
+  }
+
+  private static ActionEntry tenantRequest(long seq, UUID inspection, Instant at) {
+    return inspectionEntry(
+        seq,
+        ActionType.REQUEST_INSPECTION_CONFIRM,
+        PartySide.TENANT,
+        ActionTarget.inspection(inspection),
+        Map.of(),
+        at);
+  }
+
+  @Test
   void 상대가_탈퇴했으면_공유_중단_뒤_그_측_행동만_계속_뺀다() {
     // 03 6-4: 중단 동안 탈퇴자가 남긴 기록은 지운다. 남은 사람의 행동과 서버 행동은 풀린 기준을 따른다
     Cutoff departed = new Cutoff(null, CUTOFF);
