@@ -1,0 +1,154 @@
+# 백엔드 이미지 빌드·검사·발행(04 9-2 "이미지 빌드 → 검사 → GHCR", 런북 docs/runbooks/이미지-발행.md).
+# 운영 배포는 하지 않는다(deploy.yml이 digest를 받아 따로, 승인 뒤).
+#
+#   PR(back/ 바뀜)   : linux/amd64 빌드 → Trivy 검사 → 결과 보관. 발행 없음, packages 권한 없음
+#   main push·수동   : 백엔드 검증(spotless·테스트) → 빌드 → 검사 → [발행 허용일 때만] GHCR Push → digest
+# 발행 허용 = main + push/수동 + 저장소 변수 IMAGE_PUBLISH_ENABLED=true + IMAGE_REPOSITORY(gate.sh).
+# 저장소가 공개라 첫 Push가 공개 패키지가 될 수 있고, 공개는 되돌릴 수 없다. 그래서 공개 승인 전에는 변수를 켜지 않는다.
+name: image-publish
+
+on:
+  pull_request:
+    paths:
+      - back/**
+      - .github/workflows/image-publish.yml
+      - .github/scripts/image/**
+  push:
+    branches: [main]
+    paths:
+      - back/**
+      - .github/workflows/image-publish.yml
+      - .github/scripts/image/**
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: image-publish-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    outputs:
+      publish: ${{ steps.gate.outputs.publish }}
+      image_id: ${{ steps.build.outputs.image_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: 발행 허용 판단
+        id: gate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          PUBLISH_ENABLED: ${{ vars.IMAGE_PUBLISH_ENABLED }}
+          IMAGE_REPOSITORY: ${{ vars.IMAGE_REPOSITORY }}
+        run: |
+          .github/scripts/image/gate.sh | tee -a "$GITHUB_OUTPUT"
+
+      # PR은 CI(ci.yml back)가 같은 검사를 한다. 발행 경로에서는 그 커밋을 여기서 다시 검증한다
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6
+        if: github.event_name != 'pull_request'
+        with:
+          distribution: temurin
+          java-version: '25'
+      - name: 백엔드 검증(spotless·테스트)
+        if: github.event_name != 'pull_request'
+        working-directory: back
+        run: ./gradlew spotlessCheck build --no-daemon
+
+      - name: 이미지 빌드(linux/amd64)
+        id: build
+        env:
+          REVISION: ${{ github.sha }}
+          SOURCE: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          docker build --platform linux/amd64 \
+            --label "org.opencontainers.image.revision=$REVISION" \
+            --label "org.opencontainers.image.source=$SOURCE" \
+            --tag homestamp-back:candidate --file back/Dockerfile back
+          echo "image_id=$(docker image inspect -f '{{.Id}}' homestamp-back:candidate)" >>"$GITHUB_OUTPUT"
+          docker image inspect -f 'platform={{.Os}}/{{.Architecture}} user={{.Config.User}}' homestamp-back:candidate
+
+      - name: 보안 검사(Trivy)
+        run: .github/scripts/image/scan.sh homestamp-back:candidate trivy-report
+
+      - name: 검사 결과 보관
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: trivy-report-${{ github.sha }}
+          path: trivy-report/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: 발행할 이미지 넘기기
+        if: steps.gate.outputs.publish == 'true'
+        run: docker save homestamp-back:candidate -o image.tar
+      - if: steps.gate.outputs.publish == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: image-${{ github.sha }}
+          path: image.tar
+          retention-days: 1
+
+  publish:
+    needs: build
+    if: needs.build.outputs.publish == 'true' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: image-${{ github.sha }}
+
+      - name: 검사한 그 이미지인지
+        env:
+          IMAGE_ID: ${{ needs.build.outputs.image_id }}
+        run: |
+          docker load -i image.tar
+          [[ "$(docker image inspect -f '{{.Id}}' homestamp-back:candidate)" == "$IMAGE_ID" ]] \
+            || { echo "::error::검사한 이미지와 다릅니다"; exit 1; }
+
+      - name: GHCR 로그인(GITHUB_TOKEN)
+        env:
+          TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}
+        run: printf '%s' "$TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+
+      - name: 발행과 digest 확인
+        id: publish
+        env:
+          IMAGE_REPOSITORY: ${{ vars.IMAGE_REPOSITORY }}
+          LOCAL_IMAGE: homestamp-back:candidate
+          REVISION: ${{ github.sha }}
+        run: .github/scripts/image/publish.sh
+
+      - name: 배포 담당에게 넘길 값
+        env:
+          DIGEST: ${{ steps.publish.outputs.digest }}
+          IMAGE: ${{ steps.publish.outputs.image }}
+          REVISION: ${{ github.sha }}
+        run: |
+          {
+            echo "### 발행한 이미지"
+            echo "- 커밋: \`$REVISION\`"
+            echo "- 이미지: \`$IMAGE\`"
+            echo "- deploy.yml 입력 digest: \`$DIGEST\`"
+            echo "- 운영 배포는 deploy.yml에서 따로 승인받아 실행한다"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: 로그아웃
+        if: always()
+        run: docker logout ghcr.io
