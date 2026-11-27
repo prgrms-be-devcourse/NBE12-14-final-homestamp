@@ -18,7 +18,10 @@ public interface RoomRecordRepository extends JpaRepository<RoomRecord, UUID> {
   @Query("select r from RoomRecord r where r.id = :id")
   Optional<RoomRecord> findByIdForUpdate(@Param("id") UUID id);
 
-  /** 이 회원이 당사자인 호실 기록, 새것부터(ID가 UUID v7이라 만든 순서). 내 호실 목록의 첫 쪽. */
+  /**
+   * 이 회원이 당사자인 호실 기록, 새것부터(ID가 UUID v7이라 만든 순서). 내 호실 목록의 첫 쪽, 또는 {@code Limit.unlimited()}로 전부(홈
+   * 범위 {@code RoomQueryService.roomsOf}).
+   */
   @Query(
       "select r from RoomRecord r where exists (select 1 from Party p"
           + " where p.roomRecordId = r.id and p.memberId = :member) order by r.id desc")

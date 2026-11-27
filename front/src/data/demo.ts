@@ -312,6 +312,14 @@ export interface Inspection {
   // 마지막 [보충하고 다시 확인 요청] 시각(ISO, 한 항목에 7일에 한 번)과 보충 이력
   reaskedAt?: string
   supplements?: { text: string; photos: number; at: string }[]
+  // HTTP: 서버가 준 항목 값(06 4-7 GET /api/inspections/{id}의 items). 목업에는 없어요.
+  server?: InspectionItemServerState
+}
+export interface InspectionItemServerState {
+  // 이 항목에 지금 누를 수 있는 행동(respond·supplement)
+  availableActions: string[]
+  // "잠긴 뒤 추가"(INSP-1e)
+  addedAfterLock: boolean
 }
 // ERD photo.inspection_id + room_part_id + MOVE_IN/MOVE_OUT에 대응하는 목업.
 // 하자 항목과 달리 확인 상태를 갖지 않습니다. zone은 기존 화면의 부위 키입니다.
@@ -456,6 +464,18 @@ export interface InviteLink {
   invalidatedAt?: string
   invalidatedReason?: "번호 변경" | "연결됨"
 }
+export interface InspectionServerState {
+  // 서버의 점검 ID(요청 주소에 써요)
+  id: string
+  // 점검에 지금 누를 수 있는 행동(items·request-confirm·confirm-all)
+  availableActions: string[]
+  lockedAt: string | null
+  lockReason: "ALL_RESOLVED" | "NO_ITEMS" | null
+  // 상대도 "지금까지 쓴 것으로" 확인 요청을 보낼 수 있게 되는 시각(INSP-1f)
+  counterpartCanRequestAt: string
+  // 공유를 그만둬 보이는 범위를 고정한 시각. 고정되지 않았으면 null
+  asOf: string | null
+}
 export interface InspectionSession {
   author: Role
   status: "작성 중" | "확인 요청" | "잠김"
@@ -467,6 +487,8 @@ export interface InspectionSession {
   soloLocked?: boolean
   // 늦은 입주 점검(INSP-2a): 입주일보다 늦게 시작했으면 시작한 날(YYYY-MM-DD). 화면에 "입주 후 등록(날짜)"
   lateOn?: string
+  // HTTP: 서버가 준 점검 값(06 4-7 GET /api/inspections/{id}). 있으면 상태·잠김은 서버 값 그대로 써요(화면이 잠금을 계산하지 않음, #326). 목업에는 없어요.
+  server?: InspectionServerState
 }
 export interface Notice {
   id: string

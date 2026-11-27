@@ -1,7 +1,9 @@
 package com.chilsuitjo.back.room.service;
 
+import com.chilsuitjo.back.room.dto.MemberRoom;
 import com.chilsuitjo.back.room.dto.RoomPartSummary;
 import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -29,4 +31,11 @@ public interface RoomQueryService {
    * {@code NOT_FOUND}다. 공유 중단이 없으면 {@link #findPart}와 같다.
    */
   RoomPartSummary findPartAsSeenBy(UUID roomRecordId, UUID roomPartId, UUID memberId);
+
+  /**
+   * 이 회원이 당사자인 호실 기록 전부(홈이 호실마다 읽을 범위, #369·#370 A-8). 내 호실 목록({@code GET /api/rooms})과 같은 호실을 같은
+   * 순서(새것부터)로 주지만 커서·상한이 없다(A-8: 첫 쪽에 없는 호실의 요청이 빠지지 않게). 호실을 거르지 않는다: 정산 완료·합류 전 기록·거주 중 거르기는 부르는
+   * 쪽이 한다. 당사자인 호실이 없으면 빈 목록이다.
+   */
+  List<MemberRoom> roomsOf(UUID memberId);
 }

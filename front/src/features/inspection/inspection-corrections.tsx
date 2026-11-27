@@ -1,4 +1,5 @@
 import {
+  inspectionIdIn,
   inspectionIdOf,
   notInSpec,
   photoIdOf,
@@ -663,11 +664,13 @@ export function MissingDefectDialog({
 
 // 남은 항목 모두 확인(확인 창 → 항목마다 확인 행동)
 export function ConfirmAllItems({
+  room,
   items,
   db,
   role,
   onAct,
 }: {
+  room: Room
   items: Inspection[]
   db: DemoState
   role: Role
@@ -697,10 +700,13 @@ export function ConfirmAllItems({
           onAct(
             post(
               endpoints.inspectionAction(
-                inspectionIdOf(items[0].roomId, items[0].kind),
+                inspectionIdIn(room, items[0].kind),
                 "confirm-all",
               ),
-              { seen },
+              // 06 4-7: 화면이 본 미응답 항목과 판 번호(지금 서버의 미응답 항목과 다르면 VERSION_CONFLICT)
+              {
+                items: ids.map((id) => ({ id, seenVersionNo: seen[id] ?? 1 })),
+              },
             ),
             `남은 점검 항목 모두 확인 · ${ids.length}개`,
             update,
