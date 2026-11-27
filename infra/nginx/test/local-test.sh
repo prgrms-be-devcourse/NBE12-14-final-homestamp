@@ -70,6 +70,8 @@ server {
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Frame-Options "DENY" always;
     add_header Strict-Transport-Security "max-age=31536000 ; includeSubDomains" always;
+    # 앱이 확인 헤더와 같은 이름을 보내도 nginx가 지우는지 본다
+    add_header X-Homestamp-Upstream "from-app" always;
     return 200 "$color xff=\$http_x_forwarded_for real=\$http_x_real_ip proto=\$http_x_forwarded_proto fwd=[\$http_forwarded] uri=\$request_uri\n";
   }
 }
@@ -173,6 +175,7 @@ check "API: 응답 Cache-Control no-store" bash -c "curl ${C[*]} -D - -o /dev/nu
 ah="$(curl "${C[@]}" -D - -o /dev/null "https://$DOMAIN:$S/api/x")"
 check "API 헤더: Cache-Control 한 번(no-store)" test "$(grep -ci '^cache-control:' <<<"$ah")-$(grep -ci '^cache-control: no-store' <<<"$ah")" = "1-1"
 check "API 헤더: nosniff 한 번" test "$(grep -ci '^x-content-type-options:' <<<"$ah")" = "1"
+check "API 헤더: 밖의 요청에는 X-Homestamp-Upstream 없음(앱이 보낸 값도 지움)" test "$(grep -ci '^x-homestamp-upstream:' <<<"$ah")" = "0"
 check "API 헤더: X-Frame-Options 한 번" test "$(grep -ci '^x-frame-options:' <<<"$ah")" = "1"
 check "API 헤더: 앱의 HSTS는 지움(기본 꺼짐)" test "$(grep -ci '^strict-transport-security:' <<<"$ah")" = "0"
 check "API 헤더: Referrer-Policy·CSP 있음" has_all "$ah" '^referrer-policy: strict-origin' '^content-security-policy-report-only:'
@@ -180,8 +183,12 @@ check "API: 1MB 넘는 본문 413" test "$(head -c 1100000 /dev/zero | curl "${C
 
 # ---------- 4. 블루/그린 전환 ----------
 export NGINX_TEST="docker exec $EDGE nginx -t -q" NGINX_RELOAD="docker exec $EDGE nginx -s reload"
-"$work/nginx/switch-upstream.sh" "$P-green:8080" >/dev/null; sleep 1
-check "전환: green으로" grep -q '^green ' <<<"$(curl "${C[@]}" "https://$DOMAIN:$S/api/x")"
+export NGINX_WORKERS="docker exec $EDGE sh -c 'pgrep -P \"\$(cat /tmp/nginx.pid)\"'"
+"$work/nginx/switch-upstream.sh" "$P-green:8080" >/dev/null
+# 고정 sleep 없이: switch-upstream.sh가 이전 작업 프로세스가 끝나기를 기다렸으므로 바로 새 연결이 green으로 간다
+check "전환: 끝나자마자 green으로" grep -q '^green ' <<<"$(curl "${C[@]}" "https://$DOMAIN:$S/api/x")"
+check "RELOAD_WAIT 형식 오류: 2로 끝남" bash -c "RELOAD_WAIT=0 '$work/nginx/switch-upstream.sh' $P-blue:8080 >/dev/null 2>&1; test \$? -eq 2"
+check "RELOAD_WAIT 형식 오류 뒤: 파일이 green 그대로(바꾸기 전에 검사)" grep -q "$P-green:8080" "$work/nginx/run/upstream/upstream.conf"
 check "전환 실패(없는 주소): 0이 아닌 종료" bash -c "! '$work/nginx/switch-upstream.sh' nohost-xyz:8080 >/dev/null 2>&1"
 check "전환 실패 뒤: 파일이 green 그대로" grep -q "$P-green:8080" "$work/nginx/run/upstream/upstream.conf"
 check "전환 실패 뒤: 트래픽 green 그대로" grep -q '^green ' <<<"$(curl "${C[@]}" "https://$DOMAIN:$S/api/x")"
