@@ -8,6 +8,8 @@ import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.Objects;
 import java.util.Set;
 import org.springframework.beans.factory.annotation.Value;
@@ -19,8 +21,8 @@ import org.springframework.stereotype.Component;
  *
  * <p>정산 완료·합류 전 기록·내 공유 중단은 pipeline이 먼저 막는다(09 3-1 순서 3).
  *
- * <p>지금은 입주 점검 시작(INSP-1a·2b)과 확인 요청(INSP-1f)만 있다. 잠금(INSP-1b~e)은 그 기능을 만들 때 더하고, 그 전까지 다른 행동은
- * {@code INVALID_STATE}다. 퇴거 점검(INSP-3)·늦은 입주 표시({@code late}, INSP-2a)는 B가 만든다(07 WBS 3주차).
+ * <p>지금은 입주·퇴거 점검 시작(INSP-1a·2·3)과 확인 요청(INSP-1f)만 있다. 잠금(INSP-1b~e)과 퇴거 점검 마침({@code
+ * FINISH_INSPECTION})은 그 기능을 만들 때 더하고, 그 전까지 다른 행동은 {@code INVALID_STATE}다.
  */
 @Component
 public class InspectionTransitions implements Transitions<InspectionState> {
@@ -32,9 +34,14 @@ public class InspectionTransitions implements Transitions<InspectionState> {
   /** 작성 중이 이만큼 지나면 상대도 확인 요청을 보낼 수 있다({@code inspection.draft.stale-after}, 06 0-1). */
   private final Duration draftStaleAfter;
 
+  /** 시작 시각을 날짜로 바꿀 때 쓰는 시간대({@code app.zone}). 입주일과 같은 달력으로 늦었는지 본다(INSP-2a). */
+  private final ZoneId zone;
+
   public InspectionTransitions(
-      @Value("${app.inspection.draft.stale-after:7d}") Duration draftStaleAfter) {
+      @Value("${app.inspection.draft.stale-after:7d}") Duration draftStaleAfter,
+      @Value("${app.zone}") ZoneId zone) {
     this.draftStaleAfter = Objects.requireNonNull(draftStaleAfter, "draftStaleAfter");
+    this.zone = Objects.requireNonNull(zone, "zone");
   }
 
   @Override
@@ -95,10 +102,14 @@ public class InspectionTransitions implements Transitions<InspectionState> {
    *
    * <p>거주 종료 뒤에는 입주 점검을 새로 시작하지 않는다({@code INVALID_STATE}, 03 A "상태별로 할 수 있는 일"에 없음).
    *
-   * <p><b>현재 구현 범위의 한계</b>: 퇴거 점검({@code MOVE_OUT})은 아직 만들지 않아 {@code INVALID_STATE}로 받지 않는다. 규칙이
-   * 아니라 구현 전이라서다. 퇴거 점검(06 INSP-3, B 담당)을 만들 때 이 거절을 지운다.
+   * <p>늦은 입주 점검(INSP-2a): 시작한 날({@code app.zone} 달력)이 입주일보다 뒤면 누가 쓰든 {@code late}다. 입주일 당일은 늦지 않다.
+   * 입주일은 이 행동이 채운 값, 없으면 호실에 이미 있던 값이다.
+   *
+   * <p>퇴거 점검(INSP-3, 03 H "퇴거 점검"): 입주 점검과 같은 규칙으로 하나만, 먼저 시작한 측이 기준이다. 입주 점검이 없어도 시작한다(살다가 가입한
+   * 경우). 거주 종료 뒤에도 정산 완료 전이면 시작한다(03 A "사진 올리기"에 퇴거 점검, 정산 완료는 pipeline이 막음). 입주일은 입주 점검만 채우므로 보내면
+   * {@code VALIDATION_FAILED}이고 늦은 표시는 붙지 않는다.
    */
-  private static InspectionState start(InspectionState now, ActionEntry action) {
+  private InspectionState start(InspectionState now, ActionEntry action) {
     if (now.exists()) {
       throw new BusinessException(ErrorCode.INSPECTION_EXISTS);
     }
@@ -106,28 +117,46 @@ public class InspectionTransitions implements Transitions<InspectionState> {
       throw new BusinessException(ErrorCode.INVALID_STATE);
     }
     StartInspectionPayload in = action.payloadAs(StartInspectionPayload.class);
-    if (in.kind() != InspectionKind.MOVE_IN) {
-      // 현재 구현 범위의 한계: 퇴거 점검은 아직 없다(INSP-3)
-      throw new BusinessException(ErrorCode.INVALID_STATE);
+    boolean dateGiven = in.moveInDate() != null;
+    if (in.kind() == InspectionKind.MOVE_OUT) {
+      if (dateGiven) {
+        throw new BusinessException(ErrorCode.VALIDATION_FAILED);
+      }
+      return started(now, action, in.kind(), now.moveInDateMissing(), false);
     }
     if (Boolean.TRUE.equals(now.roomEnded())) {
       throw new BusinessException(ErrorCode.INVALID_STATE);
     }
-    boolean dateGiven = in.moveInDate() != null;
     if (Boolean.TRUE.equals(now.moveInDateMissing()) && !dateGiven) {
       throw new BusinessException(ErrorCode.MOVE_IN_DATE_REQUIRED);
     }
     if (Boolean.FALSE.equals(now.moveInDateMissing()) && dateGiven) {
       throw new BusinessException(ErrorCode.VALIDATION_FAILED);
     }
+    LocalDate moveInDate = dateGiven ? LocalDate.parse(in.moveInDate()) : now.moveInDate();
+    Boolean late =
+        moveInDate == null
+            ? null
+            : action.createdAt().atZone(zone).toLocalDate().isAfter(moveInDate);
+    return started(now, action, in.kind(), now.moveInDateMissing() == null ? null : false, late);
+  }
+
+  private static InspectionState started(
+      InspectionState now,
+      ActionEntry action,
+      InspectionKind kind,
+      Boolean moveInDateMissing,
+      Boolean late) {
     return new InspectionState(
-        in.kind(),
+        kind,
         InspectionStatus.DRAFT,
         action.actorSide(),
         action.createdAt(),
-        now.moveInDateMissing() == null ? null : false,
+        moveInDateMissing,
         now.roomEnded(),
-        now.canOpenConfirm());
+        now.canOpenConfirm(),
+        null,
+        late);
   }
 
   /**

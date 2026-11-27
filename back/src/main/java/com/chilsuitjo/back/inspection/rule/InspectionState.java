@@ -2,6 +2,7 @@ package com.chilsuitjo.back.inspection.rule;
 
 import com.chilsuitjo.back.global.common.PartySide;
 import java.time.Instant;
+import java.time.LocalDate;
 
 /**
  * 점검 하나의 상태 값({@link InspectionTransitions}가 다룬다). 아직 없는 점검이면 모든 칸이 비어 있다({@link #NONE}).
@@ -16,6 +17,9 @@ import java.time.Instant;
  * @param moveInDateMissing 호실의 입주일이 비어 있는지(06 INSP-2b). 재계산이면 null
  * @param roomEnded 호실이 거주 종료 뒤인지(정산 완료 포함). 재계산이면 null
  * @param canOpenConfirm 지금 호실 단계에서 점검 확인 요청을 열 수 있는지(03 K, {@code RequestOpening}). 재계산이면 null
+ * @param moveInDate 호실에 이미 있는 입주일(시작하기 전 호실 사실). 비었거나 재계산이면 null. 시작이 채우는 입주일은 행동 payload에 있다
+ * @param late 입주일보다 늦게 시작한 입주 점검인가(06 INSP-2a, {@code inspection.late}). 시작이 정하고 그 뒤로 바뀌지 않는다. 퇴거
+ *     점검은 늘 거짓이다. 재계산에서 입주일을 모르면 null
  */
 public record InspectionState(
     InspectionKind kind,
@@ -24,15 +28,28 @@ public record InspectionState(
     Instant startedAt,
     Boolean moveInDateMissing,
     Boolean roomEnded,
-    Boolean canOpenConfirm) {
+    Boolean canOpenConfirm,
+    LocalDate moveInDate,
+    Boolean late) {
 
   /** 아직 없는 점검. 재계산의 시작점이다(요청할 때만 아는 값은 모름). */
   public static final InspectionState NONE =
-      new InspectionState(null, null, null, null, null, null, null);
+      new InspectionState(null, null, null, null, null, null, null, null, null);
 
-  /** 아직 없는 점검의 지금 상태. 시작하기 전에 호실 사실만 담는다. */
+  /** 아직 없는 점검의 지금 상태. 시작하기 전에 호실 사실만 담는다. 입주일 값은 모른다(늦었는지는 정하지 않음). */
   public static InspectionState notStarted(boolean moveInDateMissing, boolean roomEnded) {
-    return new InspectionState(null, null, null, null, moveInDateMissing, roomEnded, null);
+    return new InspectionState(
+        null, null, null, null, moveInDateMissing, roomEnded, null, null, null);
+  }
+
+  /**
+   * 아직 없는 점검의 지금 상태({@code InspectionStateStore.load}). 입주일이 null이면 호실 입주일이 비어 있는 것이다(06 INSP-2b).
+   *
+   * @param moveInDate 호실의 지금 입주일
+   */
+  public static InspectionState notStarted(LocalDate moveInDate, boolean roomEnded) {
+    return new InspectionState(
+        null, null, null, null, moveInDate == null, roomEnded, null, moveInDate, null);
   }
 
   public boolean exists() {
@@ -56,6 +73,14 @@ public record InspectionState(
 
   public InspectionState withStatus(InspectionStatus next) {
     return new InspectionState(
-        kind, next, authorSide, startedAt, moveInDateMissing, roomEnded, canOpenConfirm);
+        kind,
+        next,
+        authorSide,
+        startedAt,
+        moveInDateMissing,
+        roomEnded,
+        canOpenConfirm,
+        moveInDate,
+        late);
   }
 }

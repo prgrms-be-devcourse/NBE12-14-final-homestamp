@@ -12,7 +12,12 @@ import com.chilsuitjo.back.action.dto.DigestField;
 import com.chilsuitjo.back.action.dto.DigestInput;
 import com.chilsuitjo.back.action.rule.ContentDigest;
 import com.chilsuitjo.back.global.common.PartySide;
+import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.global.error.ErrorCode;
+import com.chilsuitjo.back.notification.dto.RequestTarget;
+import com.chilsuitjo.back.notification.rule.RequestKind;
+import com.chilsuitjo.back.notification.rule.RequestStatus;
+import com.chilsuitjo.back.notification.service.FakeWaitService;
 import com.chilsuitjo.back.photo.dto.PhotoCard;
 import com.chilsuitjo.back.photo.dto.PhotoTarget;
 import com.chilsuitjo.back.photo.rule.PhotoStage;
@@ -24,6 +29,7 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -56,6 +62,7 @@ class RepairRegisterApiTest {
   @Autowired private MockMvc mvc;
   @Autowired private JdbcTemplate jdbc;
   @Autowired private FakePhotoService photos;
+  @Autowired private FakeWaitService waits;
   @Autowired private RoomAccessService access;
   @Autowired private PlatformTransactionManager transactionManager;
 
@@ -363,6 +370,53 @@ class RepairRegisterApiTest {
     assertThat(cardsOf(caseId)).hasSize(2);
   }
 
+  // ---- 하자 확인 요청 (#318, 05 4장 "하자 등록 + 알리기", 03 1-4 "연결 전 상대" ①) ----
+
+  @Test
+  void 연결된_상대에게는_등록과_함께_하자_확인_요청이_열린다() throws Exception {
+    UUID caseId = created(register("req-connected", body(part, "천장 누수", null)));
+
+    assertThat(defectRequestOf(caseId)).contains(RequestStatus.WAITING);
+  }
+
+  @Test
+  void 연결_전_상대에게도_하자_확인_요청이_열린다() throws Exception {
+    // 하자는 링크로 알리고 기다리는 기록이다. 72시간 뒤 "확인 없음 · 아직 연결하지 않았어요"로 혼자 진행이 열린다
+    changeParty(PartySide.LANDLORD, null, "INVITED", null);
+
+    UUID caseId = created(register("req-invited", body(part, "천장 누수", null)));
+
+    assertThat(defectRequestOf(caseId)).contains(RequestStatus.WAITING);
+  }
+
+  @Test
+  void 받을_상대가_없으면_하자_확인_요청을_열지_않는다() throws Exception {
+    // 초대 전·번호만(나만 보기)·거절은 기다릴 상대가 없다(03 D "하자 등록")
+    for (String status : List.of("EMPTY", "NUMBER_ONLY", "REJECTED")) {
+      changeParty(PartySide.LANDLORD, null, status, null);
+
+      UUID caseId = created(register("req-" + status, body(part, "누수 " + status, null)));
+
+      assertThat(defectRequestOf(caseId)).as(status).isEmpty();
+    }
+  }
+
+  @Test
+  void 상대가_볼_수_없는_기록이면_하자_확인_요청을_열지_않는다() throws Exception {
+    // 공유를 그만둔 뒤 남긴 기록은 상대에게 보이지 않는다(불변식 18). 탈퇴한 상대에게도 열지 않는다
+    changeParty(PartySide.TENANT, tenant, "SHARING_STOPPED", STOPPED);
+    UUID mine = created(register("req-my-stop", body(part, "누수", null)));
+    changeParty(PartySide.TENANT, tenant, "CONNECTED", null);
+    changeParty(PartySide.LANDLORD, member(), "SHARING_STOPPED", STOPPED);
+    UUID theirs = created(register("req-their-stop", body(part, "누수 2", null)));
+    changeParty(PartySide.LANDLORD, member(), "WITHDRAWN", STOPPED);
+    UUID withdrawn = created(register("req-withdrawn", body(part, "누수 3", null)));
+
+    assertThat(defectRequestOf(mine)).isEmpty();
+    assertThat(defectRequestOf(theirs)).isEmpty();
+    assertThat(defectRequestOf(withdrawn)).isEmpty();
+  }
+
   @Test
   void 상대가_아직_연결되지_않았으면_처음_보인_시각은_비어_있다() throws Exception {
     changeParty(PartySide.LANDLORD, null, "INVITED", null);
@@ -525,6 +579,11 @@ class RepairRegisterApiTest {
   }
 
   /** 세입자가 보는 이 수리 건의 사진 카드(가짜 사진 창구). */
+  private Optional<RequestStatus> defectRequestOf(UUID caseId) {
+    return waits.statusOf(
+        RequestTarget.of(TargetKind.REPAIR_CASE, caseId), RequestKind.DEFECT_CONFIRM);
+  }
+
   private List<PhotoCard> cardsOf(UUID caseId) {
     RoomAccess viewer =
         new TransactionTemplate(transactionManager).execute(s -> access.require(room, tenant));
