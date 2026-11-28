@@ -47,10 +47,13 @@ import {
   addedItemAnswerText,
   addsMissingDefect,
   confirmNoDefects,
+  confirmAllButtons,
   confirmReach,
+  counterpartItemsAwaitingAnswer,
   finishSoloInspection,
   inspectionStatus,
   kindLabel,
+  lockedWithNoDefects,
   sessionOf,
   startInspection,
 } from "@/lib/inspection-rules"
@@ -354,7 +357,7 @@ export function InspectionPage({
                 </StatusTag>
                 {inspectionLocked && (
                   <StatusTag>
-                    {session?.noDefects
+                    {lockedWithNoDefects(session)
                       ? "점검 완료 · 잠김 · 하자 기록 없음"
                       : "점검 완료 · 잠김"}
                   </StatusTag>
@@ -494,7 +497,7 @@ export function InspectionPage({
           inspectionLocked ? (
             <div className="actions">
               <Status>
-                {session?.noDefects
+                {lockedWithNoDefects(session)
                   ? "점검 완료 · 잠김 · 하자 기록 없음"
                   : "점검 완료 · 잠김"}
               </Status>
@@ -577,7 +580,8 @@ export function InspectionPage({
                 {moveIn === "없음" ? " 먼저 작성한 쪽이 기준 기록을 써요." : ""}
               </small>
             )}
-            {has("confirm-all") && session?.noDefects && (
+            {confirmAllButtons(session, moveInMine, has("confirm-all"))
+              .noDefects && (
               <Button
                 onClick={() =>
                   commit(
@@ -599,9 +603,16 @@ export function InspectionPage({
             )}
             {moveIn === "확인 요청" && session?.noDefects && (
               <small className="muted">
-                {moveInMine
-                  ? "하자 기록 없음으로 확인을 요청했어요. 상대가 확인하면 잠겨요."
-                  : "상대가 하자 기록 없음으로 확인을 요청했어요. 확인하면 점검이 잠겨요."}
+                {/* 상대가 더한 항목에 답이 남았으면 "하자 기록 없음" 확인만으로는 잠기지 않아요. 두 조건을 함께 알려요(03 H, #409) */}
+                {counterpartItemsAwaitingAnswer(session, inspectionItems)
+                  ? moveInMine
+                    ? "하자 기록 없음으로 확인을 요청했어요. 상대가 하자 기록 없음을 확인하고, 상대가 더한 항목에 내가 답하면 점검이 잠겨요."
+                    : has("confirm-all")
+                      ? "상대가 하자 기록 없음으로 확인을 요청했어요. 내가 하자 기록 없음을 확인하고, 내가 더한 항목에 상대가 답하면 점검이 잠겨요."
+                      : "하자 기록 없음을 확인했어요. 내가 더한 항목에 상대가 답하면 점검이 잠겨요."
+                  : moveInMine
+                    ? "하자 기록 없음으로 확인을 요청했어요. 상대가 확인하면 잠겨요."
+                    : "상대가 하자 기록 없음으로 확인을 요청했어요. 확인하면 점검이 잠겨요."}
               </small>
             )}
             {moveIn === "확인 요청" && !session?.noDefects && (
@@ -717,7 +728,8 @@ export function InspectionPage({
 
         {!readOnly && (
           <div className="actions mt-5">
-            {has("confirm-all") && !session?.noDefects && (
+            {confirmAllButtons(session, moveInMine, has("confirm-all"))
+              .items && (
               <ConfirmAllItems
                 room={room}
                 items={inspectionItems}

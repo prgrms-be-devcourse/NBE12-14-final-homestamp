@@ -66,6 +66,10 @@ export const CONNECTED_APIS: readonly {
     path: /^\/api\/auth\/phone-verifications\/[^/]+\/verify$/,
   },
   { method: "POST", path: /^\/api\/auth\/signup$/ },
+  // 내 정보 수정·문자 설정·비밀번호 변경·재설정(06 4-1, ACC-4·5·6, #416)
+  { method: "POST", path: /^\/api\/me$/ },
+  { method: "POST", path: /^\/api\/me\/password$/ },
+  { method: "POST", path: /^\/api\/auth\/reset-password$/ },
 ]
 
 export const NOT_CONNECTED_MESSAGE = "아직 서버에 연결되지 않은 기능이에요."

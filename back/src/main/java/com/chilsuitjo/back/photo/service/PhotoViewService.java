@@ -35,11 +35,12 @@ import org.springframework.transaction.annotation.Transactional;
  * PhotoService})에 두지 않는다. 사진 줄을 DB에서 직접 읽으므로 {@code photo.service=fake}로 붙인 사진(메모리)은 찾지 못한다.
  *
  * <pre>
- * 사진 읽기 → 한 호실인지 → 호실 회원인지(require) → 보이는지(PhotoSight) → 지운 사진은 흔적, 나머지는 서명
+ * 사진 읽기 → 한 호실인지 → 호실 회원인지(require) → 공개 상태 읽기 → 보이는지(PhotoSight) → 지운 사진은 흔적, 나머지는 서명
  * </pre>
  *
- * <p>볼 수 없는 사진(없는 ID, 다른 호실, 공유를 그만둔 뒤 상대가 올린 사진)이 한 장이라도 섞이면 요청 전체를 {@code NOT_FOUND}로 거절한다. 없는
- * 사진과 숨긴 사진이 같은 답이라 있는지 드러나지 않는다(ROOM-2a). 내려받기 묶음(#274)은 이보다 좁게 골라 이 거절에 걸리지 않는다(#246).
+ * <p>볼 수 없는 사진(없는 ID, 다른 호실, 공유를 그만둔 뒤 상대가 올린 사진, 상대의 작성 중 점검 사진 #295)이 한 장이라도 섞이면 요청 전체를 {@code
+ * NOT_FOUND}로 거절한다. 없는 사진과 숨긴 사진이 같은 답이라 있는지 드러나지 않는다(ROOM-2a). 내려받기 묶음(#274)은 이보다 좁게 골라 이 거절에 걸리지
+ * 않는다(#246).
  */
 @Service
 public class PhotoViewService {
@@ -90,19 +91,20 @@ public class PhotoViewService {
       throw new BusinessException(ErrorCode.NOT_FOUND);
     }
     RoomAccess viewer = access.require(rooms.iterator().next(), memberId);
+    Map<UUID, PhotoVisibility> states =
+        visibilities.findAllById(ids).stream()
+            .collect(Collectors.toMap(PhotoVisibility::getPhotoId, Function.identity()));
     for (Photo photo : found.values()) {
+      PhotoVisibility state = stateOf(photo, states);
       if (!PhotoSight.visibleTo(
           photo.getUploadedBySide(),
-          photo.getCreatedAt(),
+          state.getReleasedAt(),
           viewer.side(),
           viewer.sharingStoppedAt())) {
         throw new BusinessException(ErrorCode.NOT_FOUND);
       }
     }
 
-    Map<UUID, PhotoVisibility> states =
-        visibilities.findAllById(ids).stream()
-            .collect(Collectors.toMap(PhotoVisibility::getPhotoId, Function.identity()));
     UrlPlan plan = needsUrl(ids, states) ? plan(request.variant()) : null;
     return new ViewUrlsResponse(
         ids.stream()
@@ -121,12 +123,17 @@ public class PhotoViewService {
         variant, clock.instant(), memberTtl, shortTtl, signer.credentialsExpireAt().orElse(null));
   }
 
-  private PhotoUrlResponse item(
-      Photo photo, PhotoVisibility state, PhotoVariant variant, UrlPlan plan) {
+  private static PhotoVisibility stateOf(Photo photo, Map<UUID, PhotoVisibility> states) {
+    PhotoVisibility state = states.get(photo.getId());
     if (state == null) {
       // 사진 카드와 공개 상태는 같은 트랜잭션에서 함께 만든다(JpaPhotoService.save). 없으면 만드는 쪽 버그다
       throw new IllegalStateException("사진 공개 상태가 없어요: " + photo.getId());
     }
+    return state;
+  }
+
+  private PhotoUrlResponse item(
+      Photo photo, PhotoVisibility state, PhotoVariant variant, UrlPlan plan) {
     if (state.getErasedAt() != null) {
       return new PhotoUrlResponse(
           photo.getId(),

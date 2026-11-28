@@ -7,6 +7,7 @@ import com.chilsuitjo.back.photo.dto.LinkPhoto;
 import com.chilsuitjo.back.photo.dto.PhotoAttachCommand;
 import com.chilsuitjo.back.photo.dto.PhotoCard;
 import com.chilsuitjo.back.photo.dto.PhotoTarget;
+import com.chilsuitjo.back.photo.rule.PhotoSight;
 import com.chilsuitjo.back.room.dto.RoomAccess;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -97,7 +98,9 @@ public class FakePhotoService implements PhotoService {
               null,
               List.of());
       String originalSha256 = fakeSha256(ticket);
-      stored.add(new Stored(command.uploader().roomRecordId(), card));
+      stored.add(
+          new Stored(
+              command.uploader().roomRecordId(), card, command.released() ? command.at() : null));
       attached.add(new PhotoDigest(card.id(), originalSha256, nextOrder));
       nextOrder++;
     }
@@ -129,15 +132,33 @@ public class FakePhotoService implements PhotoService {
     Map<PhotoTarget, List<PhotoCard>> result = new LinkedHashMap<>();
     for (PhotoTarget target : targets) {
       List<PhotoCard> cards =
-          roomCards(viewer.roomRecordId(), target).stream()
-              .filter(card ->
-                  card.uploadedBy() == viewer.side()
-                      || viewer.sharingStoppedAt() == null
-                      || !card.createdAt().isAfter(viewer.sharingStoppedAt()))
+          roomPhotos(viewer.roomRecordId(), target).stream()
+              .filter(photo ->
+                  PhotoSight.visibleTo(
+                      photo.card().uploadedBy(),
+                      photo.releasedAt(),
+                      viewer.side(),
+                      viewer.sharingStoppedAt()))
+              .map(Stored::card)
               .toList();
       result.put(target, cards);
     }
     return Map.copyOf(result);
+  }
+
+  /** 아직 상대에게 보이지 않은 사진을 {@code at}부터 보이게 한다(#295). 가짜라 롤백 때 되돌리지 않는다. */
+  @Override
+  public synchronized void release(UUID roomRecordId, Collection<PhotoTarget> targets, Instant at) {
+    for (PhotoTarget target : targets) {
+      List<Stored> stored = photos.get(target);
+      if (stored == null) {
+        continue;
+      }
+      stored.replaceAll(photo ->
+          photo.roomRecordId().equals(roomRecordId) && photo.releasedAt() == null
+              ? new Stored(photo.roomRecordId(), photo.card(), at)
+              : photo);
+    }
   }
 
   @Override
@@ -147,8 +168,9 @@ public class FakePhotoService implements PhotoService {
     Map<PhotoTarget, List<LinkPhoto>> result = new LinkedHashMap<>();
     for (PhotoTarget target : targets) {
       List<LinkPhoto> links =
-          roomCards(roomRecordId, target).stream()
-              .filter(card -> !card.hiddenOnLink())
+          roomPhotos(roomRecordId, target).stream()
+              .filter(photo -> photo.releasedAt() != null && !photo.card().hiddenOnLink())
+              .map(Stored::card)
               .map(card ->
                   new LinkPhoto(
                       card.id(),
@@ -164,19 +186,21 @@ public class FakePhotoService implements PhotoService {
     return Map.copyOf(result);
   }
 
-  /** 테스트용: 숨김·지움 등 원하는 상태의 사진 카드를 적어 둔다. 같은 호실의 같은 사진이면 바꾼다. */
+  /**
+   * 테스트용: 숨김·지움 등 원하는 상태의 사진 카드를 적어 둔다. 같은 호실의 같은 사진이면 바꾼다. 붙인 때({@code createdAt})부터 상대에게 보이는
+   * 사진이다.
+   */
   public synchronized void put(UUID roomRecordId, PhotoCard card) {
     List<Stored> stored = photos.computeIfAbsent(card.target(), target -> new ArrayList<>());
     stored.removeIf(
         photo -> photo.roomRecordId().equals(roomRecordId) && photo.card().id().equals(card.id()));
-    stored.add(new Stored(roomRecordId, card));
+    stored.add(new Stored(roomRecordId, card, card.createdAt()));
   }
 
-  private List<PhotoCard> roomCards(UUID roomRecordId, PhotoTarget target) {
+  private List<Stored> roomPhotos(UUID roomRecordId, PhotoTarget target) {
     return photos.getOrDefault(target, List.of()).stream()
         .filter(photo -> photo.roomRecordId().equals(roomRecordId))
-        .map(Stored::card)
-        .sorted(CARD_ORDER)
+        .sorted(Comparator.comparing(Stored::card, CARD_ORDER))
         .toList();
   }
 
@@ -206,6 +230,9 @@ public class FakePhotoService implements PhotoService {
     }
   }
 
-  /** {@code PhotoCard}에는 호실 기록이 없어서, 읽기 창구가 호실로 거를 수 있게 함께 둔다. */
-  private record Stored(UUID roomRecordId, PhotoCard card) {}
+  /**
+   * {@code PhotoCard}에는 호실 기록과 상대에게 보이기 시작한 시각이 없어서, 읽기 창구가 거를 수 있게 함께 둔다. {@code releasedAt}이
+   * null이면 아직 올린 측에게만 보인다.
+   */
+  private record Stored(UUID roomRecordId, PhotoCard card, Instant releasedAt) {}
 }

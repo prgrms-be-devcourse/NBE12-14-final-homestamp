@@ -300,15 +300,23 @@ abstract class PhotoAttachTestSupport {
         sortOrder,
         room,
         Timestamp.from(createdAt));
+    // 보통 사진이라 붙인 때부터 상대에게 보인다(released_at = created_at, #295)
     jdbc.update(
         "INSERT INTO state.photo_visibility (photo_id, room_record_id, erased_at, erase_reason,"
-            + " created_at, version) VALUES (?, ?, ?, ?, ?, 0)",
+            + " released_at, created_at, version) VALUES (?, ?, ?, ?, ?, ?, 0)",
         id,
         room,
         erased ? Timestamp.from(createdAt.plusSeconds(1)) : null,
         erased ? "PRIVACY" : null,
+        Timestamp.from(createdAt),
         Timestamp.from(createdAt));
     return id;
+  }
+
+  /** 아직 상대에게 보이지 않은 사진으로 바꾼다(작성 중 점검에 기준 측이 붙인 사진처럼 {@code released_at}이 빈 것, #295). */
+  UUID unreleased(UUID photoId) {
+    jdbc.update("UPDATE state.photo_visibility SET released_at = NULL WHERE photo_id = ?", photoId);
+    return photoId;
   }
 
   List<UUID> existingPhotos(int count) {

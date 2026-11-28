@@ -2,7 +2,7 @@
 \set QUIET 1
 
 -- Required psql variables: owner_role, migration_role, app_role, purge_role, human_role.
--- human_role is the NOLOGIN Human read group (e.g. homestamp_human_read). Per-person LOGIN roles
+-- human_role is the NOLOGIN Human read group (production: hs_human_read). Per-person LOGIN roles
 -- are created by the separate admin procedure in docs/runbooks, never by this script.
 -- Role names are deployment inputs; credentials are intentionally not handled here.
 SELECT set_config('homestamp.bootstrap.owner_role', :'owner_role', false);
