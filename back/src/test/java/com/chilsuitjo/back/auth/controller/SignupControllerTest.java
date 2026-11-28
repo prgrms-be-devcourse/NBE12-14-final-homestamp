@@ -6,7 +6,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.clearInvocations;
-import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
@@ -430,22 +430,29 @@ class SignupControllerTest {
     assertThat(audit.get("target_id")).isNull();
     assertThat(((Timestamp) audit.get("created_at")).toInstant()).isEqualTo(completedAt);
     assertThat(createdAtOf(id)).isEqualTo(completedAt);
-    assertThat(
-            jdbc.queryForObject(
-                "SELECT count(*) FROM state.outbox WHERE kind = 'AUDIT_WRITE' AND dedupe_key = ?",
-                Integer.class,
-                "audit:" + audit.get("id")))
-        .isOne();
+    Map<String, Object> outbox =
+        jdbc.queryForMap(
+            "SELECT status, created_at, next_attempt_at FROM state.outbox"
+                + " WHERE kind = 'AUDIT_WRITE' AND dedupe_key = ?",
+            "audit:" + audit.get("id"));
+    assertThat(outbox).containsEntry("status", "PENDING");
+    assertThat(((Timestamp) outbox.get("created_at")).toInstant()).isEqualTo(completedAt);
+    assertThat(((Timestamp) outbox.get("next_attempt_at")).toInstant()).isEqualTo(completedAt);
+    assertThat(auditWriteRows(phone)).isOne();
   }
 
   @Test
   void NOTI_8c_거부되지_않은_번호로_가입하면_감사를_남기지_않는다() throws Exception {
     String phone = newPhone();
+    String ticket = ticket(phone, SIGNUP);
+    clock.advance(Duration.ofSeconds(30));
 
-    signUpOk(body(newEmail(), ticket(phone, SIGNUP)));
+    signUpOk(body(newEmail(), ticket));
 
-    verify(spiedOptOuts()).releaseForVerifiedOwner(phone, START);
+    // 해제는 불렸지만(가입 완료 시각으로) 지울 행이 없어 아무것도 남지 않는다
+    verify(spiedOptOuts()).releaseForVerifiedOwner(phone, START.plusSeconds(30));
     assertThat(auditRows(phone)).isZero();
+    assertThat(auditWriteRows(phone)).isZero();
   }
 
   @Test
@@ -468,13 +475,20 @@ class SignupControllerTest {
     optOut(phone);
     String ticket = ticket(phone, SIGNUP);
     String email = newEmail();
-    doThrow(new IllegalStateException("해제 실패"))
+    // 실제 해제(행 삭제·감사·AUDIT_WRITE)를 끝낸 뒤 던져서, 아래 "그대로"가 실행 안 됨이 아니라 롤백임을 본다
+    AtomicReference<Boolean> released = new AtomicReference<>();
+    doAnswer(
+            invocation -> {
+              released.set((Boolean) invocation.callRealMethod());
+              throw new IllegalStateException("해제 뒤 실패");
+            })
         .when(spiedOptOuts())
         .releaseForVerifiedOwner(any(), any());
 
     assertThatThrownBy(() -> signups.signUp(request(email, ticket)))
         .isInstanceOf(IllegalStateException.class);
 
+    assertThat(released.get()).isTrue();
     assertThat(
             jdbc.queryForObject(
                 "SELECT count(*) FROM state.member WHERE email = ?", Integer.class, email))
@@ -483,6 +497,7 @@ class SignupControllerTest {
     assertThat(phoneVerifiedAtOf(previous)).isNotNull();
     assertThat(optedOutRows(phone)).isOne();
     assertThat(auditRows(phone)).isZero();
+    assertThat(auditWriteRows(phone)).isZero();
 
     // 인증 표도 쓰지 않은 채로 남아 같은 표로 다시 가입된다(ACC-1f)
     reset(spiedOptOuts());
@@ -491,44 +506,48 @@ class SignupControllerTest {
     assertThat(phoneOf(previous)).isNull();
     assertThat(optedOutRows(phone)).isZero();
     assertThat(auditRows(phone)).isOne();
+    assertThat(auditWriteRows(phone)).isOne();
   }
 
   @Test
-  void NOTI_8c_거부가_풀려도_번호를_지운_초대_자리는_되살아나지_않는다() throws Exception {
+  void NOTI_8c_거부가_풀려도_옛_초대_자리와_무효가_된_링크는_되살아나지_않는다() throws Exception {
     String phone = newPhone();
+    UUID issuer = signUpOk(body(newEmail(), ticket(newPhone(), SIGNUP)));
     optOut(phone);
-    UUID room = UUID.randomUUID();
-    UUID party = UUID.randomUUID();
-    // 호실은 DB가 지우기를 막아(purge owner) 남겨 둔다. ID를 테스트마다 새로 만든다
-    jdbc.update(
-        "INSERT INTO state.region (code, sido, dong) VALUES ('9999999999', '테스트', '테스트동')"
-            + " ON CONFLICT DO NOTHING");
-    jdbc.update(
-        """
-        INSERT INTO state.room_record (id, region_code, alias, status, created_by_side, created_at, version)
-        VALUES (?, '9999999999', '테스트 호실', 'LIVING', 'TENANT', CURRENT_TIMESTAMP, 0)
-        """,
-        room);
-    // 그만 받기로 번호만 지워진 초대 자리(NOTI-8a: INVITED, 번호 없음)
-    jdbc.update(
-        """
-        INSERT INTO state.party (id, room_record_id, side, status, created_at, version)
-        VALUES (?, ?, 'LANDLORD', 'INVITED', CURRENT_TIMESTAMP, 0)
-        """,
-        party,
-        room);
+    // 그만 받기로 번호만 지워진 초대 자리(NOTI-8a: INVITED, 번호 없음)와 그 자리의 무효 링크
+    UUID clearedRoom = room();
+    UUID clearedSeat = invitedSeat(clearedRoom, null);
+    UUID oldLink = invalidatedLink(clearedRoom, clearedSeat, issuer);
+    // 같은 번호가 아직 남은 다른 호실의 초대 자리: 가입이 번호로 자리를 찾아 연결·변경하지 않는다
+    UUID numberedRoom = room();
+    UUID numberedSeat = invitedSeat(numberedRoom, phone);
 
     signUpOk(body(newEmail(), ticket(phone, SIGNUP)));
 
     assertThat(optedOutRows(phone)).isZero();
-    assertThat(
-            jdbc.queryForMap(
-                "SELECT status, invite_phone, member_id, version FROM state.party WHERE id = ?",
-                party))
+    assertThat(seat(clearedSeat))
         .containsEntry("status", "INVITED")
         .containsEntry("invite_phone", null)
         .containsEntry("member_id", null)
         .containsEntry("version", 0L);
+    assertThat(seat(numberedSeat))
+        .containsEntry("status", "INVITED")
+        .containsEntry("invite_phone", phone)
+        .containsEntry("member_id", null)
+        .containsEntry("version", 0L);
+    Map<String, Object> link =
+        jdbc.queryForMap(
+            "SELECT invalidated_reason, invalidated_at, version FROM state.link WHERE id = ?",
+            oldLink);
+    assertThat(link).containsEntry("invalidated_reason", "REINVITED").containsEntry("version", 0L);
+    assertThat(link.get("invalidated_at")).isNotNull();
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM state.link WHERE room_record_id IN (?, ?)",
+                Integer.class,
+                clearedRoom,
+                numberedRoom))
+        .isOne();
   }
 
   // 도움
@@ -557,6 +576,64 @@ class SignupControllerTest {
   private int auditRows(String phone) {
     return jdbc.queryForObject(
         "SELECT count(*) FROM log.deletion_log WHERE phone_hmac = ?", Integer.class, hmac(phone));
+  }
+
+  /** 해제 감사에 딸린 AUDIT_WRITE 줄 수. 감사와 한 문장으로 들어가므로 감사 ID로 찾는다. */
+  private int auditWriteRows(String phone) {
+    return jdbc.queryForObject(
+        "SELECT count(*) FROM state.outbox WHERE kind = 'AUDIT_WRITE' AND payload->>'deletionLogId'"
+            + " IN (SELECT id::text FROM log.deletion_log WHERE phone_hmac = ?)",
+        Integer.class,
+        hmac(phone));
+  }
+
+  /** 테스트 호실. DB가 지우기를 막아(purge owner) 남겨 두고 ID를 테스트마다 새로 만든다. */
+  private UUID room() {
+    UUID room = UUID.randomUUID();
+    jdbc.update(
+        "INSERT INTO state.region (code, sido, dong) VALUES ('9999999999', '테스트', '테스트동')"
+            + " ON CONFLICT DO NOTHING");
+    jdbc.update(
+        """
+        INSERT INTO state.room_record (id, region_code, alias, status, created_by_side, created_at, version)
+        VALUES (?, '9999999999', '테스트 호실', 'LIVING', 'TENANT', CURRENT_TIMESTAMP, 0)
+        """,
+        room);
+    return room;
+  }
+
+  private UUID invitedSeat(UUID room, String invitePhone) {
+    UUID party = UUID.randomUUID();
+    jdbc.update(
+        """
+        INSERT INTO state.party (id, room_record_id, side, invite_phone, status, created_at, version)
+        VALUES (?, ?, 'LANDLORD', ?, 'INVITED', CURRENT_TIMESTAMP, 0)
+        """,
+        party,
+        room,
+        invitePhone);
+    return party;
+  }
+
+  private UUID invalidatedLink(UUID room, UUID party, UUID issuer) {
+    UUID link = UUID.randomUUID();
+    jdbc.update(
+        """
+        INSERT INTO state.link (id, room_record_id, kind, party_id, token_hash, issued_by_member_id,
+                                invalidated_at, invalidated_reason, created_at, version)
+        VALUES (?, ?, 'INVITE', ?, ?, ?, CURRENT_TIMESTAMP, 'REINVITED', CURRENT_TIMESTAMP, 0)
+        """,
+        link,
+        room,
+        party,
+        "signup-test-" + link,
+        issuer);
+    return link;
+  }
+
+  private Map<String, Object> seat(UUID party) {
+    return jdbc.queryForMap(
+        "SELECT status, invite_phone, member_id, version FROM state.party WHERE id = ?", party);
   }
 
   private Instant createdAtOf(UUID memberId) {
