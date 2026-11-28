@@ -122,7 +122,10 @@ test("문자를 끄고 다시 켤 수 있다", async () => {
 
   fireEvent.click(within(dialog).getByRole("button", { name: "문자 끄기" }))
   expect(await within(dialog).findByText("꺼 둠")).toBeTruthy()
-  expect(within(dialog).getByText(/문자를 껐어요/)).toBeTruthy()
+  // 문자를 꺼도 인증번호 문자는 간다고 알려요(06 NOTI-8b)
+  expect(within(dialog).getByText(/문자를 껐어요/).textContent).toContain(
+    "인증번호 문자는 계속 가요",
+  )
 
   fireEvent.click(within(dialog).getByRole("button", { name: "문자 켜기" }))
   expect(await within(dialog).findByText("켜 둠")).toBeTruthy()

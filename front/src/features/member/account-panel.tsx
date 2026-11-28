@@ -21,7 +21,9 @@ const KINDS = Object.keys(ACKNOWLEDGEMENT_LABELS) as AcknowledgementKind[]
 
 export const NAME_SAVED_MESSAGE = "이름을 바꿨어요."
 export const SMS_ON_MESSAGE = "문자를 다시 받아요."
-export const SMS_OFF_MESSAGE = "문자를 껐어요. 알림은 서비스 안에서 받아요."
+// 본인이 요청한 인증번호 문자는 문자 설정과 상관없이 가요(03 K "인증 문자", 06 NOTI-8b)
+export const SMS_OFF_MESSAGE =
+  "문자를 껐어요. 알림은 서비스 안에서 받아요. 가입·비밀번호 재설정 같은 인증번호 문자는 계속 가요."
 export const PASSWORD_CHANGED_MESSAGE =
   "비밀번호를 바꿨어요. 이 기기는 그대로이고, 다른 기기에서는 로그아웃됐어요."
 // 바뀐 약관을 확인하기 전이라 거절됐을 때(CONS-4b). 확인 창은 App이 열고, 거절된 요청은 다시 보내지 않아요(#401)
