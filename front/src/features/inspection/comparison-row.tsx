@@ -21,7 +21,7 @@ const SHOW = 2
 
 // 칸마다 색: 입주 파랑 · 수리 주황 · 퇴거 초록
 const tone: Record<string, { chip: string; label: string }> = {
-  in: { chip: "bg-[#eaf0ff] text-brand", label: "text-brand" },
+  in: { chip: "bg-[#eef1f5] text-brand", label: "text-brand" },
   repair: { chip: "bg-turn-soft text-turn-ink", label: "text-turn-ink" },
   out: { chip: "bg-ok-soft text-ok-ink", label: "text-ok-ink" },
 }
@@ -30,7 +30,7 @@ function Column({ c }: { c: ComparisonColumn }) {
   const [all, setAll] = useState(false)
   const shown = all ? c.items : c.items.slice(0, SHOW)
   return (
-    <div className="flex min-w-0 flex-col gap-2 rounded-[12px] bg-[#f7f9fc] p-2.5">
+    <div className="flex min-w-0 flex-col gap-2 rounded-[12px] bg-[#f5f6f8] p-2.5">
       <div className="flex flex-wrap items-center gap-1.5 text-[13px] text-sub">
         <strong className={cn("text-sm text-ink", tone[c.key]?.label)}>
           {c.label}
@@ -43,7 +43,7 @@ function Column({ c }: { c: ComparisonColumn }) {
           {shown}
         </div>
       ) : (
-        <div className="flex min-h-11 items-center gap-1.5 rounded-[10px] border border-dashed border-[#d7dfeb] bg-white px-2.5 py-2 text-[13px] text-sub">
+        <div className="flex min-h-11 items-center gap-1.5 rounded-[10px] border border-dashed border-[#e3e7eb] bg-white px-2.5 py-2 text-[13px] text-sub">
           <Camera size={16} aria-hidden />
           {c.empty}
         </div>
@@ -93,7 +93,7 @@ export function ComparisonRow({
               key={c.key}
               className={cn(
                 "inline-flex h-6 items-center rounded-full px-[9px] text-xs leading-[inherit] font-bold whitespace-nowrap tabular-nums",
-                c.items.length ? tone[c.key]?.chip : "bg-[#f1f3f7] text-faint",
+                c.items.length ? tone[c.key]?.chip : "bg-[#f5f6f8] text-faint",
               )}
             >
               {c.label} {c.items.length}

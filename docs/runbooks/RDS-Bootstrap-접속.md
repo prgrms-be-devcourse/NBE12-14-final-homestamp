@@ -78,20 +78,20 @@ psql -X -At -c "SELECT current_user, ssl, version FROM pg_stat_ssl JOIN pg_stat_
 - `homestamp_master|t|TLSv1.3`(또는 1.2)처럼 나와야 한다. 인증서 이름 오류가 나면 `PGHOST`가 RDS 주소인지 확인한다. `localhost`로 바꾸거나 `sslmode`를 낮추지 않는다
 
 ### 7. Bootstrap
-#185 런북(`DB-보관-삭제.md` "운영 Role Bootstrap")의 명령 그대로다. 역할 이름은 테스트 이름(`homestamp_*`)을 쓰지 않고 실행할 때 확정한 운영 이름을 변수로 넣는다. 비밀번호는 없다:
+#185 런북(`DB-보관-삭제.md` "운영 Role Bootstrap")의 명령 그대로다. 역할 이름은 운영 이름(decisions 2026-11-28, 이미지 `roles.properties`와 같음)을 변수로 넣는다. 테스트 이름(`homestamp_*`)을 쓰지 않는다. 비밀번호는 없다:
 ```sh
 psql -X -v ON_ERROR_STOP=1 \
-  -v owner_role='<owner identifier>' \
-  -v migration_role='<migration login identifier>' \
-  -v app_role='<app login identifier>' \
-  -v purge_role='<purge login identifier>' \
-  -v human_role='<NOLOGIN human read group identifier>' \
+  -v owner_role=hs_owner \
+  -v migration_role=hs_migrator \
+  -v app_role=hs_app \
+  -v purge_role=hs_purge \
+  -v human_role=hs_human_read \
   -f infra/db/bootstrap_roles.sql
 ```
 
 ### 8. 점검
 ```sh
-psql -X -v ON_ERROR_STOP=1 -v human_role='<NOLOGIN human read group identifier>' -f infra/db/check_human_access.sql   # 7단계와 같은 이름
+psql -X -v ON_ERROR_STOP=1 -v human_role=hs_human_read -f infra/db/check_human_access.sql   # 7단계와 같은 이름
 ```
 
 ### 9. 결과 판단
