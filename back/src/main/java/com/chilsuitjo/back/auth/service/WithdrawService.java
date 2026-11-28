@@ -21,8 +21,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 탈퇴({@code POST /api/me/withdraw}, 06 KEEP-4, 03 L "탈퇴"). 회원(member)·토큰(auth)·호실 자리(room)를 <b>한
  * 트랜잭션</b>에서 바꾼다. 어느 하나가 실패하면 모두 되돌아간다(KEEP-4f "확인 기록 삭제나 감사 보존이 실패하면 롤백").
  *
- * <p>순서(#424): 비밀번호 확인(잠금 없음) → 트랜잭션[호실 잠금(ID 순) → 회원 행 잠금·가림·확인 기록 삭제 → 자리 다시 읽기·탈퇴함 → 리프레시 토큰
- * 폐기]. 잠금 순서는 호실 → 회원 행 → 토큰 묶음이고, 연결(호실 → 회원 행 공유 잠금)과 같은 방향이다.
+ * <p>순서(#424): 비밀번호 확인(잠금 없음) → 트랜잭션[호실 잠금(ID 순) → 회원 행 잠금·가림·확인 기록 삭제 → 자리 다시 읽기·탈퇴함·호실마다 요청 닫기·링크
+ * 무효·문자 취소 → 리프레시 토큰 폐기]. 잠금 순서는 호실 → 회원 행 → 토큰 묶음이고, 연결(호실 → 회원 행 공유 잠금)과 같은 방향이다.
  *
  * <p><b>다시 시도</b>: 호실을 잠근 뒤 회원 행을 잡기 전에 같은 회원의 연결이 커밋되면 잠그지 않은 호실에 자리가 생긴다. 그 호실을 지금 잠그면 순서가 깨지므로
  * 트랜잭션을 되돌리고 처음부터 다시 한다({@link RoomWithdrawalService#leave}). 회원 행을 잡은 뒤 시작하는 연결은 그 잠금에서 기다렸다가
@@ -31,9 +31,10 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <p>이미 낸 액세스 토큰은 만료까지 남지만(04 4-1), 탈퇴한 자리는 당사자가 아니라 호실을 읽거나 행동할 수 없고({@code RoomSeats.seatOf}), 내
  * 정보·비밀번호는 {@code LOGIN_REQUIRED}다.
  *
- * <p><b>아직 하지 않는 것</b>(#424): 호실마다 같은 탈퇴 시각으로 ① 열린 확인 요청 닫기({@code closeAll(…, at)}) ② 탈퇴자가 발급한
- * 초대·정산 초대 링크 무효({@code invalidateIssuedBy}) ③ 그 링크의 보내지 않은 문자 취소. D가 한 PR로 만든 뒤 {@code leave} 다음에
- * 이 순서로 부르고, 하나라도 실패하면 탈퇴 전체가 되돌아간다. 상대 측 서비스 안 알림(KEEP-4b, #116), 초안·공유 중단 기간 기록과 혼자 쓴 호실
+ * <p>자리를 바꾼 뒤 room이 호실마다 같은 탈퇴 시각으로 ① 열린 확인 요청 닫기 ② 탈퇴자가 발급한 초대·정산 초대 링크 무효 ③ 그 링크의 보내지 않은 문자 취소를
+ * 차례로 한다({@link RoomWithdrawalService#leave}, #435). 하나라도 실패하면 탈퇴 전체가 되돌아간다.
+ *
+ * <p><b>아직 하지 않는 것</b>: 상대 측 서비스 안 알림(KEEP-4b, #116), 혼자 진행 탈퇴 열기(D 별도 PR), 초안·공유 중단 기간 기록과 혼자 쓴 호실
  * 삭제(KEEP-4a·4b·4g~j), 중단 기간 행동을 상태에서 빼기(#314).
  */
 @Service
@@ -71,7 +72,7 @@ public class WithdrawService {
     Instant at = clock.instant().truncatedTo(ChronoUnit.MICROS);
     List<UUID> locked = rooms.lockRoomsOf(memberId);
     members.withdraw(checked, at);
-    if (!rooms.leave(memberId, locked)) {
+    if (!rooms.leave(memberId, locked, at)) {
       status.setRollbackOnly();
       return false;
     }

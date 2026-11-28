@@ -171,8 +171,7 @@ public class Member {
     this.email = null;
     this.passwordHash = null;
     this.displayName = null;
-    this.phone = null;
-    this.phoneVerifiedAt = null;
+    releasePhone(); // 번호와 함께 지울 칸은 releasePhone이 정한다(#466 phone_hmac)
     this.smsEnabled = false;
     this.status = MemberStatus.WITHDRAWN;
     this.withdrawnAt = Objects.requireNonNull(at);
