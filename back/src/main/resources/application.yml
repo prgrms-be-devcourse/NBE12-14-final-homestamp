@@ -58,6 +58,14 @@ app:
   # 거주 종료 뒤 정산 자동 마감까지(06 0-1 settlement.autoclose-after). 거주 종료 때 room_record.autoclose_due_at으로 저장한다
   settlement:
     autoclose-after: 90d
+  # 정산 완료 뒤 삭제까지(06 0-1 retention.after-settled 1y). 정산 완료 때 room_record.delete_due_at으로 저장한다
+  retention:
+    after-settled: 365d
+  # [아직 안 끝났어요] 뒤 정산 끝내기 다시 요청 간격(06 0-1 settle.finish.reask.interval)
+  settle:
+    finish:
+      reask:
+        interval: 7d
   # 기다림 기한(06 0-1). 기한은 생길 때 시각으로 저장해서 값을 바꿔도 이미 정한 기한은 그대로다
   wait:
     renotify: 48h

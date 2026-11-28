@@ -7,12 +7,16 @@ import com.chilsuitjo.back.action.dto.Actor;
 import com.chilsuitjo.back.action.dto.PipelineResult;
 import com.chilsuitjo.back.action.rule.ActionType;
 import com.chilsuitjo.back.action.service.ActionPipeline;
+import com.chilsuitjo.back.action.service.StateStore;
 import com.chilsuitjo.back.global.common.ResidentIdGuard;
 import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.global.common.dto.AnswerResult;
+import com.chilsuitjo.back.global.common.dto.ReasonRequest;
 import com.chilsuitjo.back.global.common.dto.RespondRequest;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
+import com.chilsuitjo.back.settlement.dto.FinishConfirmRequest;
+import com.chilsuitjo.back.settlement.dto.FinishResult;
 import com.chilsuitjo.back.settlement.dto.SettlementCreated;
 import com.chilsuitjo.back.settlement.dto.TransferRequest;
 import com.chilsuitjo.back.settlement.repository.SettlementRepository;
@@ -138,6 +142,98 @@ public class SettlementService {
             transferRules);
     return new AnswerResult(
         transferId, request.seenVersionNo(), result.state().response(), result.action().replayed());
+  }
+
+  /**
+   * 정산 끝내기 제안(06 4-8 {@code finish}, SET-5a). 거주 종료 뒤에만, 연결한 상대에게만, 열린 끝내기 요청이 없을 때만({@code
+   * INVALID_STATE}). 어느 쪽이든 공유를 그만둔 동안은 {@code SHARING_STOPPED}, [아직 안 끝났어요] 뒤 7일 안이면 {@code
+   * ASKED_RECENTLY}다.
+   */
+  public FinishResult proposeFinish(UUID settlementId, UUID memberId, String idempotencyKey) {
+    return finish(
+        settlementId,
+        memberId,
+        idempotencyKey,
+        ActionType.PROPOSE_FINISH,
+        null,
+        null,
+        store.proposing());
+  }
+
+  /**
+   * 정산 끝내기 확인(06 4-8 {@code finish/confirm}, SET-5a·5e). 본 정산 모습 번호가 지금과 다르면 {@code
+   * VERSION_CONFLICT}, 요청한 측이면 {@code NOT_COUNTERPART_SIDE}, 열린 요청이 없으면 {@code INVALID_STATE}다.
+   * 확인되면 정산 완료다.
+   */
+  public FinishResult confirmFinish(
+      UUID settlementId, UUID memberId, String idempotencyKey, FinishConfirmRequest request) {
+    Integer seen = request == null ? null : request.seenVersionNo();
+    if (seen == null) {
+      throw new BusinessException(ErrorCode.VALIDATION_FAILED);
+    }
+    return finish(
+        settlementId,
+        memberId,
+        idempotencyKey,
+        ActionType.CONFIRM_FINISH,
+        seen,
+        null,
+        store.confirming());
+  }
+
+  /**
+   * [아직 안 끝났어요](06 4-8 {@code finish/not-yet}, SET-5c). 사유가 비었으면 {@code REASON_REQUIRED}, 주민등록번호
+   * 형태면 {@code RESIDENT_ID_BLOCKED}다. 끝내기 요청이 닫히고 요청한 쪽에 혼자 끝내기가 열리지 않는다.
+   */
+  public FinishResult notYetFinish(
+      UUID settlementId, UUID memberId, String idempotencyKey, ReasonRequest request) {
+    String reason = request == null ? null : request.reason();
+    ResidentIdGuard.check(reason);
+    return finish(
+        settlementId,
+        memberId,
+        idempotencyKey,
+        ActionType.NOT_YET_FINISH,
+        null,
+        reason == null || reason.isBlank() ? null : reason,
+        store.notYet());
+  }
+
+  /**
+   * 혼자 끝내기(06 4-8 {@code finish/alone}, SET-5d). 혼자 진행 이유가 없으면 {@code SOLO_NOT_ALLOWED}, 공유를 그만둔
+   * 동안은 {@code SHARING_STOPPED}다. 정산 완료가 된다.
+   */
+  public FinishResult finishAlone(UUID settlementId, UUID memberId, String idempotencyKey) {
+    return finish(
+        settlementId, memberId, idempotencyKey, ActionType.FINISH_ALONE, null, null, store.alone());
+  }
+
+  private FinishResult finish(
+      UUID settlementId,
+      UUID memberId,
+      String idempotencyKey,
+      ActionType type,
+      Integer seenVersionNo,
+      String reason,
+      StateStore<SettlementState> stateStore) {
+    UUID roomRecordId = roomOf(settlementId);
+    PipelineResult<SettlementState> result =
+        pipeline.execute(
+            new ActionCommand(
+                roomRecordId,
+                Actor.member(memberId),
+                type,
+                idempotencyKey,
+                ActionTarget.settlement(settlementId),
+                seenVersionNo,
+                null,
+                reason,
+                Map.of()),
+            stateStore,
+            rules);
+    SettlementState state = result.state();
+    return new FinishResult(
+        settlementId, state.settled(), state.finishRequestedBy(), result.action().replayed());
   }
 
   private UUID roomOf(UUID settlementId) {

@@ -22,6 +22,8 @@ import java.util.UUID;
  * @param depositStatus 보증금 상태(화면 말은 "보증금 확인 전"/"둘 다 확인", 06 SET-1b)
  * @param snapshotNo 정산 모습 번호. 끝내기 확인 때 {@code seenVersionNo}로 돌려보낸다(06 SET-5e)
  * @param createdAt 정산을 연 시각
+ * @param settled 정산 완료인지(확인·혼자 끝내기·자동 마감)
+ * @param finishRequestedBy 지금 열린(기다림·미확인) 정산 끝내기 요청을 보낸 측. 없으면 null
  * @param unansweredForMe 이 호실에서 내가 아직 답하지 않은 확인 요청 수(기다림·미확인, 06 SET-5g). 내가 요청한 쪽인 요청은 세지 않는다
  * @param transfers 송금 기록, 기록한 순서대로(SET-4)
  * @param confirmedRefund 상대가 확인한 반환 합계(같은 송금으로 묶인 기록은 한 번만, SET-4b·4e)
@@ -35,6 +37,8 @@ public record SettlementDetail(
     DepositStatus depositStatus,
     int snapshotNo,
     Instant createdAt,
+    boolean settled,
+    PartySide finishRequestedBy,
     int unansweredForMe,
     List<Transfer> transfers,
     long confirmedRefund,

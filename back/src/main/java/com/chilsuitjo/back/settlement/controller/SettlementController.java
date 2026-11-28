@@ -1,9 +1,12 @@
 package com.chilsuitjo.back.settlement.controller;
 
 import com.chilsuitjo.back.global.common.dto.AnswerResult;
+import com.chilsuitjo.back.global.common.dto.ReasonRequest;
 import com.chilsuitjo.back.global.common.dto.RespondRequest;
 import com.chilsuitjo.back.global.response.CreatedResponse;
 import com.chilsuitjo.back.global.security.LoginMember;
+import com.chilsuitjo.back.settlement.dto.FinishConfirmRequest;
+import com.chilsuitjo.back.settlement.dto.FinishResult;
 import com.chilsuitjo.back.settlement.dto.SettlementCreated;
 import com.chilsuitjo.back.settlement.dto.SettlementDetail;
 import com.chilsuitjo.back.settlement.dto.TransferRequest;
@@ -61,6 +64,52 @@ public class SettlementController {
       @RequestHeader("Idempotency-Key") String idempotencyKey,
       @RequestBody RespondRequest request) {
     AnswerResult result = settlements.respondTransfer(id, memberId, idempotencyKey, request);
+    ResponseEntity.BodyBuilder response = ResponseEntity.ok();
+    if (result.replayed()) {
+      response.header(REPLAYED, "true");
+    }
+    return response.body(result);
+  }
+
+  /** 정산 끝내기 제안(SET-5a). 본문 없음. 처음 성공과 다시 온 요청 모두 200과 {@code FinishResult}다. */
+  @PostMapping("/api/settlements/{id}/finish")
+  public ResponseEntity<FinishResult> proposeFinish(
+      @PathVariable UUID id,
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey) {
+    return finished(settlements.proposeFinish(id, memberId, idempotencyKey));
+  }
+
+  /** 정산 끝내기 확인(SET-5a·5e) → 정산 완료. 본문은 본 정산 모습 번호 {@code {seenVersionNo}}다. */
+  @PostMapping("/api/settlements/{id}/finish/confirm")
+  public ResponseEntity<FinishResult> confirmFinish(
+      @PathVariable UUID id,
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey,
+      @RequestBody FinishConfirmRequest request) {
+    return finished(settlements.confirmFinish(id, memberId, idempotencyKey, request));
+  }
+
+  /** [아직 안 끝났어요](SET-5c). 본문은 {@code {reason}}이다. */
+  @PostMapping("/api/settlements/{id}/finish/not-yet")
+  public ResponseEntity<FinishResult> notYetFinish(
+      @PathVariable UUID id,
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey,
+      @RequestBody ReasonRequest request) {
+    return finished(settlements.notYetFinish(id, memberId, idempotencyKey, request));
+  }
+
+  /** 혼자 끝내기(SET-5d) → 정산 완료. 본문 없음. */
+  @PostMapping("/api/settlements/{id}/finish/alone")
+  public ResponseEntity<FinishResult> finishAlone(
+      @PathVariable UUID id,
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey) {
+    return finished(settlements.finishAlone(id, memberId, idempotencyKey));
+  }
+
+  private static ResponseEntity<FinishResult> finished(FinishResult result) {
     ResponseEntity.BodyBuilder response = ResponseEntity.ok();
     if (result.replayed()) {
       response.header(REPLAYED, "true");

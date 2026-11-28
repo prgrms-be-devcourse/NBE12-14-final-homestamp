@@ -81,6 +81,14 @@ public class RoomRecord {
   @Column(name = "autoclose_due_at")
   private Instant autocloseDueAt;
 
+  /** 정산 완료 시각(06 SET-5, 03 A). 정산 완료이면 필수(V1 CHECK). */
+  @Column(name = "settled_at")
+  private Instant settledAt;
+
+  /** 삭제 기한 = 정산 완료 시각 + {@code retention.after-settled}(03 A "(자동) 삭제 기한 저장"). */
+  @Column(name = "delete_due_at")
+  private Instant deleteDueAt;
+
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
 
@@ -138,6 +146,22 @@ public class RoomRecord {
     this.status = RoomStatus.ENDED;
     this.endedAt = Objects.requireNonNull(at, "at");
     this.autocloseDueAt = at.plus(Objects.requireNonNull(autocloseAfter, "autocloseAfter"));
+  }
+
+  /**
+   * 정산 완료(06 SET-5a·5d, 03 A). 상태를 정산 완료로 바꾸고 완료 시각과 삭제 기한을 남긴다. 거주 종료가 아니면 부르는 쪽 버그라 {@code
+   * IllegalStateException}이다(규칙은 정산이 먼저 본다).
+   *
+   * @param at 정산 완료가 된 행동의 시각
+   * @param keepAfter 정산 완료 뒤 삭제까지(06 0-1 {@code retention.after-settled})
+   */
+  public void settle(Instant at, Duration keepAfter) {
+    if (status != RoomStatus.ENDED) {
+      throw new IllegalStateException("거주 종료가 아닌 호실이에요: " + id);
+    }
+    this.status = RoomStatus.SETTLED;
+    this.settledAt = Objects.requireNonNull(at, "at");
+    this.deleteDueAt = at.plus(Objects.requireNonNull(keepAfter, "keepAfter"));
   }
 
   /** 정산 완료(자동 마감 포함). 호실 단위 거절({@code SETTLED})과 링크용 조회가 같은 기준으로 본다. */

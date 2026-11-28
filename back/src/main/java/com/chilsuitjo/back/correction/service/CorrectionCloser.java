@@ -9,6 +9,7 @@ import com.chilsuitjo.back.global.common.ClosedReason;
 import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.service.WaitService;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -40,5 +41,17 @@ public class CorrectionCloser {
     waits.close(
         RequestTarget.of(kind.targetKind(), targetId), RequestKind.CORRECTION_CONFIRM, reason);
     return waiting.size();
+  }
+
+  /**
+   * 호실의 확인 전 고친 내용(기다림·미확인)을 모두 닫는다(정산 완료, 06 SET-5f). 고친 내용 확인 요청은 같은 트랜잭션의 {@code
+   * WaitService.closeAll}이 함께 닫는다. 닫은 개수를 돌려준다.
+   */
+  public int closeAllInRoom(UUID roomRecordId, ClosedReason reason) {
+    List<CorrectionRequest> open =
+        corrections.findByRoomRecordIdAndStatusIn(
+            roomRecordId, EnumSet.of(CorrectionStatus.WAITING, CorrectionStatus.UNCONFIRMED));
+    open.forEach(row -> row.close(reason, requestContext.at()));
+    return open.size();
   }
 }
