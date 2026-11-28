@@ -1,9 +1,11 @@
 package com.chilsuitjo.back.room.repository;
 
+import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.room.entity.Party;
 import com.chilsuitjo.back.room.rule.PartyStatus;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 
@@ -14,6 +16,9 @@ public interface PartyRepository extends JpaRepository<Party, UUID> {
 
   /** 여러 호실의 자리를 한 번에(내 호실 목록). */
   List<Party> findByRoomRecordIdIn(Collection<UUID> roomRecordIds);
+
+  /** 이 호실의 한 측 자리. 한 측에 자리는 하나다({@code uq_party_room_side}). */
+  Optional<Party> findByRoomRecordIdAndSide(UUID roomRecordId, PartySide side);
 
   /**
    * 이 번호로 초대된 자리(받은 초대, 06 4-3 {@code GET /api/invitations}). 번호는 정규화된 번호다. {@code

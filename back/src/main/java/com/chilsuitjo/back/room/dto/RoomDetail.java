@@ -20,6 +20,8 @@ import java.util.UUID;
  * @param asOf 공유를 그만둔 시각(두 측 중 이른 쪽). 이 시각 뒤 상대 기록은 보이지 않는다(03 3-1, 불변식 18). 상대가 탈퇴했거나 아무도 그만두지
  *     않았으면 null
  * @param availableActions 지금 누를 수 있는 호실 행동. 이름은 API 끝 단어(06 4-0)
+ * @param counterpartMaskedPhone 상대 자리에 저장된 번호의 가린 모양({@code 010-****-5678}). 보는 사람이 호실을 만든 측이고 번호가
+ *     남아 있을 때(번호만·초대됨·거절됨)만 있다. 초대 화면에서 저장한 번호를 초대 전에 확인하게 한다(#407 리뷰). 원래 번호는 주지 않는다
  */
 public record RoomDetail(
     UUID id,
@@ -34,4 +36,5 @@ public record RoomDetail(
     boolean joinedAway,
     Instant asOf,
     Instant createdAt,
-    List<String> availableActions) {}
+    List<String> availableActions,
+    String counterpartMaskedPhone) {}
