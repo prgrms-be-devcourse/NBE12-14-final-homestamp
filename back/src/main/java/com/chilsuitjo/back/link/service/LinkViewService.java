@@ -21,6 +21,7 @@ import com.chilsuitjo.back.link.repository.LinkViewStateStore;
 import com.chilsuitjo.back.link.rule.LinkKind;
 import com.chilsuitjo.back.link.rule.LinkToken;
 import com.chilsuitjo.back.link.rule.LinkViewTransitions;
+import com.chilsuitjo.back.notification.service.NoticeWaitStart.EvidenceNotRecorded;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -146,7 +147,7 @@ public class LinkViewService {
                   + link.getId()
                   + ":"
                   + observedAt.getEpochSecond() / viewDedupe.toSeconds()
-              : "link-view:n:" + evidence;
+              : LinkViewStateStore.EVIDENCE_KEY_PREFIX + evidence;
       try {
         pipeline.executeAll(
             ActionBatch.of(link.getRoomRecordId(), actor, key)
@@ -161,10 +162,15 @@ public class LinkViewService {
       } catch (RecentLinkView ignored) {
         // 링크 행과 호실 행을 잠근 뒤 확인한 최근 열람이고 새 증거가 없다. 성공 응답만 돌리고 새 행동은 남기지 않는다.
         return;
-      } catch (EvidenceChanged changed) {
+      } catch (EvidenceChanged | EvidenceNotRecorded changed) {
+        // EvidenceNotRecorded: 저장 단계가 키의 통지를 열람으로 바꾸지 못해(서버 시계가 뒤로 감) 행동·키까지 함께 되돌아갔다. 키가 소비되지 않아
+        // 다시 정한다
         if (attempt >= 2) {
           // 잠그는 사이 후보가 또 바뀌었다. 더 다시 하지 않고 다음 열람이나 전달 결과가 증거가 된다(열람은 그대로 성공, decisions 2026-11-28)
-          log.warn("링크 열람 증거 후보가 잠그는 사이 두 번 바뀜: link={}", link.getId());
+          log.warn(
+              "링크 열람 증거를 두 번 다 남기지 못함(후보 바뀜 또는 시계 역행): link={}, reason={}",
+              link.getId(),
+              changed.getClass().getSimpleName());
           return;
         }
       }
@@ -205,12 +211,6 @@ public class LinkViewService {
     }
     // 증거 키: 그 통지가 아직 후보면 이 키는 쓰인 적이 없다(쓰였다면 그 줄이 그 통지를 열람으로 바꿨다)
     if (candidates.contains(evidence)) {
-      String key = "link-view:n:" + evidence;
-      if (views.stream().anyMatch(action -> key.equals(action.idempotencyKey()))) {
-        // 이 키의 줄이 있는데 그 통지가 아직 후보다. 시계가 뒤로 가 그 줄의 행동 시각이 후보를 읽은 시각보다 앞선 경우뿐이다(정상 시계면 그 줄이 열람으로
-        // 바꿈). 재생되어 증거를 적지 못하고, 전달 결과(전달·최종 실패)가 오면 풀린다
-        log.warn("링크 열람 증거 키가 이미 쓰였는데 통지가 아직 후보임: link={}", resolved.getId());
-      }
       return;
     }
     if (candidates.isEmpty() && recordedRecently) {

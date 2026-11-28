@@ -3,6 +3,7 @@ package com.chilsuitjo.back.link.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -31,6 +32,7 @@ import com.chilsuitjo.back.link.repository.LinkViewStateStore;
 import com.chilsuitjo.back.link.rule.LinkKind;
 import com.chilsuitjo.back.link.rule.LinkToken;
 import com.chilsuitjo.back.notification.service.NoticeWaitStart;
+import com.chilsuitjo.back.notification.service.NoticeWaitStart.EvidenceNotRecorded;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -242,7 +244,52 @@ class LinkViewServiceTest {
     assertThat(viewActions().get(1).idempotencyKey())
         .isEqualTo("link-view:n:" + candidates.getFirst());
     // 첫 열람 한 번 + 예외 줄 한 번
-    verify(waitStart, times(2)).linkViewed(any(), any(), any());
+    verify(waitStart, times(2)).linkViewed(any(), any(), any(), any());
+  }
+
+  @Test
+  void 증거_키의_저장이_그_통지를_처리하지_못하면_키도_줄도_남기지_않고_다시_정해_남긴다() {
+    // 서버 시계가 뒤로 가 행동 시각이 그 통지의 보낸 시각보다 앞선 경우. 키가 소비되면 그 뒤 열람이 재생만 해서 증거가 영구히 빠진다
+    String token = issue(LinkKind.INVITE, repairCaseId);
+    openRoom();
+    content.seedRecord(roomRecordId, repairCaseId, repairRecord(), false);
+    fx.gates().putRoom(RoomGate.open(roomRecordId, null));
+    service.view(new LinkViewRequest(token));
+    clock.advance(Duration.ofMinutes(3));
+    UUID sent = UUID.randomUUID();
+    when(waitStart.unviewedSent(any(), any(), any())).thenReturn(List.of(sent));
+    when(waitStart.linkViewed(any(), any(), any(), eq(sent)))
+        .thenThrow(new EvidenceNotRecorded())
+        .thenReturn(1);
+
+    service.view(new LinkViewRequest(token));
+
+    assertThat(viewActions()).hasSize(2);
+    assertThat(viewActions().get(1).idempotencyKey()).isEqualTo("link-view:n:" + sent);
+  }
+
+  @Test
+  void 다시_정해도_증거를_남기지_못하면_열람은_성공하고_키는_다음_열람에_남는다() {
+    String token = issue(LinkKind.INVITE, repairCaseId);
+    openRoom();
+    content.seedRecord(roomRecordId, repairCaseId, repairRecord(), false);
+    fx.gates().putRoom(RoomGate.open(roomRecordId, null));
+    service.view(new LinkViewRequest(token));
+    clock.advance(Duration.ofMinutes(3));
+    UUID sent = UUID.randomUUID();
+    when(waitStart.unviewedSent(any(), any(), any())).thenReturn(List.of(sent));
+    when(waitStart.linkViewed(any(), any(), any(), eq(sent)))
+        .thenThrow(new EvidenceNotRecorded(), new EvidenceNotRecorded())
+        .thenReturn(1);
+
+    LinkViewResponse failed = service.view(new LinkViewRequest(token));
+    assertThat(failed.kind()).isEqualTo(LinkViewKind.RECORD);
+    assertThat(viewActions()).hasSize(1);
+
+    // 키가 쓰이지 않았으므로 다음 열람이 같은 키로 증거를 남긴다
+    service.view(new LinkViewRequest(token));
+    assertThat(viewActions()).hasSize(2);
+    assertThat(viewActions().get(1).idempotencyKey()).isEqualTo("link-view:n:" + sent);
   }
 
   @Test
@@ -263,7 +310,7 @@ class LinkViewServiceTest {
     assertThat(viewActions()).hasSize(2);
     assertThat(viewActions().get(1).idempotencyKey()).isEqualTo("link-view:n:" + late);
     // 첫 열람 한 번 + 예외 줄 한 번
-    verify(waitStart, times(2)).linkViewed(any(), any(), any());
+    verify(waitStart, times(2)).linkViewed(any(), any(), any(), any());
   }
 
   @Test
@@ -283,7 +330,7 @@ class LinkViewServiceTest {
 
     assertThat(viewActions()).hasSize(2);
     assertThat(viewActions().get(1).idempotencyKey()).isEqualTo("link-view:n:" + next);
-    verify(waitStart, times(2)).linkViewed(any(), any(), any());
+    verify(waitStart, times(2)).linkViewed(any(), any(), any(), any());
   }
 
   @Test
@@ -303,7 +350,7 @@ class LinkViewServiceTest {
 
     assertThat(again.kind()).isEqualTo(LinkViewKind.RECORD);
     assertThat(viewActions()).hasSize(1);
-    verify(waitStart, times(1)).linkViewed(any(), any(), any());
+    verify(waitStart, times(1)).linkViewed(any(), any(), any(), any());
   }
 
   @Test
@@ -321,7 +368,7 @@ class LinkViewServiceTest {
 
     assertThat(viewActions()).hasSize(1);
     // 첫 열람의 한 번뿐이다
-    verify(waitStart, times(1)).linkViewed(any(), any(), any());
+    verify(waitStart, times(1)).linkViewed(any(), any(), any(), any());
   }
 
   @Test

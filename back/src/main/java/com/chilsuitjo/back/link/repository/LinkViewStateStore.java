@@ -22,6 +22,13 @@ import org.springframework.stereotype.Component;
 @Component
 public class LinkViewStateStore implements StateStore<Void> {
 
+  /**
+   * 최근 열람 예외 줄의 멱등 키 앞부분({@code link-view:n:<통지 ID>}, {@code LinkViewService}). 이 키의 줄은 그 통지를 반드시
+   * 열람으로 바꿔야 남는다({@code NoticeWaitStart#linkViewed(UUID, UUID, Instant, UUID)}). 열람 요청은 이 단계 하나뿐이라
+   * 키에 {@code #n}이 붙지 않는다(단계를 더하면 이 해석을 고쳐야 함).
+   */
+  public static final String EVIDENCE_KEY_PREFIX = "link-view:n:";
+
   private final NoticeWaitStart waitStart;
   private final ActionRequestContext request;
 
@@ -42,7 +49,12 @@ public class LinkViewStateStore implements StateStore<Void> {
 
   @Override
   public SavedState save(ActionCommand command, Void next) {
-    waitStart.linkViewed(command.roomRecordId(), command.target().id(), request.at());
+    String key = command.idempotencyKey();
+    UUID required =
+        key.startsWith(EVIDENCE_KEY_PREFIX)
+            ? UUID.fromString(key.substring(EVIDENCE_KEY_PREFIX.length()))
+            : null;
+    waitStart.linkViewed(command.roomRecordId(), command.target().id(), request.at(), required);
     return SavedState.unchanged();
   }
 }

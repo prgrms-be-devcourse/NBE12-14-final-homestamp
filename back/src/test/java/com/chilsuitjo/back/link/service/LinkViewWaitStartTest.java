@@ -10,6 +10,8 @@ import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.link.dto.LinkRoom;
 import com.chilsuitjo.back.link.dto.LinkViewRequest;
 import com.chilsuitjo.back.link.rule.LinkToken;
+import com.chilsuitjo.back.notification.service.NoticeWaitStart;
+import com.chilsuitjo.back.notification.service.NoticeWaitStart.EvidenceNotRecorded;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
@@ -31,6 +33,8 @@ import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 링크 열람이 전달 증거가 되는지(06 NOTI-3b, 03 1-1 "타이머 시작점", 05 4장 "집주인 링크 열람 → notice(VIEWED)"). 실제
@@ -47,6 +51,8 @@ class LinkViewWaitStartTest {
   @Autowired private LinkViewService service;
   @Autowired private FakeLinkContentSource content;
   @Autowired private JdbcTemplate jdbc;
+  @Autowired private NoticeWaitStart waitStart;
+  @Autowired private PlatformTransactionManager transactionManager;
 
   @Test
   void 결과가_아직_없는_보낸_요청_통지는_열람이_되고_기다림이_열람_시각부터_시작한다() {
@@ -247,6 +253,40 @@ class LinkViewWaitStartTest {
             first,
             second);
     assertThat(key).isEqualTo("link-view:n:" + earliest);
+  }
+
+  @Test
+  void 반드시_남길_통지를_열람으로_바꾸지_못하면_예외로_함께_되돌린다() {
+    // 링크 열람 증거 키의 저장(LinkViewStateStore): 행동 시각이 그 통지를 보낸 시각보다 앞서면(서버 시계가 뒤로 감) 그 통지를 바꾸지 않는다
+    Fixture fx = fixture();
+    UUID request = request(fx, "WAITING");
+    UUID other = notice(fx, fx.link(), request, "REQUEST", "SENT");
+    UUID later = notice(fx, fx.link(), request, "RENOTIFY", "SENT");
+    Instant viewAt = Instant.now().minusSeconds(3_600);
+    jdbc.update(
+        "UPDATE state.notice SET sent_at = ?, delivery_check_due_at = ? WHERE id = ?",
+        Timestamp.from(viewAt.minusSeconds(60)),
+        Timestamp.from(viewAt.plusSeconds(86_400)),
+        other);
+    jdbc.update(
+        "UPDATE state.notice SET sent_at = ?, delivery_check_due_at = ? WHERE id = ?",
+        Timestamp.from(viewAt.plusSeconds(1)),
+        Timestamp.from(viewAt.plusSeconds(86_400)),
+        later);
+    UUID room =
+        jdbc.queryForObject(
+            "SELECT room_record_id FROM state.link WHERE id = ?", UUID.class, fx.link());
+
+    assertThatThrownBy(() ->
+            new TransactionTemplate(transactionManager)
+                .executeWithoutResult(
+                    status -> waitStart.linkViewed(room, fx.link(), viewAt, later)))
+        .isInstanceOf(EvidenceNotRecorded.class);
+
+    // 같은 트랜잭션에서 바꾼 다른 통지·기다림도 되돌아간다
+    assertThat(notice(other)).containsEntry("status", "SENT");
+    assertThat(notice(later)).containsEntry("status", "SENT");
+    assertThat(requestTime(request, "first_notified_at")).isNull();
   }
 
   @Test

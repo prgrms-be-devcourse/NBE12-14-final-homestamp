@@ -81,7 +81,21 @@ public class NoticeWaitStart {
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public int linkViewed(UUID roomRecordId, UUID linkId, Instant at) {
+    return linkViewed(roomRecordId, linkId, at, null);
+  }
+
+  /**
+   * {@link #linkViewed(UUID, UUID, Instant)}와 같고, {@code required}가 있으면 그 통지를 이번에 실제로 열람으로 바꿨는지
+   * 확인한다. 바꾸지 못했으면(그사이 처리됐거나, 열람 시각이 그 통지의 보낸 시각보다 앞섬: 서버 시계가 뒤로 감) {@link EvidenceNotRecorded}를 던져
+   * 부른 쪽 트랜잭션을 되돌린다. 링크 열람이 그 통지의 증거 키로 행동을 남길 때 쓴다: 키만 쓰이고 증거가 남지 않으면 같은 키의 재생이 그 통지를 다시 보지 않기
+   * 때문이다.
+   *
+   * @param required 이번 열람이 반드시 증거를 남겨야 하는 통지. 없으면 null
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public int linkViewed(UUID roomRecordId, UUID linkId, Instant at, UUID required) {
     int viewed = 0;
+    boolean requiredViewed = required == null;
     for (Notice notice : notices.lockByLinks(roomRecordId, List.of(linkId), NoticeChannel.SMS)) {
       // 열람 뒤에 보낸 문자는 이 열람의 증거가 아니다(그 문자를 받기 전에 이미 링크를 가지고 있었다). 시각을 끌어올려 맞추지 않는다
       if (notice.getSentAt() != null && notice.getSentAt().isAfter(at)) {
@@ -90,9 +104,20 @@ public class NoticeWaitStart {
       if (notice.markViewed(at)) {
         viewed++;
         reached(notice, at);
+        requiredViewed |= notice.getId().equals(required);
       }
     }
+    if (!requiredViewed) {
+      throw new EvidenceNotRecorded();
+    }
     return viewed;
+  }
+
+  /** 반드시 증거를 남겨야 하는 통지를 이번 열람으로 바꾸지 못했다. 부른 쪽 트랜잭션이 되돌아가 아무것도 남지 않는다. */
+  public static final class EvidenceNotRecorded extends RuntimeException {
+    public EvidenceNotRecorded() {
+      super("링크 열람이 증거 통지를 열람으로 바꾸지 못함", null, false, false);
+    }
   }
 
   /**
