@@ -9,7 +9,12 @@ export const endpoints = {
   login: "/api/auth/login",
   refresh: "/api/auth/refresh",
   logout: "/api/auth/logout",
+  // 비밀번호 재설정(ACC-5b, RESET 인증 표)
+  resetPassword: "/api/auth/reset-password",
+  // 내 정보 보기·수정(이름·문자 설정, ACC-4·6)
   me: "/api/me",
+  // 비밀번호 변경(ACC-4a)
+  password: "/api/me/password",
   // 바뀐 약관·확인 항목 다시 확인(CONS-4)
   agreements: "/api/me/agreements",
   // 4-2 홈·알림

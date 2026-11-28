@@ -17,7 +17,7 @@ export function SubTabs({
   return (
     <nav
       aria-label="세부 메뉴"
-      className="mb-4 inline-flex max-w-full overflow-x-auto rounded-[12px] border border-line bg-white p-1 shadow-[0_1px_2px_#17203308] [scrollbar-width:none] max-md:flex max-md:w-full [&::-webkit-scrollbar]:hidden"
+      className="mb-4 inline-flex max-w-full overflow-x-auto rounded-[12px] border border-line bg-white p-1 shadow-[0_1px_2px_#1f2a3308] [scrollbar-width:none] max-md:flex max-md:w-full [&::-webkit-scrollbar]:hidden"
     >
       {items.map((item) => {
         const active = item.id === value
@@ -31,7 +31,7 @@ export function SubTabs({
             className={cn(
               "inline-flex min-h-10 flex-1 items-center justify-center gap-1.5 rounded-[9px] px-4 text-sm font-semibold whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand md:flex-none",
               active
-                ? "bg-brand text-white shadow-[0_1px_2px_#17203318]"
+                ? "bg-brand text-white shadow-[0_1px_2px_#1f2a3318]"
                 : "text-sub hover:bg-hover hover:text-ink",
             )}
           >

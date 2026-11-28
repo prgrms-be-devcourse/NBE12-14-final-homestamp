@@ -31,13 +31,13 @@ export function AppTopbar({
   return (
     <header className="topbar">
       <div className="top-left">
-        {/* 모바일: 호실 전환기(또는 브랜드)로 첫 화면 공간 절약 */}
-        <div className="flex min-w-0 items-center gap-2 md:hidden">
-          <span className="mobile-brand-mark" aria-hidden>
-            H
-          </span>
+        {/* 모바일: 왼쪽 이름표, 오른쪽에 호실 고르기(시안 A의 상단 바 모양, B의 남색·회색) */}
+        <div className="flex min-w-0 flex-1 items-center gap-2 md:hidden">
+          <strong className="flex-none font-brand text-[15px] font-bold tracking-[-0.2px] text-brand">
+            HomeStamp
+          </strong>
           {roomId && roomName && roomOptions.length > 1 ? (
-            <div className="mobile-room-select">
+            <div className="mobile-room-select ml-auto">
               <Choice
                 label="현재 호실 선택"
                 value={roomId}
@@ -45,19 +45,13 @@ export function AppTopbar({
                 onChange={onRoom}
               />
             </div>
-          ) : roomName ? (
-            <span className="inline-flex min-w-0 items-center gap-1.5 text-[15px] font-bold text-ink">
-              <Building2
-                size={15}
-                className="flex-none text-brand"
-                aria-hidden
-              />
-              <span className="truncate">{roomName}</span>
-            </span>
           ) : (
-            <strong className="text-[16px] font-extrabold tracking-[-0.4px] text-ink">
-              HomeStamp
-            </strong>
+            roomName && (
+              <span className="ml-auto inline-flex h-9 min-w-0 items-center gap-1.5 rounded-[6px] border border-line-strong bg-white px-2.5 text-sm font-semibold text-brand">
+                <Building2 size={15} className="flex-none" aria-hidden />
+                <span className="truncate">{roomName}</span>
+              </span>
+            )
           )}
         </div>
       </div>
@@ -66,7 +60,7 @@ export function AppTopbar({
           <Button
             variant="outline"
             size="sm"
-            className="h-9 rounded-full border-brand-line bg-brand-soft px-3 text-xs font-bold text-brand-ink hover:bg-[#e2ebff]"
+            className="h-9 rounded-full border-brand-line bg-brand-soft px-3 text-xs font-bold text-brand-ink hover:bg-[#eef1f5]"
             onClick={onInvitations}
           >
             초대 {invitations}건
