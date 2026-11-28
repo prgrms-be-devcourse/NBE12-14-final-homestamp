@@ -36,12 +36,16 @@ export function useRoomParts(roomId: string) {
     async (send: (s: NonNullable<typeof session>) => Promise<RoomPart>) => {
       if (!session) throw new Error("로그인한 뒤 부위를 바꿀 수 있어요.")
       try {
-        return await send(session)
+        const part = await send(session)
+        // 성공하면 호실도 다시 받아 경과 탭에 방금 한 행동이 바로 보여요(#469 리뷰).
+        // 보내기는 이미 성공했어요. 호실 다시 받기가 실패해도 실패로 돌려주지 않아요(다음 받기 때 다시 받아요)
+        api.records.loadRoom(session, roomId).catch(() => {})
+        return part
       } finally {
         notifyChanged(roomId)
       }
     },
-    [session, roomId],
+    [api, session, roomId],
   )
   const add = useCallback(
     (body: NewRoomPart) => run((s) => api.parts.add(s, roomId, body)),

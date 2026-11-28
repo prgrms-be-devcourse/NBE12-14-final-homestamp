@@ -129,10 +129,18 @@ describe("부위 관리 카드", () => {
       </>
     )
   }
-  const renderScreen = (canEdit?: boolean) => {
+  const renderScreen = (canEdit?: boolean, loaded: string[] = []) => {
     const store = createMockStore(createSampleSeed)
+    const api = createMockApi(store)
+    // 호실 다시 받기(loadRoom)를 부른 호실을 모아요. 목업은 저장소에 바로 남겨 받을 것이 없어요
+    const records = {
+      ...api.records,
+      loadRoom: async (_s: unknown, roomId: string) => {
+        loaded.push(roomId)
+      },
+    }
     render(
-      <ApiProvider api={createMockApi(store)} accountId="dev-tenant">
+      <ApiProvider api={{ ...api, records }} accountId="dev-tenant">
         <Screen canEdit={canEdit} />
       </ApiProvider>,
     )
@@ -197,6 +205,28 @@ describe("부위 관리 카드", () => {
     )
     await screen.findByText("설비·가전 · 냉장고을(를) 켰어요.")
     await vi.waitFor(() => expect(within(zone).queryByText("꺼 둠")).toBeNull())
+  })
+
+  test("바꾸기에 성공하면 그 호실을 다시 받아 경과에 방금 한 행동이 보여요. 실패하면 받지 않아요(#469 리뷰)", async () => {
+    const loaded: string[] = []
+    const store = renderScreen(true, loaded)
+    await openFold("부위 관리")
+    fireEvent.click(
+      await screen.findByRole("button", { name: "방 · 붙박이장 숨기기" }),
+    )
+    await screen.findByText("방 · 붙박이장을(를) 숨겼어요.")
+    expect(loaded).toEqual(["302"])
+    expect(store.getState().events[0].text).toBe("부위 숨기기 · 방 · 붙박이장")
+    // 화면을 연 뒤 상대가 같은 부위를 숨겼어요(INVALID_STATE)
+    await screen.findByRole("button", { name: "방 · 벽 숨기기" })
+    store.setState((d) => {
+      const next = structuredClone(d)
+      find(next.roomParts!["302"], "방", "벽").hidden = true
+      return next
+    })
+    fireEvent.click(screen.getByRole("button", { name: "방 · 벽 숨기기" }))
+    await screen.findByText("이미 숨긴 부위예요.")
+    expect(loaded).toEqual(["302"])
   })
 
   test("상대가 먼저 바꿨으면(INVALID_STATE) 서버 문구를 보이고 목록을 다시 받아요", async () => {
