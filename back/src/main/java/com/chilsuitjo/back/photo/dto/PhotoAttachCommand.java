@@ -14,6 +14,8 @@ import java.util.List;
  * @param uploadTickets 1~10장. 0부터 시작하는 목록 위치가 사진 번호({@code photoIndex})다
  * @param quota 부르는 도메인이 정하는 대상 한도. 없으면 {@link PhotoQuota#none()}
  * @param at 행동 시각({@code ActionRequestContext.at()}). {@code photo.created_at}이 된다(불변식 10)
+ * @param released 붙이는 순간 상대에게 보이나({@code photo_visibility.released_at = at}). 기준 측이 작성 중 점검에 붙이는
+ *     사진만 false이고, 확인 요청 때 {@code PhotoService.release}로 보이게 한다(#295, 03 3-1 "작성 중 점검")
  */
 public record PhotoAttachCommand(
     RoomAccess uploader,
@@ -21,4 +23,17 @@ public record PhotoAttachCommand(
     PhotoStage stage,
     List<String> uploadTickets,
     PhotoQuota quota,
-    Instant at) {}
+    Instant at,
+    boolean released) {
+
+  /** 붙이는 순간 상대에게 보이는 보통 사진. */
+  public PhotoAttachCommand(
+      RoomAccess uploader,
+      PhotoTarget target,
+      PhotoStage stage,
+      List<String> uploadTickets,
+      PhotoQuota quota,
+      Instant at) {
+    this(uploader, target, stage, uploadTickets, quota, at, true);
+  }
+}

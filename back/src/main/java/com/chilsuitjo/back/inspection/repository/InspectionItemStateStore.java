@@ -441,9 +441,11 @@ public class InspectionItemStateStore {
                 next.addedBy()));
       }
 
+      // 작성 중 기준 측 항목의 사진은 항목과 함께 확인 요청 때부터 상대에게 보인다(03 3-1 "작성 중 점검", #295)
       return new SavedState(ActionTarget.of(TargetKind.INSPECTION_ITEM, itemId), digest(first))
           .withPhotos(
-              photos.attach(command, parent.getId(), parent.getKind(), itemId, uploadTickets));
+              photos.attach(
+                  command, parent.getId(), parent.getKind(), itemId, uploadTickets, !authorDraft));
     }
   }
 
@@ -508,9 +510,11 @@ public class InspectionItemStateStore {
                 side));
       }
       Inspection parent = inspection(roomRecordId, row.getInspectionId());
+      // 보충은 확인 요청 중에만 하므로 사진은 붙인 때부터 상대에게 보인다
       return new SavedState(null, content)
           .withPhotos(
-              photos.attach(command, parent.getId(), parent.getKind(), row.getId(), uploadTickets));
+              photos.attach(
+                  command, parent.getId(), parent.getKind(), row.getId(), uploadTickets, true));
     }
   }
 
