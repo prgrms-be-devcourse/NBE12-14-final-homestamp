@@ -188,6 +188,7 @@ describe("HTTP 기록 API의 호실 받기", () => {
       if (path === endpoints.room("b"))
         throw new ApiError({ status: 404, code: "NOT_FOUND" })
       if (path === endpoints.notifications) throw notConnected()
+      if (path === endpoints.invitations) return []
       throw new Error(`unexpected ${path}`)
     }) as HttpRequest
     const records = createHttpRecords(request)

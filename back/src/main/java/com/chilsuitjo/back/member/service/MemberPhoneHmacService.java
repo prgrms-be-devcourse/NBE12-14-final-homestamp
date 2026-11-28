@@ -13,7 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 회원 번호 HMAC({@code state.member.phone_hmac}, #462)의 회원 쪽 일. HMAC 계산과 번호 잠금은 auth가 한다(키와 잠금이 auth에
  * 있음). member는 다른 도메인을 부르지 않고 값만 읽고 쓴다.
  *
- * <p>V14부터 HMAC은 "비었거나 지금 번호의 값"이다(번호만 바뀐 UPDATE는 트리거가 비움). 빈 값은 V14 전에 가입한 회원과 이 칸을 모르는 이전 앱이
+ * <p>V15부터 HMAC은 "비었거나 지금 번호의 값"이다(번호만 바뀐 UPDATE는 트리거가 비움). 빈 값은 V15 전에 가입한 회원과 이 칸을 모르는 이전 앱이
  * 블루/그린 전환 중에 쓴 행에서 생기고, auth 채우기({@code MemberPhoneHmacFill})가 채운다.
  */
 @Service

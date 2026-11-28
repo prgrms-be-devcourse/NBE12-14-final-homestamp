@@ -42,6 +42,16 @@ export function connectionText(room: Room) {
 // 합류 전 기록(상대 기록에 합류해 읽기만 하는 내 기록). 목업은 합류한 호실 ID, 서버는 joinedAway로 알려요
 export const isPreJoin = (room: Room) =>
   Boolean(room.preJoinOf || room.server?.joinedAway)
+// 부위를 바꿀 수 없을 때 안내 한 줄(부위 관리 카드, #456). 버튼을 그릴지는 서버가 준 availableActions `parts`로만 정하고(06 4-3),
+// 이 글은 왜 없는지 알려 주기만 해요(정산 완료·합류 전 기록·공유를 그만둔 사람, 06 4-10)
+export function partsLockedReason(room: Room) {
+  if (room.status === "정산 완료")
+    return "정산이 끝난 기록이라 부위를 바꿀 수 없어요."
+  if (isPreJoin(room)) return "합류 전 기록이라 부위를 바꿀 수 없어요."
+  if (room.server?.myStatus === "SHARING_STOPPED")
+    return "공유를 그만둔 동안에는 부위를 바꿀 수 없어요. 다시 공유한 뒤 바꿔 주세요."
+  return "지금은 부위를 바꿀 수 없어요."
+}
 export function canAccessRoom(room: Room, role: Role) {
   return room.creator === role || room.connection === "연결됨"
 }

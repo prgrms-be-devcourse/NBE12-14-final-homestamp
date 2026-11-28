@@ -81,6 +81,12 @@ tasks.named('test') {
     useJUnitPlatform()
     // 테스트 클래스를 나눠 돌릴 JVM 수(#335). 기본 1개, -PtestForks=N으로 바꾼다. JVM마다 테스트 DB 컨테이너가 따로라 섞이지 않는다
     maxParallelForks = (project.findProperty('testForks') ?: '1') as int
+    // 테스트 JVM 최대 힙(#476). Gradle 기본 512MB에서는 캐시된 Spring 컨텍스트(로컬에서 접속 풀 30개)로 Full GC 뒤에도 힙이 한도에 닿아 CI가 Java heap space로
+    // 죽었다. 운영 JVM·Gradle Daemon과는 상관없다. -PtestForks=N이면 JVM마다 이만큼이다
+    maxHeapSize = '1g'
+    // 메모리가 부족하면 테스트 JVM을 바로 끝낸다(종료 코드 3 → test 실패). 이것이 없으면 OOM 뒤에도 JVM이 남아 job이 끝나지 않을 수 있다(2026-11-28 정상 3~5분인 job이 끝나지 않음, 원인 로그는 미확인).
+    // 그때는 그 실행의 커버리지 파일이 비지만, 테스트가 이미 실패라 커버리지 검사는 돌지 않는다. 보통 테스트 실패에는 영향 없음
+    jvmArgs '-XX:+ExitOnOutOfMemoryError'
     // 이 테스트를 뺀다(쉼표로 여러 개, 클래스 이름 패턴). CI는 오래 걸리는 Migration 통합 테스트를 다른 job에서 동시에 돌리려고 쓴다(#350)
     if (project.hasProperty('excludeTests')) {
         filter {

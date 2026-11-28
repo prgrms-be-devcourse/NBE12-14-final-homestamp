@@ -22,7 +22,7 @@ public interface VerifiedPhoneOwners {
    * <ul>
    *   <li>트랜잭션 밖: {@code IllegalTransactionStateException}
    *   <li>{@link PhoneHmacs} 값(소문자 hex 64자)이 아님: {@code IllegalArgumentException}(서버 버그)
-   *   <li>회원 번호 HMAC을 아직 채우지 않은 행이 있음(V14 전 가입자, 블루/그린 전환 중 이전 앱이 쓴 행): {@code
+   *   <li>회원 번호 HMAC을 아직 채우지 않은 행이 있음(V15 전 가입자, 블루/그린 전환 중 이전 앱이 쓴 행): {@code
    *       IllegalStateException}. {@code false}로 바꾸지 않는다(회원 번호를 비회원 목록에 넣지 않게). 부르는 쪽은 잡지 않고 실패시킨다.
    *       엄격한 CHECK가 들어오면 이 실패는 없어진다
    * </ul>

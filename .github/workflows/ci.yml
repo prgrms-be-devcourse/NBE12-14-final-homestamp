@@ -173,6 +173,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.back == 'true'
     runs-on: ubuntu-24.04
+    # 정상은 job 전체 3~5분(2026-11-28 성공 실행 2분 45초~4분 49초). 끝나지 않는 job이 기본 360분까지 러너를 잡지 않게(#476)
+    # 정상의 6배쯤인 30분에서 끊는다
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: back
@@ -186,6 +189,9 @@ jobs:
       # 캐시에 없는 의존성은 Maven Central 대신 미러에서 받는다(러너 공유 IP의 429 막기, #372)
       - name: CI Maven 미러
         run: mkdir -p ~/.gradle/init.d && cp ../.github/gradle/ci-mirror.init.gradle ~/.gradle/init.d/
+      # 메모리 부족을 볼 때 러너 크기를 추정하지 않으려고 남긴다(#476)
+      - name: 러너 자원
+        run: nproc && free -m
       # Gradle을 한 번만 띄운다(따로 돌리면 JVM·설정 읽기를 두 번 함, #335)
       # Migration 통합 테스트는 back-migration이 따로 돌린다
       - name: 서식·테스트·커버리지 (Spotless, Testcontainers postgres:18.6, JaCoCo)

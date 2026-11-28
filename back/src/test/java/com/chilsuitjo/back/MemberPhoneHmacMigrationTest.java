@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
 
 /**
- * V14 회원 번호 HMAC(#462): HMAC은 번호 없이 있을 수 없고, 이 칸을 모르는 이전 앱이 번호만 바꾸면 트리거가 HMAC을 비운다(블루/그린 호환). 실제
+ * V15 회원 번호 HMAC(#462): HMAC은 번호 없이 있을 수 없고, 이 칸을 모르는 이전 앱이 번호만 바꾸면 트리거가 HMAC을 비운다(블루/그린 호환). 실제
  * PostgreSQL에서 본다.
  */
 class MemberPhoneHmacMigrationTest extends SchemaTestSupport {

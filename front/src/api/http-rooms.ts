@@ -12,8 +12,8 @@ import { ApiError } from "./errors"
 import type { HttpRequest } from "./http-client"
 
 // 호실 API(06 4-3)의 서버 모양과 화면 모델(Room) 사이 변환. 서버 값은 room.server에 그대로 남겨요.
-type ServerSide = RoomServerState["mySide"]
-interface ServerRegion {
+export type ServerSide = RoomServerState["mySide"]
+export interface ServerRegion {
   code: string
   sido: string
   sigungu: string | null
@@ -46,6 +46,8 @@ export interface RoomDetailBody {
   asOf: string | null
   createdAt: string
   availableActions: string[]
+  // 상대 자리에 저장된 번호의 가린 모양(010-****-5678). 내가 만든 측이고 번호가 남아 있을 때(번호만·초대됨·거절됨)만 와요(#317)
+  counterpartMaskedPhone: string | null
   endRequest: RoomEndRequest | null
   endedAt: string | null
   endSoloReason: string | null
@@ -66,7 +68,8 @@ interface RoomPage {
 // 서버 시각(UTC Instant) → 화면 날짜(한국 날짜, 목업의 todayKey와 같은 모양 YYYY-MM-DD)
 export const seoulDate = (iso: string) =>
   new Date(iso).toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" })
-const toRole = (s: ServerSide): Role => (s === "TENANT" ? "임차인" : "임대인")
+export const toRole = (s: ServerSide): Role =>
+  s === "TENANT" ? "임차인" : "임대인"
 const STATUS: Record<RoomSummaryBody["status"], Room["status"]> = {
   LIVING: "거주 중",
   ENDED: "거주 종료",
@@ -144,6 +147,7 @@ export function roomFromDetail(
       createdBySide: b.createdBySide,
       asOf: b.asOf,
       availableActions: roomActionsOf(b.availableActions),
+      counterpartMaskedPhone: b.counterpartMaskedPhone ?? null,
       endRequest: b.endRequest,
       endedAt: b.endedAt,
       endSoloReason: b.endSoloReason,

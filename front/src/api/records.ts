@@ -8,6 +8,9 @@ import type { Session } from "./types"
 export interface ApiRequest {
   path: string
   body?: unknown
+  // 함께 올릴 사진(화면의 data URL). HTTP는 보내기 전에 호실 업로드 표로 올리고(06 4-5, api/photo-uploads)
+  // 받은 표를 본문의 uploadTickets로 넣어요. 목업은 보내지 않아 쓰지 않아요
+  photos?: readonly string[]
 }
 // 06 4장에 아직 주소가 없는 행동. 서버를 붙이기 전에 팀이 주소를 정해야 해요(HTTP에서는 보내지 않고 안내해요).
 export interface MissingApi {
@@ -60,13 +63,19 @@ export const post = (path: string, body?: unknown): ApiRequest => ({
   path,
   body,
 })
+// 사진을 함께 보내는 요청: postWithPhotos(주소, 본문, 사진). 본문에는 uploadTickets를 넣지 않아요
+export const postWithPhotos = (
+  path: string,
+  body: Record<string, unknown>,
+  photos: readonly string[],
+): ApiRequest => ({ path, body, photos })
 export const notInSpec = (what: string): MissingApi => ({ missing: what })
 export const noRequest = (why: string): NoRequest => ({ none: why })
 // 요청 본문의 호실 쪽 값(06 4-3 side, 05 party.side). 화면의 임차인·임대인을 서버 값으로 바꿔요
 export const roomSide = (r: Role): "TENANT" | "LANDLORD" =>
   r === "임차인" ? "TENANT" : "LANDLORD"
 // 목업에는 점검·정산의 서버 ID가 없어 호실 ID로 대신해요(목업은 주소로 보내지 않아요).
-// 아직 서버에 연결하지 않은 점검 행동(항목 더하기·부위 사진, #356)도 이 자리표를 써요.
+// 아직 서버에 연결하지 않은 점검 행동(부위 사진)도 이 자리표를 써요.
 export const inspectionIdOf = (roomId: string, kind: "in" | "out") =>
   `${roomId}:${kind}`
 // 점검 주소에 쓸 ID. 서버에서 받은 점검이면 서버 점검 ID(06 4-7, #357), 목업이면 자리표예요.

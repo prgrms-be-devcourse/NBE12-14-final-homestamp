@@ -60,7 +60,7 @@ public class Member {
   private String phone;
 
   /**
-   * 인증 번호의 번호 HMAC({@code PhoneHmacs} 값, #462). 번호와 늘 함께 바꾸고 함께 비운다. V14 전에 가입한 회원과 이 칸을 모르는 이전 앱이
+   * 인증 번호의 번호 HMAC({@code PhoneHmacs} 값, #462). 번호와 늘 함께 바꾸고 함께 비운다. V15 전에 가입한 회원과 이 칸을 모르는 이전 앱이
    * 쓴 행은 비어 있을 수 있고, auth가 채운다({@code MemberPhoneHmacFill}).
    */
   @Column(name = "phone_hmac", length = 128)

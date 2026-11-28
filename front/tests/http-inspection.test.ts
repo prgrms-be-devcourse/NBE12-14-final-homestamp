@@ -1,4 +1,5 @@
-import { expect, test } from "vitest"
+import { expect, test, vi } from "vitest"
+import type { PhotoUploadsApi } from "../src/api/photo-uploads"
 import { createHttpRecords } from "../src/api/http-records"
 import {
   inspectionFromDetail,
@@ -15,17 +16,26 @@ import {
   inspectionIdIn,
   inspectionIdOf,
   post,
+  postWithPhotos,
   type RecordChange,
 } from "../src/api/records"
 import {
+  addedItemAnswerText,
+  addsMissingDefect,
   confirmAll,
   confirmableItems,
   confirmAllButtons,
+  confirmReach,
   counterpartItemsAwaitingAnswer,
   inspectionStatus,
   lockedWithNoDefects,
 } from "../src/lib/inspection-rules"
-import { emptyState, type Room } from "../src/data/demo"
+import {
+  emptyState,
+  type PartyStatus,
+  type Room,
+  type RoomServerState,
+} from "../src/data/demo"
 
 // 입주 점검 API 연결(06 4-7, #357): 서버 점검 → 화면 모델, 점검 ID 찾기, 요청 주소·모양
 const s = { accountId: "dev-tenant" }
@@ -137,6 +147,7 @@ function fakeServer(opts: {
     if (path === endpoints.inspection(INSPECTION))
       return opts.detail ?? inspection()
     if (path === endpoints.notifications) return []
+    if (path === endpoints.invitations) return []
     throw new Error(`모르는 주소: ${path}`)
   }) as HttpRequest
   return { calls, request }
@@ -499,11 +510,164 @@ test("상대가 먼저 시작했으면(INSPECTION_EXISTS) 그 점검을 다시 �
   expect(roomOf(records).moveIn?.server?.id).toBe(INSPECTION)
 })
 
-test("연결한 점검 API만 서버로 보낸다(항목 더하기·부위 사진·퇴거 마침은 연결 전)", () => {
+test("항목 더하기는 사진을 먼저 올리고 받은 업로드 표를 본문에 넣는다(06 4-7)", async () => {
+  const { calls, request } = fakeServer({ started: true })
+  const uploads: { roomId: string; photos: readonly string[] }[] = []
+  const photoUploads: PhotoUploadsApi = {
+    upload: async (roomId, photos) => {
+      uploads.push({ roomId, photos })
+      return photos.map((_, i) => `ticket-${i}`)
+    },
+  }
+  const records = createHttpRecords(request, photoUploads)
+  await records.load(s)
+
+  await records.send(
+    s,
+    change(
+      postWithPhotos(
+        endpoints.inspectionAction(
+          inspectionIdIn(roomOf(records), "in"),
+          "items",
+        ),
+        { roomPartId: "part-1", description: "타일이 깨졌어요" },
+        ["data:image/jpeg;base64,AA", "data:image/jpeg;base64,BB"],
+      ),
+    ),
+  )
+
+  expect(uploads).toEqual([
+    {
+      roomId: ROOM,
+      photos: ["data:image/jpeg;base64,AA", "data:image/jpeg;base64,BB"],
+    },
+  ])
+  expect(calls.filter((c) => c.method === "POST")).toEqual([
+    {
+      method: "POST",
+      path: `/api/inspections/${INSPECTION}/items`,
+      body: {
+        roomPartId: "part-1",
+        description: "타일이 깨졌어요",
+        uploadTickets: ["ticket-0", "ticket-1"],
+      },
+    },
+  ])
+})
+
+test("사진이 없으면 빈 업로드 표를 보내고, 연결 전 주소면 사진을 올리지 않는다", async () => {
+  const { calls, request } = fakeServer({ started: true })
+  const upload = vi.fn(async (_roomId: string, photos: readonly string[]) =>
+    photos.map(() => "ticket"),
+  )
+  const records = createHttpRecords(request, { upload })
+  await records.load(s)
+  const id = inspectionIdIn(roomOf(records), "in")
+
+  await records.send(
+    s,
+    change(
+      postWithPhotos(
+        endpoints.inspectionAction(id, "items"),
+        { roomPartId: "part-1", description: "금이 가 있어요" },
+        [],
+      ),
+    ),
+  )
+  expect(calls.filter((c) => c.method === "POST").at(-1)?.body).toEqual({
+    roomPartId: "part-1",
+    description: "금이 가 있어요",
+    uploadTickets: [],
+  })
+
+  // 부위 사진은 아직 연결 전이라 사진을 올리지 않아요(쓰이지 않을 업로드 표를 받지 않게).
+  // "연결 전" 안내는 http-client가 해요(이 가짜 서버는 그 앞 단계라 본문만 봐요)
+  upload.mockClear()
+  await records.send(
+    s,
+    change(
+      postWithPhotos(
+        endpoints.inspectionAction(id, "part-photos"),
+        { roomPartId: "part-1" },
+        ["data:image/jpeg;base64,AA"],
+      ),
+    ),
+  )
+  expect(upload).not.toHaveBeenCalled()
+  expect(calls.filter((c) => c.method === "POST").at(-1)).toEqual({
+    method: "POST",
+    path: `/api/inspections/${INSPECTION}/part-photos`,
+    body: { roomPartId: "part-1" },
+  })
+})
+
+test("더한 하자에 답할 상대는 서버와 같은 기준이다: 연결됨·초대됨만, 공유 중단·상대 없음·거절·탈퇴는 없음(06 4-7)", () => {
+  const withStatus = (
+    counterpartStatus: PartyStatus,
+    myStatus: PartyStatus = "CONNECTED",
+  ) =>
+    ({
+      server: { counterpartStatus, myStatus } as RoomServerState,
+    }) as Room
+  expect(confirmReach(withStatus("CONNECTED"))).toBe("connected")
+  expect(confirmReach(withStatus("INVITED"))).toBe("invited")
+  for (const s of [
+    "EMPTY",
+    "NUMBER_ONLY",
+    "REJECTED",
+    "WITHDRAWN",
+    "SHARING_STOPPED",
+  ] as const)
+    expect(confirmReach(withStatus(s))).toBe("none")
+  // 내가 공유를 그만뒀어도 확인 요청은 열리지 않아요
+  expect(confirmReach(withStatus("CONNECTED", "SHARING_STOPPED"))).toBe("none")
+
+  // 받을 상대가 없으면 "상대가 답해요"라고 쓰지 않아요(03 1-4 ⑦)
+  expect(addedItemAnswerText("connected")).toMatch(/상대가 맞아요·보류·이견/)
+  // 초대된 상대는 연결 전에도 링크로 보고, 답은 연결한 뒤에 해요
+  expect(addedItemAnswerText("invited")).toMatch(
+    /연결 전에도 기록 링크로 볼 수 있고/,
+  )
+  expect(addedItemAnswerText("invited")).toMatch(/연결한 뒤에/)
+  expect(addedItemAnswerText("none")).not.toMatch(/답해요/)
+  // 지금 더하는 하자만 말하고, 앞서 보낸 확인 요청은 단정하지 않아요
+  expect(addedItemAnswerText("none")).toMatch(
+    /지금 더하는 하자에는 확인 요청이 가지 않아요/,
+  )
+  expect(addedItemAnswerText("none")).not.toMatch(/않았어요/)
+})
+
+test("HTTP에서는 작성 중 기준 측만 기록 창을 쓰고, 작성 중 상대·확인 요청 뒤 양쪽은 빠뜨린 하자 창을 연다(INSP-1d)", () => {
+  // HTTP: 서버가 items를 주면 누구든 더해요
+  expect(addsMissingDefect("작성 중", true, true)).toBe(false)
+  expect(addsMissingDefect("작성 중", false, true)).toBe(true)
+  expect(addsMissingDefect("확인 요청", true, true)).toBe(true)
+  expect(addsMissingDefect("확인 요청", false, true)).toBe(true)
+  // 목업은 그대로: 확인 요청 뒤 상대만
+  expect(addsMissingDefect("작성 중", false, false)).toBe(false)
+  expect(addsMissingDefect("확인 요청", true, false)).toBe(false)
+  expect(addsMissingDefect("확인 요청", false, false)).toBe(true)
+})
+
+test("작성 중 상대에게도 서버가 준 items 버튼이 그대로 보인다", () => {
+  const { session } = inspectionFromDetail(
+    inspection({
+      status: "DRAFT",
+      items: [],
+      availableActions: ["items"],
+    }),
+  )
+  const room = { moveIn: session } as Room
+  expect(
+    httpAvailableActions.inspection(emptyState(), room, "in", "임차인"),
+  ).toEqual(["items"])
+})
+
+test("연결한 점검 API만 서버로 보낸다(부위 사진·퇴거 마침은 연결 전)", () => {
   expect(isConnected("GET", endpoints.timeline(ROOM))).toBe(true)
   expect(isConnected("GET", endpoints.inspection(INSPECTION))).toBe(true)
   expect(isConnected("POST", endpoints.inspections(ROOM))).toBe(true)
-  for (const a of ["request-confirm", "confirm-all"] as const)
+  for (const a of ["items", "request-confirm", "confirm-all"] as const)
     expect(isConnected("POST", endpoints.inspectionAction(INSPECTION, a))).toBe(
       true,
     )
@@ -511,7 +675,7 @@ test("연결한 점검 API만 서버로 보낸다(항목 더하기·부위 사�
     expect(isConnected("POST", endpoints.inspectionItemAction("i", a))).toBe(
       true,
     )
-  for (const a of ["items", "part-photos", "finish"] as const)
+  for (const a of ["part-photos", "finish"] as const)
     expect(isConnected("POST", endpoints.inspectionAction(INSPECTION, a))).toBe(
       false,
     )

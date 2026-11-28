@@ -4,6 +4,7 @@ import com.chilsuitjo.back.global.security.LoginMember;
 import com.chilsuitjo.back.room.dto.ConnectRequest;
 import com.chilsuitjo.back.room.dto.InvitationAnswered;
 import com.chilsuitjo.back.room.dto.InvitationSummary;
+import com.chilsuitjo.back.room.dto.RejectRequest;
 import com.chilsuitjo.back.room.service.InvitationQueryService;
 import com.chilsuitjo.back.room.service.InvitationService;
 import java.util.List;
@@ -44,13 +45,14 @@ public class InvitationController {
     return respond(answers.connect(partyId, memberId, idempotencyKey, request));
   }
 
-  /** "제 집이 아니에요". 200과 {@code {partyId, status}}(호실 기록 ID는 주지 않음). */
+  /** "제 집이 아니에요". 본문 {@code {inviteId}}, 200과 {@code {partyId, status}}(호실 기록 ID는 주지 않음). */
   @PostMapping("/api/invitations/{partyId}/reject")
   public ResponseEntity<InvitationAnswered> reject(
       @PathVariable UUID partyId,
       @LoginMember UUID memberId,
-      @RequestHeader("Idempotency-Key") String idempotencyKey) {
-    return respond(answers.reject(partyId, memberId, idempotencyKey));
+      @RequestHeader("Idempotency-Key") String idempotencyKey,
+      @RequestBody(required = false) RejectRequest request) {
+    return respond(answers.reject(partyId, memberId, idempotencyKey, request));
   }
 
   private static ResponseEntity<InvitationAnswered> respond(InvitationAnswered.Result result) {

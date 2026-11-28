@@ -451,6 +451,8 @@ export interface Room {
   // HTTP: 서버가 준 원래 값(06 4-3 GET /api/rooms, /api/rooms/{id}). 위 화면 칸은 이 값에서 바꿔 채우고,
   // 바꾸며 뭉뚱그린 상태(공유 그만둠·탈퇴·합류 전)는 여기서 그대로 읽어요. 목업에는 없어요.
   server?: RoomServerState
+  // HTTP: 받은 초대로 만든 호실 자리표(id = partyId). 아직 내 호실이 아니라 기록은 없어요. 목업에는 없어요
+  invitation?: InvitationServerState
 }
 // 당사자 자리 상태(05 party.status). 서버 값 그대로예요.
 export type PartyStatus =
@@ -473,10 +475,21 @@ export interface RoomServerState {
   // 두 측 중 이른 공유 그만둔 시각(ISO). 이 시각 뒤 상대 기록은 보이지 않아요(03 3-1)
   asOf?: string | null
   availableActions?: string[]
+  // 상대 자리에 저장된 번호의 가린 모양(06 4-3 counterpartMaskedPhone). 원래 번호는 서버가 주지 않아요
+  counterpartMaskedPhone?: string | null
   // 거주 종료(06 4-3, ROOM-9, #445). 공유를 그만둔 뒤에도 양쪽에 그대로 보여요(03 B "예외 둘")
   endRequest?: RoomEndRequest | null
   endedAt?: string | null
   endSoloReason?: string | null
+}
+// 받은 초대 한 줄의 서버 값(06 4-3 GET /api/invitations). 연결 전이라 호실 기록 ID·별칭·번호는 없어요
+export interface InvitationServerState {
+  // 초대받은 자리. 연결·거절 주소에 써요(/api/invitations/{partyId}/connect)
+  partyId: string
+  // 초대 회차. 연결·거절 본문에 보내요(#437)
+  inviteId: string
+  // 초대한 사람의 가린 이름(03 6-1). 탈퇴했으면 null
+  inviterName: string | null
 }
 // 집주인 측이 연 가장 최근 거주 종료 요청(06 4-3 endRequest). 닫힌 것도 와요
 export interface RoomEndRequest {
@@ -543,6 +556,8 @@ export interface DemoState {
   roomParts?: Record<string, RoomPart[]>
   // 호실마다 경과 기준 시각(06 4장 timeline asOf). 공유를 그만둔 뒤면 그 시각, 아니면 null. 목업은 비워 둬요
   timelineAsOf?: Record<string, string | null>
+  // 받은 초대(06 4-3 GET /api/invitations)로 만든 호실 자리표. HTTP만 채워요(목업은 rooms의 초대 번호로 걸러요)
+  invitations?: Room[]
 }
 export const uid = () => crypto.randomUUID()
 export const won = formatWon
