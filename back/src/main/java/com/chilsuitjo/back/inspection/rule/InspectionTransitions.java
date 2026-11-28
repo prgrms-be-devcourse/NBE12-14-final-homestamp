@@ -55,6 +55,8 @@ public class InspectionTransitions implements Transitions<InspectionState> {
     return switch (action.type()) {
       case START_INSPECTION -> start(now, action);
       case REQUEST_INSPECTION_CONFIRM -> requestConfirm(now, action);
+      // 서버 LOCK(주체 측 없음)은 항목 응답으로 잠김, 회원 LOCK은 혼자 잠그기뿐이다(#392). 회원 LOCK의 payload에는 늘 solo_reason이
+      // 있어 측으로 나눈 것과 "solo_reason이 있으면 SOLO"는 같은 구분이다. 회원 LOCK 경로를 새로 더하면 여기서 나눈다
       case LOCK -> action.actorSide() == null ? lock(now) : lockAlone(now);
       default -> throw new BusinessException(ErrorCode.INVALID_STATE);
     };

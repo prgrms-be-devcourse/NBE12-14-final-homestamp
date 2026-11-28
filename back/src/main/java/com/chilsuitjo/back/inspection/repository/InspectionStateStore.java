@@ -134,7 +134,12 @@ public class InspectionStateStore {
     return Optional.of(check.reason());
   }
 
-  /** {@code since} 뒤에 이 측에게 보이는 상대의 이 점검(항목 포함) 행동이 있나. {@code since}가 없으면 거짓이다. */
+  /**
+   * {@code since} 뒤에 이 측에게 보이는 상대의 이 점검(항목 포함) 행동이 있나. {@code since}가 없으면 거짓이다. "뒤"는 {@code
+   * since}보다 늦은 행동만이고 같은 시각은 세지 않는다(수리 건 혼자 종료와 같은 경계). 보이는 범위는 공유 중단 시각({@code asOf})까지와 이 측 자신의
+   * 행동이라, 상대 공유 중단({@code SHARING_STOPPED}, {@code since} = 그만둔 시각)이면 그 뒤 상대 행동은 이 측에게 보이지 않아 막지
+   * 않는다. 서버 행동은 상대 행동이 아니다.
+   */
   private boolean counterpartActedSince(Inspection row, PartySide side, Instant since) {
     if (since == null) {
       return false;
@@ -334,6 +339,10 @@ public class InspectionStateStore {
      */
     @Override
     public SavedState save(ActionCommand command, InspectionState next) {
+      if (reason == null) {
+        // 규칙(InspectionTransitions.lockAlone)이 canLockAlone=false를 먼저 막으므로 오면 구현 버그다
+        throw new IllegalStateException("혼자 진행 이유 없이 혼자 잠글 수 없어요");
+      }
       Inspection row = row(command);
       for (InspectionItem item : items.findByInspectionIdOrderByIdAsc(row.getId())) {
         if (item.getConfirmedVersionId() == null) {
