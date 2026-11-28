@@ -38,6 +38,9 @@ app:
   progress:
     ask:
       interval: 7d
+  # 마지막 당사자 행동에서 이만큼 지나면 홈의 "오래 멈춘 건"(06 0-1 repair.stale-after, REP-6a·6e)
+  repair:
+    stale-after: 14d
   # 점검이 작성 중인 채로 이만큼 지나면 상대도 확인 요청을 보낼 수 있다(06 0-1 inspection.draft.stale-after)
   inspection:
     draft:
