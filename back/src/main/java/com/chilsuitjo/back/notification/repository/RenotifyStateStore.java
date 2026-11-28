@@ -144,6 +144,10 @@ public class RenotifyStateStore implements StateStore<RenotifyPlan> {
    * 재통지 행동 키에 넣을 링크: 이 요청의 가장 최근 요청·초대 통지의 링크(상태 무관, 없으면 {@code null}). 잠그기 전에 notification 표만 읽는다.
    * 번호를 고치면 새 링크의 통지가 생겨 바뀐다({@link RenotifyKey}). 잠근 뒤 실제로 고른 링크와 드물게 다를 수 있으나(그 사이 번호 고치기와 새 전달까지
    * 끝난 경우) 한 기회에 한 번은 잠근 뒤 확인이 지킨다.
+   *
+   * <p>"가장 최근"은 서버가 통지를 만든 시각 순서다. 새 기회의 통지는 옛 기회의 요청·초대 통지보다 적어도 사람 행동 하나(처음 초대 → 번호 고치기) 뒤에
+   * 만들어지므로 같은 서버 시계에서 뒤집히지 않는다. 링크 무효 여부는 잠그기 전이라 보지 않는다({@code InviteLinks}는 잠근 뒤에만 부름). 뒤집히면 키가 옛
+   * 기회의 키와 같아져 그 재통지는 재생으로 끝나므로, 인스턴스를 늘릴 때 후보 조회와 함께 다시 본다(decisions 2026-11-29 T-2).
    */
   public UUID keyLink(UUID requestId) {
     return notices

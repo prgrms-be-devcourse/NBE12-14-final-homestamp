@@ -363,20 +363,33 @@ class ReinviteWaitingTest {
 
   @Test
   void 새_기회의_통지가_옛_재통지와_같은_시각에_만들어져도_새_기회에_재통지가_간다() throws Exception {
-    // 고정 시계·낮은 정밀도에서 두 통지의 created_at이 같아도: 잠근 뒤 확인은 시각이 아니라 링크(REINVITED)로 본다
+    // 고정 시계·낮은 정밀도에서 새 기회의 요청 통지와 옛 재통지의 created_at이 같아도(둘 다 지금 기한 전): 후보 조회는 같은 시각을 옛 기회로
+    // 넣고(>=), 잠근 뒤 확인은 시각이 아니라 링크(REINVITED)로 본다
     UUID old = requestNotice();
     deliver(old, now.minus(Duration.ofHours(49)));
     worker.runOnce(50);
     UUID oldRenotify = (UUID) renotices().getFirst().get("id");
     changePhone(key(), phone());
     UUID fresh = requestNotice();
+    deliver(fresh, now.minus(Duration.ofHours(49)));
     jdbc.update(
         "UPDATE state.notice SET created_at = (SELECT created_at FROM state.notice WHERE id = ?)"
             + " WHERE id = ?",
         oldRenotify,
         fresh);
+    // 옛 기회의 요청 통지는 실제로 그보다 앞서 만들어졌다(처음 초대 → 번호 고치기)
+    jdbc.update(
+        "UPDATE state.notice SET created_at = ? WHERE id = ?",
+        Timestamp.from(now.minus(Duration.ofHours(100))),
+        old);
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT count(DISTINCT created_at) FROM state.notice WHERE id IN (?, ?)",
+                Integer.class,
+                oldRenotify,
+                fresh))
+        .isEqualTo(1);
 
-    deliver(fresh, now.minus(Duration.ofHours(49)));
     worker.runOnce(50);
     worker.runOnce(50);
 
@@ -388,14 +401,15 @@ class ReinviteWaitingTest {
 
   @Test
   void 같은_기회의_재통지는_요청_통지와_같은_시각이어도_한_번이다() {
-    // 후보 조회는 같은 시각을 넣는 쪽(거친 거르기)이지만 잠근 뒤 확인이 지금 기회의 재통지를 보고 건너뛴다
+    // 같은 기회의 요청 통지와 재통지가 같은 시각이고 둘 다 지금 기한 전이면 후보 조회는 옛 기회로 보고 넣는다(>=, 거친 거르기). 잠근 뒤 확인이 지금
+    // 기회의 재통지(링크가 REINVITED 아님)를 보고 건너뛰어 두 번 가지 않는다
     UUID notice = requestNotice();
     deliver(notice, now.minus(Duration.ofHours(49)));
     worker.runOnce(50);
     UUID renotify = (UUID) renotices().getFirst().get("id");
     jdbc.update(
-        "UPDATE state.notice SET created_at = (SELECT created_at FROM state.notice WHERE id = ?)"
-            + " WHERE id = ?",
+        "UPDATE state.notice SET created_at = ? WHERE id IN (?, ?)",
+        Timestamp.from(now.minus(Duration.ofHours(2))),
         notice,
         renotify);
 
