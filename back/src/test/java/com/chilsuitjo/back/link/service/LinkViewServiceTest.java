@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -28,6 +29,8 @@ import com.chilsuitjo.back.link.entity.Link;
 import com.chilsuitjo.back.link.repository.LinkRepository;
 import com.chilsuitjo.back.link.rule.LinkKind;
 import com.chilsuitjo.back.link.rule.LinkToken;
+import com.chilsuitjo.back.room.rule.PartyStatus;
+import com.chilsuitjo.back.room.rule.RoomStatus;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -122,8 +125,17 @@ class LinkViewServiceTest {
     LinkContentSource source = mock(LinkContentSource.class);
     when(source.room(roomRecordId, partyId))
         .thenReturn(
-            Optional.of(new LinkRoom(PartySide.LANDLORD, "서울특별시", "강남구", "역삼동", false, false)));
-    when(source.record(roomRecordId, TargetKind.INSPECTION, inspectionId))
+            Optional.of(
+                new LinkRoom(
+                    PartySide.LANDLORD,
+                    "서울특별시",
+                    "강남구",
+                    "역삼동",
+                    false,
+                    false,
+                    PartyStatus.INVITED,
+                    RoomStatus.LIVING)));
+    when(source.record(roomRecordId, TargetKind.INSPECTION, inspectionId, PartySide.LANDLORD))
         .thenReturn(Optional.of(inspectionRecord()));
     LinkViewService inspectionService =
         new LinkViewService(
@@ -262,13 +274,54 @@ class LinkViewServiceTest {
   }
 
   @Test
+  void 미리_본_뒤_잠그기_전에_자리가_거절됨이_되면_잠근_뒤_다시_읽어_LINK_INVALID이고_열람이_남지_않는다() {
+    // 거절·연결·거주 종료도 호실을 잠그고 저장한다. 미리 본 자리 상태는 잠그기 전 값이라 pipeline 접근 검증에서 다시 읽는다
+    Link link = newLink(LinkKind.INVITE, null);
+    String token = stub(link);
+    LinkContentSource source = mock(LinkContentSource.class);
+    when(source.room(roomRecordId, partyId))
+        .thenReturn(Optional.of(seat(PartyStatus.INVITED, RoomStatus.LIVING)))
+        .thenReturn(Optional.of(seat(PartyStatus.REJECTED, RoomStatus.LIVING)));
+    LinkViewService racing =
+        new LinkViewService(
+            links, source, fx.pipeline(), fx.actions(), clock, Duration.ofMinutes(10));
+
+    assertLinkInvalid(() -> racing.view(new LinkViewRequest(token)));
+    verify(source, times(2)).room(roomRecordId, partyId);
+    verify(links).countFailedView(link.getId());
+    assertThat(viewActions()).isEmpty();
+  }
+
+  @Test
+  void 정산_초대_링크에는_초대_링크의_자리_호실_조건을_쓰지_않는다() {
+    Link link = newLink(LinkKind.SETTLEMENT_INVITE, null);
+    String token = stub(link);
+    content.seedRoom(roomRecordId, partyId, seat(PartyStatus.NUMBER_ONLY, RoomStatus.ENDED));
+
+    assertThat(service.view(new LinkViewRequest(token)).kind())
+        .isEqualTo(LinkViewKind.SETTLEMENT_INVITE);
+  }
+
+  private static LinkRoom seat(PartyStatus seat, RoomStatus room) {
+    return new LinkRoom(PartySide.LANDLORD, "서울특별시", "강남구", "역삼동", false, false, seat, room);
+  }
+
+  @Test
   void 합류_전_기록인_호실은_같은_LINK_INVALID이고_열람이_남지_않는다() {
     Link link = newLink(LinkKind.INVITE, repairCaseId);
     String token = stub(link);
     content.seedRoom(
         roomRecordId,
         partyId,
-        new LinkRoom(PartySide.LANDLORD, "서울특별시", "강남구", "역삼동", false, true));
+        new LinkRoom(
+            PartySide.LANDLORD,
+            "서울특별시",
+            "강남구",
+            "역삼동",
+            false,
+            true,
+            PartyStatus.INVITED,
+            RoomStatus.LIVING));
 
     assertLinkInvalid(() -> service.view(new LinkViewRequest(token)));
     // 링크를 식별한 실패라 센다(05 link.failed_view_count)
@@ -283,7 +336,15 @@ class LinkViewServiceTest {
     content.seedRoom(
         roomRecordId,
         partyId,
-        new LinkRoom(PartySide.LANDLORD, "서울특별시", "강남구", "역삼동", true, false));
+        new LinkRoom(
+            PartySide.LANDLORD,
+            "서울특별시",
+            "강남구",
+            "역삼동",
+            true,
+            false,
+            PartyStatus.INVITED,
+            RoomStatus.LIVING));
 
     assertLinkInvalid(() -> service.view(new LinkViewRequest(token)));
     verify(links).countFailedView(link.getId());
@@ -409,7 +470,15 @@ class LinkViewServiceTest {
     content.seedRoom(
         roomRecordId,
         partyId,
-        new LinkRoom(PartySide.LANDLORD, "서울특별시", "강남구", "역삼동", false, false));
+        new LinkRoom(
+            PartySide.LANDLORD,
+            "서울특별시",
+            "강남구",
+            "역삼동",
+            false,
+            false,
+            PartyStatus.INVITED,
+            RoomStatus.LIVING));
   }
 
   private static LinkRecordResponse repairRecord() {
