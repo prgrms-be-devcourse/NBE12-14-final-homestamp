@@ -52,7 +52,7 @@ import {
 } from "@/api/records"
 import { endpoints } from "@/api/endpoints"
 import { RoomEndCard } from "@/features/room/room-end-card"
-import { roomEndView } from "@/lib/room-end"
+import { moveOutEndsNow, roomEndView } from "@/lib/room-end"
 import { createAuth, type Account, type AuthApi } from "@/api/auth"
 import { AuthScreen } from "@/features/auth/auth-screen"
 import { TermsReconfirmDialog } from "@/features/member/terms-reconfirm-dialog"
@@ -1175,15 +1175,8 @@ function HomeStampApp({
                       canConfirm={roomHas("move-out-confirm")}
                       canReject={roomHas("move-out-reject")}
                       onMoveOut={() => {
-                        // 집주인 측도 물을 세입자가 없거나 연결 전이면 바로 거주 종료예요(03 A, #428). 그때는 확인 창을 먼저 띄워요.
-                        // 버튼은 서버가 실제로 받을 때만 주므로(availableActions) 연결 전은 #428 머지 뒤에만 이 갈래로 와요
-                        const direct =
-                          role === "임차인" ||
-                          (room.server
-                            ? ["EMPTY", "NUMBER_ONLY", "INVITED"].includes(
-                                room.server.counterpartStatus,
-                              )
-                            : room.connection === "연결 전")
+                        // 바로 거주 종료가 되면 확인 창을 먼저 띄워요(되돌릴 수 없어서). 판단은 lib/room-end(moveOutEndsNow)
+                        const direct = moveOutEndsNow(room, role)
                         commit(
                           post(endpoints.moveOut(roomId)),
                           role === "임차인"

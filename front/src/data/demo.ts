@@ -466,9 +466,6 @@ export interface RoomEndRequest {
   openedAt: string
   // 미확인이 되는 기한. 거주 종료 요청 문자가 아직 없어 지금은 비어 있어요(NOTI-4b: 비면 남은 시간을 보이지 않음)
   dueAt: string | null
-  soloReason: string | null
-  closedReason: string | null
-  closedAt: string | null
   // 세입자의 "아직 살고 있어요" 사유
   rejectReason: string | null
 }

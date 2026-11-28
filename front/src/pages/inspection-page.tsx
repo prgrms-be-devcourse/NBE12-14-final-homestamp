@@ -730,14 +730,8 @@ export function InspectionPage({
           onAct={inspectionAct}
         />
 
-        {page === "checkout" && room.status === "거주 중" && (
-          // 거주 종료(이사했어요·이사함·요청 답)는 호실 홈의 거주 종료 카드에서 해요(06 S-06, #445).
-          // 퇴거 점검 마침(POST /api/inspections/{id}/finish, INSP-3)은 아직 없어 여기서 거주 종료를 보내지 않아요.
-          <small className="muted mt-5 block">
-            거주 종료는 호실 홈의 거주 종료 카드에서 남겨요. 거주 종료와 점검
-            항목 확인·정산 완료는 별개예요.
-          </small>
-        )}
+        {/* 거주 종료(이사했어요·이사함·요청 답)는 호실 홈의 거주 종료 카드에서 해요(06 S-06, #445).
+            퇴거 점검 마침(POST /api/inspections/{id}/finish, INSP-3)은 아직 없어 여기서 거주 종료를 보내지 않아요 */}
       </Panel>
       {page === "checkout" &&
         room.status === "거주 종료" &&

@@ -3,7 +3,17 @@ import { fireEvent, render, screen } from "@testing-library/react"
 import { roomFromDetail, type RoomDetailBody } from "../src/api/http-rooms"
 import type { Role, RoomEndRequest } from "../src/data/demo"
 import { RoomEndCard } from "../src/features/room/room-end-card"
-import { dayCount, roomEndView, timeLeft } from "../src/lib/room-end"
+import {
+  dayCount,
+  moveOutEndsNow,
+  roomEndView,
+  timeLeft,
+} from "../src/lib/room-end"
+import { ApiError } from "../src/api/errors"
+import { endpoints } from "../src/api/endpoints"
+import type { HttpRequest } from "../src/api/http-client"
+import { createHttpRecords } from "../src/api/http-records"
+import { post } from "../src/api/records"
 
 // 거주 종료 카드(06 S-06 표, ROOM-9, #445). 버튼은 서버 availableActions로만 그리고(06 4-0),
 // 서버는 요청 문자·기다림 시작·미확인 뒤 적용·양쪽 안내 전에는 버튼을 주지 않아요(#421 D 리뷰).
@@ -35,9 +45,6 @@ const request = (patch: Partial<RoomEndRequest> = {}): RoomEndRequest => ({
   status: "WAITING",
   openedAt: "2026-11-27T03:00:00Z",
   dueAt: null,
-  soloReason: null,
-  closedReason: null,
-  closedAt: null,
   rejectReason: null,
   ...patch,
 })
@@ -207,9 +214,7 @@ describe("거주 종료 카드", () => {
       "임대인",
     )
     expect(
-      screen.getByText(
-        "11월 28일 거주 종료 · 세입자 없이 남긴 거주 종료 · 이제 정산을 마무리해요",
-      ),
+      screen.getByText("11월 28일 거주 종료 · 세입자 없이 남긴 거주 종료"),
     ).toBeTruthy()
     expect(screen.queryByRole("button")).toBeNull()
   })
@@ -240,5 +245,94 @@ describe("연결 목록(connected.ts)", () => {
     expect(isConnected("POST", "/api/rooms/r1/move-out/confirm")).toBe(true)
     expect(isConnected("POST", "/api/rooms/r1/move-out/reject")).toBe(true)
     expect(isConnected("POST", "/api/rooms/r1/move-out/alone")).toBe(false)
+  })
+})
+
+describe("바로 거주 종료 판단(확인 창)", () => {
+  test("세입자는 늘 바로, 집주인은 세입자가 답할 수 있는 자리가 아니면 바로", () => {
+    const of = (counterpartStatus: RoomDetailBody["counterpartStatus"]) =>
+      roomFromDetail(body({ mySide: "LANDLORD", counterpartStatus }), "me")
+    expect(moveOutEndsNow(of("CONNECTED"), "임차인")).toBe(true)
+    expect(moveOutEndsNow(of("CONNECTED"), "임대인")).toBe(false)
+    expect(moveOutEndsNow(of("SHARING_STOPPED"), "임대인")).toBe(false)
+    // 서버가 이 자리들에서 move-out을 주면 그것은 바로 거주 종료예요(#428·초대 거절 합의 뒤에도 그대로)
+    for (const s of [
+      "EMPTY",
+      "NUMBER_ONLY",
+      "INVITED",
+      "REJECTED",
+      "WITHDRAWN",
+    ] as const)
+      expect(moveOutEndsNow(of(s), "임대인")).toBe(true)
+  })
+})
+
+describe("정산 완료 뒤", () => {
+  test("거주 종료 날짜가 그대로 보인다(03 B)", () => {
+    const room = roomFromDetail(
+      body({
+        status: "SETTLED",
+        endedAt: "2026-11-28T01:00:00Z",
+        availableActions: [],
+      }),
+      "me",
+    )
+    expect(roomEndView(room, "임차인")).toEqual({
+      kind: "ended",
+      endedAt: "2026-11-28T01:00:00Z",
+      soloReason: null,
+    })
+  })
+})
+
+describe("INVALID_STATE면 호실을 다시 받는다", () => {
+  test("그사이 상대가 먼저 답해 거절되면 지금 버튼으로 다시 그린다", async () => {
+    let actions = ["move-out", "confirm", "reject"]
+    const request = (async (method: string, path: string) => {
+      if (method === "POST")
+        throw new ApiError({ status: 409, code: "INVALID_STATE" })
+      if (path.startsWith(`${endpoints.rooms}?`))
+        return {
+          items: [
+            {
+              id: "r1",
+              alias: "302호",
+              region: body().region,
+              status: "LIVING",
+              mySide: "TENANT",
+              counterpartStatus: "CONNECTED",
+              joinedAway: false,
+              nextStep: "NONE",
+              createdAt: "2026-11-01T00:00:00Z",
+            },
+          ],
+          nextCursor: null,
+        }
+      if (path === endpoints.room("r1"))
+        return body({ availableActions: actions })
+      if (path.includes("/repair-cases"))
+        return { asOf: null, mySide: "TENANT", items: [], nextCursor: null }
+      if (path.endsWith("/timeline")) return { items: [], nextCursor: null }
+      return []
+    }) as HttpRequest
+    const records = createHttpRecords(request)
+    await records.load({ accountId: "me" })
+    await records.loadRoom({ accountId: "me" }, "r1")
+    actions = ["repair-cases"]
+    await expect(
+      records.send(
+        { accountId: "me" },
+        {
+          request: post(endpoints.moveOutAnswer("r1", "confirm")),
+          role: "임차인",
+          text: "거주 종료 요청에 맞아요 · 거주 종료",
+          update: () => {},
+          options: { roomId: "r1" },
+        },
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_STATE" })
+    expect(records.getSnapshot().rooms[0].server?.availableActions).toEqual([
+      "repair-cases",
+    ])
   })
 })

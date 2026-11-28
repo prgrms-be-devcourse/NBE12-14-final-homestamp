@@ -18,14 +18,13 @@ const OPEN = new Set(["WAITING", "UNCONFIRMED"])
 export function roomEndView(room: Room, role: Role): RoomEndView {
   const server = room.server
   if (server?.availableActions) {
+    // 거주 종료 사실과 날짜는 정산 완료 뒤에도 양쪽에 보여요(03 B, 불변식 18의 예외)
     if (room.status !== "거주 중")
-      return room.status === "거주 종료"
-        ? {
-            kind: "ended",
-            endedAt: server.endedAt,
-            soloReason: server.endSoloReason,
-          }
-        : { kind: "none" }
+      return {
+        kind: "ended",
+        endedAt: server.endedAt,
+        soloReason: server.endSoloReason,
+      }
     const req = server.endRequest
     if (req && OPEN.has(req.status))
       return server.mySide === "TENANT"
@@ -40,11 +39,22 @@ export function roomEndView(room: Room, role: Role): RoomEndView {
     return { kind: "none" }
   }
   // 목업
-  if (room.status === "거주 종료") return { kind: "ended" }
+  if (room.status !== "거주 중") return { kind: "ended" }
   if (room.status !== "거주 중" || !room.endRequested) return { kind: "none" }
   return role === "임차인"
     ? { kind: "asked" }
     : { kind: "waiting", unconfirmed: room.endWait === "미확인" }
+}
+
+// [이사했어요]·[이사함]이 바로 거주 종료가 되나(그러면 확인 창을 먼저 띄워요). 세입자 측은 늘 바로예요.
+// 집주인 측은 세입자가 답할 수 있는 자리(연결됨·공유 중단)면 거주 종료 요청이고, 아니면 바로 거주 종료예요.
+// 서버는 집주인에게 move-out을 이 두 경우에만 주므로(요청은 답할 세입자가 있을 때, 바로 종료는 물을 세입자가 없을 때,
+// RoomTransitions) 화면이 세입자 자리 목록을 따로 고르지 않아요. #428·초대 거절 합의로 바로 종료되는 자리가 늘어도 그대로예요
+const ANSWERING = new Set(["CONNECTED", "SHARING_STOPPED"])
+export function moveOutEndsNow(room: Room, role: Role): boolean {
+  if (role === "임차인") return true
+  if (room.server) return !ANSWERING.has(room.server.counterpartStatus)
+  return room.connection === "연결 전"
 }
 
 // "○월 ○일"(한국 날짜)

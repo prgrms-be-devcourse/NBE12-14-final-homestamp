@@ -57,7 +57,8 @@ export function RoomEndCard({
         return `세입자가 아직 살고 있다고 답했어요${view.reason ? ` · ${view.reason}` : ""}`
       case "ended": {
         const solo = endSoloText(view.soloReason)
-        return `${view.endedAt ? `${monthDay(view.endedAt)} ` : ""}거주 종료${solo ? ` · ${solo}` : ""} · 이제 정산을 마무리해요`
+        // 정산 안내는 [정산 열기]가 생길 때 함께 둬요(공유를 그만둔 동안에는 정산을 끝낼 수 없어서, 03 B)
+        return `${view.endedAt ? `${monthDay(view.endedAt)} ` : ""}거주 종료${solo ? ` · ${solo}` : ""}`
       }
       default:
         return undefined
@@ -84,12 +85,6 @@ export function RoomEndCard({
             </Button>
           )}
         </div>
-      )}
-      {canMoveOut && role === "임대인" && (
-        <small className="muted mt-2 block">
-          세입자가 맞다고 답하면 거주 종료가 돼요. 세입자가 없으면 바로 거주
-          종료가 돼요.
-        </small>
       )}
       {/* [아직 살고 있어요]는 사유와 함께 답해요(06 S-06, move-out/reject REASON_REQUIRED) */}
       <ActionDialog
