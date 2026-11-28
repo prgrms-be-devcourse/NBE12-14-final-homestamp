@@ -57,7 +57,7 @@ import org.springframework.stereotype.Component;
  */
 @Component
 @RequiredArgsConstructor
-public class  PaymentStateStore {
+public class PaymentStateStore {
 
   /** 내용 지문의 판 종류(05 2-3 「해시 입력 형식」 내용 지문). */
   static final String CONTENT_KIND = "payment_version";
@@ -151,9 +151,9 @@ public class  PaymentStateStore {
   }
 
   /**
-   * 남긴 지불에 상대의 금액 확인 요청을 연다(03 F "금액 확인", 06 LINK-1e). 상대가 <b>연결된 회원</b>일 때만 연다: 초대만 했거나(연결 전) 자리가
-   * 비었으면 돈은 요청 없이 혼자 기록한다(03 1-4 "연결 전 상대" ②, 불변식 20). 링크로 알리는 하자 확인 요청과 다르다. 공유 중단 제한이 살아 있거나 호실
-   * 단계에서 열 수 없어도 열지 않는다. 통지·문자는 만들지 않는다.
+   * 남긴 지불에 상대의 금액 확인 요청을 연다(03 F "금액 확인"). 상대가 <b>연결된 회원</b>일 때만 연다: 초대만 했거나(연결 전) 자리가 비었으면 돈은 요청
+   * 없이 혼자 기록한다(03 1-4 "연결 전 상대" ②, 불변식 20, 06 LINK-1e). 링크로 알리는 하자 확인 요청과 다르다. 공유 중단 제한이 살아 있거나 호실
+   * 단계에서 열 수 없어도 열지 않는다. 통지·문자는 만들지 않는다. 연결 전에 남긴 지불에 상대가 연결한 뒤 요청을 여는 일(LINK-1e 둘째 줄)은 아직 없다(후속).
    */
   private void openAmountConfirm(UUID roomRecordId, UUID paymentId, PartySide side) {
     RoomParties room = parties.read(roomRecordId, side);

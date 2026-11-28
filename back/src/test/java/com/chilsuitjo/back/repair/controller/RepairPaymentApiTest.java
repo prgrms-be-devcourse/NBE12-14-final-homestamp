@@ -47,8 +47,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 띄워 본다.
  *
  * <p>기대값: 06 4-0(만드는 행동은 201 + 만든 ID만, 같은 키면 처음과 같은 응답 + {@code Idempotent-Replayed}), 06 4-6 지불 기록
- * 줄, MONEY-1b(제3자는 관계로만), 03 F·06 LINK-1e·불변식 20(상대가 연결된 회원일 때만 금액 확인 요청), ROOM-2a(남의 것·보이지 않는 것은
- * 404). 중복 안내(MONEY-1a·1c)는 응답이 들어온 뒤 시나리오 테스트에서 본다.
+ * 줄, MONEY-1b(제3자는 관계로만), 03 F(금액 확인 요청)·불변식 20·06 LINK-1e(연결 전 상대에게는 요청 없음), ROOM-2a(남의 것·보이지 않는
+ * 것은 404). 중복 안내(MONEY-1a·1c)는 응답이 들어온 뒤 시나리오 테스트에서 본다.
  *
  * <p>응답 요청·사진은 가짜({@code FakeWaitService}·{@code FakePhotoService})라 상태만 확인한다. pipeline이 바깥 트랜잭션을
  * 거절해서 {@code @Transactional}로 되돌리지 않는다. 테스트마다 새 호실을 만든다.
