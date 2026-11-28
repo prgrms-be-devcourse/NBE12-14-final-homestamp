@@ -156,11 +156,13 @@ class RoomTimelineApiTest {
 
     String theirs = body(timeline(landlord).andExpect(status().isOk()));
     List<String> landlordSees = JsonPath.read(theirs, "$.items[*].type");
-    assertThat(landlordSees).containsExactly("START_INSPECTION", "REQUEST_INSPECTION_CONFIRM");
+    // 퇴거 점검 시작은 같은 요청에서 정산을 연다(#320). 그만두기 전 행동이라 보인다
+    assertThat(landlordSees)
+        .containsExactly("START_INSPECTION", "OPEN_SETTLEMENT", "REQUEST_INSPECTION_CONFIRM");
 
     String mine = body(timeline(tenant).andExpect(status().isOk()));
     List<String> tenantSees = JsonPath.read(mine, "$.items[*].type");
-    assertThat(tenantSees).containsExactly("START_INSPECTION", "ADD_ITEM");
+    assertThat(tenantSees).containsExactly("START_INSPECTION", "OPEN_SETTLEMENT", "ADD_ITEM");
   }
 
   @Test
