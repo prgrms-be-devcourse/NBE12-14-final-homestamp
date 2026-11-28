@@ -75,7 +75,11 @@ export type OnInspectionAct = (
   text: string,
   update: (d: DemoState) => void,
   targetId: string,
-) => void
+  // 저장 결과(성공 true). 기다릴 창만 써요(App.tsx commit)
+) => void | Promise<boolean>
+// 빠뜨린 하자 더하기가 실패했을 때 창에 남기는 한 줄(이유는 앱 안내에 따로 떠요). 쓴 설명과 고른 사진은 그대로 둬요
+export const MISSING_DEFECT_FAILED =
+  "하자를 더하지 못했어요. 쓴 설명과 사진은 그대로 있으니 다시 시도해 주세요."
 // 규칙 위반은 복사본에서 먼저 확인합니다.
 function check(db: DemoState, update: (d: DemoState) => void) {
   try {
@@ -590,7 +594,7 @@ export function MissingDefectDialog({
         setError("")
         onClose()
       }}
-      onSubmit={(f) => {
+      onSubmit={async (f) => {
         if (!part) return ZONE_PART_ERROR
         const data = {
           roomPartId: part.id,
@@ -612,7 +616,9 @@ export function MissingDefectDialog({
         }
         const e = http ? "" : check(db, update)
         if (e) return e
-        onAct(
+        // 사진 올리기와 항목 저장을 기다려요(ActionDialog가 그동안 버튼을 막아요). 성공이면 창이 닫히며 onClose가 사진을 비우고,
+        // 실패면 문구를 돌려줘 창·설명·사진을 그대로 둬요(#405 리뷰)
+        const saved = await onAct(
           postWithPhotos(
             endpoints.inspectionAction(inspectionIdIn(room, kind), "items"),
             { roomPartId: data.roomPartId, description: data.description },
@@ -622,7 +628,7 @@ export function MissingDefectDialog({
           update,
           "",
         )
-        setPhotos([])
+        if (saved === false) return MISSING_DEFECT_FAILED
       }}
     >
       <PartField

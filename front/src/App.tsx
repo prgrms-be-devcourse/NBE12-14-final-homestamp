@@ -588,20 +588,21 @@ function HomeStampApp({
     eventRoomId = roomId,
     privateTo?: Role,
     recordTarget?: RecordTarget,
-  ) {
+  ): Promise<boolean> {
     const targetRoom = db.rooms.find((r) => r.id === eventRoomId)
     if (
       targetRoom &&
       !(sideOf(targetRoom, accountId) && canAccessRoom(targetRoom, role))
     ) {
       toast("호실 연결 후에 기록할 수 있어요.")
-      return
+      return Promise.resolve(false)
     }
     if (/거주 종료$|정산 끝내기/.test(text)) {
       setPending({ request, text, update })
-      return
+      return Promise.resolve(true)
     }
-    void act(
+    // 저장 결과(성공 true, 실패 false)를 돌려줘요. 창이 기다렸다가 성공일 때만 닫게요(실패면 쓴 내용을 그대로 둬요)
+    return act(
       request,
       text,
       update,
@@ -611,9 +612,10 @@ function HomeStampApp({
       privateTo,
       recordTarget,
     ).then((ok) => {
-      if (!ok) return
+      if (!ok) return false
       toast("기록했어요.")
       setModal(null)
+      return true
     })
   }
   // 공유받은 기록 한 건 보기(받은 초대에서 '공유받은 기록 보기')
@@ -755,7 +757,7 @@ function HomeStampApp({
     update: (d: DemoState) => void,
     targetId: string,
   ) {
-    commit(
+    return commit(
       request,
       text,
       update,
