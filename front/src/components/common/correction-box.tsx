@@ -253,7 +253,7 @@ export function CorrectionPanel({
             title="고치기 요청"
             sub={`${g.items.map((c) => c.field).join(" · ")} 변경`}
             meta={
-              <span className="inline-flex items-center gap-1 rounded-full bg-[#fff6e4] px-[9px] py-[3px] text-[13px] leading-[1.6] font-[650] whitespace-nowrap text-[#bc9146] max-sm:px-[7px] max-sm:py-0.5 max-sm:text-xs">
+              <span className="inline-flex items-center gap-1 rounded-full bg-[#f1f3f6] px-[9px] py-[3px] text-[13px] leading-[1.6] font-[650] whitespace-nowrap text-[#5b6670] max-sm:px-[7px] max-sm:py-0.5 max-sm:text-xs">
                 {answerable.length ? "내 확인 필요" : groupStatus(g)}
               </span>
             }
