@@ -23,6 +23,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -131,6 +132,37 @@ class InviteRejectSupportTest {
   }
 
   /** room의 거절 저장이 부를 순서 그대로. 초대한 측은 호실을 만든 측(세입자)이다. */
+  @Test
+  void 고친_내용도_거절_이유로_닫을_수_있고_모르는_이유는_막는다() {
+    // room의 거절 저장이 확인 전 고친 내용을 그 확인 요청과 함께 닫는다(#478 (나)). 이 PR은 V16 CHECK만 연다
+    UUID room = room().id();
+    String insert =
+        """
+        INSERT INTO state.correction_request
+          (id, room_record_id, field, new_value, target_key, requested_by_side, status,
+           closed_reason, closed_at, created_at, version)
+        VALUES (?, ?, 'MOVE_IN_DATE', '"2026-11-01"'::jsonb, 'ROOM', 'TENANT', 'CLOSED', ?, ?, ?, 0)
+        """;
+
+    jdbc.update(
+        insert,
+        UUID.randomUUID(),
+        room,
+        "INVITE_REJECTED",
+        Timestamp.from(REJECTED_AT),
+        Timestamp.from(AT));
+    assertThatThrownBy(() ->
+            jdbc.update(
+                insert,
+                UUID.randomUUID(),
+                room,
+                "ROOM_ENDED",
+                Timestamp.from(REJECTED_AT),
+                Timestamp.from(AT)))
+        .isInstanceOf(DataIntegrityViolationException.class)
+        .hasMessageContaining("correction_request_closed_reason_check");
+  }
+
   private List<UUID> reject(Room room) {
     waits.closeRequestedBy(room.id(), PartySide.TENANT, ClosedReason.INVITE_REJECTED);
     List<UUID> links =
