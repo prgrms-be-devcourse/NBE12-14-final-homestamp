@@ -21,6 +21,14 @@ export function createHttpRoomParts(request: HttpRequest): HttpRoomParts {
       request<RoomPart>("POST", endpoints.roomParts(roomId), {
         body: { zone: body.zone, name: body.name },
       }),
+    hide: (_s, roomId, partId) =>
+      request<RoomPart>("POST", endpoints.roomPart(roomId, partId, "hide")),
+    show: (_s, roomId, partId) =>
+      request<RoomPart>("POST", endpoints.roomPart(roomId, partId, "show")),
+    toggle: (_s, roomId, partId, enabled) =>
+      request<RoomPart>("POST", endpoints.roomPart(roomId, partId, "toggle"), {
+        body: { enabled },
+      }),
     partsOf: async (roomId) => (await load(roomId)).parts,
   }
 }
