@@ -154,7 +154,7 @@ export function CauseNotes({
     <Panel title="각 쪽의 원인 설명">
       <p className="muted text-sm mb-3">
         각자의 설명과 근거만 남겨요. HomeStamp는 원인을 판정하지 않고, 수리
-        상태·부담 합의·하자 인정도 바꾸지 않아요.
+        상태·수리비 나누기·하자 확인도 바꾸지 않아요.
       </p>
       {active.map((c) => (
         <ClaimView key={c.id} c={c}>
