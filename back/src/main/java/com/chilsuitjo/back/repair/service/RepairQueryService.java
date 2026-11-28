@@ -427,14 +427,14 @@ public class RepairQueryService {
     return List.copyOf(result);
   }
 
-  /** 보이는 응답 상태. */
-  private record Shown(CorrectionStatus status, AckState answer, String reason, Instant at) {}
+  /** 보이는 응답 상태. 링크 열람({@link JpaRepairLinkQuery})도 같은 값을 쓴다. */
+  record Shown(CorrectionStatus status, AckState answer, String reason, Instant at) {}
 
   /**
    * 보는 사람에게 보이는 응답. 고정되지 않았으면 지금 값이다. 고정됐으면 그 시각까지의 응답과 보는 사람 자신의 응답 중 마지막이고, 그 뒤 상대가 남긴 응답이 있을 때만
    * 다시 계산한다(맞아요 → 확인됨, 보류·이견 → 거절, 없음 → 기다림).
    */
-  private static Shown shownAnswer(CorrectionView view, PartySide viewer, Instant asOf) {
+  static Shown shownAnswer(CorrectionView view, PartySide viewer, Instant asOf) {
     Shown now = new Shown(view.status(), view.answer(), view.answerReason(), view.answeredAt());
     if (asOf == null) {
       return now;
@@ -591,9 +591,10 @@ public class RepairQueryService {
    * 같은 규칙({@link RepairTransitions})으로 다시 계산하면 그때의 상태가 나온다(REP-10).
    *
    * <p>내용의 고친 내용에 대한 응답({@code RESPOND_CORRECTION})도 함께 읽는다. 대상이 고친 내용이지만 맞아요가 내용의 새 판을 만들어서, 빼면
-   * 보이는 판 번호가 뒤처진다. 순서는 호실의 행동 번호({@code room_seq})다.
+   * 보이는 판 번호가 뒤처진다. 순서는 호실의 행동 번호({@code room_seq})다. 링크 열람({@link JpaRepairLinkQuery})도 같은 기준으로 다시
+   * 계산한다.
    */
-  private List<ActionEntry> visibleActions(RepairCase row, RepairSight sight) {
+  List<ActionEntry> visibleActions(RepairCase row, RepairSight sight) {
     List<ActionEntry> all =
         new ArrayList<>(actionReader.findByTarget(ActionTarget.repairCase(row.getId())));
     for (CorrectionView correction :

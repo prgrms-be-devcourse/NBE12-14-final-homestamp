@@ -8,6 +8,13 @@ export const sideText = (side?: string) =>
       : side === "임대인"
         ? "집주인 쪽"
         : `${side} 쪽`
+// 서버 시각(ISO) → "11월 26일"(한국 날짜)
+export const monthDay = (iso: string) => {
+  const [, m, d] = new Date(iso)
+    .toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" })
+    .split("-")
+  return `${Number(m)}월 ${Number(d)}일`
+}
 // 사람을 가리킬 때의 이름(GLOSSARY: 임차인·임대인은 호실을 만들 때 고르는 버튼 말고는 쓰지 않음).
 export const sideName = (side?: string) =>
   side === "임차인" ? "세입자" : side === "임대인" ? "집주인" : (side ?? "상대")

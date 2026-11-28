@@ -1,4 +1,10 @@
-import type { PartyStatus, Role, Room, RoomServerState } from "@/data/demo"
+import type {
+  PartyStatus,
+  Role,
+  Room,
+  RoomEndRequest,
+  RoomServerState,
+} from "@/data/demo"
 // ServerSide(TENANT·LANDLORD)로 바꾸기는 화면이 요청 본문을 만들 때 쓰므로 records.ts(roomSide)에 있어요
 import { regionName } from "@/lib/region"
 import { endpoints } from "./endpoints"
@@ -40,7 +46,18 @@ export interface RoomDetailBody {
   asOf: string | null
   createdAt: string
   availableActions: string[]
+  endRequest: RoomEndRequest | null
+  endedAt: string | null
+  endSoloReason: string | null
 }
+// 서버 행동 이름(API 끝 단어, 06 4-0) → 화면 행동 이름. 거주 종료 요청의 답만 화면에서 이름을 달리 써요
+const ROOM_ACTION_NAMES: Record<string, string> = {
+  confirm: "move-out-confirm",
+  reject: "move-out-reject",
+}
+export const roomActionsOf = (names: string[]) =>
+  names.map((n) => ROOM_ACTION_NAMES[n] ?? n)
+const OPEN_END = new Set<RoomEndRequest["status"]>(["WAITING", "UNCONFIRMED"])
 interface RoomPage {
   items: RoomSummaryBody[]
   nextCursor: string | null
@@ -116,6 +133,8 @@ export function roomFromDetail(
     ),
     since: b.moveInDate ?? "",
     creator: toRole(b.createdBySide),
+    // 목업과 같은 칸도 맞춰 둬요(열린 요청만 참)
+    endRequested: Boolean(b.endRequest && OPEN_END.has(b.endRequest.status)),
     server: {
       mySide: b.mySide,
       counterpartStatus: b.counterpartStatus,
@@ -124,7 +143,10 @@ export function roomFromDetail(
       myStatus: b.myStatus,
       createdBySide: b.createdBySide,
       asOf: b.asOf,
-      availableActions: b.availableActions,
+      availableActions: roomActionsOf(b.availableActions),
+      endRequest: b.endRequest,
+      endedAt: b.endedAt,
+      endSoloReason: b.endSoloReason,
     },
   }
 }

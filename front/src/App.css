@@ -16,14 +16,14 @@ button:disabled {
 }
 .app-shell {
   min-height: 100vh;
-  background: #f5f7fb;
+  background: #f3f4f6;
   color: #24344e;
 }
 .sidebar {
   position: fixed;
   inset: 0 auto 0 0;
   background: #fff;
-  border-right: 1px solid #e7edf5;
+  border-right: 1px solid #e3e7eb;
   padding: 30px 18px 12px;
   display: flex;
   flex-direction: column;
@@ -35,8 +35,9 @@ button:disabled {
   gap: 11px;
   font-size: 25px;
   font-weight: 850;
-  letter-spacing: -1.2px;
-  color: #182c4c;
+  letter-spacing: -0.6px;
+  font-family: var(--font-brand);
+  color: var(--color-brand);
 }
 .brand small {
   display: block;
@@ -47,8 +48,7 @@ button:disabled {
   margin-top: 2px;
 }
 .logo-mark {
-  background: linear-gradient(145deg, #4b8fff, #175ce0);
-  box-shadow: 0 5px 12px #2464dd25;
+  background: var(--color-brand);
   color: #fff;
   width: 44px;
   height: 44px;
@@ -61,7 +61,7 @@ button:disabled {
   position: absolute;
   width: 11px;
   height: 11px;
-  background: #ff9a79;
+  background: var(--color-stamp);
   border: 2px solid white;
   border-radius: 50%;
   bottom: 8px;
@@ -89,14 +89,14 @@ button:disabled {
   font-weight: 600;
 }
 .nav-item.active {
-  background: #eaf1ff;
-  color: #2465e5;
+  background: #eef1f5;
+  color: #22324a;
   font-weight: 750;
 }
 .nav-count {
   margin-left: auto;
-  background: #dbe8ff;
-  color: #2465e5;
+  background: #eef1f5;
+  color: #22324a;
   border-radius: 5px;
   padding: 1px 6px;
   font-size: 14px;
@@ -106,7 +106,7 @@ button:disabled {
   padding-top: 30px;
 }
 .profile {
-  border-top: 1px solid #edf1f7;
+  border-top: 1px solid #e3e7eb;
   width: 100%;
   justify-content: flex-start;
   border-radius: 0;
@@ -129,10 +129,10 @@ button:disabled {
   margin-top: 4px;
 }
 .avatar {
-  background: #e9efff;
-  color: #5671ac;
+  background: #eef1f5;
+  color: var(--color-brand);
   border: 3px solid #fff;
-  box-shadow: 0 0 0 1px #e9edf5;
+  box-shadow: 0 0 0 1px #e3e7eb;
   border-radius: 50%;
   width: 36px;
   height: 36px;
@@ -152,8 +152,8 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: #ffffffee;
-  border-bottom: 1px solid #e7edf5;
+  background: var(--color-topbar);
+  border-bottom: 1px solid var(--color-line-strong);
   gap: 12px;
 }
 .top-left,
@@ -163,15 +163,16 @@ button:disabled {
 }
 .bell {
   position: relative;
-  color: #7e8ba0;
+  color: var(--color-brand);
 }
+/* 안 읽은 알림 수: 답할 일이라 '내 차례' 주황 */
 .bell > span {
   position: absolute;
   font-size: 14px;
   border: 2px solid white;
   border-radius: 50%;
   color: #fff;
-  background: #ef866b;
+  background: var(--color-turn);
 }
 main {
   max-width: 1180px;
@@ -193,7 +194,7 @@ main {
   font-weight: 800;
 }
 .greeting-dot {
-  color: #3175eb;
+  color: #22324a;
 }
 .page-heading p {
   margin-top: 7px;
@@ -222,16 +223,16 @@ main {
 .room-select [data-slot="select-trigger"] {
   padding-left: 34px;
   background: white;
-  border-color: #e1e7f0;
+  border-color: #e3e7eb;
   box-shadow: none;
 }
 .blue {
-  background: #edf3ff;
-  color: #477ee2;
+  background: #eef1f5;
+  color: #22324a;
 }
 .green {
-  background: #eaf7f1;
-  color: #479f80;
+  background: #eef0f3;
+  color: #46525e;
 }
 .panel-head > button {
   font-size: 14px;
@@ -241,27 +242,70 @@ main {
   width: 13px;
   height: 13px;
 }
+/* 상태 꼬리표: 네 가지 상태 표시(index.css 토큰 주석). 색만으로 나누지 않고 앞의 점 모양도 달라요. */
 .status {
-  border: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid transparent;
   font-weight: 600;
-  border-radius: 5px;
+  border-radius: 6px;
   box-shadow: none;
 }
-.status.blue {
-  background: #edf3ff;
-  color: #4779cd;
+.status::before {
+  content: "";
+  flex: none;
+  width: 7px;
+  height: 7px;
+  box-sizing: border-box;
+  border-radius: 50%;
 }
-.status.green {
-  background: #eaf7f0;
-  color: #3a9271;
+/* 내 차례: 주황 채운 점 */
+.status.turn {
+  background: var(--color-turn-soft);
+  color: var(--color-turn-ink);
 }
-.status.amber {
-  background: #fff6e4;
-  color: #bc9146;
+.status.turn::before {
+  background: var(--color-turn);
 }
-.status.rose {
-  background: #fff0ed;
-  color: #cc7869;
+/* 오래 멈춤: 회색 점선 */
+.status.stale {
+  background: #fff;
+  border-color: var(--color-line-strong);
+  color: var(--color-ink);
+}
+.status.stale::before {
+  border: 1.5px dashed var(--color-stale);
+}
+/* 진행 중: 남색 빈 원 */
+.status.progress {
+  background: #fff;
+  border-color: var(--color-line);
+  color: var(--color-brand);
+}
+.status.progress::before {
+  border: 1.5px solid var(--color-brand);
+}
+/* 아직 안 끝남: 노랑 빈 원(주황보다 훨씬 밝게) */
+.status.wait {
+  background: var(--color-wait-soft);
+  color: var(--color-wait-ink);
+}
+.status.wait::before {
+  border: 1.5px solid var(--color-wait);
+}
+/* 끝남: 초록 ✓ */
+.status.done {
+  background: var(--color-ok-soft);
+  color: var(--color-ok-ink);
+}
+.status.done::before {
+  content: "✓";
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  font-weight: 800;
+  line-height: 1;
 }
 .repair-summary {
   min-width: 0;
@@ -372,7 +416,7 @@ main {
   white-space: normal;
   gap: 10px;
   box-shadow: none;
-  border-color: #e9edf4;
+  border-color: #e3e7eb;
   border-radius: 10px;
 }
 .task > span:nth-child(2) {
@@ -408,20 +452,20 @@ main {
   left: 4px;
   top: 12px;
   height: calc(100% - 10px);
-  border-left: 1px solid #e7edf6;
+  border-left: 1px solid #e3e7eb;
 }
 .event-dot {
   width: 9px;
   height: 9px;
-  border: 2px solid #afc6ed;
+  border: 2px solid #cbd2d8;
   background: white;
   border-radius: 50%;
   flex-shrink: 0;
 }
 .event:first-child .event-dot {
-  border-color: #4c87ea;
-  background: #4c87ea;
-  box-shadow: 0 0 0 3px #edf4ff;
+  border-color: #22324a;
+  background: #22324a;
+  box-shadow: 0 0 0 3px #eef1f5;
 }
 .event strong {
   font-weight: 600;
@@ -438,14 +482,14 @@ main {
 .info-box {
   display: flex;
   gap: 11px;
-  background: #edf3fc;
-  border: 1px solid #e4ecf8;
+  background: #eef1f5;
+  border: 1px solid #eef1f5;
   border-radius: 10px;
   color: #8095b3;
 }
 .info-box svg {
   flex-shrink: 0;
-  color: #7296ca;
+  color: #6f7a85;
   margin-top: 2px;
 }
 .info-box strong {
@@ -456,7 +500,7 @@ main {
   margin-top: 3px;
 }
 .muted {
-  color: #8d9db2;
+  color: #6f7a85;
 }
 .empty {
   display: flex;
@@ -470,7 +514,7 @@ main {
   font-size: 14px;
 }
 .empty svg {
-  color: #b8c9e0;
+  color: #cbd2d8;
 }
 .main-footer {
   display: flex;
@@ -501,8 +545,8 @@ main {
   overflow-wrap: anywhere;
 }
 .note {
-  background: #f7f9fc;
-  border-left: 2px solid #bbcff0;
+  background: #f5f6f8;
+  border-left: 2px solid #cbd2d8;
   padding: 12px 15px;
   margin-top: 15px;
   font-size: 14px;
@@ -519,7 +563,7 @@ main {
   display: flex;
   flex-direction: column;
   margin: 20px 0;
-  background: #f7f9fd;
+  background: #f5f6f8;
   padding: 20px;
   border-radius: 10px;
 }
@@ -539,7 +583,7 @@ main {
 .payment {
   padding: 15px;
   margin: 12px 0;
-  border: 1px solid #e8edf5;
+  border: 1px solid #e3e7eb;
   border-radius: 10px;
   display: flex;
   flex-direction: column;
@@ -568,8 +612,8 @@ main {
   padding: 20px 0;
 }
 .person-card {
-  background: #f8faff;
-  border: 1px solid #e7edf8;
+  background: #eef1f5;
+  border: 1px solid #e3e7eb;
   border-radius: 14px;
   text-align: center;
   padding: 25px;
@@ -594,23 +638,23 @@ main {
   flex-direction: column;
   align-items: center;
   gap: 15px;
-  color: #8aabdc;
+  color: #6f7a85;
 }
 .counterpart {
-  background: #e6f3ed;
-  color: #71a18c;
+  background: #eef0f3;
+  color: #46525e;
 }
 .notice-row {
   display: flex;
   gap: 16px;
   padding: 20px;
   margin-top: 10px;
-  border: 1px solid #e5edf9;
-  background: #f6f9ff;
+  border: 1px solid #eef1f5;
+  background: #eef1f5;
   border-radius: 10px;
 }
 .notice-row > svg {
-  color: #82a4d7;
+  color: #6f7a85;
   flex-shrink: 0;
 }
 .notice-row.read {
@@ -671,10 +715,10 @@ main {
   flex-direction: column;
   padding: 22px;
   gap: 10px;
-  background: #f8faff;
-  border: 1px dashed #cfdcf0;
+  background: #eef1f5;
+  border: 1px dashed #cbd2d8;
   border-radius: 10px;
-  color: #8eabd3;
+  color: #6f7a85;
   cursor: pointer;
 }
 .upload-zone strong {
@@ -712,7 +756,7 @@ main {
   align-items: center;
   justify-content: flex-end;
   padding-top: 17px;
-  border-top: 1px solid #e9eef6;
+  border-top: 1px solid #e3e7eb;
 }
 .modal-footer button {
   padding: 0 15px;
@@ -752,7 +796,7 @@ main {
   line-height: 1.7;
 }
 .toast > svg {
-  color: #a9dac7;
+  color: #d5dae0;
   flex-shrink: 0;
 }
 .guest-shell {
@@ -764,7 +808,7 @@ main {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-bottom: 1px solid #e8edf5;
+  border-bottom: 1px solid #e3e7eb;
   padding-bottom: 25px;
 }
 .guest-banner {
@@ -774,7 +818,7 @@ main {
   padding: 35px 0;
 }
 .guest-banner > svg {
-  color: #7b9fd6;
+  color: #6f7a85;
 }
 .guest-banner p {
   color: #8ea1bb;
@@ -784,7 +828,7 @@ main {
   margin-top: 25px;
   padding: 30px;
   align-items: center;
-  background: #f1f6ff;
+  background: #eef1f5;
   text-align: center;
 }
 .guest-cta p,
