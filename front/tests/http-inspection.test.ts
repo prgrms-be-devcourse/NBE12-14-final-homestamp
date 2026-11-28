@@ -147,6 +147,7 @@ function fakeServer(opts: {
     if (path === endpoints.inspection(INSPECTION))
       return opts.detail ?? inspection()
     if (path === endpoints.notifications) return []
+    if (path === endpoints.invitations) return []
     throw new Error(`모르는 주소: ${path}`)
   }) as HttpRequest
   return { calls, request }

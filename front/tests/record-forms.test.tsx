@@ -10,6 +10,7 @@ import type { Account } from "../src/api/auth"
 import { PhoneForm } from "../src/features/room/phone-form"
 import { InviteForm } from "../src/features/room/invite-form"
 import { ConnectForm } from "../src/features/room/connect-form"
+import { SHARE_CONSENT_VERSION } from "../src/api/http-invitations"
 import { RoomForm } from "../src/features/room/room-form"
 import { SettlementItemForm } from "../src/features/settlement/settlement-item-form"
 import { InspectionItemForm } from "../src/features/inspection/inspection-item-form"
@@ -121,7 +122,10 @@ describe("초대", () => {
     submit(/동의하고 보여 주기/)
     const [request] = commit.mock.calls[0] as [ApiRequest]
     expect(request.path).toBe(endpoints.invite(r.id))
-    expect(request.body).toMatchObject({ phone: "01055556666", consent: true })
+    expect(request.body).toEqual({
+      phone: "01055556666",
+      consentVersion: SHARE_CONSENT_VERSION,
+    })
     expect(toast).toHaveBeenCalledTimes(1)
   })
 })
