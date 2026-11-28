@@ -5,6 +5,7 @@ import { FormDialog } from "@/components/common/form-dialog"
 import { ConsentList } from "@/components/common/consent-list"
 import { post } from "@/api/records"
 import { endpoints } from "@/api/endpoints"
+import { SHARE_CONSENT_VERSION, type ConnectBody } from "@/api/http-invitations"
 import type { Account } from "@/api/auth"
 import type { DemoState, Role, Room } from "@/data/demo"
 import { roomOptions } from "@/lib/room-options"
@@ -62,17 +63,19 @@ export function ConnectForm({
     invitationMatches(sharedRoom, role, account.phone, account.phone),
   )
   const canConnect = Boolean(account && phoneMatched && sharedRoom)
-  // 같은 쪽으로 내가 만든 거주 중 호실 중에서 같은 집을 골라요
-  const myOwnRooms = sharedRoom
-    ? myRooms.filter(
-        (x) =>
-          x.id !== sharedRoom.id &&
-          x.creator === role &&
-          sideOf(x, accountId) === role &&
-          x.status === "거주 중" &&
-          !x.preJoinOf,
-      )
-    : []
+  // 같은 쪽으로 내가 만든 거주 중 호실 중에서 같은 집을 골라요.
+  // 서버에서 받은 초대(sharedRoom.invitation)는 같은 집 합류(ROOM-6)를 서버가 아직 받지 않아 고르지 않아요(별도 작업)
+  const myOwnRooms =
+    sharedRoom && !sharedRoom.invitation
+      ? myRooms.filter(
+          (x) =>
+            x.id !== sharedRoom.id &&
+            x.creator === role &&
+            sideOf(x, accountId) === role &&
+            x.status === "거주 중" &&
+            !x.preJoinOf,
+        )
+      : []
   const sameHouseRooms = myOwnRooms.filter((x) => x.id === sameHouseId)
   const recordCount = (id: string) =>
     db.repairs.filter((x) => x.roomId === id).length +
@@ -105,11 +108,11 @@ export function ConnectForm({
         const joining = sameHouseRooms.map((x) => x.id)
         const accountPhone = account.phone,
           me = account.id
+        // 서버 본문은 공유 동의 문구 판만이에요(06 4-3 connect). 같은 집 합류는 목업만 update로 해요(ROOM-6은 별도 작업)
         void act(
           post(endpoints.connect(sharedRoom.id), {
-            consent: true,
-            joinRoomIds: joining,
-          }),
+            consentVersion: SHARE_CONSENT_VERSION,
+          } satisfies ConnectBody),
           "호실 연결 수락 · 번호 일치 확인 및 기록 공유 동의",
           (d) => {
             const target = d.rooms.find((r) => r.id === sharedRoom.id)!
@@ -132,8 +135,12 @@ export function ConnectForm({
           true,
           sharedRoom.id,
           true,
-        ).then((ok) => {
-          if (ok) onConnected(sharedRoom)
+        ).then((made) => {
+          if (!made) return
+          // 서버 초대의 id는 자리(partyId)라 연결 응답의 호실 기록 ID로 바꿔요. 응답에 없으면(같은 키로 다시 온 요청에서
+          // 그사이 다른 회원이 연결함, 06 4-3) 호실을 고르지 않고 홈으로 가요
+          const id = sharedRoom.invitation ? (made.id ?? "") : sharedRoom.id
+          onConnected({ ...sharedRoom, id })
         })
       }}
     >

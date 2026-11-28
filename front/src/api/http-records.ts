@@ -29,6 +29,7 @@ import {
   roomFromDetail,
   roomFromSummary,
 } from "./http-rooms"
+import { listInvitations, roomFromInvitation } from "./http-invitations"
 import { inspectionIdOf, isMissing, isNone, type RecordsApi } from "./records"
 import type { Session } from "./types"
 
@@ -212,12 +213,18 @@ export function createHttpRecords(request: HttpRequest): RecordsApi {
     // 06 4장의 목록 조회로 받을 수 있는 것: 내 호실, 알림.
     // 호실 화면 칸(입주일·만든 측·행동)은 상세에만 있어 호실마다 상세도 받아요.
     // 수리 건 목록·경과도 호실마다 상세와 함께 받아요(detailOf). 점검·부위 사진·정산은 서버 응답 모양이 정해지면 여기에서 채워요.
+    // 받은 초대(GET /api/invitations, ROOM-5)도 함께 받아요. 초대만 실패하면 앞서 받은 초대를 두고 호실은 반영한 뒤 알려요
+    const invited = listInvitations(request).then(
+      (list) => ({ list: list.map(roomFromInvitation) }),
+      (error: unknown) => ({ error }),
+    )
     const [summaries, notices] = await Promise.all([
       listAllRooms(request),
       request<unknown>("GET", endpoints.notifications)
         .then(toNotices)
         .catch(unlessNotConnected<Notice[]>([])),
     ])
+    const invitations = await invited
     const before = new Map(state.rooms.map((r) => [r.id, r]))
     const listed = summaries.map((b) =>
       roomFromSummary(b, s.accountId, before.get(b.id)),
@@ -249,10 +256,12 @@ export function createHttpRecords(request: HttpRequest): RecordsApi {
       ...withEvents(rooms, freshTimelines, repaired.repairs),
       ...withInspections(rooms, freshInspections),
       notices,
+      invitations: "list" in invitations ? invitations.list : state.invitations,
     }
     emit()
     const failed = results.find((r) => r.error)
     if (failed) throw failed.error
+    if ("error" in invitations) throw invitations.error
   }
   // 목록에 없는 호실도 상세를 받아 넣어요. 만든 뒤 목록 다시 받기가 실패해도 새 호실 화면이 열려요(#241 리뷰).
   // 남의 호실·없는 호실(404)이면 넣지 않아 '찾을 수 없는 기록'이 그대로 보여요.
@@ -323,7 +332,8 @@ export function createHttpRecords(request: HttpRequest): RecordsApi {
       if (isNone(c.request)) return {}
       if (isMissing(c.request)) throw notConnected()
       const list = Array.isArray(c.request) ? c.request : [c.request]
-      let made: { id?: string } | undefined
+      // 만들기는 만든 ID(06 4-0), 받은 초대 연결은 이제 내 호실 기록 ID(roomRecordId, 06 4-3 connect)를 돌려줘요
+      let made: { id?: string; roomRecordId?: string | null } | undefined
       const before = state.rooms.find((r) => r.id === c.options.roomId)
       for (const r of list) {
         const e = placeholderError(c.options.roomId, r.path)
@@ -331,7 +341,7 @@ export function createHttpRecords(request: HttpRequest): RecordsApi {
       }
       try {
         for (const r of list)
-          made = await request<{ id?: string } | undefined>("POST", r.path, {
+          made = await request<typeof made>("POST", r.path, {
             body: r.body,
           })
       } catch (e) {
@@ -351,7 +361,7 @@ export function createHttpRecords(request: HttpRequest): RecordsApi {
         if (after?.status !== before.status) await load(s)
       }
       await refresh().catch(() => {})
-      return { id: made?.id }
+      return { id: made?.id ?? made?.roomRecordId ?? undefined }
     },
   }
 }
