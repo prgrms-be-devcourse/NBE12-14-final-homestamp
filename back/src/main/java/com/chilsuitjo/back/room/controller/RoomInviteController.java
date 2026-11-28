@@ -1,6 +1,7 @@
 package com.chilsuitjo.back.room.controller;
 
 import com.chilsuitjo.back.global.security.LoginMember;
+import com.chilsuitjo.back.room.dto.CounterpartPhoneRequest;
 import com.chilsuitjo.back.room.dto.InviteRequest;
 import com.chilsuitjo.back.room.dto.Invited;
 import com.chilsuitjo.back.room.service.InviteService;
@@ -30,7 +31,20 @@ public class RoomInviteController {
       @LoginMember UUID memberId,
       @RequestHeader("Idempotency-Key") String idempotencyKey,
       @RequestBody InviteRequest request) {
-    Invited.Result result = invites.invite(roomId, memberId, idempotencyKey, request);
+    return respond(invites.invite(roomId, memberId, idempotencyKey, request));
+  }
+
+  /** 상대 번호 고쳐 다시 초대(ROOM-4, LINK-4, #437). 200과 다시 초대한 자리 {@code {partyId, status}}. */
+  @PostMapping("/api/rooms/{roomId}/counterpart-phone")
+  public ResponseEntity<Invited> changeCounterpartPhone(
+      @PathVariable UUID roomId,
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey,
+      @RequestBody CounterpartPhoneRequest request) {
+    return respond(invites.changePhone(roomId, memberId, idempotencyKey, request));
+  }
+
+  private static ResponseEntity<Invited> respond(Invited.Result result) {
     ResponseEntity.BodyBuilder ok = ResponseEntity.ok();
     if (result.replayed()) {
       ok.header(RoomPartController.REPLAYED, "true");

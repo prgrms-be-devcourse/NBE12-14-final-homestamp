@@ -10,6 +10,7 @@ import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.room.dto.ConnectRequest;
 import com.chilsuitjo.back.room.dto.InvitationAnswered;
+import com.chilsuitjo.back.room.dto.RejectRequest;
 import com.chilsuitjo.back.room.entity.Party;
 import com.chilsuitjo.back.room.repository.PartyRepository;
 import com.chilsuitjo.back.room.repository.PartyStateStore;
@@ -30,7 +31,9 @@ import org.springframework.stereotype.Service;
  *
  * <p>오류: 판이 없으면 {@code CONSENT_REQUIRED}(연결만, 여기서 먼저), 자리가 없으면 {@code NOT_FOUND}, 정산 완료·합류 전 기록이면
  * pipeline 거절, 초대됨이 아니거나 이 호실의 다른 자리에 이미 있으면(연결·거절 모두) {@code INVALID_STATE}, 인증 번호가 초대 번호와 다르면
- * {@code PHONE_MISMATCH}. 동의 문구 판은 입력 검사라 자리 조회·잠금보다 먼저 본다(같은 키로 다시 와도 판이 없으면 거절).
+ * {@code PHONE_MISMATCH}. 동의 문구 판과 초대 회차 ID({@code inviteId}, 없으면 {@code VALIDATION_FAILED})는 입력
+ * 검사라 자리 조회·잠금보다 먼저 본다(같은 키로 다시 와도 없으면 거절). 회차가 지금 초대와 다르면(번호를 고쳐 다시 초대한 뒤 예전 초대 화면의 요청) 잠근 뒤
+ * {@code INVALID_STATE}다(#437, #370 ①).
  *
  * <p>아직 하지 않는 것(#163 범위 밖): 같은 집 기록 합류(ROOM-6, {@code JOIN_NOT_ALLOWED}), 초대한 측 서비스 안 알림(LINK-1g·03
  * B, D의 실제 알림 뒤), 쌓인 기록의 확인 요청 모음과 {@code first_shown_at}(ROOM-5a, 1-4), 연결할 때 정산 초대 링크 닫기(정산 초대 링크
@@ -53,6 +56,7 @@ public class InvitationService {
       UUID partyId, UUID memberId, String idempotencyKey, ConnectRequest request) {
     String consentVersion =
         ConsentVersion.require(request == null ? null : request.consentVersion());
+    UUID inviteId = requireInviteId(request == null ? null : request.inviteId());
     UUID roomRecordId = roomOf(partyId);
     BatchResult result =
         pipeline.executeAll(
@@ -61,14 +65,16 @@ public class InvitationService {
                 .step(
                     ActionType.CONNECT,
                     done -> ActionTarget.party(partyId),
-                    store.connecting(),
+                    store.connecting(inviteId),
                     rules)
                 .record(ActionType.SHARE_CONSENT, Map.of("consentVersion", consentVersion)));
     return answered(roomRecordId, partyId, memberId, result);
   }
 
   /** "제 집이 아니에요"({@code REJECT_INVITE}). 공유 동의는 남기지 않는다. */
-  public InvitationAnswered.Result reject(UUID partyId, UUID memberId, String idempotencyKey) {
+  public InvitationAnswered.Result reject(
+      UUID partyId, UUID memberId, String idempotencyKey, RejectRequest request) {
+    UUID inviteId = requireInviteId(request == null ? null : request.inviteId());
     UUID roomRecordId = roomOf(partyId);
     BatchResult result =
         pipeline.executeAll(
@@ -77,9 +83,16 @@ public class InvitationService {
                 .step(
                     ActionType.REJECT_INVITE,
                     done -> ActionTarget.party(partyId),
-                    store.rejecting(),
+                    store.rejecting(inviteId),
                     rules));
     return answered(roomRecordId, partyId, memberId, result);
+  }
+
+  private static UUID requireInviteId(UUID inviteId) {
+    if (inviteId == null) {
+      throw new BusinessException(ErrorCode.VALIDATION_FAILED);
+    }
+    return inviteId;
   }
 
   /**
