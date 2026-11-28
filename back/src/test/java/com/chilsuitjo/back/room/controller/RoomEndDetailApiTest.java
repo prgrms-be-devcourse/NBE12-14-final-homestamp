@@ -191,17 +191,30 @@ class RoomEndDetailApiTest {
   }
 
   @Test
-  void 거주_종료나_정산_완료_호실에는_거주_종료_행동이_없다() throws Exception {
-    for (String roomStatus : new String[] {"ENDED", "SETTLED"}) {
-      UUID room = room(jdbc, roomStatus);
-      seat(jdbc, room, "TENANT", tenant, "CONNECTED");
-      seat(jdbc, room, "LANDLORD", landlord, "CONNECTED");
-      detail(mvc, room, tenant).andExpect(jsonPath("$.availableActions", empty()));
-      detail(mvc, room, landlord)
-          .andExpect(jsonPath("$.availableActions", empty()))
-          // 거주 종료 날짜는 정산 완료 뒤에도 보인다(03 B, 불변식 18의 예외)
+  void 거주_종료_호실에는_거주_종료_행동이_없다() throws Exception {
+    UUID room = room(jdbc, "ENDED");
+    seat(jdbc, room, "TENANT", tenant, "CONNECTED");
+    seat(jdbc, room, "LANDLORD", landlord, "CONNECTED");
+    // 거주 종료 뒤에도 되는 다른 호실 행동(예: #456 부위 관리 parts)이 있을 수 있어 거주 종료 세 행동만 본다
+    for (UUID viewer : new UUID[] {tenant, landlord}) {
+      detail(mvc, room, viewer)
+          .andExpect(jsonPath("$.availableActions", not(hasItem("move-out"))))
+          .andExpect(jsonPath("$.availableActions", not(hasItem("confirm"))))
+          .andExpect(jsonPath("$.availableActions", not(hasItem("reject"))))
           .andExpect(jsonPath("$.endedAt").isNotEmpty());
     }
+  }
+
+  @Test
+  void 정산_완료_호실에는_호실_행동이_없다() throws Exception {
+    UUID room = room(jdbc, "SETTLED");
+    seat(jdbc, room, "TENANT", tenant, "CONNECTED");
+    seat(jdbc, room, "LANDLORD", landlord, "CONNECTED");
+    detail(mvc, room, tenant).andExpect(jsonPath("$.availableActions", empty()));
+    detail(mvc, room, landlord)
+        .andExpect(jsonPath("$.availableActions", empty()))
+        // 거주 종료 날짜는 정산 완료 뒤에도 보인다(03 B, 불변식 18의 예외)
+        .andExpect(jsonPath("$.endedAt").isNotEmpty());
   }
 
   @Test
