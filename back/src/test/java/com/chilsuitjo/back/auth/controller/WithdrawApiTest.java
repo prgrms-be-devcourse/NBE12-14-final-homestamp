@@ -9,8 +9,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.chilsuitjo.back.TestcontainersConfiguration;
 import com.chilsuitjo.back.auth.service.AuthTokenService;
+import com.chilsuitjo.back.auth.service.MemberPhoneHmacFill;
 import com.chilsuitjo.back.global.error.ErrorCode;
+import com.chilsuitjo.back.member.repository.MemberRepository;
 import com.chilsuitjo.back.member.service.MemberLoginService;
+import com.chilsuitjo.back.notification.service.PhoneHmacs;
+import com.chilsuitjo.back.notification.service.VerifiedPhoneOwners;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -18,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -31,6 +36,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 06 4-1 {@code POST /api/me/withdraw}(KEEP-4c·4d·4f, 03 L "탈퇴", #424). 보안 설정·실제 DB 함수({@code
@@ -54,6 +61,11 @@ class WithdrawApiTest {
   @Autowired private PasswordEncoder passwordEncoder;
   @Autowired private AuthTokenService tokens;
   @Autowired private MemberLoginService memberLogins;
+  @Autowired private PhoneHmacs hmacs;
+  @Autowired private MemberPhoneHmacFill hmacFill;
+  @Autowired private VerifiedPhoneOwners phoneOwners;
+  @Autowired private MemberRepository memberRows;
+  @Autowired private PlatformTransactionManager transactionManager;
 
   private final List<UUID> created = new ArrayList<>();
   private String email;
@@ -198,7 +210,48 @@ class WithdrawApiTest {
   // ---- 호실 자리와 접근 차단(03 B "탈퇴") ----
 
   @Test
-  void 연결된_자리는_탈퇴함이_되고_공유를_그만둔_시각은_남는다() throws Exception {
+  void 연결된_자리는_탈퇴함이_되고_행동_기록을_남기지_않는다() throws Exception {
+    UUID shared = room();
+    seat(shared, "TENANT", me, "CONNECTED");
+    seat(shared, "LANDLORD", member(newEmail(), newPhone()), "CONNECTED");
+
+    withdraw(me, body(PASSWORD)).andExpect(status().isNoContent());
+
+    assertThat(seatStatus(shared, "TENANT")).isEqualTo("WITHDRAWN");
+    assertThat(seatStatus(shared, "LANDLORD")).isEqualTo("CONNECTED");
+    Map<String, Object> mine =
+        jdbc.queryForMap(
+            "SELECT * FROM state.party WHERE room_record_id = ? AND side = 'TENANT'", shared);
+    assertThat(mine.get("member_id")).isEqualTo(me);
+    // 행동 기록이 아니다(05 2-3 "계정(호실 밖)")
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM record.action WHERE room_record_id = ?",
+                Integer.class,
+                shared))
+        .isZero();
+  }
+
+  // ---- 임시 막음: 공유를 그만둔 적 있는 호실(#314) ----
+
+  @Test
+  void 내가_공유를_그만둔_호실이_있으면_탈퇴_전체가_되돌아간다() throws Exception {
+    assertWithdrawRolledBackWhenStopped("TENANT");
+  }
+
+  @Test
+  void 상대가_공유를_그만둔_호실이_있어도_탈퇴_전체가_되돌아간다() throws Exception {
+    assertWithdrawRolledBackWhenStopped("LANDLORD");
+  }
+
+  /**
+   * 다시 계산(#314)이 없는 동안 공유를 그만둔 시각이 남은 호실이 하나라도 있으면 막는다. 다른 호실의 자리·회원 가림·확인 기록·토큰도 바뀌지 않아야 한다.
+   *
+   * @param stoppedSide 그 호실에서 공유를 그만둔 측(나는 {@code TENANT})
+   */
+  private void assertWithdrawRolledBackWhenStopped(String stoppedSide) throws Exception {
+    acknowledge(me);
+    tokens.issue(me);
     UUID shared = room();
     seat(shared, "TENANT", me, "CONNECTED");
     seat(shared, "LANDLORD", member(newEmail(), newPhone()), "CONNECTED");
@@ -208,28 +261,66 @@ class WithdrawApiTest {
     Instant stoppedAt = Instant.parse("2026-11-20T00:00:00Z");
     jdbc.update(
         "UPDATE state.party SET status = 'SHARING_STOPPED', sharing_stopped_at = ?"
-            + " WHERE room_record_id = ? AND side = 'TENANT'",
+            + " WHERE room_record_id = ? AND side = ?",
         Timestamp.from(stoppedAt),
-        stopped);
+        stopped,
+        stoppedSide);
+
+    expectProblem(withdraw(me, body(PASSWORD)), ErrorCode.INTERNAL_ERROR);
+
+    Map<String, Object> row = memberRow(me);
+    assertThat(row.get("status")).isEqualTo("ACTIVE");
+    assertThat(row.get("email")).isEqualTo(email);
+    assertThat(row.get("phone")).isEqualTo(phone);
+    assertThat(row.get("phone_hmac")).isEqualTo(hmacs.phoneHmac(phone));
+    assertThat(acknowledgements(me)).isOne();
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM state.refresh_token WHERE member_id = ? AND revoked_at IS NULL",
+                Integer.class,
+                me))
+        .isOne();
+    assertThat(seatStatus(shared, "TENANT")).isEqualTo("CONNECTED");
+    assertThat(seatStatus(stopped, stoppedSide)).isEqualTo("SHARING_STOPPED");
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT sharing_stopped_at FROM state.party WHERE room_record_id = ? AND side = ?",
+                Timestamp.class,
+                stopped,
+                stoppedSide))
+        .isEqualTo(Timestamp.from(stoppedAt));
+  }
+
+  // ---- 번호 HMAC(#466) ----
+
+  @Test
+  void 탈퇴하면_번호_HMAC도_비고_그_번호는_인증된_활동_회원이_아니다() throws Exception {
+    // 다른 테스트가 커밋한 채로 둔 HMAC 빈 행이 있으면 회원 확인이 예외를 내므로 먼저 채운다(MemberPhoneHmacTest와 같음)
+    hmacFill.fillAll();
+    String hmac = hmacs.phoneHmac(phone);
+    assertThat(memberRow(me).get("phone_hmac")).isEqualTo(hmac);
+    assertThat(inTransaction(() -> phoneOwners.lockAndCheckVerifiedMember(hmac))).isTrue();
 
     withdraw(me, body(PASSWORD)).andExpect(status().isNoContent());
 
-    assertThat(seatStatus(shared, "TENANT")).isEqualTo("WITHDRAWN");
-    assertThat(seatStatus(shared, "LANDLORD")).isEqualTo("CONNECTED");
-    Map<String, Object> mine =
-        jdbc.queryForMap(
-            "SELECT * FROM state.party WHERE room_record_id = ? AND side = 'TENANT'", stopped);
-    assertThat(mine.get("status")).isEqualTo("WITHDRAWN");
-    assertThat(mine.get("member_id")).isEqualTo(me);
-    assertThat(((Timestamp) mine.get("sharing_stopped_at")).toInstant()).isEqualTo(stoppedAt);
-    // 행동 기록이 아니다(05 2-3 "계정(호실 밖)")
-    assertThat(
-            jdbc.queryForObject(
-                "SELECT count(*) FROM record.action WHERE room_record_id IN (?, ?)",
-                Integer.class,
-                shared,
-                stopped))
+    Map<String, Object> row = memberRow(me);
+    assertThat(row.get("phone")).isNull();
+    assertThat(row.get("phone_hmac")).isNull();
+    assertThat(row.get("phone_verified_at")).isNull();
+    assertThat(inTransaction(() -> phoneOwners.lockAndCheckVerifiedMember(hmac))).isFalse();
+  }
+
+  @Test
+  void 탈퇴_전에_읽은_번호로_늦게_HMAC을_채워도_아무것도_쓰지_않는다() throws Exception {
+    // V15 전 행처럼 HMAC이 비어 있던 회원. 채우기가 번호를 읽은 뒤 탈퇴가 먼저 커밋된 경우(#462 채우기)
+    jdbc.update("UPDATE state.member SET phone_hmac = NULL WHERE id = ?", me);
+
+    withdraw(me, body(PASSWORD)).andExpect(status().isNoContent());
+
+    assertThat(inTransaction(() -> memberRows.fillPhoneHmac(me, phone, hmacs.phoneHmac(phone))))
         .isZero();
+    assertThat(memberRow(me).get("phone_hmac")).isNull();
+    assertThat(memberRow(me).get("phone")).isNull();
   }
 
   @Test
@@ -295,13 +386,15 @@ class WithdrawApiTest {
                 .with(loginAs(invitee))
                 .header("Idempotency-Key", UUID.randomUUID().toString())
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"consentVersion\":\"v1\"}")),
+                .content("{\"consentVersion\":\"v1\",\"inviteId\":\"%s\"}".formatted(invited))),
         ErrorCode.NOT_FOUND);
     expectProblem(
         mvc.perform(
             post("/api/invitations/{id}/reject", invited)
                 .with(loginAs(invitee))
-                .header("Idempotency-Key", UUID.randomUUID().toString())),
+                .header("Idempotency-Key", UUID.randomUUID().toString())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"inviteId\":\"%s\"}".formatted(invited))),
         ErrorCode.NOT_FOUND);
     assertThat(seatStatus(room, "LANDLORD")).isEqualTo("INVITED");
   }
@@ -330,17 +423,22 @@ class WithdrawApiTest {
     UUID id = UUID.randomUUID();
     Timestamp now = Timestamp.from(Instant.now());
     jdbc.update(
-        "INSERT INTO state.member (id, email, password_hash, display_name, phone,"
+        "INSERT INTO state.member (id, email, password_hash, display_name, phone, phone_hmac,"
             + " phone_verified_at, status, created_at, version)"
-            + " VALUES (?, ?, ?, '정서윤', ?, ?, 'ACTIVE', ?, 0)",
+            + " VALUES (?, ?, ?, '정서윤', ?, ?, ?, 'ACTIVE', ?, 0)",
         id,
         memberEmail,
         passwordEncoder.encode(PASSWORD),
         memberPhone,
+        hmacs.phoneHmac(memberPhone),
         now,
         now);
     created.add(id);
     return id;
+  }
+
+  private <T> T inTransaction(Supplier<T> work) {
+    return new TransactionTemplate(transactionManager).execute(status -> work.get());
   }
 
   private void acknowledge(UUID memberId) {
@@ -395,13 +493,14 @@ class WithdrawApiTest {
     jdbc.update(
         """
         INSERT INTO state.party
-          (id, room_record_id, side, invite_phone, status, created_at, version)
-        VALUES (?, ?, ?, ?, 'INVITED', CURRENT_TIMESTAMP, 0)
+          (id, room_record_id, side, invite_phone, invite_id, status, created_at, version)
+        VALUES (?, ?, ?, ?, ?, 'INVITED', CURRENT_TIMESTAMP, 0)
         """,
         id,
         room,
         side,
-        invitePhone);
+        invitePhone,
+        id);
     return id;
   }
 

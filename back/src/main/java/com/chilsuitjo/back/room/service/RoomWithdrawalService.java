@@ -14,7 +14,9 @@ import java.time.Instant;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.EnumSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -80,6 +82,11 @@ public class RoomWithdrawalService {
    *
    * <p>셋 다 실패를 숨기지 않으므로 하나라도 던지면 탈퇴 전체가 되돌아간다.
    *
+   * <p><b>임시 막음(#314)</b>: 잠근 호실의 어느 자리에든 공유를 그만둔 시각({@code sharing_stopped_at})이 있으면 아무것도 바꾸지 않고
+   * {@link IllegalStateException}을 던져 탈퇴 전체를 되돌린다. 그 호실은 탈퇴자가 중단 동안 남긴 행동을 상태 행에서도 빼야 하는데(03 6-4,
+   * #314) 그 다시 계산이 아직 없어서다. 지금 운영에는 공유를 그만두는 경로(CONS-3)가 없어 걸리지 않는다. 공유 그만두기보다 먼저 들어올 다시 계산 PR이 이
+   * 막음을 지우고 그 호출을 더한다.
+   *
    * <p>상대가 연결된 적 없는 호실(06 KEEP-4a)도 같은 방법으로 자리만 바꾼다. 그 호실은 받은 초대·연결에서 빠지고({@code
    * InvitationQueryService}, {@code JpaRoomGateReader#lockAndReadAsInvitee}) 통째 삭제는 삭제 작업이 한다(아직
    * 없음).
@@ -96,12 +103,19 @@ public class RoomWithdrawalService {
     if (!locked.containsAll(now)) {
       return false;
     }
+    Map<UUID, List<Party>> seats = new LinkedHashMap<>();
     for (UUID roomId : now) {
-      parties.findByRoomRecordId(roomId).stream()
-          .filter(party -> memberId.equals(party.getMemberId()))
-          .filter(Party::isOccupied)
-          .forEach(Party::withdraw);
+      List<Party> ofRoom = parties.findByRoomRecordId(roomId);
+      if (ofRoom.stream().anyMatch(party -> party.getSharingStoppedAt() != null)) {
+        throw new IllegalStateException("공유를 그만둔 적 있는 호실의 탈퇴는 상태 다시 계산(#314) 뒤에 열어요: " + roomId);
+      }
+      seats.put(roomId, ofRoom);
     }
+    seats.values().stream()
+        .flatMap(List::stream)
+        .filter(party -> memberId.equals(party.getMemberId()))
+        .filter(Party::isOccupied)
+        .forEach(Party::withdraw);
     parties.flush();
     for (UUID roomId : now) {
       waits.closeAll(
