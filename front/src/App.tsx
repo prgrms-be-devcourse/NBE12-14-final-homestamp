@@ -42,7 +42,7 @@ import { hasAction, type RoomAction } from "@/api/actions"
 import { ApiProvider } from "@/api"
 import { useApi } from "@/api/hooks"
 import { repairStub } from "@/api/http-repair-view"
-import { errorMessage } from "@/api/errors"
+import { errorMessage, shouldReload } from "@/api/errors"
 import { createApi } from "@/api/create-api"
 import {
   inspectionIdIn,
@@ -412,7 +412,8 @@ function HomeStampApp({
     (r) => r.id === repairId && r.roomId === roomId,
   )
   // http 모드는 목록을 받기 전(주소로 바로 연 상세)이나 목록을 다시 받기 전(방금 등록한 건)에도 상세 주소로 열고,
-  // 상세 화면이 서버에서 받아요(#179, #290). 남의 수리 건·없는 건이면 상세 화면이 서버의 404를 받아 '찾을 수 없음'을 보여요
+  // 상세 화면이 서버에서 받아요(#179, #290). 남의 수리 건·없는 건이면 상세 화면이 서버의 404를 받아 '찾을 수 없음'을 보여요.
+  // 빼면 그 두 경우에 '찾을 수 없음'이 잠깐 떴다가 바뀌어서 남겨요(#364). 그동안 '내 차례'는 waiting 없이 상태로 셉니다(lib/turn)
   const serverOnlyRepair =
     api.mode === "http" &&
     page === "detail" &&
@@ -569,7 +570,7 @@ function HomeStampApp({
           ? r.server?.joinedAway
             ? "합류 전 기록이에요 · 읽기 전용"
             : "정산이 끝난 기록이에요 · 읽기 전용"
-          : "새로 확인할 일이 없어요"
+          : "새로 답할 일이 없어요"
     const openRepairs = db.repairs.filter(
       (x) => x.roomId === r.id && x.status !== "처리 완료",
     ).length
@@ -583,7 +584,7 @@ function HomeStampApp({
             ? "퇴거 정산을 마무리해 주세요"
             : openRepairs
               ? `진행 중인 수리 ${openRepairs}건`
-              : "새로 확인할 일이 없어요"
+              : "새로 답할 일이 없어요"
   }
   // 하자·수리 / 수리비 목록의 탭별 건수
   const tabCount = (v: string) =>
@@ -921,6 +922,19 @@ function HomeStampApp({
           onCancel={closeModal}
           onLogout={onLogout}
           onOpenTerms={() => setTermsOpen(true)}
+          onUpdate={async (patch) => {
+            try {
+              onAccountChange(await auth.updateAccount(patch))
+            } catch (e) {
+              // 그사이 다른 곳에서 바뀌었으면(VERSION_CONFLICT) 내 정보를 다시 불러 보여 줘요
+              if (shouldReload(e))
+                auth.reload().then(onAccountChange, () => undefined)
+              throw e
+            }
+          }}
+          onChangePassword={(current, next) =>
+            auth.changePassword(current, next)
+          }
         />
       )}
       {modal === "room" && account && (

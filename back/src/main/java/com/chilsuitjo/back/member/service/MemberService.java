@@ -8,7 +8,6 @@ import com.chilsuitjo.back.member.entity.MemberAcknowledgement;
 import com.chilsuitjo.back.member.repository.MemberAcknowledgementRepository;
 import com.chilsuitjo.back.member.repository.MemberRepository;
 import com.chilsuitjo.back.member.rule.SignupAcknowledgements;
-import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -28,7 +27,6 @@ public class MemberService {
 
   private final MemberRepository members;
   private final MemberAcknowledgementRepository acknowledgements;
-  private final Clock clock;
   private final TermsVersions termsVersions;
 
   /**
@@ -64,15 +62,16 @@ public class MemberService {
    *
    * @param passwordHash 부르는 쪽이 트랜잭션 전에 만든 해시
    * @param phone 인증 표에서 읽은 정규화된 번호
+   * @param now 가입 완료 시각(회원의 가입·번호 인증 시각, 확인 기록 시각). 부르는 쪽이 번호 잠금 뒤에 한 번 정해 같은 트랜잭션의 수신 거부 해제 감사에도
+   *     같은 값을 쓴다
    * @return 만든 회원 ID
    * @throws BusinessException {@code EMAIL_TAKEN}(같은 이메일 가입이 동시에 와서 유니크 인덱스에 걸림)
    */
   @Transactional(propagation = Propagation.MANDATORY)
-  public UUID register(SignupRequest request, String passwordHash, String phone) {
+  public UUID register(SignupRequest request, String passwordHash, String phone, Instant now) {
     SignupAcknowledgements confirmed = request.acknowledgements();
     String email = request.email();
     String displayName = request.displayName();
-    Instant now = clock.instant();
     members.findByPhone(phone).ifPresent(Member::releasePhone);
     // Hibernate는 INSERT를 UPDATE보다 먼저 내보내므로, 번호를 비운 것을 먼저 반영해야 새 회원의 번호가 유니크에 걸리지 않는다
     members.flush();

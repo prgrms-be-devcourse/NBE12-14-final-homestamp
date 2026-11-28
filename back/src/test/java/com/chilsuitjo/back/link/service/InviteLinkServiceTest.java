@@ -26,6 +26,8 @@ import com.chilsuitjo.back.link.dto.LinkViewRequest;
 import com.chilsuitjo.back.link.rule.LinkToken;
 import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.service.InviteLinks;
+import com.chilsuitjo.back.room.rule.PartyStatus;
+import com.chilsuitjo.back.room.rule.RoomStatus;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -54,7 +56,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * 초대 링크 발급·무효(#163 ②)를 실제 DB로 본다. 포트는 부르는 쪽 트랜잭션 안에서만 돌아서 테스트가 트랜잭션을 연다. 행은 임의 ID라 다른 테스트와 겹치지 않는다.
  */
-@Import(TestcontainersConfiguration.class)
+@Import({TestcontainersConfiguration.class, FakeLinkContentSource.class})
 @SpringBootTest
 @ActiveProfiles("test")
 class InviteLinkServiceTest {
@@ -121,7 +123,15 @@ class InviteLinkServiceTest {
     content.seedRoom(
         room.id(),
         room.counterpart(),
-        new LinkRoom(PartySide.LANDLORD, "서울특별시", "강남구", "역삼동", false, false));
+        new LinkRoom(
+            PartySide.LANDLORD,
+            "서울특별시",
+            "강남구",
+            "역삼동",
+            false,
+            false,
+            PartyStatus.INVITED,
+            RoomStatus.LIVING));
     UUID old =
         inTx(() -> inviteLinks.issueInvite(room.id(), room.counterpart(), null, room.issuer()));
     String oldToken = tokenKeys.token(old);
@@ -731,7 +741,15 @@ class InviteLinkServiceTest {
     content.seedRoom(
         room.id(),
         room.counterpart(),
-        new LinkRoom(PartySide.LANDLORD, "서울특별시", "강남구", "역삼동", false, false));
+        new LinkRoom(
+            PartySide.LANDLORD,
+            "서울특별시",
+            "강남구",
+            "역삼동",
+            false,
+            false,
+            PartyStatus.INVITED,
+            RoomStatus.LIVING));
     UUID id =
         inTx(() -> inviteLinks.issueInvite(room.id(), room.counterpart(), null, room.issuer()));
     String token = tokenKeys.token(id);

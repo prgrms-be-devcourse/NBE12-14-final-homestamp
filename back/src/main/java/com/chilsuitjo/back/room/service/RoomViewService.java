@@ -119,6 +119,12 @@ public class RoomViewService {
             .map(Map.Entry::getValue)
             .toList();
     Instant cutoff = seats.visibleCutoffFor(mine);
+    Party counterpart = seats.counterpartOf(mine);
+    // 상대 번호는 만든 측이 적은 값이라 그 측에만 가린 모양으로 준다(03 "가린 번호만", #407 리뷰)
+    String maskedPhone =
+        mine.getSide() == room.getCreatedBySide()
+            ? counterpart.maskedInvitePhone().orElse(null)
+            : null;
     return new RoomDetail(
         room.getId(),
         room.getAlias(),
@@ -128,11 +134,12 @@ public class RoomViewService {
         mine.getSide(),
         room.getCreatedBySide(),
         mine.getStatus(),
-        seats.counterpartOf(mine).getStatus(),
+        counterpart.getStatus(),
         gate.joinedAway(),
         cutoff,
         room.getCreatedAt(),
-        actions);
+        actions,
+        maskedPhone);
   }
 
   /**

@@ -66,6 +66,10 @@ export const CONNECTED_APIS: readonly {
     path: /^\/api\/auth\/phone-verifications\/[^/]+\/verify$/,
   },
   { method: "POST", path: /^\/api\/auth\/signup$/ },
+  // 내 정보 수정·문자 설정·비밀번호 변경·재설정(06 4-1, ACC-4·5·6, #416)
+  { method: "POST", path: /^\/api\/me$/ },
+  { method: "POST", path: /^\/api\/me\/password$/ },
+  { method: "POST", path: /^\/api\/auth\/reset-password$/ },
   // 가입 전 링크 열람(06 4-4 `POST /api/public/links/view`, S-16, #303). 문자 그만 받기(`links/stop`)는 서버에 아직 없어요
   { method: "POST", path: /^\/api\/public\/links\/view$/ },
 ]

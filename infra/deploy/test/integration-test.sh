@@ -27,7 +27,13 @@ ok() { passed=$((passed + 1)); echo "ok   $1"; }
 bad() { failed=$((failed + 1)); echo "FAIL $1"; }
 expect() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (기대 $3, 실제 $2)"; fi; }
 
+# Migration 비밀 폴더는 운영 모양(root 0755 상위, 10002 0500 폴더, 0400 파일)으로 작업 폴더 밖에 만든다(secrets-fixture.sh)
+SEC_BASE=""
 cleanup() {
+  if [ -n "$SEC_BASE" ] && [ -d "$SEC_BASE" ] && docker image inspect $T-runner:local >/dev/null 2>&1; then
+    docker run --rm -v "$SEC_BASE:$SEC_BASE" $T-runner:local sh -c 'rm -rf "$1"/* && chown "$2" "$1"' sh "$SEC_BASE" "$(id -u):$(id -g)" >/dev/null 2>&1
+    rmdir "$SEC_BASE" 2>/dev/null
+  fi
   ids="$(docker ps -aq --filter "name=^$T-") $(docker ps -aq --filter "name=^$EDGE\$")"
   [ -z "${ids// /}" ] || docker rm -f $ids >/dev/null 2>&1
   imgs="$(docker image ls -q --filter "reference=$T-*"; docker image ls -q --filter "reference=$REPO")"
@@ -37,6 +43,8 @@ cleanup() {
 trap cleanup EXIT
 cleanup
 
+SEC_BASE="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/hs-int-sec.XXXXXX")" && pwd -P)"
+SEC=$SEC_BASE/migration
 mkdir -p "$W/secrets" "$W/state" "$W/lock" "$W/out" "$W/le/live/$DOMAIN" "$W/webroot" "$W/front/releases/v1" "$W/ca" "$W/pgtls"
 echo "<html>front-v1</html>" >"$W/front/releases/v1/index.html"
 # A(가짜 앱)용 자리표시 비밀 파일: 가짜 앱은 있는지만 본다. B에서 실제 시험 값으로 바꾼다
@@ -130,7 +138,7 @@ POST_SWITCH_RESOLVE=$DOMAIN:443:127.0.0.1
 BLUE_PORT=18181
 GREEN_PORT=18182
 NAME_PREFIX=$T-app
-MIGRATION_SECRETS_DIR=$W/secrets
+MIGRATION_SECRETS_DIR=$SEC
 UPSTREAM_FILE=$W/nginx/run/upstream/upstream.conf
 SWITCH_CMD=$W/nginx/switch-upstream.sh
 STATE_DIR=$W/state
@@ -141,7 +149,11 @@ MIGRATE_TIMEOUT=300
 GRANTS_TIMEOUT=120
 EOF
 echo 0 >"$W/n"
-runner() { docker run --rm --network host -e RELOAD_WAIT -v /var/run/docker.sock:/var/run/docker.sock -v "$W:$W" -v "$SRC:$SRC:ro" $T-runner:local "$@"; }
+# /tmp는 이미지에서 1777이라 Linux에서 비밀 폴더가 /tmp 아래면 상위 경로 검사에 걸린다. runner 안에서만 root 0755로 덮는다
+runner() { docker run --rm --network host -e RELOAD_WAIT --tmpfs /tmp:rw,mode=0755 -v /var/run/docker.sock:/var/run/docker.sock -v "$W:$W" -v "$SEC_BASE:$SEC_BASE" -v "$SRC:$SRC:ro" $T-runner:local "$@"; }
+# $W/secrets(시험 값)를 운영 모양의 비밀 폴더로 옮긴다
+sec_reset() { runner sh "$SRC/infra/deploy/test/secrets-fixture.sh" "$SEC" "$W/secrets"; }
+sec_reset || { echo "비밀 폴더 준비 실패" >&2; exit 1; }
 # 밖의 요청 흉내: bridge 컨테이너에서 Docker 호스트(게이트웨이) 주소로. nginx가 보는 주소가 127.0.0.1이 아님
 GW="$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}')"
 outside() { docker run --rm $T-runner:local curl -s --max-time 5 --resolve "$DOMAIN:443:$GW" -D - -o /dev/null "https://$DOMAIN$1" | tr -d '\r'; }
@@ -263,18 +275,20 @@ psqla -c "SELECT pg_reload_conf()" >/dev/null
 sleep 1
 expect "PostgreSQL TLS 켜짐" "$(psqla -At -c 'SHOW ssl')" on
 docker cp "$SRC/infra/db/bootstrap_roles.sql" $T-pg:/tmp/bootstrap_roles.sql >/dev/null
-docker exec $T-pg psql -X -q -U postgres -d homestamp -v owner_role=homestamp_owner -v migration_role=homestamp_migration \
-  -v app_role=homestamp_app -v purge_role=homestamp_purge -v human_role=homestamp_human_read -f /tmp/bootstrap_roles.sql >/dev/null 2>&1 &&
+# 역할 이름은 운영 이름(이미지 roles.properties와 같아야 --apply-grants가 대상을 찾는다, decisions 2026-11-28)
+docker exec $T-pg psql -X -q -U postgres -d homestamp -v owner_role=hs_owner -v migration_role=hs_migrator \
+  -v app_role=hs_app -v purge_role=hs_purge -v human_role=hs_human_read -f /tmp/bootstrap_roles.sql >/dev/null 2>&1 &&
   ok "Role Bootstrap(bootstrap_roles.sql)" || bad "Role Bootstrap"
-printf "ALTER ROLE homestamp_migration PASSWORD '%s';\n" "$PW" | psqla >/dev/null
+printf "ALTER ROLE hs_migrator PASSWORD '%s';\n" "$PW" | psqla >/dev/null
 printf '%s' "jdbc:postgresql://$PGIP:5432/homestamp?sslmode=verify-full&sslrootcert=/app/certs/test-ca.crt" >"$W/secrets/spring.datasource.url"
-printf '%s' homestamp_migration >"$W/secrets/spring.datasource.username"
+printf '%s' hs_migrator >"$W/secrets/spring.datasource.username"
 printf '%s' "$PW" >"$W/secrets/spring.datasource.password"
-printf '%s' homestamp_owner >"$W/secrets/app.migration.owner-role"
+printf '%s' hs_owner >"$W/secrets/app.migration.owner-role"
 chmod 0644 "$W"/secrets/*
 
+sec_reset || bad "B 비밀 폴더 준비"
 v_count() { psqla -At -c "SELECT count(*) FROM public.flyway_schema_history WHERE success" 2>/dev/null || echo 0; }
-grant_ok() { psqla -At -c "SELECT has_table_privilege('homestamp_app','record.action','INSERT') AND has_table_privilege('homestamp_app','record.action','SELECT') AND NOT has_table_privilege('homestamp_app','record.action','UPDATE')" 2>/dev/null || echo error; }
+grant_ok() { psqla -At -c "SELECT has_table_privilege('hs_app','record.action','INSERT') AND has_table_privilege('hs_app','record.action','SELECT') AND NOT has_table_privilege('hs_app','record.action','UPDATE')" 2>/dev/null || echo error; }
 expect "B0 처음 Flyway 이력 없음" "$(v_count)" 0
 rc="$(deploy "$IMG_real")"
 echo "     B1 종료 $rc"

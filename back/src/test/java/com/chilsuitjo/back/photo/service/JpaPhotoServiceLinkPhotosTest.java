@@ -60,6 +60,19 @@ class JpaPhotoServiceLinkPhotosTest extends PhotoAttachTestSupport {
   }
 
   @Test
+  void 아직_상대에게_보이지_않은_사진은_링크에_안_보이고_올린_측에게는_보인다() {
+    // 작성 중 점검에 기준 측이 붙인 사진(#295). 부르는 쪽이 그 대상을 넘겨도 링크 열람자에게 가지 않는다
+    UUID unreleased = unreleased(photo(caseTarget(), PartySide.TENANT, NOW.minusSeconds(60), 0));
+    UUID shown = photo(caseTarget(), PartySide.TENANT, NOW.minusSeconds(50), 1);
+
+    List<LinkPhoto> link = linkPhotos(List.of(caseTarget())).get(caseTarget());
+    List<PhotoCard> uploader = photos.cards(access(null), List.of(caseTarget())).get(caseTarget());
+
+    assertThat(link).extracting(LinkPhoto::id).containsExactly(shown);
+    assertThat(uploader).extracting(PhotoCard::id).containsExactly(unreleased, shown);
+  }
+
+  @Test
   @Tag("invariant-16")
   void 지운_사진은_주소_없이_흔적만_준다() {
     Instant created = NOW.minusSeconds(60);

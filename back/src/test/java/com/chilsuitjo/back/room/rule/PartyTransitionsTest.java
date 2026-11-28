@@ -66,6 +66,32 @@ class PartyTransitionsTest {
   }
 
   @Test
+  void 수신_거부_목록에_있는_번호로는_초대할_수_없다() {
+    expect(
+        ErrorCode.PHONE_OPTED_OUT,
+        new PartyState(PartyStatus.NUMBER_ONLY, true, true, false, null, null, true),
+        ActionType.INVITE);
+  }
+
+  @Test
+  void 내_번호이면서_수신_거부여도_SELF_INVITE가_먼저다() {
+    expect(
+        ErrorCode.SELF_INVITE,
+        new PartyState(PartyStatus.EMPTY, true, true, true, null, null, true),
+        ActionType.INVITE);
+  }
+
+  @Test
+  void 수신_거부가_아니면_초대됨이다() {
+    PartyState next =
+        rules.apply(
+            new PartyState(PartyStatus.EMPTY, true, true, false, null, null, false),
+            entry(ActionType.INVITE));
+    assertThat(next.status()).isEqualTo(PartyStatus.INVITED);
+    assertThat(next.optedOut()).isFalse();
+  }
+
+  @Test
   void 자리_상태가_틀리면_내_번호보다_먼저_INVALID_STATE다() {
     expect(
         ErrorCode.INVALID_STATE,
