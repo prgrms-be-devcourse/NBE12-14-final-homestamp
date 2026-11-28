@@ -79,9 +79,22 @@ class StartupGuardTest {
   }
 
   @Test
-  void 솔라피는_아직_구현이_없어_시작하지_않는다() {
+  void prod에서_솔라피_키가_없으면_시작하지_않는다() {
     assertThatThrownBy(() -> start("--spring.profiles.active=prod", "--app.sms.mode=solapi"))
-        .hasStackTraceContaining("솔라피 연동(app.sms.mode=solapi)은 아직 구현이 없어");
+        .hasStackTraceContaining("솔라피 설정이 없어 시작하지 않는다: app.sms.solapi.api-key");
+  }
+
+  @Test
+  void prod에서_솔라피_주소가_공식_주소가_아니면_시작하지_않는다() {
+    assertThatThrownBy(() ->
+            start(
+                "--spring.profiles.active=prod",
+                "--app.sms.mode=solapi",
+                "--app.sms.solapi.api-key=k",
+                "--app.sms.solapi.api-secret=s",
+                "--app.sms.solapi.sender=01000000000",
+                "--app.sms.solapi.base-url=https://example.com"))
+        .hasStackTraceContaining("prod 솔라피 주소는 공식 주소만 받는다");
   }
 
   @Test

@@ -42,6 +42,16 @@ final class SsmAppParameterMapper {
           Map.entry("app.origin", "String"),
           Map.entry("photo.s3.bucket", "String"));
 
+  /**
+   * 있으면 읽고 없어도 되는 설정. 솔라피 키는 {@code app.sms.mode=solapi}로 바꾸기 전에는 넣지 않아도 되고(지금 prod는 disabled), 바꾸면
+   * {@code SmsModeGuard}가 비었는지 다시 본다. 있으면 형식과 빈 값은 필수 설정과 같이 검사한다.
+   */
+  private static final Map<String, String> OPTIONAL_TYPES =
+      Map.ofEntries(
+          Map.entry("app.sms.solapi.api-key", "SecureString"),
+          Map.entry("app.sms.solapi.api-secret", "SecureString"),
+          Map.entry("app.sms.solapi.sender", "SecureString"));
+
   private static final Set<String> VERIFICATION_KEYS =
       Set.of("app.keys.verify-code", "app.keys.verify-ticket", "app.keys.phone-hmac");
 
@@ -102,14 +112,18 @@ final class SsmAppParameterMapper {
         throw new SsmConfigException("허용하지 않는 SSM 설정 경로: " + parameter.name());
       }
       String property = parameter.name().substring(PARAMETER_PREFIX.length());
-      if (!REQUIRED_TYPES.containsKey(property)) {
+      String expectedType =
+          REQUIRED_TYPES.containsKey(property)
+              ? REQUIRED_TYPES.get(property)
+              : OPTIONAL_TYPES.get(property);
+      if (expectedType == null) {
         ignoredKeys.add(REPORTABLE_KEY.matcher(property).matches() ? property : UNREPORTABLE_KEY);
         continue;
       }
       if (properties.containsKey(property)) {
         throw new SsmConfigException("SSM 앱 설정 파라미터가 중복됐다: " + property);
       }
-      if (!REQUIRED_TYPES.get(property).equals(parameter.type())) {
+      if (!expectedType.equals(parameter.type())) {
         throw new SsmConfigException("SSM 앱 설정 형식이 올바르지 않다: " + property);
       }
       String value = parameter.value();

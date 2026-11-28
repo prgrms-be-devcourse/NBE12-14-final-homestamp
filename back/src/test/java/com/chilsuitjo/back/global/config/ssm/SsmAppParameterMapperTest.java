@@ -349,4 +349,50 @@ class SsmAppParameterMapperTest {
   private static List<SsmConfigParameter> requiredParameters() {
     return new ArrayList<>(SsmTestParameterSource.validParameters());
   }
+
+  @Test
+  void 솔라피_키는_없어도_기동을_막지_않고_있으면_SecureString으로만_받아_매핑한다() {
+    List<SsmConfigParameter> parameters = requiredParameters();
+    parameters.add(
+        new SsmConfigParameter(PREFIX + "app.sms.solapi.api-key", "k-value", "SecureString"));
+    parameters.add(
+        new SsmConfigParameter(PREFIX + "app.sms.solapi.api-secret", "s-value", "SecureString"));
+    parameters.add(
+        new SsmConfigParameter(PREFIX + "app.sms.solapi.sender", "0212345678", "SecureString"));
+
+    SsmAppParameterMapper.Mapped mapped = SsmAppParameterMapper.map(parameters);
+
+    assertEquals("k-value", mapped.properties().get("app.sms.solapi.api-key"));
+    assertEquals("s-value", mapped.properties().get("app.sms.solapi.api-secret"));
+    assertEquals("0212345678", mapped.properties().get("app.sms.solapi.sender"));
+    assertEquals(List.of(), mapped.ignoredKeys());
+  }
+
+  @Test
+  void 솔라피_키가_평문이거나_비었으면_실패한다() {
+    List<SsmConfigParameter> plain = requiredParameters();
+    plain.add(new SsmConfigParameter(PREFIX + "app.sms.solapi.api-secret", "s-value", "String"));
+    IllegalStateException wrongType =
+        assertThrows(IllegalStateException.class, () -> SsmAppParameterMapper.map(plain));
+    assertEquals("SSM 앱 설정 형식이 올바르지 않다: app.sms.solapi.api-secret", wrongType.getMessage());
+
+    List<SsmConfigParameter> blank = requiredParameters();
+    blank.add(new SsmConfigParameter(PREFIX + "app.sms.solapi.api-key", " ", "SecureString"));
+    assertThrows(IllegalStateException.class, () -> SsmAppParameterMapper.map(blank));
+  }
+
+  @Test
+  void 솔라피_주소와_문자_방식은_SSM으로_바꾸지_않는다() {
+    List<SsmConfigParameter> parameters = requiredParameters();
+    parameters.add(
+        new SsmConfigParameter(
+            PREFIX + "app.sms.solapi.base-url", "https://evil.example", "String"));
+    parameters.add(new SsmConfigParameter(PREFIX + "app.sms.mode", "solapi", "String"));
+
+    SsmAppParameterMapper.Mapped mapped = SsmAppParameterMapper.map(parameters);
+
+    assertEquals(null, mapped.properties().get("app.sms.solapi.base-url"));
+    assertEquals(null, mapped.properties().get("app.sms.mode"));
+    assertEquals(List.of("app.sms.solapi.base-url", "app.sms.mode"), mapped.ignoredKeys());
+  }
 }

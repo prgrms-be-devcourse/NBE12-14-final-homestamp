@@ -9,8 +9,8 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * 문자 업체 호출 부품(04 4-2 "외부 호출 부품은 {@code notification/repository/}"). 실제 솔라피 구현은 NOTI-11(3주차), 그 전에는
- * {@link FakeSmsGateway}다.
+ * 문자 업체 호출 부품(04 4-2 "외부 호출 부품은 {@code notification/repository/}"). 솔라피 구현은 {@link
+ * SolapiSmsGateway}(NOTI-11, {@code app.sms.mode=solapi}), local·test는 {@link FakeSmsGateway}다.
  *
  * <p>번호·본문을 로그·예외 문구에 남기지 않는다. 결과는 예외가 아니라 값으로 돌려준다: 연결 거부처럼 업체에 닿지 않은 게 확실하면 {@code RETRY}, 시간
  * 제한처럼 닿았는지 모르면 {@code UNKNOWN}(보낸 것으로 봄). 작업자는 던진 예외를 모두 {@code UNKNOWN}으로 다루므로, 다시 보내도 되는 실패를 예외로
@@ -28,7 +28,7 @@ public interface SmsGateway {
    * 다시 해도 문자가 두 번 가지 않으므로 예외로 알린다.
    *
    * <p>업체 결과 코드를 {@link DeliveryOutcome}으로 바꾸는 것과 어떤 키({@code providerMessageId}, 묶음 ID 등)로 업체에
-   * 물을지는 실제 업체 구현(NOTI-11)이 정한다. 메시지 ID가 없는 문자를 업체에서 찾을 수 있는지는 확인되지 않았다(#120).
+   * 물을지는 실제 업체 구현(NOTI-11)이 정한다. 솔라피 구현은 메시지 ID로만 묻고, 메시지 ID가 없는 문자는 결과 없음이다(찾는 방법은 OPS-1).
    */
   Map<UUID, DeliveryOutcome> queryResults(List<DeliveryQuery> queries);
 }
