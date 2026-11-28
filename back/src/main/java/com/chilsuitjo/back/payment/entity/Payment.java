@@ -10,6 +10,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 import java.time.Instant;
+import java.util.Objects;
 import java.util.UUID;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -21,7 +22,8 @@ import lombok.NoArgsConstructor;
  *
  * <p>확인 강도와 상대 응답은 따로 둔다. 수리비 나누기의 기준 금액에는 {@code response = ACK}인 지불의 확인된 판 금액만 들어간다(05 2-5).
  *
- * <p>상태 변경 메서드는 지불 기능(MONEY-1~2)을 구현할 때 상태 전이·StateStore와 함께 더한다.
+ * <p>상태는 {@code PaymentTransitions}가 정한 값 그대로 바꾼다. 규칙은 여기서 보지 않는다. 동시에 바뀌면 {@code @Version}이
+ * 막는다(409 {@code VERSION_CONFLICT}).
  */
 @Entity
 @Getter
@@ -83,5 +85,28 @@ public class Payment {
     this.confirmStrength = hasEvidence ? ConfirmStrength.EVIDENCE : ConfirmStrength.ONE_SIDE;
     this.response = PaymentResponse.PENDING;
     this.createdAt = createdAt;
+  }
+
+  /**
+   * 상대의 보류·이견을 남긴다(06 MONEY-2a). 지금 판·같이 확인한 판·확인 강도는 그대로다(원래 기록은 그대로이고 이견은 행동 기록에 나란히 남는다). 그래서 기준
+   * 금액에 들어가지 않는다. [맞아요]는 {@link #confirmCurrent}로 남긴다.
+   */
+  public void changeResponse(PaymentResponse next) {
+    Objects.requireNonNull(next, "next");
+    if (next == PaymentResponse.ACK) {
+      throw new IllegalArgumentException("맞아요는 confirmCurrent로 남겨요");
+    }
+    this.response = next;
+  }
+
+  /**
+   * 상대가 지금 판에 [맞아요]를 눌렀다(03 F "금액 확인", 05 2-5). 지금 판이 같이 확인한 판이 되고 확인 강도는 양측 확인이다. 응답은 지금 판에만 할 수
+   * 있어서(본 판 번호가 같아야 함, {@code AnswerSupport.answer}) 지금 판을 가리키면 된다. 부르는 쪽은 저장한 뒤 {@code
+   * PaymentAmountConfirmed}를 낸다.
+   */
+  public void confirmCurrent() {
+    this.confirmedVersionId = currentVersionId;
+    this.confirmStrength = ConfirmStrength.BOTH;
+    this.response = PaymentResponse.ACK;
   }
 }

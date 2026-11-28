@@ -1,6 +1,7 @@
 package com.chilsuitjo.back.payment.entity;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.common.Uuids;
@@ -65,5 +66,38 @@ class PaymentTest {
     assertThat(firstVersion.getRoomRecordId()).isEqualTo(payment.getRoomRecordId());
     assertThat(firstVersion.getNo()).isEqualTo(1);
     assertThat(firstVersion.getPreviousId()).isNull();
+  }
+
+  @Test
+  void 맞아요면_지금_판이_같이_확인한_판이_되고_양측_확인이다() {
+    UUID versionId = Uuids.v7();
+    Payment payment = new Payment(Uuids.v7(), Uuids.v7(), Uuids.v7(), versionId, true, NOW);
+
+    payment.confirmCurrent();
+
+    assertThat(payment.getConfirmedVersionId()).isEqualTo(versionId);
+    assertThat(payment.getConfirmStrength()).isEqualTo(ConfirmStrength.BOTH);
+    assertThat(payment.getResponse()).isEqualTo(PaymentResponse.ACK);
+  }
+
+  @ParameterizedTest
+  @CsvSource({"NEED_MORE, false, ONE_SIDE", "DISPUTE, true, EVIDENCE"})
+  void 보류_이견은_응답만_바꾸고_확인한_판과_강도는_그대로다(
+      PaymentResponse next, boolean hasEvidence, ConfirmStrength strength) {
+    Payment payment = new Payment(Uuids.v7(), Uuids.v7(), Uuids.v7(), Uuids.v7(), hasEvidence, NOW);
+
+    payment.changeResponse(next);
+
+    assertThat(payment.getResponse()).isEqualTo(next);
+    assertThat(payment.getConfirmedVersionId()).isNull();
+    assertThat(payment.getConfirmStrength()).isEqualTo(strength);
+  }
+
+  @Test
+  void 맞아요는_응답_바꾸기로_남기지_않는다() {
+    Payment payment = new Payment(Uuids.v7(), Uuids.v7(), Uuids.v7(), Uuids.v7(), false, NOW);
+
+    assertThatThrownBy(() -> payment.changeResponse(PaymentResponse.ACK))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 }
