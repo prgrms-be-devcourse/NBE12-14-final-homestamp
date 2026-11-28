@@ -94,9 +94,15 @@ public class RoomEndStateStore implements StateStore<RoomState> {
 
   @Override
   public RoomState load(ActionCommand command) {
-    UUID roomRecordId = command.roomRecordId();
+    return read(command.roomRecordId(), command.actor().side());
+  }
+
+  /**
+   * 이 측이 본 거주 종료 상태. {@link #load}와 같은 값이고, 호실 상세의 {@code availableActions}(06 4-0 "서버의 같은 함수")도
+   * 이것으로 계산한다. 잠그지 않고 읽으므로 상태를 바꾸는 판단에는 쓰지 않는다.
+   */
+  public RoomState read(UUID roomRecordId, PartySide side) {
     RoomRecord room = room(roomRecordId);
-    PartySide side = command.actor().side();
     boolean endRequestOpen =
         waitQuery
             .latest(RequestKind.END_REQUEST, RequestTarget.roomRecord(roomRecordId))

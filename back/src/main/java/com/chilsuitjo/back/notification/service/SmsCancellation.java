@@ -28,4 +28,20 @@ public interface SmsCancellation {
    * @return 이번 호출에서 {@code CANCELLED}로 바꾼 문자 줄 수. 빈 목록이면 DB를 건드리지 않고 0, 같은 트랜잭션에서 다시 불러도 0
    */
   int cancelPendingSms(UUID roomRecordId, Collection<UUID> linkIds);
+
+  /**
+   * {@link #cancelPendingSms}와 같은 규칙으로, pipeline {@code save} 밖의 서버 업무(회원 탈퇴 KEEP-4, #424)가 자기 트랜잭션
+   * 안에서 부른다. 링크 ID는 같은 트랜잭션의 {@code InviteLinks.invalidateIssuedBy}가 돌려준 목록이다.
+   *
+   * <ul>
+   *   <li>부르는 쪽 트랜잭션 안에서만 돈다({@code MANDATORY}, 밖이면 {@code IllegalTransactionStateException}). 호실을
+   *       잠근 뒤 부르고, 여기서도 다시 잠가 확인한다(호실 → 통지 → 문자 줄). 링크 ID가 비면 DB를 건드리지 않고 0이다(다시 잠그지도 않음)
+   *   <li>취소는 상태만 바꾸고 시각을 따로 적지 않는다(통지·문자 줄에 취소 시각 칸이 없음). 그래서 업무 시각을 받지 않는다
+   *   <li>{@code PENDING} 줄만 바꾼다. 작업자가 가져간 {@code SENDING}, 보낸 문자, 전달 결과는 바꾸지 않는다. 가져간 줄은 작업자가 보내기
+   *       전에 링크 무효를 보고 스스로 취소한다({@code OutboxWorker})
+   * </ul>
+   *
+   * @return 이번 호출에서 {@code CANCELLED}로 바꾼 문자 줄 수
+   */
+  int cancelPendingSmsOnWithdrawal(UUID roomRecordId, Collection<UUID> linkIds);
 }

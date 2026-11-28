@@ -8,6 +8,7 @@ import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.dto.SoloCheck;
 import com.chilsuitjo.back.notification.dto.SoloQuery;
 import com.chilsuitjo.back.notification.rule.RequestKind;
+import java.time.Instant;
 import java.util.Set;
 import java.util.UUID;
 
@@ -93,6 +94,19 @@ public interface WaitService {
    * UnsupportedOperationException}이다({@code CloseAllScope}).
    */
   int closeAll(UUID roomRecordId, ClosedReason reason, Set<RequestKind> kinds);
+
+  /**
+   * {@link #closeAll(UUID, ClosedReason, Set)}와 같고 닫힌 시각을 부르는 쪽이 준다. pipeline {@code save} 밖의 서버
+   * 업무(회원 탈퇴 KEEP-4, #424)가 자기 트랜잭션 안에서 한 업무 시각으로 부른다. 범위·결과는 3인자와 같다(이미 답했거나 닫힌 요청, 통지·전달 사실은 그대로.
+   * 정하지 않은 이유는 {@code UnsupportedOperationException}).
+   *
+   * <ul>
+   *   <li>부르는 쪽 트랜잭션 안에서만 돈다({@code MANDATORY}). 호실 행을 다시 잠가 확인한다(같은 트랜잭션이면 기다리지 않음)
+   *   <li>{@code at}은 마이크로초로 맞춘다(DB 정밀도). 같은 업무의 다른 D 호출({@code InviteLinks#invalidateIssuedBy})과
+   *       같은 값을 넘긴다
+   * </ul>
+   */
+  int closeAll(UUID roomRecordId, ClosedReason reason, Set<RequestKind> kinds, Instant at);
 
   /**
    * 지금 호실 단계에서 이 종류의 요청을 열 수 있나(03 K "거주 종료 뒤", decisions 2026-11-18 다시 공유 규칙). 도메인 {@code load}가
