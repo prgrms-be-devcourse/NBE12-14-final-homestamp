@@ -36,6 +36,9 @@ export const endpoints = {
   room: (rid: string) => `/api/rooms/${id(rid)}`,
   // 부위 목록·부위 더하기(ROOM-3)
   roomParts: (rid: string) => `/api/rooms/${id(rid)}/parts`,
+  // 부위 숨기기·다시 보이기·설비·가전 켜고 끔(ROOM-3a·3b·3d)
+  roomPart: (rid: string, pid: string, verb: "hide" | "show" | "toggle") =>
+    `/api/rooms/${id(rid)}/parts/${id(pid)}/${verb}`,
   timeline: (rid: string) => `/api/rooms/${id(rid)}/timeline`,
   // 내려받기 목록(기록.json 내용 + 사진 묶음, DL-1)
   roomDownload: (rid: string) => `/api/rooms/${id(rid)}/download`,

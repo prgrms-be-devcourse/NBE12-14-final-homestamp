@@ -196,11 +196,35 @@ describe("HTTP 부위 API", () => {
       toggleable: false,
     },
   ]
-  test("부위 목록·더하기는 서버로 보내요(connected)", () => {
+  test("부위 목록·더하기·숨김·다시 보이기·켜고 끔은 서버로 보내요(connected)", () => {
     expect(isConnected("GET", endpoints.roomParts("r1"))).toBe(true)
     expect(isConnected("POST", endpoints.roomParts("r1"))).toBe(true)
-    // 숨김·다시 보이기·켜고 끔은 아직 화면이 없어 보내지 않아요
-    expect(isConnected("POST", "/api/rooms/r1/parts/p1/hide")).toBe(false)
+    for (const verb of ["hide", "show", "toggle"] as const)
+      expect(isConnected("POST", endpoints.roomPart("r1", "p1", verb))).toBe(
+        true,
+      )
+    expect(isConnected("POST", "/api/rooms/r1/parts/p1/delete")).toBe(false)
+  })
+
+  test("숨김·다시 보이기는 본문 없이, 켜고 끔은 원하는 값 {enabled}를 보내요(ROOM-3d)", async () => {
+    const request = vi.fn(async () => serverParts[0])
+    const api = createHttpRoomParts(request as unknown as HttpRequest)
+    await api.hide(tenant, "r1", "p1")
+    expect(request).toHaveBeenLastCalledWith(
+      "POST",
+      "/api/rooms/r1/parts/p1/hide",
+    )
+    await api.show(tenant, "r1", "p1")
+    expect(request).toHaveBeenLastCalledWith(
+      "POST",
+      "/api/rooms/r1/parts/p1/show",
+    )
+    await api.toggle(tenant, "r1", "p1", false)
+    expect(request).toHaveBeenLastCalledWith(
+      "POST",
+      "/api/rooms/r1/parts/p1/toggle",
+      { body: { enabled: false } },
+    )
   })
 
   test("목록은 부를 때마다 새로 받고(보는 사람 기준·상대 변경), 더하면 {zone, name}을 보내요", async () => {
