@@ -8,6 +8,7 @@ import com.chilsuitjo.back.member.entity.Member;
 import com.chilsuitjo.back.member.repository.MemberRepository;
 import com.chilsuitjo.back.member.service.MemberPhoneHmacService;
 import com.chilsuitjo.back.notification.service.PhoneHmacs;
+import com.chilsuitjo.back.notification.service.VerifiedPhoneOwners;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -39,7 +40,7 @@ class MemberPhoneHmacTest {
   @Autowired private MemberPhoneHmacFill fill;
   @Autowired private MemberPhoneHmacService memberPhoneHmacs;
   @Autowired private MemberRepository members;
-  @Autowired private VerifiedMemberPhoneLock phoneLock;
+  @Autowired private VerifiedPhoneOwners phoneLock;
   @Autowired private VerificationKeys keys;
   @Autowired private PhoneHmacs phoneHmacs;
   @Autowired private JdbcTemplate jdbc;
