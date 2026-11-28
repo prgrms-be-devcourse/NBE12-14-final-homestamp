@@ -52,10 +52,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class RenotifyStateStore implements StateStore<RenotifyPlan> {
 
-  /**
-   * 재통지의 자리·링크를 정할 통지: 요청에 걸려 이미 닿은 요청 통지. 이 종류의 통지가 재통지 뒤에 새로 생기면 그 재통지는 옛 응답 기회의 것이다({@link
-   * NoticeRepository#existsCurrentRenotify}, 작업자의 후보 조회도 같은 집합).
-   */
+  /** 재통지의 자리·링크를 정할 통지: 요청에 걸려 이미 닿은 요청 통지. 작업자의 후보 조회도 같은 집합을 쓴다. */
   public static final Set<NoticeKind> EVIDENCE_KINDS =
       Collections.unmodifiableSet(EnumSet.of(NoticeKind.REQUEST, NoticeKind.INVITE));
 
@@ -104,7 +101,7 @@ public class RenotifyStateStore implements StateStore<RenotifyPlan> {
         || request.getRenotifyDueAt().isAfter(clock.instant())) {
       throw new RenotifySkipped("기다림 아님 또는 기한 전");
     }
-    if (notices.existsCurrentRenotify(requestId, NoticeKind.RENOTIFY, EVIDENCE_KINDS)) {
+    if (hasCurrentRenotify(requestId)) {
       throw new RenotifySkipped("이미 재통지함");
     }
     RoomParties parties = counterparts.read(roomRecordId, request.getRequestedBySide());
@@ -131,6 +128,31 @@ public class RenotifyStateStore implements StateStore<RenotifyPlan> {
     }
     return new RenotifyPlan(
         roomRecordId, requestId, answering.partyId(), evidence.get().getLinkId());
+  }
+
+  /**
+   * 지금 응답 기회에 재통지가 있나(상태 무관, 취소된 것도 셈). 재통지는 응답 기회(요청 + 그 링크)마다 한 번이다(03 1-4 "기한"). 링크가 번호 고치기로
+   * 무효({@code REINVITED})인 재통지는 고치기 전 번호의 기회라 세지 않는다(#370 T-2). 다른 이유의 무효(연결·거주 종료·공유 중단 등)는 초대 단계가
+   * 끝난 것이라 그대로 센다. 링크가 없는 재통지도 센다. 시각을 비교하지 않으므로 같은 시각에 만든 통지에도 흔들리지 않는다.
+   */
+  private boolean hasCurrentRenotify(UUID requestId) {
+    return notices.findLinkIdsByRequestAndKind(requestId, NoticeKind.RENOTIFY).stream()
+        .anyMatch(link -> link == null || !inviteLinks.isReinvited(link));
+  }
+
+  /**
+   * 재통지 행동 키에 넣을 링크: 이 요청의 가장 최근 요청·초대 통지의 링크(상태 무관, 없으면 {@code null}). 잠그기 전에 notification 표만 읽는다.
+   * 번호를 고치면 새 링크의 통지가 생겨 바뀐다({@link RenotifyKey}). 잠근 뒤 실제로 고른 링크와 드물게 다를 수 있으나(그 사이 번호 고치기와 새 전달까지
+   * 끝난 경우) 한 기회에 한 번은 잠근 뒤 확인이 지킨다.
+   */
+  public UUID keyLink(UUID requestId) {
+    return notices
+        .findByRequest(
+            requestId, EVIDENCE_KINDS, NoticeChannel.SMS, EnumSet.allOf(NoticeStatus.class))
+        .stream()
+        .findFirst()
+        .map(Notice::getLinkId)
+        .orElse(null);
   }
 
   @Override

@@ -7,11 +7,11 @@ import com.chilsuitjo.back.action.rule.ActionType;
 import com.chilsuitjo.back.action.service.ActionPipeline;
 import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.notification.entity.ResponseRequest;
-import com.chilsuitjo.back.notification.repository.NoticeRepository;
 import com.chilsuitjo.back.notification.repository.RenotifyStateStore;
 import com.chilsuitjo.back.notification.repository.RenotifyStateStore.RenotifySkipped;
 import com.chilsuitjo.back.notification.repository.ResponseRequestRepository;
 import com.chilsuitjo.back.notification.rule.NoticeKind;
+import com.chilsuitjo.back.notification.rule.RenotifyKey;
 import com.chilsuitjo.back.notification.rule.RenotifyTransitions;
 import com.chilsuitjo.back.notification.rule.RequestStatus;
 import java.time.Clock;
@@ -34,9 +34,9 @@ import org.springframework.stereotype.Service;
  * 요청당 한 번이다: 같은 요청이 다시 기다림이 되어도({@code rewait}) 재통지는 늘지 않고, 닫힌 뒤 새로 연 요청은 새 요청이라 따로 센다.
  *
  * <p><b>잠금·멱등.</b> pipeline이 호실을 잠근 뒤 접근 검증에서 다시 본다(멱등 조회보다 먼저라 재생도 지금 상태를 통과해야 함). 잠금 순서는 다른 행동과
- * 같다(호실 → 통지·요청, 이 작업자는 통지를 새로 넣기만 하고 잠그지 않음). 행동 키는 {@code renotify:<요청 ID>:1}(서버 주체, 04 "서버 행동은
- * 정해진 키"). 두 작업자가 같은 요청을 동시에 잡아도 호실 잠금으로 줄을 서고 뒤에 온 쪽은 재통지가 이미 있어 건너뛴다. 켜질 때 따라잡기(06 OPS-1a)도 같은
- * 길이라 다시 켜도 더 나가지 않는다.
+ * 같다(호실 → 통지·요청, 이 작업자는 통지를 새로 넣기만 하고 잠그지 않음). 행동 키는 {@link RenotifyKey}({@code rn:<요청>:<링크>}, 응답
+ * 기회마다 하나, #370 T-2)(서버 주체, 04 "서버 행동은 정해진 키"). 두 작업자가 같은 요청을 동시에 잡아도 호실 잠금으로 줄을 서고 뒤에 온 쪽은 재통지가 이미
+ * 있어 건너뛴다. 켜질 때 따라잡기(06 OPS-1a)도 같은 길이라 다시 켜도 더 나가지 않는다.
  *
  * <p>트랜잭션은 요청마다 pipeline이 연다. 한 요청이 실패해도 나머지는 처리한다.
  */
@@ -49,19 +49,16 @@ public class RenotifyWorker {
   private static final UUID START_ID = new UUID(0L, 0L);
 
   private final ResponseRequestRepository requests;
-  private final NoticeRepository notices;
   private final RenotifyStateStore store;
   private final ActionPipeline pipeline;
   private final Clock clock;
 
   public RenotifyWorker(
       ResponseRequestRepository requests,
-      NoticeRepository notices,
       RenotifyStateStore store,
       ActionPipeline pipeline,
       Clock clock) {
     this.requests = requests;
-    this.notices = notices;
     this.store = store;
     this.pipeline = pipeline;
     this.clock = clock;
@@ -109,24 +106,12 @@ public class RenotifyWorker {
     }
   }
 
-  /**
-   * 재통지 행동 키 {@code renotify:<요청 ID>:<회차>}. 회차는 이 요청에 이미 있는 재통지 수 + 1이다(처음은 {@code :1}). 번호를 고쳐 새
-   * 응답 기회가 생기면 옛 재통지가 남아 있어 회차가 올라간다(#370 T-2). 같은 회차를 동시에 처리하면 같은 키라 한 줄만 남고, 앞 처리가 끝난 뒤 다시 오면 회차가
-   * 달라도 잠근 뒤 확인({@link RenotifyStateStore#check})이 지금 기회의 재통지를 보고 건너뛴다. 링크 ID를 키에 넣지 않는다(키 한도
-   * {@code ActionBatch.MAX_KEY_LENGTH} 64자, 한 링크에 요청이 여럿일 수 있음).
-   */
-  private String key(UUID requestId) {
-    return "renotify:"
-        + requestId
-        + ":"
-        + (notices.countByResponseRequestIdAndKind(requestId, NoticeKind.RENOTIFY) + 1);
-  }
-
   /** 한 요청. 잠근 뒤 확인을 통과해 재통지를 남겼으면 true. */
   private boolean renotify(UUID roomRecordId, UUID requestId) {
     try {
       pipeline.executeAll(
-          ActionBatch.of(roomRecordId, Actor.server(), key(requestId))
+          ActionBatch.of(
+                  roomRecordId, Actor.server(), RenotifyKey.of(requestId, store.keyLink(requestId)))
               .accessCheck(() -> store.check(roomRecordId, requestId))
               .step(
                   ActionType.RENOTIFY,

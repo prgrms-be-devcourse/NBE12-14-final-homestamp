@@ -123,28 +123,12 @@ public interface NoticeRepository extends JpaRepository<Notice, UUID> {
       @Param("statuses") Collection<NoticeStatus> statuses);
 
   /**
-   * 지금 응답 기회에 재통지가 있나(상태 무관). 재통지는 응답 기회 하나에 한 번이다(03 1-4 "기한"). 재통지 뒤에 같은 요청의 요청·초대 통지가 새로 만들어졌으면
-   * 그 재통지는 번호를 고치기 전 기회의 것이라 세지 않는다(#370 T-2). 기다림이 시작된 뒤 요청·초대 통지를 새로 만드는 곳은 번호 고치기로 기다림을 처음으로 되돌린
-   * 경우뿐이다({@code InviteRequestLinker}). 두 시각 모두 서버가 통지를 만든 시각이라 업체 시각과 섞이지 않는다. <b>이 가정이 깨지면 여기를
-   * 고친다</b>: 시작된 기다림에 요청·초대 통지를 새로 만드는 기능(예: 03 1-1 "다시 보내기")이 생기면 그 통지가 재통지를 옛 기회로 만들어 재통지가 한 번 더
-   * 열린다. 같은 시각이면 지금 기회로 센다(빠뜨리는 쪽). {@link ResponseRequestRepository#findRenotifyDue}와 같은 기준이다.
+   * 이 요청에 걸린 이 종류 통지의 링크 ID(상태 무관, 링크가 없는 통지는 {@code null}). 재통지가 지금 응답 기회의 것인지 볼 때 쓴다: 링크가 번호 고치기로
+   * 무효({@code REINVITED})면 옛 기회다({@code RenotifyStateStore.check}, #370 T-2). 잠그지 않는다(호실을 잠근 뒤 부름).
    */
-  @Query(
-      """
-      SELECT count(n) > 0 FROM Notice n
-      WHERE n.responseRequestId = :requestId AND n.kind = :renotify
-        AND NOT EXISTS (
-          SELECT 1 FROM Notice m
-          WHERE m.responseRequestId = n.responseRequestId AND m.kind IN :evidence
-            AND m.createdAt > n.createdAt)
-      """)
-  boolean existsCurrentRenotify(
-      @Param("requestId") UUID responseRequestId,
-      @Param("renotify") NoticeKind renotify,
-      @Param("evidence") Collection<NoticeKind> evidence);
-
-  /** 이 요청의 이 종류 통지 수(상태 무관). 재통지 행동 키의 회차를 정한다. */
-  long countByResponseRequestIdAndKind(UUID responseRequestId, NoticeKind kind);
+  @Query("select n.linkId from Notice n where n.responseRequestId = :requestId and n.kind = :kind")
+  List<UUID> findLinkIdsByRequestAndKind(
+      @Param("requestId") UUID responseRequestId, @Param("kind") NoticeKind kind);
 
   /**
    * 이 요청에 걸린 통지 중 종류가 {@code kinds}, 채널이 {@code channel}, 상태가 {@code statuses}인 것(만든 순서 거꾸로, 같으면 ID

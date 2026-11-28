@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.chilsuitjo.back.notification.entity.Notice;
 import com.chilsuitjo.back.notification.repository.NoticeRepository;
+import com.chilsuitjo.back.notification.rule.RenotifyKey;
 import com.chilsuitjo.back.notification.service.NoticeWaitStart;
 import com.chilsuitjo.back.notification.service.RenotifyWorker;
 import java.sql.Timestamp;
@@ -91,7 +92,7 @@ class RenotifyWorkerTest {
     assertThat(actions).hasSize(1);
     assertThat(actions.getFirst())
         .containsEntry("actor_key", "server")
-        .containsEntry("idempotency_key", "renotify:" + request + ":1")
+        .containsEntry("idempotency_key", RenotifyKey.of(request, link))
         .containsEntry("response_request_id", request)
         .containsEntry("actor_side", null);
     // 재통지를 만든 것만으로는 미확인 기한이 없고 기한도 그대로다(06 0-1 저장한 기한)

@@ -2,12 +2,17 @@ package com.chilsuitjo.back.notification.service;
 
 import static com.chilsuitjo.back.global.security.SecurityTestSupport.loginAs;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.chilsuitjo.back.TestcontainersConfiguration;
+import com.chilsuitjo.back.notification.dto.SmsNoticeCommand;
 import com.chilsuitjo.back.notification.entity.Notice;
 import com.chilsuitjo.back.notification.repository.NoticeRepository;
+import com.chilsuitjo.back.notification.rule.NoticeKind;
+import com.chilsuitjo.back.notification.rule.RenotifyKey;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
@@ -21,6 +26,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.LockSupport;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -32,6 +38,8 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.test.util.AopTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -61,6 +69,11 @@ class ReinviteWaitingTest {
   @Autowired private NoticeRepository notices;
   @Autowired private PlatformTransactionManager txManager;
 
+  /** 새 초대 문자를 넣을 때 실패하게 한다(테스트 전용, 운영 코드에 실패 주입 없음). 다른 통지는 그대로 넣는다. */
+  @MockitoSpyBean private NoticeOutbox outbox;
+
+  private volatile boolean failInviteSms;
+
   private Instant now;
   private UUID me;
   private UUID room;
@@ -69,6 +82,19 @@ class ReinviteWaitingTest {
 
   @BeforeEach
   void setUp() throws Exception {
+    doAnswer(
+            call -> {
+              SmsNoticeCommand command = call.getArgument(0);
+              if (failInviteSms
+                  && room.equals(command.roomRecordId())
+                  && command.kind() == NoticeKind.INVITE) {
+                throw new IllegalStateException("테스트가 넣은 실패");
+              }
+              return call.callRealMethod();
+            })
+        // 거래 프록시(MANDATORY)를 거치지 않게 프록시 안의 스파이에 건다
+        .when(AopTestUtils.<NoticeOutbox>getUltimateTargetObject(outbox))
+        .enqueueSms(any());
     now = Instant.now().truncatedTo(ChronoUnit.MICROS);
     jdbc.update(
         "INSERT INTO state.region (code, sido, sigungu, dong) VALUES (?, '재초대시', '재초대구', '재초대동')"
@@ -142,7 +168,8 @@ class ReinviteWaitingTest {
     assertThat(renotices)
         .singleElement()
         .satisfies(n -> assertThat(n.get("link_id")).isEqualTo(linkOf(fresh)));
-    assertThat(renotifyKeys()).containsExactly("renotify:" + request + ":1");
+    assertThat(renotifyKeys()).containsExactly(RenotifyKey.of(request, linkOf(fresh)));
+    assertThat(RenotifyKey.of(request, linkOf(fresh))).hasSize(48);
   }
 
   @Test
@@ -175,8 +202,10 @@ class ReinviteWaitingTest {
         .filteredOn(n -> !n.get("id").equals(oldRenotify))
         .singleElement()
         .satisfies(n -> assertThat(n.get("link_id")).isEqualTo(linkOf(fresh)));
+    // 기회마다 키가 다르다(요청 + 그 기회의 링크)
     assertThat(renotifyKeys())
-        .containsExactlyInAnyOrder("renotify:" + request + ":1", "renotify:" + request + ":2");
+        .containsExactlyInAnyOrder(
+            RenotifyKey.of(request, linkOf(old)), RenotifyKey.of(request, linkOf(fresh)));
   }
 
   @Test
@@ -311,6 +340,113 @@ class ReinviteWaitingTest {
     assertThat(row()).isEqualTo(before);
   }
 
+  // ---- 같은 시각 (7-1) ----
+
+  @Test
+  void 새_기회의_통지가_옛_재통지와_같은_시각에_만들어져도_새_기회에_재통지가_간다() throws Exception {
+    // 고정 시계·낮은 정밀도에서 두 통지의 created_at이 같아도: 잠근 뒤 확인은 시각이 아니라 링크(REINVITED)로 본다
+    UUID old = requestNotice();
+    deliver(old, now.minus(Duration.ofHours(49)));
+    worker.runOnce(50);
+    UUID oldRenotify = (UUID) renotices().getFirst().get("id");
+    changePhone(key(), phone());
+    UUID fresh = requestNotice();
+    jdbc.update(
+        "UPDATE state.notice SET created_at = (SELECT created_at FROM state.notice WHERE id = ?)"
+            + " WHERE id = ?",
+        oldRenotify,
+        fresh);
+
+    deliver(fresh, now.minus(Duration.ofHours(49)));
+    worker.runOnce(50);
+    worker.runOnce(50);
+
+    assertThat(renotices())
+        .filteredOn(n -> !n.get("id").equals(oldRenotify))
+        .singleElement()
+        .satisfies(n -> assertThat(n.get("link_id")).isEqualTo(linkOf(fresh)));
+  }
+
+  @Test
+  void 같은_기회의_재통지는_요청_통지와_같은_시각이어도_한_번이다() {
+    // 후보 조회는 같은 시각을 넣는 쪽(거친 거르기)이지만 잠근 뒤 확인이 지금 기회의 재통지를 보고 건너뛴다
+    UUID notice = requestNotice();
+    deliver(notice, now.minus(Duration.ofHours(49)));
+    worker.runOnce(50);
+    UUID renotify = (UUID) renotices().getFirst().get("id");
+    jdbc.update(
+        "UPDATE state.notice SET created_at = (SELECT created_at FROM state.notice WHERE id = ?)"
+            + " WHERE id = ?",
+        notice,
+        renotify);
+
+    worker.runOnce(50);
+
+    assertThat(renotices()).hasSize(1);
+    assertThat(renotifyKeys()).hasSize(1);
+  }
+
+  // ---- 잠금 순서를 정해 둔 경합 (7-2) ----
+
+  @Test
+  void 번호_고치기가_먼저_잠그면_기다리던_작업자는_잠근_뒤_다시_읽고_재통지하지_않는다() throws Exception {
+    deliver(requestNotice(), now.minus(Duration.ofHours(49)));
+    // 작업자는 잠그기 전에 후보(기한 지남)와 키를 이미 읽은 상태로 기다린다
+    runInLockOrder(() -> changePhone(key(), phone()), () -> worker.runOnce(50));
+
+    assertThat(renotices()).isEmpty();
+    assertThat(row().get("first_notified_at")).isNull();
+    assertThat(row().get("renotify_due_at")).isNull();
+  }
+
+  @Test
+  void 작업자가_먼저_잠그면_옛_링크_재통지를_만들고_뒤의_번호_고치기가_보내기_전에_취소한다() throws Exception {
+    UUID old = requestNotice();
+    deliver(old, now.minus(Duration.ofHours(49)));
+
+    runInLockOrder(() -> worker.runOnce(50), () -> changePhone(key(), phone()));
+
+    assertThat(renotices())
+        .singleElement()
+        .satisfies(n -> {
+          assertThat(n.get("link_id")).isEqualTo(linkOf(old));
+          assertThat(n.get("status")).isEqualTo("CANCELLED");
+        });
+    assertThat(row().get("first_notified_at")).isNull();
+    // 새 기회에는 한 번 더
+    deliver(requestNotice(), now.minus(Duration.ofHours(49)));
+    worker.runOnce(50);
+    assertThat(renotices()).hasSize(2);
+  }
+
+  // ---- 실제 롤백 (7-3·7-4) ----
+
+  @Test
+  void 번호_고치기가_새_초대_문자에서_실패하면_한_트랜잭션이_모두_되돌아가고_같은_키로_다시_하면_된다() throws Exception {
+    deliver(requestNotice(), now.minus(Duration.ofHours(49)));
+    Map<String, Object> before = snapshot();
+    String key = key();
+    String newPhone = phone();
+    failInviteSms = true;
+    try {
+      send("/api/rooms/{id}/counterpart-phone", key, newPhone)
+          .andExpect(status().isInternalServerError());
+    } finally {
+      failInviteSms = false;
+    }
+
+    // 실제 DB에서: 번호·자리·초대 회차, 링크 무효, 문자 취소, 기다림·기한, 새 링크·통지, 행동 기록이 모두 그대로
+    assertThat(snapshot()).isEqualTo(before);
+
+    // 실패한 시도는 멱등 키도 남기지 않아 같은 키로 다시 하면 처리된다
+    changePhone(key, newPhone);
+    assertThat(row().get("first_notified_at")).isNull();
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT invite_phone FROM state.party WHERE id = ?", String.class, seat))
+        .isEqualTo(newPhone);
+  }
+
   // ---- 도우미 ----
 
   private void changePhone(String key, String phone) throws Exception {
@@ -345,6 +481,109 @@ class ReinviteWaitingTest {
               "sms:" + noticeId);
           waitStart.reached(notice, at);
         });
+  }
+
+  @FunctionalInterface
+  private interface Work {
+    void run() throws Exception;
+  }
+
+  /**
+   * 테스트가 호실 행을 잠가 둔 채로 {@code first}를 띄워 그 잠금을 기다리는 것을 DB에서 본 뒤 {@code second}를 띄우고, 둘 다 기다리면 놓는다.
+   * PostgreSQL은 같은 행을 기다리는 쪽을 온 순서대로 들이므로 {@code first}가 먼저 잠근다(시간으로 순서를 맞추지 않음,
+   * SmsCancellationServiceTest와 같은 방식).
+   */
+  private void runInLockOrder(Work first, Work second) throws Exception {
+    CountDownLatch locked = new CountDownLatch(1);
+    CountDownLatch release = new CountDownLatch(1);
+    ExecutorService pool = Executors.newFixedThreadPool(3);
+    try {
+      Future<?> holder =
+          pool.submit(() -> {
+            new TransactionTemplate(txManager)
+                .executeWithoutResult(tx -> {
+                  jdbc.queryForList(
+                      "SELECT id FROM state.room_record WHERE id = ? FOR UPDATE", room);
+                  locked.countDown();
+                  try {
+                    release.await(60, TimeUnit.SECONDS);
+                  } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                  }
+                });
+            return null;
+          });
+      locked.await(30, TimeUnit.SECONDS);
+      Future<?> a =
+          pool.submit(() -> {
+            first.run();
+            return null;
+          });
+      awaitRoomLockWaiters(1);
+      Future<?> b =
+          pool.submit(() -> {
+            second.run();
+            return null;
+          });
+      awaitRoomLockWaiters(2);
+      release.countDown();
+      holder.get(60, TimeUnit.SECONDS);
+      a.get(60, TimeUnit.SECONDS);
+      b.get(60, TimeUnit.SECONDS);
+    } finally {
+      release.countDown();
+      pool.shutdownNow();
+    }
+  }
+
+  /** 호실 행 잠금을 기다리는 연결이 {@code count}개가 될 때까지 DB를 본다. */
+  private void awaitRoomLockWaiters(int count) {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+    while (System.nanoTime() < deadline) {
+      Integer waiting =
+          jdbc.queryForObject(
+              """
+              SELECT count(*) FROM pg_stat_activity
+              WHERE datname = current_database() AND wait_event_type = 'Lock'
+                AND query ILIKE '%room_record%'
+              """,
+              Integer.class);
+      if (waiting != null && waiting >= count) {
+        return;
+      }
+      LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(20));
+    }
+    throw new AssertionError("호실 잠금을 기다리는 연결이 " + count + "개가 되지 않았어요");
+  }
+
+  /** 번호 고치기가 바꿀 수 있는 이 호실의 모든 것. */
+  private Map<String, Object> snapshot() {
+    return Map.of(
+        "party",
+        jdbc.queryForList(
+            "SELECT id, status, invite_phone, invite_id FROM state.party WHERE room_record_id = ?"
+                + " ORDER BY id",
+            room),
+        "link",
+        jdbc.queryForList(
+            "SELECT id, invalidated_at, invalidated_reason FROM state.link WHERE room_record_id = ?"
+                + " ORDER BY id",
+            room),
+        "notice",
+        jdbc.queryForList(
+            "SELECT id, kind, status, link_id FROM state.notice WHERE room_record_id = ? ORDER BY id",
+            room),
+        "outbox",
+        jdbc.queryForList(
+            "SELECT o.dedupe_key, o.status FROM state.outbox o JOIN state.notice n"
+                + " ON o.dedupe_key = 'sms:' || n.id WHERE n.room_record_id = ? ORDER BY 1",
+            room),
+        "request",
+        row(),
+        "actions",
+        jdbc.queryForList(
+            "SELECT room_seq, type FROM record.action WHERE room_record_id = ? ORDER BY room_seq",
+            room));
   }
 
   /** 지금 열려 있는 요청 통지(가장 최근). */
