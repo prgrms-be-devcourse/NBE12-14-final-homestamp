@@ -66,7 +66,7 @@ class DatabaseGrantsIntegrationTest {
                   "withdrawn_at",
                   "created_at",
                   "version"),
-              List.of("email", "password_hash", "display_name", "phone")),
+              List.of("email", "password_hash", "display_name", "phone", "phone_hmac")),
           "state.refresh_token",
           List.of(
               List.of(
@@ -619,6 +619,7 @@ class DatabaseGrantsIntegrationTest {
     assertFunctionPermissions("record.forbid_change()", false, false, false);
     assertFunctionPermissions(
         "record.purge_member_acknowledgements(uuid, timestamp with time zone)", true, false, false);
+    assertFunctionPermissions("state.clear_stale_member_phone_hmac()", false, false, false);
     assertFunctionPermissions("state.forbid_link_revalidate()", false, false, false);
     assertFunctionPermissions("state.guard_room_delete()", false, false, false);
     assertFunctionPermissions("state.purge_room_record(uuid)", false, true, false);
