@@ -2,10 +2,12 @@ package com.chilsuitjo.back.member.repository;
 
 import com.chilsuitjo.back.member.entity.Member;
 import jakarta.persistence.LockModeType;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -50,4 +52,56 @@ public interface MemberRepository extends JpaRepository<Member, UUID> {
 
   /** 이 번호를 인증한 회원({@code ux_member_phone}이라 많아야 하나). */
   Optional<Member> findByPhone(String phone);
+
+  /** 번호는 있는데 번호 HMAC이 비어 있는 회원 행(#462 채우기). {@code afterId}보다 큰 ID부터 ID 순으로 {@code limit}개. */
+  @Query(
+      value =
+          """
+          SELECT id, phone FROM state.member
+          WHERE phone IS NOT NULL AND phone_hmac IS NULL AND id > :afterId
+          ORDER BY id LIMIT :limit
+          """,
+      nativeQuery = true)
+  List<PhoneToFill> findPhonesWithoutHmac(
+      @Param("afterId") UUID afterId, @Param("limit") int limit);
+
+  /** 채울 행의 ID와 그때 읽은 번호. */
+  interface PhoneToFill {
+    UUID getId();
+
+    String getPhone();
+  }
+
+  /**
+   * 그 행의 번호가 읽은 때와 같고 HMAC이 아직 비어 있을 때만 채운다(#462). 그사이 번호가 바뀌었거나(해제·탈퇴) 누가 먼저 채웠으면 0줄이다. {@code
+   * version}은 올리지 않는다: 채우기 전에 이 행을 읽은 트랜잭션이 행 전체를 다시 쓰면 HMAC이 다시 비지만, 다음 채우기가 다시 채운다(사용자 요청이 버전 충돌로
+   * 실패하지 않게).
+   */
+  @Modifying(flushAutomatically = true)
+  @Query(
+      value =
+          """
+          UPDATE state.member SET phone_hmac = :phoneHmac
+          WHERE id = :id AND phone = :phone AND phone_hmac IS NULL
+          """,
+      nativeQuery = true)
+  int fillPhoneHmac(
+      @Param("id") UUID id, @Param("phone") String phone, @Param("phoneHmac") String phoneHmac);
+
+  /** 이 번호 HMAC으로 인증한 활동 회원이 있는가(#83 Q2). 탈퇴하면 번호와 HMAC을 지우므로 걸리지 않는다. */
+  @Query(
+      value =
+          """
+          SELECT EXISTS (SELECT 1 FROM state.member
+                         WHERE phone_hmac = :phoneHmac AND status = 'ACTIVE')
+          """,
+      nativeQuery = true)
+  boolean existsActiveByPhoneHmac(@Param("phoneHmac") String phoneHmac);
+
+  /** 번호는 있는데 번호 HMAC이 아직 비어 있는 행이 있는가(#462, 채우기 전·이전 앱이 쓴 행). */
+  @Query(
+      value =
+          "SELECT EXISTS (SELECT 1 FROM state.member WHERE phone IS NOT NULL AND phone_hmac IS NULL)",
+      nativeQuery = true)
+  boolean existsPhoneWithoutHmac();
 }
