@@ -206,6 +206,119 @@ describe("HTTP 기록 API의 받은 초대", () => {
     ).rejects.toMatchObject({ code: "INVALID_STATE" })
     expect(records.getSnapshot().invitations).toEqual([])
   })
+
+  test("끝난 초대로 거절되면 받은 초대만 다시 받고 호실 목록·상세는 받지 않는다", async () => {
+    const calls: string[] = []
+    const base = server(() => [])
+    const request = (async (method: string, path: string, opts?: unknown) => {
+      calls.push(`${method} ${path}`)
+      if (method === "POST" && path === endpoints.rejectInvitation("party-1"))
+        throw new ApiError({ status: 409, code: "INVALID_STATE" })
+      return base(method as "GET", path, opts as never)
+    }) as HttpRequest
+    const records = createHttpRecords(request)
+    await expect(
+      records.send({ accountId: "me" }, rejectCommand()),
+    ).rejects.toMatchObject({ code: "INVALID_STATE" })
+    expect(calls).toEqual([
+      `POST ${endpoints.rejectInvitation("party-1")}`,
+      `GET ${endpoints.invitations}`,
+    ])
+  })
+
+  // 먼저 시작한 전체 받기가 늦게 끝나도, 연결·거절 뒤 새로 받은 목록에서 빠진 초대가 다시 나타나지 않는다(#431 리뷰)
+  describe("늦게 끝난 받기", () => {
+    // 받은 초대 GET을 부른 순서대로 붙잡아 두고, 테스트가 원하는 순서로 풀어요
+    const held = () => {
+      const pending: Array<(v: unknown) => void> = []
+      let answer: "reject" | "invalid" = "reject"
+      const request = (async (method: string, path: string) => {
+        if (path.startsWith("/api/rooms?"))
+          return { items: [], nextCursor: null }
+        if (path === endpoints.notifications) return []
+        if (path === endpoints.invitations)
+          return new Promise((resolve) => pending.push(resolve))
+        if (
+          method === "POST" &&
+          path === endpoints.rejectInvitation("party-1")
+        ) {
+          if (answer === "invalid")
+            throw new ApiError({ status: 409, code: "INVALID_STATE" })
+          return { partyId: "party-1", status: "REJECTED" }
+        }
+        throw new Error(`unexpected ${path}`)
+      }) as HttpRequest
+      return {
+        request,
+        pending,
+        answerInvalid: () => {
+          answer = "invalid"
+        },
+      }
+    }
+    const settle = () => new Promise((r) => setTimeout(r, 0))
+
+    test("거절 뒤 다시 받은 목록을 먼저 시작한 전체 받기가 덮지 않는다", async () => {
+      const h = held()
+      const records = createHttpRecords(h.request)
+      const me = { accountId: "me" }
+      const first = records.load(me)
+      await settle()
+      const sent = records.send(me, rejectCommand())
+      await settle()
+      expect(h.pending).toHaveLength(2)
+      // 거절 뒤 받기(나중에 시작)가 먼저 끝남: 초대가 빠진 목록
+      h.pending[1]([])
+      await sent
+      expect(records.getSnapshot().invitations).toEqual([])
+      // 먼저 시작한 받기가 늦게 끝남: 거절 전 목록
+      h.pending[0]([invitation()])
+      await first
+      expect(records.getSnapshot().invitations).toEqual([])
+    })
+
+    test("끝난 초대로 다시 받은 목록도 먼저 시작한 전체 받기가 덮지 않는다", async () => {
+      const h = held()
+      h.answerInvalid()
+      const records = createHttpRecords(h.request)
+      const me = { accountId: "me" }
+      const first = records.load(me)
+      await settle()
+      const sent = records.send(me, rejectCommand())
+      await settle()
+      expect(h.pending).toHaveLength(2)
+      h.pending[1]([])
+      await expect(sent).rejects.toMatchObject({ code: "INVALID_STATE" })
+      h.pending[0]([invitation()])
+      await first
+      expect(records.getSnapshot().invitations).toEqual([])
+    })
+
+    test("늦게 시작한 받기가 먼저 끝나지 않았으면 먼저 시작한 받기의 목록을 반영한다", async () => {
+      const h = held()
+      const records = createHttpRecords(h.request)
+      const me = { accountId: "me" }
+      const first = records.load(me)
+      const second = records.load(me)
+      await settle()
+      h.pending[0]([invitation()])
+      await first
+      expect(records.getSnapshot().invitations?.map((r) => r.id)).toEqual([
+        "party-1",
+      ])
+      h.pending[1]([])
+      await second
+      expect(records.getSnapshot().invitations).toEqual([])
+    })
+  })
+})
+
+const rejectCommand = () => ({
+  request: post(endpoints.rejectInvitation("party-1")),
+  role: "임차인" as const,
+  text: "거절",
+  update: () => {},
+  options: { roomId: "party-1", connecting: true },
 })
 
 describe("서버 호실의 상대 초대", () => {
