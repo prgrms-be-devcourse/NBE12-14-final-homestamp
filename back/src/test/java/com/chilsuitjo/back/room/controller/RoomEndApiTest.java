@@ -259,9 +259,45 @@ class RoomEndApiTest {
   }
 
   @Test
-  void 세입자_자리가_연결_전_거절_탈퇴이면_D_확인_전이라_INVALID_STATE다() throws Exception {
-    // 03 A "이사함 기록"(연결 전이면 바로 거주 종료)과 SoloRule이 달라 막아 둔다(#415)
-    for (String seatStatus : new String[] {"INVITED", "REJECTED", "WITHDRAWN"}) {
+  void 세입자가_연결_전이면_집주인_측도_바로_거주_종료이고_연결_전을_이유로_남긴다() throws Exception {
+    // 03 A "이사함 기록": 세입자 측이 없거나 연결 전이면 바로 거주 종료.
+    // 수신 거부로 초대 번호를 비운 자리(03 K)도 초대됨이라 같다
+    for (boolean phoneCleared : new boolean[] {false, true}) {
+      UUID room = room("LIVING");
+      UUID tenantSeat = seat(room, "TENANT", null, "INVITED");
+      if (phoneCleared) {
+        jdbc.update("UPDATE state.party SET invite_phone = NULL WHERE id = ?", tenantSeat);
+      }
+      seat(room, "LANDLORD", landlord, "CONNECTED");
+      UUID invite = inviteLink(room, tenantSeat);
+      // 새로 열린 바로 거주 종료 경로에서도 열려 있던 하자 확인 요청은 거주 종료 범위로 닫힌다(#370 B-1)
+      UUID defectWaiting = request(room, "DEFECT_CONFIRM", repair(room), "WAITING");
+
+      moveOut(room, landlord, key())
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.status").value("ENDED"))
+          .andExpect(jsonPath("$.endRequested").value(false));
+
+      List<Map<String, Object>> actions = actions(room);
+      assertThat(actions)
+          .as("phoneCleared=%s", phoneCleared)
+          .extracting(a -> a.get("type"))
+          .containsExactly("MOVE_OUT");
+      assertThat(actions.getFirst().get("actor_side")).isEqualTo("LANDLORD");
+      assertThat(actions.getFirst().get("solo_reason")).isEqualTo("NOT_CONNECTED");
+      assertThat(roomRow(room).get("status")).isEqualTo("ENDED");
+      assertThat(jdbc.queryForObject(countEndRequests(), Integer.class, room)).isZero();
+      assertThat(linkReason(invite)).isEqualTo("RESIDENCE_ENDED");
+      Map<String, Object> closed = requestRow(defectWaiting);
+      assertThat(closed.get("status")).isEqualTo("CLOSED");
+      assertThat(closed.get("closed_reason")).isEqualTo("ROOM_ENDED");
+    }
+  }
+
+  @Test
+  void 세입자_자리가_거절_탈퇴이면_INVALID_STATE다() throws Exception {
+    // 거절은 03 1-1의 혼자 진행 이유가 아니고, 탈퇴는 KEEP-4 접근 차단 전이라 열지 않는다
+    for (String seatStatus : new String[] {"REJECTED", "WITHDRAWN"}) {
       UUID room = room("LIVING");
       seat(room, "TENANT", null, seatStatus);
       seat(room, "LANDLORD", landlord, "CONNECTED");

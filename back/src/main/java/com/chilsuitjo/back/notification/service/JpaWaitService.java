@@ -1,5 +1,7 @@
 package com.chilsuitjo.back.notification.service;
 
+import com.chilsuitjo.back.action.dto.Actor;
+import com.chilsuitjo.back.action.rule.RoomGateReader;
 import com.chilsuitjo.back.action.service.ActionRequestContext;
 import com.chilsuitjo.back.global.common.ClosedReason;
 import com.chilsuitjo.back.global.common.PartySide;
@@ -17,12 +19,16 @@ import com.chilsuitjo.back.notification.rule.RequestStatus;
 import com.chilsuitjo.back.notification.rule.SoloReason;
 import com.chilsuitjo.back.notification.rule.SoloRule;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Supplier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -57,16 +63,19 @@ public class JpaWaitService implements WaitService, WaitQuery {
   private final ResponseRequestRepository requests;
   private final CounterpartReader counterparts;
   private final ActionRequestContext requestContext;
+  private final RoomGateReader rooms;
   private final Duration renotifyAfter;
 
   public JpaWaitService(
       ResponseRequestRepository requests,
       CounterpartReader counterparts,
       ActionRequestContext requestContext,
+      RoomGateReader rooms,
       @Value("${app.wait.renotify:48h}") Duration renotifyAfter) {
     this.requests = requests;
     this.counterparts = counterparts;
     this.requestContext = requestContext;
+    this.rooms = rooms;
     this.renotifyAfter = WaitDurations.require(renotifyAfter, "app.wait.renotify");
   }
 
@@ -165,6 +174,21 @@ public class JpaWaitService implements WaitService, WaitQuery {
   @Override
   @Transactional(propagation = Propagation.MANDATORY)
   public int closeAll(UUID roomRecordId, ClosedReason reason, Set<RequestKind> kinds) {
+    return closeAll(roomRecordId, reason, kinds, requestContext::at);
+  }
+
+  /** 탈퇴처럼 pipeline 밖의 서버 업무가 자기 트랜잭션에서 업무 시각으로 부른다({@link WaitService}). 호실 잠금을 다시 확인한다. */
+  @Override
+  @Transactional(propagation = Propagation.MANDATORY)
+  public int closeAll(UUID roomRecordId, ClosedReason reason, Set<RequestKind> kinds, Instant at) {
+    Objects.requireNonNull(roomRecordId, "roomRecordId");
+    Instant closedAt = Objects.requireNonNull(at, "at").truncatedTo(ChronoUnit.MICROS);
+    rooms.lockAndRead(roomRecordId, Actor.server());
+    return closeAll(roomRecordId, reason, kinds, () -> closedAt);
+  }
+
+  private int closeAll(
+      UUID roomRecordId, ClosedReason reason, Set<RequestKind> kinds, Supplier<Instant> at) {
     Map<RequestKind, Set<RequestStatus>> targets = CloseAllScope.targets(reason, kinds);
     Set<RequestStatus> anyStatus = EnumSet.noneOf(RequestStatus.class);
     targets.values().forEach(anyStatus::addAll);
@@ -173,8 +197,8 @@ public class JpaWaitService implements WaitService, WaitQuery {
             .filter(r -> targets.get(r.getKind()).contains(r.getStatus()))
             .toList();
     if (!open.isEmpty()) {
-      var at = requestContext.at();
-      open.forEach(r -> r.close(reason, at));
+      Instant closedAt = at.get(); // 3인자는 닫을 것이 있을 때만 행동 시각을 읽는다(전과 같음)
+      open.forEach(r -> r.close(reason, closedAt));
     }
     return open.size();
   }

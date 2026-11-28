@@ -6,7 +6,7 @@ import { HousePlan, type PlanSpot } from "@/components/common/house-plan"
 import { Stamp } from "@/components/common/stamp"
 import type { Event, Notice, Repair, Role, Room } from "@/data/demo"
 import type { Page } from "@/lib/router"
-import { myTurn } from "@/lib/turn"
+import { myTurn, theirWaits } from "@/lib/turn"
 import { cn } from "cn"
 import {
   dropCheck,
@@ -129,6 +129,8 @@ export function RepairListItem({
   action?: ReactNode
 }) {
   const turn = role ? myTurn(r, role) : undefined
+  // 상대의 답을 기다리는 요청(서버 목록 waiting, 06 4-6). 목업은 없음
+  const waits = role ? theirWaits(r, role) : []
   const done = r.status === "처리 완료"
   const money = `수리비 ${statusText(moneyLabel(r))}`
   const repair = repairWord(r.status)
@@ -138,19 +140,23 @@ export function RepairListItem({
     part: "repair" | "money" | ""
   } = turn
     ? { tone: "turn", text: `내 차례 · ${statusText(turn)}`, part: "" }
-    : stale
-      ? { tone: "stale", text: stale, part: "" }
-      : done && !moneyDone(r)
-        ? { tone: "wait", text: money, part: "money" }
-        : {
-            tone: done ? "done" : "progress",
-            text: repair,
-            part: "repair",
-          }
+    : waits.length
+      ? { tone: "wait", text: waits[0], part: "" }
+      : stale
+        ? { tone: "stale", text: stale, part: "" }
+        : done && !moneyDone(r)
+          ? { tone: "wait", text: money, part: "money" }
+          : {
+              tone: done ? "done" : "progress",
+              text: repair,
+              part: "repair",
+            }
   const area = r.zone.split(" · ")[0] || r.zone
   // 사진이 있는 줄은 왼쪽 구역 칸 대신 사진이 오니 구역을 회색 줄 앞에 써요
   const rest = [
     thumb ? area : undefined,
+    // 꼬리표에 못 담은 나머지 기다림(내 차례가 꼬리표면 전부)
+    ...waits.slice(turn ? 0 : 1),
     r.ack === "확인됨" ? "✓ 하자 확인" : `하자 ${ackWord(r.ack)}`,
     lead.part === "repair" ? undefined : done ? "✓ 수리 끝" : repair,
     lead.part === "money" ? undefined : moneyDone(r) ? "✓ 수리비 정함" : money,

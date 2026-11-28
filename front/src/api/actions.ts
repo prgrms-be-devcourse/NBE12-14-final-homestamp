@@ -80,9 +80,8 @@ export type RoomAction =
   | "repair-cases" // 하자 등록(거주 중)
   | "inspections" // 입주 점검 시작만(POST /api/rooms/{id}/inspections, kind MOVE_IN). 퇴거 점검 시작은 들지 않아요(06 4-3, #357)
   | "move-out" // 세입자: 거주 종료 / 집주인: 거주 종료 요청
-  | "move-out-confirm" // 집주인의 요청에 [맞아요]
-  | "move-out-reject" // [아직 살고 있어요]
-  | "move-out-alone" // 답이 없을 때 혼자 거주 종료(06 4장 API 표에는 아직 없음)
+  | "move-out-confirm" // 집주인의 요청에 [맞아요](서버 이름 confirm, http-rooms가 바꿔요)
+  | "move-out-reject" // [아직 살고 있어요](서버 이름 reject)
 
 export const hasAction = <A extends string>(list: readonly A[], a: A) =>
   list.includes(a)

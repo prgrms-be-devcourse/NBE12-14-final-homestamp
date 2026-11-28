@@ -31,12 +31,6 @@ export function roomAvailableActions(
     "move-out-reject",
     living && Boolean(room.endRequested) && role === "임차인",
   )
-  add(
-    "move-out-alone",
-    living &&
-      Boolean(room.endRequested) &&
-      role === "임대인" &&
-      room.endWait === "미확인",
-  )
+  // 미확인 뒤 적용은 버튼이 아니라 서버 작업자 몫이에요(03 A "이사함 기록", #370 A-10)
   return out
 }

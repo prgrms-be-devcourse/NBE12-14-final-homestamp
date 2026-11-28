@@ -69,6 +69,26 @@ public class FakeInviteLinks implements InviteLinks {
         .toList();
   }
 
+  @Override
+  public List<UUID> invalidateIssuedBy(
+      UUID roomRecordId, UUID issuerMemberId, LinkInvalidReason reason, java.time.Instant at) {
+    Objects.requireNonNull(issuerMemberId, "issuerMemberId");
+    Objects.requireNonNull(at, "at");
+    if (reason != LinkInvalidReason.ISSUER_WITHDRAWN) {
+      throw new IllegalArgumentException("발급자 기준 무효는 ISSUER_WITHDRAWN만 받아요");
+    }
+    List<Issued> mine =
+        issued.stream()
+            .filter(link ->
+                link.roomRecordId.equals(roomRecordId)
+                    && link.issuedByMemberId.equals(issuerMemberId))
+            .toList();
+    mine.stream()
+        .filter(link -> link.invalidReason == null)
+        .forEach(link -> link.invalidReason = reason);
+    return mine.stream().map(link -> link.id).toList();
+  }
+
   /** 발급한 링크 전부(무효 포함), 발급한 순서대로. */
   public List<Issued> issued() {
     return List.copyOf(issued);

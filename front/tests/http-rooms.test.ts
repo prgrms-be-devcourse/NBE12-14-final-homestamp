@@ -56,6 +56,9 @@ const detail = (patch: Partial<RoomDetailBody> = {}): RoomDetailBody => {
     myStatus: "CONNECTED",
     asOf: null,
     availableActions: ["repair-cases"],
+    endRequest: null,
+    endedAt: null,
+    endSoloReason: null,
     ...patch,
   }
 }
