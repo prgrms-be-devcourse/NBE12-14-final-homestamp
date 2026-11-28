@@ -108,7 +108,7 @@ psql -X -v ON_ERROR_STOP=1 -v human_role='<NOLOGIN human read group identifier>'
   - CLI `put-parameter --value`는 쓰지 않는다(셸 기록·프로세스 인자에 남는다)
 - **Migration 공급**: `\password hs_migrator`로 정한 뒤 EC2에서 배포-블루그린 "Migration 비밀 폴더 → 처음 만들기"를 한다
 - 끝나면 클립보드를 비운다(macOS `pbcopy </dev/null`). 값은 노트북 어디에도 남기지 않는다
-- **확인(값 없이)**: App은 첫 배포의 헬스, Migration은 첫 배포의 `--migrate`(또는 배포-블루그린 "연결 확인")로 본다
+- **확인(값 없이)**: App은 첫 배포의 헬스. Migration은 아래 "Migration 비밀번호 확인"으로 DB 인증을 바로 보고, EC2 파일과 JDBC 접속 전체는 첫 배포의 Migration 단계로 본다(배포-블루그린 "Migration 비밀 폴더 → 확인")
 
 ### 10. 다른 마스터 세션 정리 (아직 붙어 있는 동안)
 비밀번호를 바꿔도 **이미 열린 세션은 끊기지 않는다**(PostgreSQL은 접속할 때만 인증한다. 실환경 확인 NOT_RUN). 그래서 마스터 계정으로 열린 다른 세션을 먼저 확인하고 끊는다.
@@ -179,14 +179,32 @@ AWS_PROFILE=homestamp aws secretsmanager describe-secret --secret-id "$SECRET_AR
 1. 새 값을 만든다(9b)
 2. 콘솔에서 `/homestamp/prod/app/spring.datasource.password`를 새 값으로 바꾼다. 실행 중인 앱은 아직 이전 값으로 동작한다
 3. 마스터 세션에서 `\password hs_app`에 같은 값을 넣는다. 이미 열린 연결은 유지되지만 앱 연결 풀의 새 연결은 이때부터 실패하므로 바로 4로 간다
-4. EC2: `sudo flock -n /run/lock/homestamp-deploy.lock docker restart -t 30 homestamp-app-<활성 슬롯>`. 시작하면서 새 값을 읽는다. 다시 뜰 때까지 수십 초 동안 API가 503이다
+4. EC2: 잠금을 쥔 뒤 활성 슬롯을 읽고 재시작한다(잠금을 못 잡으면 배포 중이니 나중에)
+   ```sh
+   sudo flock -n /run/lock/homestamp-deploy.lock bash -c 's=$(/opt/homestamp/deploy/deploy.sh --status | sed -n "s/^active: //p")
+     case $s in blue|green) docker restart -t 30 "homestamp-app-$s" ;; *) echo "활성 슬롯을 모름: $s"; exit 1 ;; esac'
+   ```
+   시작하면서 새 값을 읽는다. 다시 뜰 때까지 수십 초 동안 API가 503이다
 5. 확인: `--status`, 헬스 200·UP, `sudo docker logs --since 10m homestamp-app-<활성 슬롯> 2>&1 | grep -c 'password authentication failed'`가 0
 - 새 값은 5가 끝날 때까지 지우지 않는다
 - 3이 실패하면 4를 하지 않는다(앱은 이전 값으로 계속 돈다). 같은 값으로 3을 다시 한다
 - 4 뒤에 앱이 뜨지 않고 인증 실패가 보이면 SSM과 DB 값이 다르다. 들고 있는 값으로 3을 다시 하고 4를 다시 한다. 값을 잃었으면 1부터 새 값으로 한다
 - 멈춰 둔 이전 슬롯 앱과 다음 배포의 새 앱은 시작할 때 새 값을 읽는다
 
-**Migration(`hs_migrator`)**: 새 값 → `\password hs_migrator` → 배포-블루그린 "Migration 비밀 폴더 → 처음 만들기·교체" → "연결 확인". 그사이 배포는 11로 멈추고 서비스는 그대로다.
+**Migration(`hs_migrator`)**: 새 값 → `\password hs_migrator` → 아래 "Migration 비밀번호 확인" → 배포-블루그린 "Migration 비밀 폴더 → 처음 만들기·교체" → 다음 새 digest 배포의 Migration 단계로 최종 확인. 그사이 배포는 11로 멈추고 서비스는 그대로다. 같은 digest 재배포(noop)는 확인이 아니다.
+
+### Migration 비밀번호 확인 (노트북, 처음 공급·교체 때만)
+`\password hs_migrator`로 정한 값이 DB에서 인증되는지 **읽기 전용**으로 바로 본다. 일반 자동 배포에는 필요 없다.
+- 2·5단계의 관리 역할과 포트 포워딩, 3~4단계의 `PGHOST`·`PGHOSTADDR`·`PGPORT`·`PGDATABASE`·`PGSSLMODE=verify-full`·`PGSSLROOTCERT`를 그대로 쓴다. AI 도구·화면 녹화 밖의 터미널에서 한다
+- 비밀번호는 프롬프트에만 붙여 넣는다. 명령 인자·환경변수·파일에 넣지 않는다. 마스터용 `PGPASSFILE`·`PGPASSWORD`는 쓰지 않게 끈다
+```sh
+env -u PGPASSWORD PGPASSFILE=/dev/null PGUSER=hs_migrator PGOPTIONS='-c default_transaction_read_only=on' \
+  psql -X -W -At -P pager=off -v ON_ERROR_STOP=1 -c "SELECT current_user, ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid();"
+```
+- `hs_migrator|t`가 나오면 인증·TLS 성공. `password authentication failed`면 `\password`를 다시 한다. 인증서 이름 오류면 `PGHOST`를 본다(`sslmode`를 낮추지 않는다)
+- 쿼리는 읽기만 하고, `default_transaction_read_only`로 쓰기를 막는다. 이 세션에서 다른 쿼리를 치지 않는다
+- 사람이 입력한 값이 DB와 맞는다는 확인이다. EC2의 Migration 파일 내용과 앱의 JDBC 접속은 다음 새 digest 배포의 Migration 단계에서 본다
+- 2026-11-28 로컬 확인(가짜 CA·인증서, PostgreSQL 18, 가짜 비밀번호): 맞는 값 `hs_migrator|t`, 틀린 값 실패, 남은 `PGPASSFILE`·`PGPASSWORD` 안 씀, 쓰기 거절, 인증서 이름 다르면 접속 안 함, psql 기록·DB 로그에 값 없음
 
 **마스터**: 12~14단계(RDS 관리형 교체)만 쓴다. Secrets Manager `rotate-secret`을 직접 부르지 않는다.
 
