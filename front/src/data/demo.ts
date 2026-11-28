@@ -455,6 +455,22 @@ export interface RoomServerState {
   // 두 측 중 이른 공유 그만둔 시각(ISO). 이 시각 뒤 상대 기록은 보이지 않아요(03 3-1)
   asOf?: string | null
   availableActions?: string[]
+  // 거주 종료(06 4-3, ROOM-9, #445). 공유를 그만둔 뒤에도 양쪽에 그대로 보여요(03 B "예외 둘")
+  endRequest?: RoomEndRequest | null
+  endedAt?: string | null
+  endSoloReason?: string | null
+}
+// 집주인 측이 연 가장 최근 거주 종료 요청(06 4-3 endRequest). 닫힌 것도 와요
+export interface RoomEndRequest {
+  status: "WAITING" | "UNCONFIRMED" | "ANSWERED" | "WITHDRAWN" | "CLOSED"
+  openedAt: string
+  // 미확인이 되는 기한. 거주 종료 요청 문자가 아직 없어 지금은 비어 있어요(NOTI-4b: 비면 남은 시간을 보이지 않음)
+  dueAt: string | null
+  soloReason: string | null
+  closedReason: string | null
+  closedAt: string | null
+  // 세입자의 "아직 살고 있어요" 사유
+  rejectReason: string | null
 }
 // 초대 링크 목업(ERD link). 번호 값은 남기지 않고 발급·무효 사실만 남깁니다.
 export interface InviteLink {

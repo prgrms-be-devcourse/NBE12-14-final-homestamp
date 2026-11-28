@@ -27,6 +27,11 @@ export const CONNECTED_APIS: readonly {
   { method: "POST", path: /^\/api\/rooms$/ },
   { method: "GET", path: /^\/api\/rooms$/ },
   { method: "GET", path: /^\/api\/rooms\/[^/]+$/ },
+  // 거주 종료·거주 종료 요청과 답(06 4-3, ROOM-9, #445). 버튼은 서버 availableActions가 있을 때만 보여요
+  {
+    method: "POST",
+    path: /^\/api\/rooms\/[^/]+\/move-out(\/(confirm|reject))?$/,
+  },
   // 부위 목록·부위 더하기(06 4-3, ROOM-3, #356). 숨김·다시 보이기·켜고 끔은 그 화면이 생길 때 더해요
   { method: "GET", path: /^\/api\/rooms\/[^/]+\/parts$/ },
   { method: "POST", path: /^\/api\/rooms\/[^/]+\/parts$/ },

@@ -336,7 +336,13 @@ export function createHttpRecords(request: HttpRequest): RecordsApi {
           })
       } catch (e) {
         // 상대가 먼저 점검을 시작했으면 그 점검을 다시 받아 열어요(06 4-7 INSPECTION_EXISTS "그쪽으로 열게요")
-        if (e instanceof ApiError && e.code === "INSPECTION_EXISTS" && before)
+        // 그사이 상대가 먼저 행동해 지금 상태와 맞지 않으면(INVALID_STATE, 예: 세입자가 먼저 답한 거주 종료 요청)
+        // 호실을 다시 받아 지금 버튼으로 그려요(#445)
+        if (
+          e instanceof ApiError &&
+          (e.code === "INSPECTION_EXISTS" || e.code === "INVALID_STATE") &&
+          before
+        )
           await loadRoom(s, before.id).catch(() => {})
         throw e
       }
