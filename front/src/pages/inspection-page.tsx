@@ -340,7 +340,7 @@ export function InspectionPage({
               "기준 기록 잠김",
             ]
         return (
-          <Card className="mb-5 min-w-0 gap-3 rounded-[18px] border border-line bg-white py-4 shadow-[0_1px_2px_#1720330a] ring-0">
+          <Card className="mb-5 min-w-0 gap-3 rounded-[18px] border border-line bg-white py-4 shadow-[0_1px_2px_#1f2a330a] ring-0">
             <CardContent className="space-y-3 px-5 max-md:px-4">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <strong className="text-[17px] font-bold text-ink">
@@ -638,7 +638,7 @@ export function InspectionPage({
                 </div>
               ))}
             {/* 적지 않은 부위는 '기록 없음'(문서 9장 [반드시]) — 목록 끝 얇은 한 줄 */}
-            <div className="col-span-full flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-[12px] border border-dashed border-[#dce5f1] px-4 py-3 text-sm text-[#91a6c3]">
+            <div className="col-span-full flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-[12px] border border-dashed border-[#e3e7eb] px-4 py-3 text-sm text-[#91a6c3]">
               <Camera size={16} aria-hidden />
               <strong className="font-semibold">그 밖의 부위</strong>
               <span>입주 점검에 기록 없음</span>
