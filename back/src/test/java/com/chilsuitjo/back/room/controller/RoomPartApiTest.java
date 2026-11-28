@@ -435,6 +435,33 @@ class RoomPartApiTest {
   }
 
   @Test
+  void 상대가_탈퇴해도_그만둔_뒤_상대가_더한_부위는_계속_빠지고_그전_부위는_보인다() throws Exception {
+    // 중단 동안 탈퇴자가 남긴 기록은 상대가 본 적이 없어 숨긴다(03 6-4, #288). 탈퇴는 sharing_stopped_at을 남긴다.
+    // 숨김·켜고 끔 같은 상태는 지금 값이다(바로 위 테스트, #314 한계)
+    UUID landlord = connectLandlord();
+    UUID before =
+        UUID.fromString(
+            body(addAs(landlord, "{\"zone\":\"주방\",\"name\":\"선반\"}")
+                    .andExpect(status().isCreated()))
+                .get("id")
+                .asString());
+    stopSharing("TENANT");
+    UUID after =
+        UUID.fromString(
+            body(addAs(landlord, "{\"zone\":\"주방\",\"name\":\"식탁\"}")
+                    .andExpect(status().isCreated()))
+                .get("id")
+                .asString());
+    jdbc.update(
+        "UPDATE state.party SET status = 'WITHDRAWN' WHERE room_record_id = ? AND side = 'LANDLORD'",
+        room);
+
+    JsonNode parts = listOf(member).get("parts");
+    assertThat(has(parts, before)).isTrue();
+    assertThat(has(parts, after)).isFalse();
+  }
+
+  @Test
   void 다시_공유하면_그만둔_동안의_변경도_보인다() throws Exception {
     UUID landlord = connectLandlord();
     stopSharing("TENANT");

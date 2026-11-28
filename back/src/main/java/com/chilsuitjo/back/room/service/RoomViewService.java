@@ -123,7 +123,7 @@ public class RoomViewService {
         room.getId(),
         room.getAlias(),
         region(room.getRegionCode()),
-        visibleMoveInDate(room, mine, cutoff),
+        visibleMoveInDate(room, mine, cutoff != null ? cutoff : seats.departedCutoffFor(mine)),
         room.getStatus(),
         mine.getSide(),
         room.getCreatedBySide(),
@@ -138,7 +138,9 @@ public class RoomViewService {
   /**
    * 보는 사람에게 보이는 입주일(불변식 18, #190). 비어 있던 입주일은 입주 점검 시작이 채우고, 그 사실은 그 행동의 payload {@value
    * RoomMoveInDates#FILLED_PAYLOAD_KEY}에 남는다({@link RoomMoveInDates}). 보이는 범위가 고정된 뒤({@code
-   * cutoff}) 상대 측이 채운 입주일이면 보는 사람에게는 비어 있는 것으로 준다. 호실을 만들 때 적은 입주일은 공유 중단보다 늘 먼저라 그대로 보인다.
+   * cutoff}) 상대 측이 채운 입주일이면 보는 사람에게는 비어 있는 것으로 준다. 호실을 만들 때 적은 입주일은 공유 중단보다 늘 먼저라 그대로 보인다. 상대가
+   * 탈퇴했으면 {@code cutoff} 대신 남은 중단 시각({@link RoomSeats#departedCutoffFor})으로 본다: 중단 동안 탈퇴자가 채운 입주일은
+   * 계속 비어 있다(03 6-4, #288).
    */
   private LocalDate visibleMoveInDate(RoomRecord room, Party mine, Instant cutoff) {
     if (room.getMoveInDate() == null || cutoff == null) {

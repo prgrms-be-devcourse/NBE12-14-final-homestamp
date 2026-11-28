@@ -921,20 +921,69 @@ class InspectionApiTest {
   }
 
   @Test
-  void 공유를_그만둔_뒤_상대가_채웠어도_상대가_탈퇴하면_입주일이_보인다() throws Exception {
-    // 상대가 탈퇴하면 함께 볼 상대가 없어 보이는 범위를 고정하지 않는다(RoomSeats.visibleCutoffFor, 06 CONS-3p)
+  void 공유를_그만둔_뒤_상대가_채운_입주일과_시작한_점검은_상대가_탈퇴해도_보이지_않는다() throws Exception {
+    // 상대가 탈퇴하면 보이는 범위는 고정하지 않지만(asOf 없음, 06 CONS-3p) 중단 동안 탈퇴자가 남긴 기록은 상대가 본 적이 없어
+    // 계속 숨긴다(03 6-4, #288). 탈퇴는 sharing_stopped_at을 지우지 않는다(decisions 2026-11-26)
     clearMoveInDate();
     stopSharing(PartySide.LANDLORD, Instant.now().minusSeconds(3600));
-    created(start(tenant, "then-withdraw", "MOVE_IN", "2026-02-15"));
-    jdbc.update(
-        "UPDATE state.party SET status = 'WITHDRAWN', member_id = NULL"
-            + " WHERE room_record_id = ? AND side = 'TENANT'",
-        room);
+    UUID inspection = created(start(tenant, "then-withdraw", "MOVE_IN", "2026-02-15"));
+    withdraw(PartySide.TENANT);
 
     roomDetail(landlord)
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.asOf").doesNotExist())
-        .andExpect(jsonPath("$.moveInDate").value("2026-02-15"));
+        .andExpect(jsonPath("$.moveInDate").doesNotExist());
+    detail(landlord, inspection).andExpect(status().isNotFound());
+  }
+
+  @Test
+  void 공유를_그만두기_전에_상대가_채운_입주일은_상대가_탈퇴해도_보인다() throws Exception {
+    clearMoveInDate();
+    created(start(tenant, "before-withdraw", "MOVE_IN", "2026-02-15"));
+    stopSharing(PartySide.LANDLORD, Instant.now().plusSeconds(3600));
+    withdraw(PartySide.TENANT);
+
+    roomDetail(landlord).andExpect(jsonPath("$.moveInDate").value("2026-02-15"));
+  }
+
+  @Test
+  void 불변식_18_탈퇴자가_그만둔_뒤_보낸_확인_요청으로도_작성_중_항목이_드러나지_않는다() throws Exception {
+    // 그만둘 때 작성 중이던 탈퇴자의 점검은 상대가 본 적이 없다(03 6-4 "작성 중 점검", #288). 상태 값은 지금 값이다(#314 한계)
+    UUID inspection = created(start(tenant, "s", "MOVE_IN", null));
+    created(addItem(tenant, inspection, "i1", "벽지 찢어짐", "[]"));
+    stopSharing(PartySide.LANDLORD, Instant.now());
+    requestConfirm(tenant, inspection, "after-stop").andExpect(status().isOk());
+    withdraw(PartySide.TENANT);
+
+    detail(landlord, inspection)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.asOf").doesNotExist())
+        .andExpect(jsonPath("$.items").isEmpty());
+  }
+
+  @Test
+  void 불변식_18_상대가_탈퇴해도_항목은_남은_중단_시각까지_더한_것만_보인다() throws Exception {
+    // 확인 요청 뒤 더한 항목은 API로 만들 수 없는 순서라 항목 시각을 옮겨 경계만 본다(위 그만둔 경우 테스트와 같음)
+    UUID inspection = created(start(tenant, "s", "MOVE_IN", null));
+    UUID item = created(addItem(tenant, inspection, "i1", "벽지 찢어짐", "[]"));
+    requestConfirm(tenant, inspection, "r1").andExpect(status().isOk());
+    Instant requestedAt =
+        jdbc.queryForObject(
+                "SELECT created_at FROM record.action WHERE inspection_id = ?"
+                    + " AND type = 'REQUEST_INSPECTION_CONFIRM'",
+                Timestamp.class,
+                inspection)
+            .toInstant();
+    stopSharing(PartySide.LANDLORD, requestedAt);
+    withdraw(PartySide.TENANT);
+
+    moveItemCreatedAt(item, requestedAt);
+    detail(landlord, inspection)
+        .andExpect(jsonPath("$.status").value("REQUESTED"))
+        .andExpect(jsonPath("$.items[0].id").value(item.toString()));
+
+    moveItemCreatedAt(item, requestedAt.plus(Duration.ofNanos(1_000)));
+    detail(landlord, inspection).andExpect(jsonPath("$.items").isEmpty());
   }
 
   @Test
@@ -1106,6 +1155,15 @@ class InspectionApiTest {
             + " WHERE room_record_id = ? AND side = 'LANDLORD'",
         status,
         room);
+  }
+
+  /** 탈퇴 처리와 같게 자리만 탈퇴함으로 바꾼다(회원 ID·공유를 그만둔 시각은 남김, {@code Party.withdraw}). */
+  private void withdraw(PartySide side) {
+    jdbc.update(
+        "UPDATE state.party SET status = 'WITHDRAWN', invite_phone = NULL"
+            + " WHERE room_record_id = ? AND side = ?",
+        room,
+        side.name());
   }
 
   private void stopSharing(PartySide side, Instant at) {
