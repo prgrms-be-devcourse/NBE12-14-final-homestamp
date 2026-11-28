@@ -10,7 +10,7 @@ public enum LockReason {
   /** 항목 없이 "하자 기록 없음"으로 잠김(06 INSP-1c). */
   NO_ITEMS,
   /**
-   * [혼자 잠그기]로 잠김: "단독 기록"(06 INSP-1g, V14). 항목이 없어도 이 값이다. 구체적인 혼자 진행 이유는 그 {@code LOCK} 행동
+   * [혼자 잠그기]로 잠김: "단독 기록"(06 INSP-1g, V15). 항목이 없어도 이 값이다. 구체적인 혼자 진행 이유는 그 {@code LOCK} 행동
    * payload의 {@code solo_reason}에 있다.
    */
   SOLO

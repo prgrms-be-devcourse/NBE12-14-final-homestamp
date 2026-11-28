@@ -46,7 +46,7 @@ import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * 06 4-7 혼자 잠그기({@code lock-alone}, INSP-1g, #392)를 보안·pipeline·진짜 행동 기록 저장(PostgreSQL, V14)까지 띄워
+ * 06 4-7 혼자 잠그기({@code lock-alone}, INSP-1g, #392)를 보안·pipeline·진짜 행동 기록 저장(PostgreSQL, V15)까지 띄워
  * 본다. 세입자가 기준 측으로 점검을 쓰고, 집주인 자리는 테스트마다 정한다. 혼자 진행 판단은 가짜 {@code WaitService}가 진짜 {@code SoloRule}로
  * 한다.
  */
