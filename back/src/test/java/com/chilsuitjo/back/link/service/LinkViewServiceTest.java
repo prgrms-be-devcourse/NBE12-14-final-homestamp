@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -26,8 +27,10 @@ import com.chilsuitjo.back.link.dto.LinkViewRequest;
 import com.chilsuitjo.back.link.dto.LinkViewResponse;
 import com.chilsuitjo.back.link.entity.Link;
 import com.chilsuitjo.back.link.repository.LinkRepository;
+import com.chilsuitjo.back.link.repository.LinkViewStateStore;
 import com.chilsuitjo.back.link.rule.LinkKind;
 import com.chilsuitjo.back.link.rule.LinkToken;
+import com.chilsuitjo.back.notification.service.NoticeWaitStart;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -46,9 +49,12 @@ class LinkViewServiceTest {
   private final FakeLinkContentSource content = new FakeLinkContentSource();
   private final MutableClock clock = new MutableClock(NOW);
   private final ActionPipelineFixture fx = new ActionPipelineFixture(clock);
+  private final NoticeWaitStart waitStart = mock(NoticeWaitStart.class);
+  private final LinkViewStateStore viewStore =
+      new LinkViewStateStore(waitStart, fx.requestContext());
   private final LinkViewService service =
       new LinkViewService(
-          links, content, fx.pipeline(), fx.actions(), clock, Duration.ofMinutes(10));
+          links, content, fx.pipeline(), fx.actions(), viewStore, clock, Duration.ofMinutes(10));
 
   private final UUID roomRecordId = UUID.randomUUID();
   private final UUID partyId = UUID.randomUUID();
@@ -127,7 +133,7 @@ class LinkViewServiceTest {
         .thenReturn(Optional.of(inspectionRecord()));
     LinkViewService inspectionService =
         new LinkViewService(
-            links, source, fx.pipeline(), fx.actions(), clock, Duration.ofMinutes(10));
+            links, source, fx.pipeline(), fx.actions(), viewStore, clock, Duration.ofMinutes(10));
 
     LinkViewResponse response = inspectionService.view(new LinkViewRequest(token));
 
@@ -216,11 +222,119 @@ class LinkViewServiceTest {
     verify(links, never()).countFailedView(any());
   }
 
+  // ---- 최근 열람 예외: 아직 전달 증거가 없는 보낸 문자가 있으면 한 줄을 더 남긴다(06 LINK-1a 예외, NOTI-3b) ----
+
+  @Test
+  void 최근_열람_안이라도_새_증거_후보가_있으면_그_통지_키로_한_줄을_더_남긴다() {
+    String token = issue(LinkKind.INVITE, repairCaseId);
+    openRoom();
+    content.seedRecord(roomRecordId, repairCaseId, repairRecord(), false);
+    fx.gates().putRoom(RoomGate.open(roomRecordId, null));
+    service.view(new LinkViewRequest(token));
+    clock.advance(Duration.ofMinutes(3));
+    // ID 순서로 읽은 후보(NoticeWaitStart.unviewedSent). 키는 그 첫 번째다
+    List<UUID> candidates = List.of(UUID.randomUUID(), UUID.randomUUID());
+    when(waitStart.unviewedSent(any(), any(), any())).thenReturn(candidates);
+
+    service.view(new LinkViewRequest(token));
+
+    assertThat(viewActions()).hasSize(2);
+    assertThat(viewActions().get(1).idempotencyKey())
+        .isEqualTo("link-view:n:" + candidates.getFirst());
+    // 첫 열람 한 번 + 예외 줄 한 번
+    verify(waitStart, times(2)).linkViewed(any(), any(), any());
+  }
+
+  @Test
+  void 잠그기_전에_없던_후보가_잠근_뒤_보이면_구간_키를_쓰지_않고_다시_정해_한_줄을_남긴다() {
+    // 구간 키로 들어가면 앞 열람 줄이 재생돼 save가 불리지 않는다. 잠근 뒤 확인이 멈추고 증거 키로 다시 보낸다
+    String token = issue(LinkKind.INVITE, repairCaseId);
+    openRoom();
+    content.seedRecord(roomRecordId, repairCaseId, repairRecord(), false);
+    fx.gates().putRoom(RoomGate.open(roomRecordId, null));
+    service.view(new LinkViewRequest(token));
+    clock.advance(Duration.ofMinutes(3));
+    UUID late = UUID.randomUUID();
+    when(waitStart.unviewedSent(any(), any(), any()))
+        .thenReturn(List.of(), List.of(late), List.of(late), List.of(late));
+
+    service.view(new LinkViewRequest(token));
+
+    assertThat(viewActions()).hasSize(2);
+    assertThat(viewActions().get(1).idempotencyKey()).isEqualTo("link-view:n:" + late);
+    // 첫 열람 한 번 + 예외 줄 한 번
+    verify(waitStart, times(2)).linkViewed(any(), any(), any());
+  }
+
+  @Test
+  void 키의_후보가_잠그는_사이_처리되고_다른_후보가_남으면_그_후보_키로_다시_정한다() {
+    String token = issue(LinkKind.INVITE, repairCaseId);
+    openRoom();
+    content.seedRecord(roomRecordId, repairCaseId, repairRecord(), false);
+    fx.gates().putRoom(RoomGate.open(roomRecordId, null));
+    service.view(new LinkViewRequest(token));
+    clock.advance(Duration.ofMinutes(3));
+    UUID gone = UUID.randomUUID();
+    UUID next = UUID.randomUUID();
+    when(waitStart.unviewedSent(any(), any(), any()))
+        .thenReturn(List.of(gone), List.of(next), List.of(next), List.of(next));
+
+    service.view(new LinkViewRequest(token));
+
+    assertThat(viewActions()).hasSize(2);
+    assertThat(viewActions().get(1).idempotencyKey()).isEqualTo("link-view:n:" + next);
+    verify(waitStart, times(2)).linkViewed(any(), any(), any());
+  }
+
+  @Test
+  void 다시_정해도_후보가_또_바뀌면_열람은_성공하지만_새_줄도_증거도_없다() {
+    // 재시도는 한 번뿐이다. 이 요청은 증거를 남기지 못하고 다음 열람이나 전달 결과에 맡긴다(decisions 2026-11-28)
+    String token = issue(LinkKind.INVITE, repairCaseId);
+    openRoom();
+    content.seedRecord(roomRecordId, repairCaseId, repairRecord(), false);
+    fx.gates().putRoom(RoomGate.open(roomRecordId, null));
+    service.view(new LinkViewRequest(token));
+    clock.advance(Duration.ofMinutes(3));
+    UUID late = UUID.randomUUID();
+    when(waitStart.unviewedSent(any(), any(), any()))
+        .thenReturn(List.of(), List.of(late), List.of(), List.of(late));
+
+    LinkViewResponse again = service.view(new LinkViewRequest(token));
+
+    assertThat(again.kind()).isEqualTo(LinkViewKind.RECORD);
+    assertThat(viewActions()).hasSize(1);
+    verify(waitStart, times(1)).linkViewed(any(), any(), any());
+  }
+
+  @Test
+  void 키의_후보가_잠그는_사이_다른_열람으로_처리됐고_남은_후보가_없으면_새_줄이_없다() {
+    String token = issue(LinkKind.INVITE, repairCaseId);
+    openRoom();
+    content.seedRecord(roomRecordId, repairCaseId, repairRecord(), false);
+    fx.gates().putRoom(RoomGate.open(roomRecordId, null));
+    service.view(new LinkViewRequest(token));
+    clock.advance(Duration.ofMinutes(3));
+    when(waitStart.unviewedSent(any(), any(), any()))
+        .thenReturn(List.of(UUID.randomUUID()), List.of());
+
+    service.view(new LinkViewRequest(token));
+
+    assertThat(viewActions()).hasSize(1);
+    // 첫 열람의 한 번뿐이다
+    verify(waitStart, times(1)).linkViewed(any(), any(), any());
+  }
+
   @Test
   void 멱등_구간이_1초보다_짧으면_시작할_수_없다() {
     assertThatThrownBy(() ->
             new LinkViewService(
-                links, content, fx.pipeline(), fx.actions(), clock, Duration.ofMillis(999)))
+                links,
+                content,
+                fx.pipeline(),
+                fx.actions(),
+                viewStore,
+                clock,
+                Duration.ofMillis(999)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("app.link.view-dedupe");
   }
@@ -333,7 +447,7 @@ class LinkViewServiceTest {
     when(failing.room(any(), any())).thenThrow(new BusinessException(ErrorCode.NOT_FOUND));
     LinkViewService withFailingContent =
         new LinkViewService(
-            links, failing, fx.pipeline(), fx.actions(), clock, Duration.ofMinutes(10));
+            links, failing, fx.pipeline(), fx.actions(), viewStore, clock, Duration.ofMinutes(10));
     String token = issue(LinkKind.INVITE, repairCaseId);
 
     assertLinkInvalid(() -> withFailingContent.view(new LinkViewRequest(token)));
@@ -344,7 +458,8 @@ class LinkViewServiceTest {
     ActionPipeline rejecting = mock(ActionPipeline.class);
     when(rejecting.executeAll(any())).thenThrow(new BusinessException(ErrorCode.NOT_FOUND));
     LinkViewService withRejectingPipeline =
-        new LinkViewService(links, content, rejecting, fx.actions(), clock, Duration.ofMinutes(10));
+        new LinkViewService(
+            links, content, rejecting, fx.actions(), viewStore, clock, Duration.ofMinutes(10));
     String token = issue(LinkKind.INVITE, repairCaseId);
     openRoom();
     content.seedRecord(roomRecordId, repairCaseId, repairRecord(), false);
@@ -359,7 +474,7 @@ class LinkViewServiceTest {
     when(broken.room(any(), any())).thenThrow(new IllegalStateException("고장"));
     LinkViewService withBrokenContent =
         new LinkViewService(
-            links, broken, fx.pipeline(), fx.actions(), clock, Duration.ofMinutes(10));
+            links, broken, fx.pipeline(), fx.actions(), viewStore, clock, Duration.ofMinutes(10));
     String token = issue(LinkKind.INVITE, repairCaseId);
 
     assertThatThrownBy(() -> withBrokenContent.view(new LinkViewRequest(token)))
