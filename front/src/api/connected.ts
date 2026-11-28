@@ -27,6 +27,11 @@ export const CONNECTED_APIS: readonly {
   { method: "POST", path: /^\/api\/rooms$/ },
   { method: "GET", path: /^\/api\/rooms$/ },
   { method: "GET", path: /^\/api\/rooms\/[^/]+$/ },
+  // 받은 초대·연결·거절(06 4-3, ROOM-5, #429). 같은 집 기록 합류(ROOM-6)는 아직 보내지 않아요.
+  // 상대 초대(POST /api/rooms/{id}/invite, ROOM-4)는 요청 모양만 맞추고 아직 넣지 않아요: #370 "활성화 조건"(거절 때 초대 링크 무효,
+  // 링크 공개 조회 준비)이 남았고 서버도 호실 availableActions에 invite를 주지 않아요. 켤 때 이 줄 아래에 더해요
+  { method: "GET", path: /^\/api\/invitations$/ },
+  { method: "POST", path: /^\/api\/invitations\/[^/]+\/(connect|reject)$/ },
   // 거주 종료·거주 종료 요청과 답(06 4-3, ROOM-9, #445). 버튼은 서버 availableActions가 있을 때만 보여요
   {
     method: "POST",

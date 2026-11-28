@@ -28,9 +28,10 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>요청 통지({@code REQUEST})와 요청이 걸린 초대 문자({@code INVITE})만 기다림을 시작한다. 초대 문자에 요청이 걸리는 것은 같은 점검 초대에서
  * 문자 한 통이 초대이자 그 점검의 확인 요청 통지일 때뿐이다({@link InviteRequestLinker}, #370 A-7). 재통지({@code RENOTIFY})가
- * 닿는 것은 미확인 기한(06 0-1 {@code wait.unconfirmed})의 시작이라 기다림 타이머(d3)에서 다루고, 알림({@code INFO})은 답을 묻지
- * 않는다. 정산 초대({@code SETTLEMENT_INVITE})에는 요청을 걸지 않는다. 부르는 곳은 문자 전달 결과와 링크 열람({@link
- * #linkViewed})이다(빠른 쪽이 시작점, 03 1-1 "타이머 시작점"·06 NOTI-3b). 회원의 알림 열람은 아직 없다.
+ * 닿으면 기다림을 시작하지 않고 미확인 기한(06 0-1 {@code wait.unconfirmed})을 적는다({@link
+ * ResponseRequest#renotifyReached}, {@link RenotifyWorker}). 알림({@code INFO})은 답을 묻지 않는다. 정산
+ * 초대({@code SETTLEMENT_INVITE})에는 요청을 걸지 않는다. 부르는 곳은 문자 전달 결과와 링크 열람({@link #linkViewed})이다(빠른 쪽이
+ * 시작점, 03 1-1 "타이머 시작점"·06 NOTI-3b). 재통지 문자의 링크를 열어도 전달과 같이 미확인 기한을 적는다. 회원의 알림 열람은 아직 없다.
  *
  * <p><b>고치기 전 번호로 간 통지</b>: 링크가 번호 고치기로 무효({@code REINVITED})가 된 통지가 닿은 것은 시작점이 아니다. 그 문자는 지금 상대가
  * 아닌 옛 번호로 갔다(#370 T-2, #399). 업체의 전달 사실은 통지에 그대로 남고(부르는 쪽이 이미 적음), 요청의 기다림만 시작하거나 앞당기지 않는다.
@@ -45,18 +46,21 @@ public class NoticeWaitStart {
   private final RoomGateReader rooms;
   private final InviteLinks inviteLinks;
   private final Duration renotifyAfter;
+  private final Duration unconfirmedAfter;
 
   public NoticeWaitStart(
       NoticeRepository notices,
       ResponseRequestRepository requests,
       RoomGateReader rooms,
       InviteLinks inviteLinks,
-      @Value("${app.wait.renotify:48h}") Duration renotifyAfter) {
+      @Value("${app.wait.renotify:48h}") Duration renotifyAfter,
+      @Value("${app.wait.unconfirmed:24h}") Duration unconfirmedAfter) {
     this.notices = notices;
     this.requests = requests;
     this.rooms = rooms;
     this.inviteLinks = inviteLinks;
     this.renotifyAfter = WaitDurations.require(renotifyAfter, "app.wait.renotify");
+    this.unconfirmedAfter = WaitDurations.require(unconfirmedAfter, "app.wait.unconfirmed");
   }
 
   /** 응답 요청에 걸린 통지면 그 호실 행을 잠근다. 통지를 잠그기 전에 부른다. 걸린 요청이 없으면 아무것도 잠그지 않는다. */
@@ -132,16 +136,20 @@ public class NoticeWaitStart {
   }
 
   /**
-   * 통지가 {@code at}에 닿았다. 요청 통지가 걸린 열린 요청이면 기다림을 시작한다({@link ResponseRequest#startWaiting}). 끝난 요청이면
-   * 버린다. 링크가 번호 고치기로 무효가 된 통지면 버린다(위 "고치기 전 번호로 간 통지"). 통지와 요청의 호실이 같은지는 DB 외래 키({@code
+   * 통지가 {@code at}에 닿았다. 요청 통지가 걸린 열린 요청이면 기다림을 시작한다({@link ResponseRequest#startWaiting}). 재통지면
+   * 미확인 기한을 적는다({@link ResponseRequest#renotifyReached}, 기다림 시작이 아니라 false). 끝난 요청이면 버린다. 링크가 번호
+   * 고치기로 무효가 된 통지면 버린다(위 "고치기 전 번호로 간 통지"). 통지와 요청의 호실이 같은지는 DB 외래 키({@code
    * fk_notice_response_request_id_room})가 막는다.
    *
    * @return 기다림을 이번에 시작했으면 true
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public boolean reached(Notice notice, Instant at) {
+    boolean renotify = notice.getKind() == NoticeKind.RENOTIFY;
     if (notice.getResponseRequestId() == null
-        || (notice.getKind() != NoticeKind.REQUEST && notice.getKind() != NoticeKind.INVITE)) {
+        || (!renotify
+            && notice.getKind() != NoticeKind.REQUEST
+            && notice.getKind() != NoticeKind.INVITE)) {
       return false;
     }
     if (notice.getLinkId() != null && inviteLinks.isReinvited(notice.getLinkId())) {
@@ -151,6 +159,10 @@ public class NoticeWaitStart {
         requests
             .findById(notice.getResponseRequestId())
             .orElseThrow(() -> new IllegalStateException("통지에 걸린 응답 요청이 없어요"));
+    if (renotify) {
+      request.renotifyReached(at, unconfirmedAfter);
+      return false;
+    }
     return request.startWaiting(at, renotifyAfter);
   }
 }

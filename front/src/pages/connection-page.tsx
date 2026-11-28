@@ -23,6 +23,8 @@ export function ConnectionPage({
   roomHas: (a: RoomAction) => boolean
   open: (m: "invite" | "phone" | "room") => void
 }) {
+  // 서버 호실은 상대 번호를 가린 모양으로만 줘요(06 4-3 counterpartMaskedPhone, 내가 만든 측일 때만)
+  const masked = room.server?.counterpartMaskedPhone ?? undefined
   return (
     <Panel title="호실의 두 사람">
       <div className="connection-flow">
@@ -47,6 +49,11 @@ export function ConnectionPage({
                 ? "휴대폰 인증 후 연결된 계정"
                 : "초대 후 가입·연결 확인이 필요해요"}
           </p>
+          {masked && room.server?.counterpartStatus === "NUMBER_ONLY" && (
+            <p className="muted">
+              저장한 번호 · {masked} · 초대하면 이 번호로 보내요
+            </p>
+          )}
         </div>
       </div>
       <p className="muted my-5">
@@ -85,8 +92,8 @@ export function ConnectionPage({
           )}
           {room.connection === "초대됨" && (
             <p className="muted">
-              초대 번호 {maskPhone(room.phone || "")} · 상대가 이 번호로
-              가입·인증한 계정에서 연결을 수락하면 연결돼요.
+              초대 번호 {masked ?? maskPhone(room.phone || "")} · 상대가 이
+              번호로 가입·인증한 계정에서 연결을 수락하면 연결돼요.
             </p>
           )}
         </div>

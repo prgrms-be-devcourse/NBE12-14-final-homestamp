@@ -121,4 +121,24 @@ public interface NoticeRepository extends JpaRepository<Notice, UUID> {
   List<UUID> findLinkIdsByRequestAndStatusIn(
       @Param("requestId") UUID responseRequestId,
       @Param("statuses") Collection<NoticeStatus> statuses);
+
+  /** 이 요청에 이 종류의 통지가 있나(상태 무관). 재통지는 요청당 한 번이라(03 1-4 "기한") 있으면 다시 만들지 않는다. */
+  boolean existsByResponseRequestIdAndKind(UUID responseRequestId, NoticeKind kind);
+
+  /**
+   * 이 요청에 걸린 통지 중 종류가 {@code kinds}, 채널이 {@code channel}, 상태가 {@code statuses}인 것(만든 순서 거꾸로, 같으면 ID
+   * 거꾸로). 재통지가 갈 자리와 링크를 고를 때 쓴다. 잠그지 않는다(호실을 잠근 뒤 부름).
+   */
+  @Query(
+      """
+      SELECT n FROM Notice n
+      WHERE n.responseRequestId = :requestId AND n.kind IN :kinds AND n.channel = :channel
+        AND n.status IN :statuses
+      ORDER BY n.createdAt DESC, n.id DESC
+      """)
+  List<Notice> findByRequest(
+      @Param("requestId") UUID responseRequestId,
+      @Param("kinds") Collection<NoticeKind> kinds,
+      @Param("channel") NoticeChannel channel,
+      @Param("statuses") Collection<NoticeStatus> statuses);
 }

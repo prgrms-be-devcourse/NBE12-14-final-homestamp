@@ -78,6 +78,30 @@ class LinkViewWaitStartTest {
   }
 
   @Test
+  void 보낸_재통지의_링크를_열면_기다림은_그대로이고_미확인_기한을_열람_시각부터_적는다() {
+    // #434 + #433: 재통지가 닿은 증거는 업체 전달과 링크 열람 중 빠른 쪽이다(06 NOTI-3b·NOTI-5a, 0-1 wait.unconfirmed 24h)
+    Fixture fx = fixture();
+    UUID request = request(fx, "WAITING");
+    Instant firstReached = SENT.minus(RENOTIFY).minusSeconds(60);
+    jdbc.update(
+        "UPDATE state.response_request SET first_notified_at = ?, renotify_due_at = ? WHERE id = ?",
+        Timestamp.from(firstReached),
+        Timestamp.from(firstReached.plus(RENOTIFY)),
+        request);
+    UUID renotice = notice(fx, fx.link(), request, "RENOTIFY", "SENT");
+
+    service.view(new LinkViewRequest(fx.token()));
+
+    Map<String, Object> row = notice(renotice);
+    assertThat(row).containsEntry("status", "VIEWED");
+    Instant viewedAt = ((Timestamp) row.get("viewed_at")).toInstant();
+    assertThat(requestTime(request, "first_notified_at")).isEqualTo(firstReached);
+    assertThat(requestTime(request, "renotify_due_at")).isEqualTo(firstReached.plus(RENOTIFY));
+    assertThat(requestTime(request, "unconfirmed_due_at"))
+        .isEqualTo(viewedAt.plus(Duration.ofHours(24)));
+  }
+
+  @Test
   void 이미_전달로_시작한_기다림은_뒤의_열람으로_늦추거나_늘리지_않는다() {
     Fixture fx = fixture();
     UUID request = request(fx, "WAITING");
