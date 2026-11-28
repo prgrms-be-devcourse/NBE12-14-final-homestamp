@@ -130,6 +130,22 @@ class PaymentRepositoryTest {
                 second.getId(), PartySide.TENANT, PaymentResponse.ACK, PAID_ON, NOW));
   }
 
+  @Test
+  void 지불_ID는_이_수리_건의_것만_기록_순서로_찾는다() {
+    UUID room = room();
+    UUID other = room();
+    UUID repair = repair(room);
+    UUID another = repair(room);
+    Payment first = record(room, repair, PayeeKind.VENDOR, 82_000);
+    record(room, another, PayeeKind.VENDOR, 10_000);
+    Payment second = record(room, repair, PayeeKind.COUNTERPART, 30_000);
+    second.changeResponse(PaymentResponse.DISPUTE);
+    payments.flush();
+
+    assertThat(payments.findIds(room, repair)).containsExactly(first.getId(), second.getId());
+    assertThat(payments.findIds(other, repair)).isEmpty();
+  }
+
   /** 세입자가 남긴 첫 판 지불. 머리를 먼저 내보내야 판의 FK(즉시 검사)가 통과한다. 지금 판 FK는 지연이라 판보다 먼저 들어가도 된다. */
   private Payment record(UUID room, UUID repair, PayeeKind payee, long amount) {
     UUID id = Uuids.v7();

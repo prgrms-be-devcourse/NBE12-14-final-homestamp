@@ -5,6 +5,8 @@ import com.chilsuitjo.back.action.dto.PhotoDigest;
 import com.chilsuitjo.back.action.service.ActionRequestContext;
 import com.chilsuitjo.back.correction.rule.CorrectionTargetKind;
 import com.chilsuitjo.back.correction.service.CorrectionReader;
+import com.chilsuitjo.back.payment.service.PaymentReader;
+import com.chilsuitjo.back.payment.service.RepairPhotoScope;
 import com.chilsuitjo.back.photo.dto.PhotoAttachCommand;
 import com.chilsuitjo.back.photo.dto.PhotoQuota;
 import com.chilsuitjo.back.photo.dto.PhotoTarget;
@@ -29,10 +31,11 @@ import org.springframework.stereotype.Component;
  * {@code photo.max.repair}(06 0-1)이고, 수리 건과 그 건의 진행 상황에 붙은 사진을 함께 센다. 원인 설명의 근거 사진은 그 설명({@code
  * CAUSE_NOTE})에 붙고 단계는 {@code BASIS}다(06 REP-8). 원인 설명 사진도 한도에 함께 센다. 고친 내용을 다시 보낼 때 더한 근거 사진은 새 고친
  * 내용({@code CORRECTION_REQUEST})에 붙고 단계는 보충과 같은 {@code BEFORE}다("고친 기록이 원래 쓰는 단계", #278). 이 사진도 한도에
- * 함께 센다(06 0-1 {@code photo.max.repair} "다시 요청 근거"). 지불 사진은 그 기능을 만들 때 {@link #quota}의 대상에 더한다.
+ * 함께 센다(06 0-1 {@code photo.max.repair} "다시 요청 근거"). 지불 증빙 사진({@code PAYMENT}, 단계 {@code
+ * EVIDENCE})도 한도에 함께 센다. 지불 쪽이 사진을 붙일 때도 이 한도를 쓴다({@link RepairPhotoScope}).
  */
 @Component
-public class RepairPhotos {
+public class RepairPhotos implements RepairPhotoScope {
 
   private final PhotoService photos;
   private final RoomAccessService access;
@@ -40,6 +43,7 @@ public class RepairPhotos {
   private final ProgressNoteRepository notes;
   private final CauseNoteRepository causeNotes;
   private final CorrectionReader corrections;
+  private final PaymentReader payments;
   private final int maxRepair;
 
   public RepairPhotos(
@@ -49,6 +53,7 @@ public class RepairPhotos {
       ProgressNoteRepository notes,
       CauseNoteRepository causeNotes,
       CorrectionReader corrections,
+      PaymentReader payments,
       @Value("${photo.max.repair:30}") int maxRepair) {
     this.photos = Objects.requireNonNull(photos, "photos");
     this.access = Objects.requireNonNull(access, "access");
@@ -56,6 +61,7 @@ public class RepairPhotos {
     this.notes = Objects.requireNonNull(notes, "notes");
     this.causeNotes = Objects.requireNonNull(causeNotes, "causeNotes");
     this.corrections = Objects.requireNonNull(corrections, "corrections");
+    this.payments = Objects.requireNonNull(payments, "payments");
     this.maxRepair = maxRepair;
   }
 
@@ -146,12 +152,13 @@ public class RepairPhotos {
             target,
             stage,
             uploadTickets,
-            quota(repairCaseId),
+            quota(command.roomRecordId(), repairCaseId),
             requestContext.at()));
   }
 
-  /** 수리 건 카드 전체: 수리 건과 그 건의 진행 상황·원인 설명(방금 만든 것 포함). */
-  private PhotoQuota quota(UUID repairCaseId) {
+  /** 수리 건 카드 전체: 수리 건과 그 건의 진행 상황·원인 설명·고친 내용·지불(방금 만든 것 포함). */
+  @Override
+  public PhotoQuota quota(UUID roomRecordId, UUID repairCaseId) {
     List<PhotoTarget> counted = new ArrayList<>();
     counted.add(new PhotoTarget.Ref(PhotoTargetType.REPAIR_CASE, repairCaseId));
     for (UUID noteId : notes.findIdsByRepairCaseId(repairCaseId)) {
@@ -163,6 +170,9 @@ public class RepairPhotos {
     for (UUID correctionId :
         corrections.idsByRecord(CorrectionTargetKind.REPAIR_CASE, repairCaseId)) {
       counted.add(new PhotoTarget.Ref(PhotoTargetType.CORRECTION_REQUEST, correctionId));
+    }
+    for (UUID paymentId : payments.idsByRepairCase(roomRecordId, repairCaseId)) {
+      counted.add(new PhotoTarget.Ref(PhotoTargetType.PAYMENT, paymentId));
     }
     return new PhotoQuota(maxRepair, List.copyOf(counted));
   }

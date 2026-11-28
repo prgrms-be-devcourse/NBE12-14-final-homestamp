@@ -19,6 +19,16 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID> {
   /** 링크 화면의 돈 기록 있음(06 LINK-1d). 확인 전 지불도 센다. */
   boolean existsByRoomRecordIdAndRepairCaseId(UUID roomRecordId, UUID repairCaseId);
 
+  /** 이 수리 건의 지불 ID(기록 순서). 사진 한도를 셀 때 쓴다. */
+  @Query(
+      """
+      SELECT p.id FROM Payment p
+      WHERE p.roomRecordId = :roomRecordId AND p.repairCaseId = :repairCaseId
+      ORDER BY p.createdAt, p.id
+      """)
+  List<UUID> findIds(
+      @Param("roomRecordId") UUID roomRecordId, @Param("repairCaseId") UUID repairCaseId);
+
   /**
    * 수리비 나누기 기준 금액(05 2-5, decisions 2026-11-24): {@code response = ACK}인 지불의 같이 확인한 판 금액 합. 그 판의 받는
    * 사람이 상대 당사자면 뺀다. 없으면 0.
