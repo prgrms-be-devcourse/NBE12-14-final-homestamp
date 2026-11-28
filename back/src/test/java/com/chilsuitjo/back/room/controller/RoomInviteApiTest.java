@@ -28,11 +28,12 @@ import org.springframework.test.web.servlet.ResultActions;
 
 /**
  * 06 4-3 {@code POST /api/rooms/{id}/invite}(ROOM-4a·4c, CONS-2b). 보안 설정·pipeline·실제 초대 링크
- * 발급({@code InviteLinkService})·아웃박스까지 띄워 부른다. 링크는 pipeline {@code save} 안에서만 만들 수 있어서 실제 구현으로
- * 확인한다(#236).
+ * 발급({@code InviteLinkService})·아웃박스·점검 확인 요청 잇기({@code InviteRequestLinker}, 실제 {@code
+ * JpaInspectionsAwaitingConfirm}과 DB {@code WaitService})까지 띄워 부른다. 링크는 pipeline {@code save} 안에서만
+ * 만들 수 있어서 실제 구현으로 확인한다(#236).
  */
 @Import(TestcontainersConfiguration.class)
-@SpringBootTest
+@SpringBootTest(properties = "test.notification.wait-service=jpa")
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 class RoomInviteApiTest {
@@ -151,12 +152,137 @@ class RoomInviteApiTest {
             body(phone, "v1", Map.of("kind", "INSPECTION", "id", inspection.toString())))
         .andExpect(status().isOk());
 
+    UUID link =
+        jdbc.queryForObject(
+            "SELECT id FROM state.link WHERE room_record_id = ? AND inspection_id = ?",
+            UUID.class,
+            room,
+            inspection);
+    assertThat(count("state.link", room)).isEqualTo(1);
+
+    // 확인 요청 상태 점검이라 확인 요청이 열리고(쓴 측 = 기준 측), 아직 기다리지 않는다(첫 전달 전, #302)
+    List<Map<String, Object>> requests = requests(room);
+    assertThat(requests).hasSize(1);
+    assertThat(requests.get(0))
+        .containsEntry("kind", "INSPECTION_CONFIRM")
+        .containsEntry("inspection_id", inspection)
+        .containsEntry("requested_by_side", "TENANT")
+        .containsEntry("status", "WAITING");
+    assertThat(requests.get(0).get("first_notified_at")).isNull();
+
+    // 같은 점검 초대라 초대 문자 한 통이 그 요청의 통지가 된다(같은 주소의 문자가 두 통 가지 않음, #399)
+    List<Map<String, Object>> notices = notices(room);
+    assertThat(notices).hasSize(1);
+    assertThat(notices.get(0))
+        .containsEntry("kind", "INVITE")
+        .containsEntry("response_request_id", requests.get(0).get("id"))
+        .containsEntry("link_id", link);
+  }
+
+  @Test
+  void 호실_초대인데_확인_요청_점검이_있으면_그_점검_링크로_요청_통지를_따로_넣는다() throws Exception {
+    UUID room = room("LIVING", "TENANT");
+    seat(room, "TENANT", me, "CONNECTED", null);
+    UUID counterpart = seat(room, "LANDLORD", null, "EMPTY", null);
+    UUID inspection = inspection(room);
+
+    invite(room, me, key(), body(phone, "v1", null)).andExpect(status().isOk());
+
+    UUID roomLink =
+        jdbc.queryForObject(
+            "SELECT id FROM state.link WHERE room_record_id = ? AND inspection_id IS NULL",
+            UUID.class,
+            room);
+    UUID inspectionLink =
+        jdbc.queryForObject(
+            "SELECT id FROM state.link WHERE room_record_id = ? AND inspection_id = ?",
+            UUID.class,
+            room,
+            inspection);
+    UUID request = (UUID) requests(room).get(0).get("id");
+    assertThat(notices(room))
+        .extracting(n -> List.of(n.get("kind"), String.valueOf(n.get("response_request_id"))))
+        .containsExactlyInAnyOrder(
+            List.of("INVITE", "null"), List.of("REQUEST", request.toString()));
+    assertThat(notices(room))
+        .extracting(n -> n.get("link_id"))
+        .containsExactlyInAnyOrder(roomLink, inspectionLink);
+    assertThat(notices(room))
+        .allSatisfy(n -> assertThat(n).containsEntry("recipient_party_id", counterpart));
+  }
+
+  @Test
+  void 작성_중인_점검은_확인_요청을_열지_않는다() throws Exception {
+    UUID room = room("LIVING", "TENANT");
+    seat(room, "TENANT", me, "CONNECTED", null);
+    seat(room, "LANDLORD", null, "EMPTY", null);
+    inspection(room, "MOVE_IN", "DRAFT");
+
+    invite(room, me, key(), body(phone, "v1", null)).andExpect(status().isOk());
+
+    assertThat(requests(room)).isEmpty();
+    assertThat(notices(room))
+        .singleElement()
+        .satisfies(n -> {
+          assertThat(n).containsEntry("kind", "INVITE");
+          assertThat(n.get("response_request_id")).isNull();
+        });
+  }
+
+  @Test
+  void 번호만_자리는_번호를_비워_보내면_저장한_번호로_초대한다() throws Exception {
+    UUID room = room("LIVING", "LANDLORD");
+    seat(room, "LANDLORD", me, "CONNECTED", null);
+    UUID counterpart = seat(room, "TENANT", null, "NUMBER_ONLY", phone);
+
+    invite(room, me, key(), body(null, "v1", null))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("INVITED"));
+
     assertThat(
             jdbc.queryForObject(
-                "SELECT inspection_id FROM state.link WHERE room_record_id = ?", UUID.class, room))
-        .isEqualTo(inspection);
-    // 확인 요청 열기는 D의 메서드가 생긴 뒤 더한다(#163). 지금은 요청을 만들지 않는다
-    assertThat(count("state.response_request", room)).isZero();
+                "SELECT invite_phone FROM state.party WHERE id = ?", String.class, counterpart))
+        .isEqualTo(phone);
+    assertThat(notices(room))
+        .singleElement()
+        .satisfies(n -> assertThat(n).containsEntry("kind", "INVITE"));
+  }
+
+  @Test
+  void 비어_있음_자리에_번호가_없으면_VALIDATION_FAILED이고_아무것도_남지_않는다() throws Exception {
+    UUID room = room("LIVING", "TENANT");
+    seat(room, "TENANT", me, "CONNECTED", null);
+    UUID counterpart = seat(room, "LANDLORD", null, "EMPTY", null);
+
+    invite(room, me, key(), body(" ", "v1", null))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value(ErrorCode.VALIDATION_FAILED.name()));
+
+    assertNothingSaved(room, counterpart);
+  }
+
+  @Test
+  void 초대됨_자리에_번호_없이_보내면_번호보다_자리_상태가_먼저_INVALID_STATE다() throws Exception {
+    UUID room = room("LIVING", "TENANT");
+    seat(room, "TENANT", me, "CONNECTED", null);
+    seat(room, "LANDLORD", null, "INVITED", phone);
+
+    invite(room, me, key(), body(null, "v1", null))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value(ErrorCode.INVALID_STATE.name()));
+  }
+
+  @Test
+  void 저장한_번호가_내_인증_번호면_SELF_INVITE다() throws Exception {
+    UUID room = room("LIVING", "TENANT");
+    seat(room, "TENANT", me, "CONNECTED", null);
+    UUID counterpart = seat(room, "LANDLORD", null, "NUMBER_ONLY", myPhone);
+
+    invite(room, me, key(), body(null, "v1", null))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value(ErrorCode.SELF_INVITE.name()));
+
+    assertNothingSaved(room, counterpart);
   }
 
   @Test
@@ -380,9 +506,10 @@ class RoomInviteApiTest {
         record == null
             ? "null"
             : "{\"kind\":\"" + record.get("kind") + "\",\"id\":\"" + record.get("id") + "\"}";
-    return "{\"phone\":\""
-        + phone
-        + "\",\"consentVersion\":\""
+    String phoneJson = phone == null ? "null" : "\"" + phone + "\"";
+    return "{\"phone\":"
+        + phoneJson
+        + ",\"consentVersion\":\""
         + consentVersion
         + "\",\"record\":"
         + recordJson
@@ -429,14 +556,37 @@ class RoomInviteApiTest {
     return id;
   }
 
+  /** 쓴 측 TENANT, 확인 요청 상태(항목 없음 = "하자 기록 없음" 확인을 기다림). */
   private UUID inspection(UUID room) {
+    return inspection(room, "MOVE_IN", "REQUESTED");
+  }
+
+  private UUID inspection(UUID room, String kind, String inspectionStatus) {
     UUID id = UUID.randomUUID();
     jdbc.update(
         "INSERT INTO state.inspection (id, room_record_id, kind, author_side, status, created_at, version)"
-            + " VALUES (?, ?, 'MOVE_IN', 'TENANT', 'REQUESTED', CURRENT_TIMESTAMP, 0)",
+            + " VALUES (?, ?, ?, 'TENANT', ?, CURRENT_TIMESTAMP, 0)",
         id,
-        room);
+        room,
+        kind,
+        inspectionStatus);
     return id;
+  }
+
+  /** 그 호실의 통지(만든 순서). 종류·걸린 요청·링크·받는 자리. */
+  private List<Map<String, Object>> notices(UUID room) {
+    return jdbc.queryForList(
+        "SELECT kind, response_request_id, link_id, recipient_party_id FROM state.notice"
+            + " WHERE room_record_id = ? ORDER BY created_at, kind",
+        room);
+  }
+
+  /** 그 호실의 응답 요청. 종류·대상·요청한 측·상태·첫 전달 시각. */
+  private List<Map<String, Object>> requests(UUID room) {
+    return jdbc.queryForList(
+        "SELECT id, kind, inspection_id, requested_by_side, status, first_notified_at"
+            + " FROM state.response_request WHERE room_record_id = ?",
+        room);
   }
 
   private UUID member(String verifiedPhone) {

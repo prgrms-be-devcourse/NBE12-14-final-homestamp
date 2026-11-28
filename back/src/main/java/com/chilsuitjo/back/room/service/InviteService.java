@@ -33,6 +33,9 @@ import org.springframework.stereotype.Service;
  * 자리·링크·문자를 같은 트랜잭션에 넣는다(06 ROOM-4c, 09 3-1 초대 예시). 트랜잭션은 pipeline이 연다(09 3-1). 그래서 여기에
  * {@code @Transactional}을 두지 않는다.
  *
+ * <p>번호: 번호만({@code NUMBER_ONLY}) 자리는 번호를 비워 보내면 호실을 만들 때 저장한 번호로 초대하고, 새 번호를 넣으면 그 번호로 덮어쓴다(03 B
+ * "상대 초대하기", #407 리뷰). 비어 있음 자리에 번호가 없으면 {@code VALIDATION_FAILED}다.
+ *
  * <p>오류: 판이 없으면 {@code CONSENT_REQUIRED}, 번호·기록 모양이 틀리면 {@code VALIDATION_FAILED}(여기서 먼저), 당사자가 아니면
  * {@code NOT_FOUND}, 정산 완료·합류 전 기록·공유 중단이면 pipeline 거절, 만든 측이 아니거나 거주 종료이거나 비어 있음·번호만 자리가 아니면
  * {@code INVALID_STATE}, 내 인증 번호면 {@code SELF_INVITE}, 수신 거부 목록에 있는 번호면 {@code
@@ -54,7 +57,7 @@ public class InviteService {
   public Invited.Result invite(
       UUID roomRecordId, UUID memberId, String idempotencyKey, InviteRequest request) {
     String consentVersion = ConsentVersion.require(request.consentVersion());
-    String phone = PhoneNumber.normalize(request.phone());
+    String phone = optionalPhone(request.phone());
     RequestTarget record = sharedRecord(request.record());
     UUID partyId = counterpartSeat(roomRecordId);
 
@@ -84,6 +87,15 @@ public class InviteService {
         .findByRoomRecordIdAndSide(roomRecordId, other)
         .map(Party::getId)
         .orElseThrow(() -> new IllegalStateException("호실의 상대 자리가 없어요: " + roomRecordId));
+  }
+
+  /**
+   * 새로 넣은 번호. 비어 있으면 {@code null}이고, 그때 어느 번호로 초대할지(번호만 자리의 저장한 번호, 비어 있음 자리면 {@code
+   * VALIDATION_FAILED})는 자리를 잠근 뒤 {@code PartyStateStore}가 정한다. 넣었으면 모양이 틀릴 때 여기서 먼저 {@code
+   * VALIDATION_FAILED}다.
+   */
+  private static String optionalPhone(String input) {
+    return input == null || input.isBlank() ? null : PhoneNumber.normalize(input);
   }
 
   /** 기록 링크의 기록. 종류·ID가 함께 있어야 하고 지금은 점검만 받는다. */
