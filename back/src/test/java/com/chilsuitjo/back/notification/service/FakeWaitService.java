@@ -178,6 +178,32 @@ public class FakeWaitService implements WaitService, WaitQuery {
     java.time.Instant closedAt =
         java.util.Objects.requireNonNull(at, "at")
             .truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+    if (CloseAllScope.oneWay(reason)) {
+      throw new IllegalArgumentException(reason + "는 closeRequestedBy로 한 방향만 닫아요");
+    }
+    return close(roomRecordId, reason, kinds, null, closedAt);
+  }
+
+  @Override
+  public int closeRequestedBy(UUID roomRecordId, PartySide requestedBySide, ClosedReason reason) {
+    java.util.Objects.requireNonNull(requestedBySide, "requestedBySide");
+    if (!CloseAllScope.oneWay(reason)) {
+      throw new IllegalArgumentException("한 방향으로 닫는 이유가 아니에요: " + reason);
+    }
+    return close(
+        roomRecordId,
+        reason,
+        java.util.EnumSet.allOf(RequestKind.class),
+        requestedBySide,
+        clock.instant().truncatedTo(java.time.temporal.ChronoUnit.MICROS));
+  }
+
+  private int close(
+      UUID roomRecordId,
+      ClosedReason reason,
+      Set<RequestKind> kinds,
+      PartySide requestedBySide,
+      Instant closedAt) {
     // 운영(JpaWaitService)과 같은 범위만 닫는다. 정해지지 않은 이유는 같은 예외다(#113)
     Map<RequestKind, Set<RequestStatus>> targets = CloseAllScope.targets(reason, kinds);
     int closed = 0;
@@ -185,7 +211,8 @@ public class FakeWaitService implements WaitService, WaitQuery {
       Request request = entry.getValue();
       if (request.roomRecordId().equals(roomRecordId)
           && targets.containsKey(entry.getKey().kind())
-          && targets.get(entry.getKey().kind()).contains(request.status())) {
+          && targets.get(entry.getKey().kind()).contains(request.status())
+          && (requestedBySide == null || request.requestedBySide() == requestedBySide)) {
         write(entry.getKey(), request.closed(reason, closedAt));
         closed++;
       }

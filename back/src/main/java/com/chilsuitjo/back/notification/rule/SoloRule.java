@@ -31,7 +31,9 @@ import java.util.Set;
  *       않는다(72시간 뒤 "아직 연결하지 않았어요", 03 1-1 ⑥, 요청 이력이 필요함). 정산 끝내기(03 A "상대 없음(연결 전 포함)이면 바로")는 정산
  *       계약과 함께 따로 연결하고 지금은 열지 않는다(decisions 2026-11-28 D-1)
  *   <li>미확인·문자 안 감: 열지 않는다. 이 건의 요청 이력과 기한·전달 결과가 있어야 한다(실제 기다림 타이머, #124)
- *   <li>초대 거절({@code REJECTED}): 03 1-1의 이유에 없어 열지 않는다
+ *   <li>초대 거절({@code REJECTED}): 아직 열지 않는다. 이유 값({@link SoloReason#INVITE_REJECTED})과 거절 때 요청 닫기·링크
+ *       무효 계약은 있지만, room의 거절 저장이 그것을 부르기 전에 열면 닫히지 않은 요청과 링크가 남은 채 혼자 진행이 된다(#421 조건 1·5, #392 Q2,
+ *       H-1 PR-b에서 연다)
  * </ul>
  *
  * <p>위 세 자리 상태는 서로 겹치지 않아 이유가 둘 이상 성립하지 않는다. 이유가 겹칠 때 고르는 법(03 "확인 없음 화면 표시" ⑤의 "가장 최근")은 기록 이유를 열
@@ -64,12 +66,15 @@ public final class SoloRule {
   private static final Set<RequestKind> BY_NOT_CONNECTED = EnumSet.of(RequestKind.END_REQUEST);
 
   /**
-   * 성립 시각 없이 돌려줄 수 있는 이유. 상대 없음·상대 탈퇴는 상대가 이 호실에서 행동할 수 없고, 연결 전은 그 이유를 여는 종류(거주 종료 요청)에 상대가 링크로 답할
-   * 기록이 없다.
+   * 성립 시각 없이 돌려줄 수 있는 이유. 상대 없음·상대 탈퇴·초대 거절은 상대가 이 호실에서 행동할 수 없고, 연결 전은 그 이유를 여는 종류(거주 종료 요청)에 상대가
+   * 링크로 답할 기록이 없다.
    */
   private static final Set<SoloReason> WITHOUT_SINCE =
       EnumSet.of(
-          SoloReason.NO_COUNTERPART, SoloReason.NOT_CONNECTED, SoloReason.COUNTERPART_WITHDRAWN);
+          SoloReason.NO_COUNTERPART,
+          SoloReason.NOT_CONNECTED,
+          SoloReason.COUNTERPART_WITHDRAWN,
+          SoloReason.INVITE_REJECTED);
 
   private SoloRule() {}
 
@@ -98,7 +103,7 @@ public final class SoloRule {
               BY_NOT_CONNECTED.contains(kind)
                   ? SoloCheck.allowedBecause(SoloReason.NOT_CONNECTED)
                   : SoloCheck.notYet(null);
-          // 탈퇴는 접근 차단(KEEP-4) 전이라, 거절은 03 1-1의 이유가 아니라 열지 않는다(클래스 설명)
+          // 탈퇴는 접근 차단(KEEP-4) 전이라, 거절은 room의 거절 저장이 요청 닫기·링크 무효를 부른 뒤 연다(클래스 설명)
           case WITHDRAWN, REJECTED -> SoloCheck.notYet(null);
         };
     return requireDirectContract(check);

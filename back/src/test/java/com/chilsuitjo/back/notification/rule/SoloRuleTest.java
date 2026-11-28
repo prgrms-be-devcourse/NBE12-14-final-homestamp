@@ -161,7 +161,7 @@ class SoloRuleTest {
   @ParameterizedTest
   @EnumSource(
       value = SoloReason.class,
-      names = {"NO_COUNTERPART", "NOT_CONNECTED", "COUNTERPART_WITHDRAWN"},
+      names = {"NO_COUNTERPART", "NOT_CONNECTED", "COUNTERPART_WITHDRAWN", "INVITE_REJECTED"},
       mode = EnumSource.Mode.EXCLUDE)
   void 성립_시각_없이_돌려줄_수_없는_이유는_계약_위반이다(SoloReason reason) {
     assertThatThrownBy(() -> SoloRule.requireDirectContract(SoloCheck.allowedBecause(reason)))
@@ -173,7 +173,7 @@ class SoloRuleTest {
   @ParameterizedTest
   @EnumSource(
       value = SoloReason.class,
-      names = {"NO_COUNTERPART", "NOT_CONNECTED", "COUNTERPART_WITHDRAWN"})
+      names = {"NO_COUNTERPART", "NOT_CONNECTED", "COUNTERPART_WITHDRAWN", "INVITE_REJECTED"})
   void 상대가_행동할_수_없는_이유는_성립_시각이_없어도_된다(SoloReason reason) {
     assertThat(SoloRule.requireDirectContract(SoloCheck.allowedBecause(reason)).allowed()).isTrue();
   }
