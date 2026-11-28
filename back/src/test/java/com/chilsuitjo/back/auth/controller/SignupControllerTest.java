@@ -3,8 +3,12 @@ package com.chilsuitjo.back.auth.controller;
 import static com.chilsuitjo.back.auth.rule.VerificationPurpose.RESET;
 import static com.chilsuitjo.back.auth.rule.VerificationPurpose.SIGNUP;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -20,6 +24,9 @@ import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.global.error.GlobalExceptionHandler;
 import com.chilsuitjo.back.member.dto.SignupRequest;
+import com.chilsuitjo.back.notification.service.PhoneHmacs;
+import com.chilsuitjo.back.notification.service.SmsOptOuts;
+import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -57,8 +64,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.test.util.AopTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 06 4-1 {@code POST /api/auth/signup}과 ACC-1·ACC-3a 수용 기준. 보안 설정까지 띄워 로그인 없이 부른다. 인증번호는 서비스로
@@ -81,8 +90,12 @@ class SignupControllerTest {
   @MockitoSpyBean private PasswordEncoder passwordEncoder;
   @Autowired private JdbcTemplate jdbc;
   @Autowired private MutableClock clock;
+  @MockitoSpyBean private SmsOptOuts smsOptOuts;
+  @Autowired private PhoneHmacs phoneHmacs;
+  @Autowired private TransactionTemplate transaction;
 
   private final ExecutorService pool = Executors.newFixedThreadPool(2);
+  private final List<String> optedOutHmacs = new ArrayList<>();
 
   @BeforeEach
   void clean() {
@@ -94,6 +107,19 @@ class SignupControllerTest {
   @AfterEach
   void stopPool() {
     pool.shutdownNow();
+  }
+
+  /** 수신 거부 행과 해제가 만든 AUDIT_WRITE 줄을 지운다. 감사({@code deletion_log})는 지울 수 없는 표라 번호를 테스트마다 새로 만든다. */
+  @AfterEach
+  void cleanOptOuts() {
+    optedOutHmacs.forEach(hmac -> {
+      jdbc.update("DELETE FROM state.sms_opt_out WHERE phone_hmac = ?", hmac);
+      jdbc.update(
+          "DELETE FROM state.outbox WHERE kind = 'AUDIT_WRITE' AND payload->>'deletionLogId' IN"
+              + " (SELECT id::text FROM log.deletion_log WHERE phone_hmac = ?)",
+          hmac);
+    });
+    optedOutHmacs.clear();
   }
 
   // ACC-1b 가입하면 회원과 확인 기록 세 줄이 남는다
@@ -379,7 +405,169 @@ class SignupControllerTest {
         .doesNotContain(phone);
   }
 
+  // NOTI-8c 그만 받았던 번호의 주인이 가입을 완료하면 수신 거부가 풀린다(#438)
+
+  @Test
+  void NOTI_8c_거부된_번호로_가입하면_거부가_풀리고_가입_시각으로_감사와_AUDIT_WRITE가_하나씩_남는다() throws Exception {
+    String phone = newPhone();
+    // 형식만 다른 번호(하이픈)로 거부했어도 같은 번호다
+    optOut(hyphenated(phone));
+    String ticket = ticket(phone, SIGNUP);
+    clock.advance(Duration.ofSeconds(30)); // 인증과 가입 완료 시각을 나눈다
+
+    UUID id = signUpOk(body(newEmail(), ticket));
+
+    Instant completedAt = START.plusSeconds(30);
+    assertThat(optedOutRows(phone)).isZero();
+    Map<String, Object> audit =
+        jdbc.queryForMap(
+            "SELECT id, target_kind, target_id, reason, created_at FROM log.deletion_log"
+                + " WHERE phone_hmac = ?",
+            hmac(phone));
+    assertThat(audit)
+        .containsEntry("target_kind", "SMS_OPT_OUT")
+        .containsEntry("reason", "OWNER_VERIFIED");
+    assertThat(audit.get("target_id")).isNull();
+    assertThat(((Timestamp) audit.get("created_at")).toInstant()).isEqualTo(completedAt);
+    assertThat(createdAtOf(id)).isEqualTo(completedAt);
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM state.outbox WHERE kind = 'AUDIT_WRITE' AND dedupe_key = ?",
+                Integer.class,
+                "audit:" + audit.get("id")))
+        .isOne();
+  }
+
+  @Test
+  void NOTI_8c_거부되지_않은_번호로_가입하면_감사를_남기지_않는다() throws Exception {
+    String phone = newPhone();
+
+    signUpOk(body(newEmail(), ticket(phone, SIGNUP)));
+
+    verify(spiedOptOuts()).releaseForVerifiedOwner(phone, START);
+    assertThat(auditRows(phone)).isZero();
+  }
+
+  @Test
+  void NOTI_8c_인증_코드_발급과_확인만으로는_거부가_풀리지_않는다() {
+    String phone = newPhone();
+    optOut(phone);
+
+    ticket(phone, SIGNUP);
+
+    verify(spiedOptOuts(), never()).releaseForVerifiedOwner(any(), any());
+    assertThat(optedOutRows(phone)).isOne();
+    assertThat(auditRows(phone)).isZero();
+  }
+
+  @Test
+  void NOTI_8c_해제가_실패하면_가입_전체가_되돌아가고_같은_표로_다시_가입할_수_있다() throws Exception {
+    String phone = newPhone();
+    UUID previous = signUpOk(body(newEmail(), ticket(phone, SIGNUP)));
+    clock.advance(Duration.ofSeconds(61)); // 다시 받기 간격
+    optOut(phone);
+    String ticket = ticket(phone, SIGNUP);
+    String email = newEmail();
+    doThrow(new IllegalStateException("해제 실패"))
+        .when(spiedOptOuts())
+        .releaseForVerifiedOwner(any(), any());
+
+    assertThatThrownBy(() -> signups.signUp(request(email, ticket)))
+        .isInstanceOf(IllegalStateException.class);
+
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM state.member WHERE email = ?", Integer.class, email))
+        .isZero();
+    assertThat(phoneOf(previous)).isEqualTo(phone); // ACC-3a 번호 비우기도 되돌아감
+    assertThat(phoneVerifiedAtOf(previous)).isNotNull();
+    assertThat(optedOutRows(phone)).isOne();
+    assertThat(auditRows(phone)).isZero();
+
+    // 인증 표도 쓰지 않은 채로 남아 같은 표로 다시 가입된다(ACC-1f)
+    reset(spiedOptOuts());
+    UUID current = signUpOk(body(email, ticket));
+    assertThat(phoneOf(current)).isEqualTo(phone);
+    assertThat(phoneOf(previous)).isNull();
+    assertThat(optedOutRows(phone)).isZero();
+    assertThat(auditRows(phone)).isOne();
+  }
+
+  @Test
+  void NOTI_8c_거부가_풀려도_번호를_지운_초대_자리는_되살아나지_않는다() throws Exception {
+    String phone = newPhone();
+    optOut(phone);
+    UUID room = UUID.randomUUID();
+    UUID party = UUID.randomUUID();
+    // 호실은 DB가 지우기를 막아(purge owner) 남겨 둔다. ID를 테스트마다 새로 만든다
+    jdbc.update(
+        "INSERT INTO state.region (code, sido, dong) VALUES ('9999999999', '테스트', '테스트동')"
+            + " ON CONFLICT DO NOTHING");
+    jdbc.update(
+        """
+        INSERT INTO state.room_record (id, region_code, alias, status, created_by_side, created_at, version)
+        VALUES (?, '9999999999', '테스트 호실', 'LIVING', 'TENANT', CURRENT_TIMESTAMP, 0)
+        """,
+        room);
+    // 그만 받기로 번호만 지워진 초대 자리(NOTI-8a: INVITED, 번호 없음)
+    jdbc.update(
+        """
+        INSERT INTO state.party (id, room_record_id, side, status, created_at, version)
+        VALUES (?, ?, 'LANDLORD', 'INVITED', CURRENT_TIMESTAMP, 0)
+        """,
+        party,
+        room);
+
+    signUpOk(body(newEmail(), ticket(phone, SIGNUP)));
+
+    assertThat(optedOutRows(phone)).isZero();
+    assertThat(
+            jdbc.queryForMap(
+                "SELECT status, invite_phone, member_id, version FROM state.party WHERE id = ?",
+                party))
+        .containsEntry("status", "INVITED")
+        .containsEntry("invite_phone", null)
+        .containsEntry("member_id", null)
+        .containsEntry("version", 0L);
+  }
+
   // 도움
+
+  private void optOut(String phone) {
+    transaction.executeWithoutResult(status -> smsOptOuts.optOut(phone, START));
+    optedOutHmacs.add(hmac(phone));
+    // 준비에서 부른 등록이 검사에 섞이지 않게 기록을 지운다
+    clearInvocations(spiedOptOuts());
+  }
+
+  /** 스파이 자신. {@code @Transactional} 프록시를 거치면 준비·검사 호출도 MANDATORY 검사에 걸려서 그 안의 대상에 건다. */
+  private SmsOptOuts spiedOptOuts() {
+    return AopTestUtils.getUltimateTargetObject(smsOptOuts);
+  }
+
+  private String hmac(String phone) {
+    return phoneHmacs.phoneHmac(phone);
+  }
+
+  private int optedOutRows(String phone) {
+    return jdbc.queryForObject(
+        "SELECT count(*) FROM state.sms_opt_out WHERE phone_hmac = ?", Integer.class, hmac(phone));
+  }
+
+  private int auditRows(String phone) {
+    return jdbc.queryForObject(
+        "SELECT count(*) FROM log.deletion_log WHERE phone_hmac = ?", Integer.class, hmac(phone));
+  }
+
+  private Instant createdAtOf(UUID memberId) {
+    return jdbc.queryForObject(
+            "SELECT created_at FROM state.member WHERE id = ?", Timestamp.class, memberId)
+        .toInstant();
+  }
+
+  private static String hyphenated(String phone) {
+    return phone.substring(0, 3) + "-" + phone.substring(3, 7) + "-" + phone.substring(7);
+  }
 
   private String ticket(String phone, VerificationPurpose purpose) {
     IssuedCode code = verifications.issue(phone, purpose);
