@@ -17,7 +17,9 @@ import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.EnumSet;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -199,6 +201,36 @@ public class ResponseRequest {
   }
 
   /**
+   * 재통지가 상대에게 닿았다(문자 전달됨·링크 열람, 03 1-1 "미확인이 붙는 조건"). 미확인 기한 {@code unconfirmed_due_at}을 적는다(06 0-1
+   * {@code wait.unconfirmed}: 재통지가 <b>전달된 시각</b>부터). 재통지를 만들거나 보낸 것만으로는 적지 않는다(받지 못한 사람을 미확인으로 몰지
+   * 않음).
+   *
+   * <ul>
+   *   <li>기다림이 아니거나(답함·거둠·닫힘·미확인) 기다림이 시작되지 않았으면 바꾸지 않는다
+   *   <li>이미 적었으면 그대로다. 같은 재통지의 다른 증거(전달 뒤 열람)가 뒤에 와도 늘이거나 당기지 않는다(저장한 기한은 바꾸지 않음, 06 0-1)
+   *   <li>고친 내용 확인·제안에서 재통지 뒤 닿기 전에 더하거나 바꿔 재통지 기한을 다시 셌으면({@link #recount}) 더한 시각부터 72시간(= 다시 센
+   *       재통지 기한 + 미확인)보다 이르지 않게 한다(03 1-4 "기한": 늘어나는 기다림은 더한 쪽만 늦춤)
+   * </ul>
+   *
+   * @return 미확인 기한을 이번에 적었으면 true
+   */
+  public boolean renotifyReached(Instant reachedAt, Duration unconfirmedAfter) {
+    Objects.requireNonNull(reachedAt, "reachedAt");
+    Objects.requireNonNull(unconfirmedAfter, "unconfirmedAfter");
+    if (status != RequestStatus.WAITING || firstNotifiedAt == null || unconfirmedDueAt != null) {
+      return false;
+    }
+    Instant base =
+        RECOUNT_AFTER_RENOTIFY.contains(kind)
+                && renotifyDueAt != null
+                && renotifyDueAt.isAfter(reachedAt)
+            ? renotifyDueAt
+            : reachedAt;
+    unconfirmedDueAt = base.plus(unconfirmedAfter);
+    return true;
+  }
+
+  /**
    * 같은 요청에 더해 기한을 "마지막으로 더한 시각부터 다시 센다"(03 1-4 "기한", 03 E 제안 바꾸기). 혼자 진행이 열리는 종류는 부르지 않는다(기한이 보낸 뒤
    * 고정).
    *
@@ -206,37 +238,49 @@ public class ResponseRequest {
    *   <li>기다림 시작 전(첫 통지가 아직 닿지 않음): 바꿀 기한이 없다. 시작은 그 통지가 닿은 시각부터 센다(더하기는 문자 없이 묶기만 해서 기준은 받은 통지다).
    *       작업자가 전달을 확인한 뒤 적기 전에 더하면 기한이 더한 시각 + 48시간보다 조금 이를 수 있다
    *   <li>재통지 전: {@code renotify_due_at}을 이 시각 + {@code wait.renotify}로 다시 정한다
-   *   <li>재통지 뒤({@code unconfirmed_due_at}이 있음): 재통지와 미확인 타이머(d3)가 아직 없어 "미확인 72시간을 다시 정함"을 어떻게
-   *       저장할지 정하지 않았다. 조용히 옛 기한을 남기지 않고 {@code IllegalStateException}
+   *   <li>재통지가 닿은 뒤({@code unconfirmed_due_at}이 있음): 고친 내용 확인과 제안만 미확인 기한을 이 시각 + {@code
+   *       wait.renotify} + {@code wait.unconfirmed}(72시간)로 다시 정한다(03 1-4 "재통지 뒤면 미확인 72시간을 다시 정함",
+   *       03 E 바꾸기 "1-4 고친 칸 더하기와 같음"). 이미 미확인이 된 그 둘을 다시 기다림으로 돌릴 때({@link #rewait}, 03 1-4 "미확인 뒤
+   *       다시 고침", #313)도 같다: 재통지는 요청당 한 번이라 이미 갔다. 그 밖의 종류(진행 상황 묻기 등)는 저장한 기한을 그대로 둔다(정책 근거가 그
+   *       둘뿐이라 늘이지 않음)
    * </ul>
    */
-  public void recount(Instant at, Duration renotifyAfter) {
+  public void recount(Instant at, Duration renotifyAfter, Duration unconfirmedAfter) {
     Objects.requireNonNull(at, "at");
     Objects.requireNonNull(renotifyAfter, "renotifyAfter");
+    Objects.requireNonNull(unconfirmedAfter, "unconfirmedAfter");
     requireOpen();
-    if (unconfirmedDueAt != null) {
-      throw new IllegalStateException("재통지 뒤 기한 다시 세기는 기다림 타이머(d3)에서 정해요");
-    }
     if (firstNotifiedAt == null) {
       return;
     }
-    renotifyDueAt = at.plus(renotifyAfter);
+    if (unconfirmedDueAt == null) {
+      renotifyDueAt = at.plus(renotifyAfter);
+      return;
+    }
+    if (RECOUNT_AFTER_RENOTIFY.contains(kind)) {
+      renotifyDueAt = at.plus(renotifyAfter);
+      unconfirmedDueAt = renotifyDueAt.plus(unconfirmedAfter);
+    }
   }
+
+  /** 재통지가 닿은 뒤 더하거나 바꾸면 미확인 기한을 다시 정하는 종류(03 1-4 "기한", 03 E 바꾸기). */
+  private static final Set<RequestKind> RECOUNT_AFTER_RENOTIFY =
+      EnumSet.of(RequestKind.CORRECTION_CONFIRM, RequestKind.PROPOSAL);
 
   /**
    * 같은 요청이 다시 기다림이 된다. 두 경우만이다: 제안을 낸 쪽이 자기 안을 바꿨다(05 {@code proposal} ②), 미확인이 된 고친 내용 확인에 같은 기록을
    * 또 고쳤다(03 1-4 "미확인 뒤 다시 고침", decisions 2026-11-27, #104). 요청 ID·만든 시각·첫 통지 시각은 그대로이고, 미확인 때 열린
-   * 혼자 진행 이유는 지운다. 기한은 그 시각부터 다시 센다({@link #recount}, 03 1-4 "기한"·03 E). 타이머가 만든 미확인은 {@code
-   * unconfirmed_due_at}이 있어 {@link #recount}가 거절한다(재통지 뒤 다시 세기는 d3에서 정함).
+   * 혼자 진행 이유는 지운다. 기한은 그 시각부터 다시 센다({@link #recount}, 03 1-4 "기한"·03 E). 재통지가 닿아 만들어진 미확인({@code
+   * unconfirmed_due_at}이 있음)이면 미확인 기한을 그 시각부터 72시간으로 다시 정한다(재통지는 이미 갔다).
    */
-  public void rewait(Instant at, Duration renotifyAfter) {
+  public void rewait(Instant at, Duration renotifyAfter, Duration unconfirmedAfter) {
     requireOpen();
     boolean correctionAgain =
         kind == RequestKind.CORRECTION_CONFIRM && status == RequestStatus.UNCONFIRMED;
     if (kind != RequestKind.PROPOSAL && !correctionAgain) {
       throw new IllegalStateException("다시 기다림은 제안 요청과 미확인 고친 내용 확인만이에요: " + kind);
     }
-    recount(at, renotifyAfter);
+    recount(at, renotifyAfter, unconfirmedAfter);
     status = RequestStatus.WAITING;
     soloReason = null;
   }

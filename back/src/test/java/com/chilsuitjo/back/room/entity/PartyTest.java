@@ -54,6 +54,30 @@ class PartyTest {
   }
 
   @Test
+  void 초대할_때마다_초대_회차가_새로_정해진다() {
+    Party party = emptySeat();
+    assertThat(party.currentInviteId()).isEmpty();
+    party.invite(PHONE);
+    UUID first = party.currentInviteId().orElseThrow();
+    assertThat(first).isNotEqualTo(party.getId());
+    assertThat(party.isCurrentInvite(first)).isTrue();
+    assertThat(party.isCurrentInvite(null)).isFalse();
+
+    party.reject();
+    party.reinvite("01099998888");
+
+    assertThat(party.getStatus()).isEqualTo(PartyStatus.INVITED);
+    assertThat(party.isInvitedPhone("01099998888")).isTrue();
+    assertThat(party.isCurrentInvite(first)).isFalse();
+    assertThat(party.isCurrentInvite(party.currentInviteId().orElseThrow())).isTrue();
+  }
+
+  @Test
+  void 초대됨_거절됨이_아니면_번호를_고쳐_다시_초대할_수_없다() {
+    assertThatThrownBy(() -> emptySeat().reinvite(PHONE)).isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
   void 번호가_없으면_어떤_번호와도_같지_않다() {
     assertThat(emptySeat().isInvitedPhone(null)).isFalse();
     assertThat(emptySeat().isInvitedPhone(PHONE)).isFalse();

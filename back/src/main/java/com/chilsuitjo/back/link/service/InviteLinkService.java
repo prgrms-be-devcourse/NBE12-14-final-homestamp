@@ -14,6 +14,7 @@ import com.chilsuitjo.back.link.rule.LinkKind;
 import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.service.InviteLinks;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -140,6 +141,23 @@ public class InviteLinkService implements InviteLinks {
     // 돌려줄 집합(그 자리의 초대 링크 전부)과 상태를 바꿀 대상(아직 유효한 것)을 나눈다. 이미 무효인 링크는 다시 저장하지 않아 처음 이유·시각이 남는다.
     List<Link> all = links.lockAllForParty(roomRecordId, partyId, LinkKind.INVITE);
     invalidate(all.stream().filter(link -> !link.isInvalidated()).toList(), reason, at);
+    return all.stream().map(Link::getId).toList();
+  }
+
+  @Override
+  @Transactional(propagation = Propagation.MANDATORY)
+  public List<UUID> invalidateIssuedBy(
+      UUID roomRecordId, UUID issuerMemberId, LinkInvalidReason reason, Instant at) {
+    Objects.requireNonNull(roomRecordId, "roomRecordId");
+    Objects.requireNonNull(issuerMemberId, "issuerMemberId");
+    if (reason != LinkInvalidReason.ISSUER_WITHDRAWN) {
+      throw new IllegalArgumentException("발급자 기준 무효는 발급한 사람 탈퇴(ISSUER_WITHDRAWN)만 받아요");
+    }
+    Instant invalidatedAt = Objects.requireNonNull(at, "at").truncatedTo(ChronoUnit.MICROS);
+    roomGateReader.lockAndRead(roomRecordId, Actor.server());
+    // 돌려줄 집합(그 회원이 발급한 링크 전부)과 바꿀 대상(아직 유효한 것)을 나눈다. 이미 무효인 링크의 처음 이유·시각은 그대로다
+    List<Link> all = links.lockAllIssuedBy(roomRecordId, issuerMemberId);
+    invalidate(all.stream().filter(link -> !link.isInvalidated()).toList(), reason, invalidatedAt);
     return all.stream().map(Link::getId).toList();
   }
 

@@ -17,6 +17,7 @@ import {
 import { endpoints } from "./endpoints"
 import { ApiError } from "./errors"
 import type { HttpRequest } from "./http-client"
+import { createHttpPhotoUploads, type PhotoUploadsApi } from "./photo-uploads"
 import {
   eventsFromTimeline,
   getTimeline,
@@ -29,6 +30,7 @@ import {
   roomFromDetail,
   roomFromSummary,
 } from "./http-rooms"
+import { listInvitations, roomFromInvitation } from "./http-invitations"
 import { inspectionIdOf, isMissing, isNone, type RecordsApi } from "./records"
 import type { Session } from "./types"
 
@@ -55,7 +57,11 @@ const atMs = (r: Repair) => (r.createdAt ? Date.parse(r.createdAt) || 0 : 0)
 const newestFirst = (a: Repair, b: Repair) =>
   atMs(b) - atMs(a) || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0)
 
-export function createHttpRecords(request: HttpRequest): RecordsApi {
+// photoUploads: 사진을 함께 보내는 요청(ApiRequest.photos)의 사진을 올려 업로드 표로 바꿔요(06 4-5)
+export function createHttpRecords(
+  request: HttpRequest,
+  photoUploads: PhotoUploadsApi = createHttpPhotoUploads(request),
+): RecordsApi {
   let state: DemoState = emptyState()
   const listeners = new Set<() => void>()
   const emit = () => listeners.forEach((l) => l())
@@ -65,6 +71,9 @@ export function createHttpRecords(request: HttpRequest): RecordsApi {
   const freshAt = new Map<string, number>()
   const newer = (roomId: string, startedAt: number) =>
     (freshAt.get(roomId) ?? 0) > startedAt
+  // 받은 초대 목록도 마지막으로 반영한 받기의 시작 차례를 둬요. 먼저 시작한 전체 받기(load)가 늦게 끝나도
+  // 연결·거절 뒤 새로 받은 목록에서 빠진 초대가 다시 나타나지 않게 해요(#431 리뷰)
+  let invitationsAt = 0
   // 지금 기록의 계정. api는 앱에서 한 번만 만들어 로그아웃 뒤에도 남아요(App.tsx).
   // 다른 계정으로 받기 시작하면 앞 계정의 기록을 모두 비워요. 경과·수리 건은 측마다 보이는 범위가 달라(03 3-1)
   // "앞서 받은 값 두기"가 앞 계정의 값을 보이면 안 돼요(#368 리뷰)
@@ -75,6 +84,7 @@ export function createHttpRecords(request: HttpRequest): RecordsApi {
     owner = s.accountId
     state = emptyState()
     freshAt.clear()
+    invitationsAt = 0
     if (had) emit()
   }
   // 기다리는 사이 계정이 바뀌었으면 그 받기의 값은 버려요
@@ -206,18 +216,38 @@ export function createHttpRecords(request: HttpRequest): RecordsApi {
     }
     return { repairs, repairListAsOf }
   }
+  // 받은 초대(GET /api/invitations, ROOM-5). 실패해도 던지지 않고 오류를 돌려줘요(부른 쪽이 호실을 먼저 반영하게)
+  const fetchInvitations = () =>
+    listInvitations(request).then(
+      (list) => ({ list: list.map(roomFromInvitation) }),
+      (error: unknown) => ({ error }),
+    )
+  // 받은 초대만 다시 받아요. 끝난 초대에 답했을 때 목록에서 빼려고 써요(호실 상세·수리 건·경과는 다시 받지 않아요, #431 리뷰)
+  const loadInvitations = async (s: Session) => {
+    forAccount(s)
+    const startedAt = ++tick
+    const result = await fetchInvitations()
+    if (stale(s) || startedAt <= invitationsAt) return
+    if ("error" in result) throw result.error
+    invitationsAt = startedAt
+    state = { ...state, invitations: result.list }
+    emit()
+  }
   const load = async (s: Session) => {
     forAccount(s)
     const startedAt = ++tick
     // 06 4장의 목록 조회로 받을 수 있는 것: 내 호실, 알림.
     // 호실 화면 칸(입주일·만든 측·행동)은 상세에만 있어 호실마다 상세도 받아요.
     // 수리 건 목록·경과도 호실마다 상세와 함께 받아요(detailOf). 점검·부위 사진·정산은 서버 응답 모양이 정해지면 여기에서 채워요.
+    // 받은 초대(GET /api/invitations, ROOM-5)도 함께 받아요. 초대만 실패하면 앞서 받은 초대를 두고 호실은 반영한 뒤 알려요
+    const invited = fetchInvitations()
     const [summaries, notices] = await Promise.all([
       listAllRooms(request),
       request<unknown>("GET", endpoints.notifications)
         .then(toNotices)
         .catch(unlessNotConnected<Notice[]>([])),
     ])
+    const invitations = await invited
     const before = new Map(state.rooms.map((r) => [r.id, r]))
     const listed = summaries.map((b) =>
       roomFromSummary(b, s.accountId, before.get(b.id)),
@@ -242,6 +272,10 @@ export function createHttpRecords(request: HttpRequest): RecordsApi {
       if (inspections) freshInspections.set(room.id, inspections)
     }
     const repaired = withRepairs(rooms, fresh)
+    // 기다리는 사이 더 늦게 시작한 받기가 받은 초대를 반영했으면 그 값(과 이 받기의 초대 오류)은 버려요
+    const invitationsFresh = startedAt > invitationsAt
+    const takeInvitations = invitationsFresh && "list" in invitations
+    if (takeInvitations) invitationsAt = startedAt
     state = {
       ...state,
       rooms,
@@ -249,10 +283,12 @@ export function createHttpRecords(request: HttpRequest): RecordsApi {
       ...withEvents(rooms, freshTimelines, repaired.repairs),
       ...withInspections(rooms, freshInspections),
       notices,
+      invitations: takeInvitations ? invitations.list : state.invitations,
     }
     emit()
     const failed = results.find((r) => r.error)
     if (failed) throw failed.error
+    if (invitationsFresh && "error" in invitations) throw invitations.error
   }
   // 목록에 없는 호실도 상세를 받아 넣어요. 만든 뒤 목록 다시 받기가 실패해도 새 호실 화면이 열려요(#241 리뷰).
   // 남의 호실·없는 호실(404)이면 넣지 않아 '찾을 수 없는 기록'이 그대로 보여요.
@@ -323,21 +359,48 @@ export function createHttpRecords(request: HttpRequest): RecordsApi {
       if (isNone(c.request)) return {}
       if (isMissing(c.request)) throw notConnected()
       const list = Array.isArray(c.request) ? c.request : [c.request]
-      let made: { id?: string } | undefined
+      // 만들기는 만든 ID(06 4-0), 받은 초대 연결은 이제 내 호실 기록 ID(roomRecordId, 06 4-3 connect)를 돌려줘요
+      let made: { id?: string; roomRecordId?: string | null } | undefined
       const before = state.rooms.find((r) => r.id === c.options.roomId)
       for (const r of list) {
         const e = placeholderError(c.options.roomId, r.path)
         if (e) throw e
       }
       try {
-        for (const r of list)
-          made = await request<{ id?: string } | undefined>("POST", r.path, {
-            body: r.body,
+        for (const r of list) {
+          // 연결 전 주소면 사진을 올리지 않고 http-client가 "연결 전"으로 안내해요(쓰이지 않을 업로드 표를 받지 않게)
+          const body =
+            r.photos && isConnected("POST", r.path)
+              ? {
+                  ...(r.body as Record<string, unknown>),
+                  uploadTickets: await photoUploads.upload(
+                    c.options.roomId,
+                    r.photos,
+                  ),
+                }
+              : r.body
+          made = await request<typeof made>("POST", r.path, {
+            body,
           })
+        }
       } catch (e) {
         // 상대가 먼저 점검을 시작했으면 그 점검을 다시 받아 열어요(06 4-7 INSPECTION_EXISTS "그쪽으로 열게요")
-        if (e instanceof ApiError && e.code === "INSPECTION_EXISTS" && before)
+        // 그사이 상대가 먼저 행동해 지금 상태와 맞지 않으면(INVALID_STATE, 예: 세입자가 먼저 답한 거주 종료 요청)
+        // 호실을 다시 받아 지금 버튼으로 그려요(#445)
+        if (
+          e instanceof ApiError &&
+          (e.code === "INSPECTION_EXISTS" || e.code === "INVALID_STATE") &&
+          before
+        )
           await loadRoom(s, before.id).catch(() => {})
+        // 받은 초대 연결·거절이 더는 받을 수 없는 초대로 거절되면(이미 답함·번호가 바뀜·없는 자리) 받은 초대만 다시 받아
+        // 목록에서 빼요(06 5장 INVALID_STATE "다시 불러올게요"). 번호가 다르면(PHONE_MISMATCH) 서버 문구로 안내만 해요
+        if (
+          e instanceof ApiError &&
+          (e.code === "INVALID_STATE" || e.code === "NOT_FOUND") &&
+          list.some((r) => r.path.startsWith(endpoints.invitations + "/"))
+        )
+          await loadInvitations(s).catch(() => {})
         throw e
       }
       // 보내기는 이미 성공했어요. 다시 받기(목록·상세)가 실패해도 실패로 돌려주지 않아요
@@ -351,7 +414,7 @@ export function createHttpRecords(request: HttpRequest): RecordsApi {
         if (after?.status !== before.status) await load(s)
       }
       await refresh().catch(() => {})
-      return { id: made?.id }
+      return { id: made?.id ?? made?.roomRecordId ?? undefined }
     },
   }
 }

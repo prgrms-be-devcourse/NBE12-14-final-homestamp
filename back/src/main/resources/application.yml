@@ -55,12 +55,25 @@ app:
   notice:
     send:
       retry: 1m,5m,15m
+  room:
+    end:
+      # 호실 상세 availableActions에 거주 종료 행동(move-out·confirm·reject)을 넣을지(#445). 거주 종료 요청 문자·기다림 시작,
+      # 미확인 뒤 적용, 양쪽 거주 종료 안내가 연결되기 전에는 끈다(#421 D 리뷰). API는 그대로이고 켤 때는 이 값만 바꾼다
+      actions-enabled: false
   # 거주 종료 뒤 정산 자동 마감까지(06 0-1 settlement.autoclose-after). 거주 종료 때 room_record.autoclose_due_at으로 저장한다
   settlement:
     autoclose-after: 90d
   # 기다림 기한(06 0-1). 기한은 생길 때 시각으로 저장해서 값을 바꿔도 이미 정한 기한은 그대로다
   wait:
     renotify: 48h
+    # 재통지가 전달된(또는 열린) 뒤 상대 미확인까지(06 0-1 wait.unconfirmed). 재통지가 닿을 때 unconfirmed_due_at으로 저장한다
+    unconfirmed: 24h
+    # 재통지 작업자(06 NOTI-5a). 기본은 꺼 둔다: 요청 → 통지(NOTI-1)와 전달 결과 조회가 운영에서 켜진 뒤에 켠다
+    renotify-worker:
+      enabled: false
+      initial-delay-ms: 5000
+      interval-ms: 60000
+      page-size: 100
   delivery:
     unknown-after: 3d
     # 전달 결과 조회 일정: 보내고 첫 조회, 보내고 두 번째 조회, 그 뒤 조회 간격(06 0-1)
@@ -208,7 +221,7 @@ spring:
   config:
     activate:
       on-profile: prod
-# 운영 문자 스위치는 여기 한 곳에서 정한다: app.sms.mode, app.outbox.worker.enabled, app.delivery.poller.enabled(와 재통지 작업자).
+# 운영 문자 스위치는 여기 한 곳에서 정한다: app.sms.mode, app.outbox.worker.enabled, app.delivery.poller.enabled, app.wait.renotify-worker.enabled(재통지 작업자).
 # SSM은 이 키들을 받지 않고(SsmAppParameterMapper가 무시) 배포 스크립트도 환경 변수로 넘기지 않으므로, 바꾸려면 이 파일을 고친 새 이미지로
 # 다시 배포한다(실행 중 바뀌지 않음). 솔라피 비밀값만 SSM이다
 app:

@@ -64,6 +64,7 @@ class DeliveryResultPollerTest {
   private static final Instant SENT = Instant.parse("2020-01-01T00:00:00Z");
   private static final Duration THREE_DAYS = Duration.ofDays(3);
   private static final Duration RENOTIFY = Duration.ofHours(48);
+  private static final Duration UNCONFIRMED = Duration.ofHours(24);
   private static final Instant DEADLINE = SENT.plus(THREE_DAYS);
   private static final Instant FIRST_POLL = SENT.plus(Duration.ofMinutes(1));
   private static final DeliveryPollSchedule SCHEDULE =
@@ -851,6 +852,47 @@ class DeliveryResultPollerTest {
   }
 
   @Test
+  void 재통지가_전달되면_같은_트랜잭션에서_미확인_기한이_생기고_기다림_시작은_그대로다() {
+    UUID request = linkedRequest("WAITING");
+    Instant started = SENT.minus(RENOTIFY);
+    jdbc.update(
+        "UPDATE response_request SET first_notified_at = ?, renotify_due_at = ? WHERE id = ?",
+        Timestamp.from(started),
+        Timestamp.from(SENT),
+        request);
+    UUID id = linkedNotice(request, "RENOTIFY");
+    fake.respondDelivery(id, DeliveryOutcome.DELIVERED);
+
+    poller(FIRST_POLL, FIRST_POLL.plusSeconds(3), fake).runOnce(50);
+
+    Instant delivered = time(id, "delivered_at");
+    // 06 0-1 wait.unconfirmed(24h): 재통지가 전달된 시각부터
+    assertThat(requestTime(request, "unconfirmed_due_at")).isEqualTo(delivered.plus(UNCONFIRMED));
+    assertThat(requestTime(request, "first_notified_at")).isEqualTo(started);
+    assertThat(requestTime(request, "renotify_due_at")).isEqualTo(SENT);
+    assertThat(requestColumn(request, "status")).isEqualTo("WAITING");
+  }
+
+  @Test
+  void 재통지가_최종_실패하면_미확인_기한이_없다() {
+    // 03 1-1: 받지도 못한 사람을 미확인으로 몰지 않는다
+    UUID request = linkedRequest("WAITING");
+    jdbc.update(
+        "UPDATE response_request SET first_notified_at = ?, renotify_due_at = ? WHERE id = ?",
+        Timestamp.from(SENT.minus(RENOTIFY)),
+        Timestamp.from(SENT),
+        request);
+    UUID failed = linkedNotice(request, "RENOTIFY");
+    fake.respondDelivery(failed, DeliveryOutcome.FAILED);
+
+    poller(FIRST_POLL, FIRST_POLL, fake).runOnce(50);
+
+    assertThat(column(failed, "status")).isEqualTo("FAILED");
+    assertThat(requestTime(request, "unconfirmed_due_at")).isNull();
+    assertThat(requestColumn(request, "status")).isEqualTo("WAITING");
+  }
+
+  @Test
   void 요청_통지가_아닌_통지가_닿는_것은_기다림_시작이_아니다() {
     UUID request = linkedRequest("WAITING");
     List<UUID> others =
@@ -1032,7 +1074,7 @@ class DeliveryResultPollerTest {
     UUID id = linkedNotice(request, "REQUEST");
     fake.respondDelivery(id, DeliveryOutcome.DELIVERED);
     NoticeWaitStart failing =
-        new NoticeWaitStart(notices, requests, rooms, inviteLinks, RENOTIFY) {
+        new NoticeWaitStart(notices, requests, rooms, inviteLinks, RENOTIFY, Duration.ofHours(24)) {
           @Override
           public boolean reached(Notice notice, Instant at) {
             throw new IllegalStateException("기다림 시작 실패");
