@@ -20,8 +20,8 @@ import org.springframework.transaction.annotation.Transactional;
  * auth {@code WithdrawService}가 부른다.
  *
  * <p><b>행동 기록을 남기지 않는다.</b> 탈퇴는 회원 변경(신원 칸 예외)이라 행동이 아니다(05 2-3 "계정(호실 밖)"). 그래서 pipeline의 행동 시각
- * 창구({@code ActionRequestContext})가 열려 있지 않다. 열린 요청 닫기는 D가 시각을 받는 {@code closeAll}을 더한 뒤, 초대 링크 무효는
- * 방법이 정해진 뒤 여기서 부른다(#424).
+ * 창구({@code ActionRequestContext})가 열려 있지 않다. 열린 요청 닫기·발급 링크 무효·보내지 않은 문자 취소는 D가 시각을 받는 메서드를 만든 뒤
+ * auth {@code WithdrawService}가 같은 탈퇴 시각으로 부른다(#424).
  *
  * <p><b>잠금 순서</b>(#424 D 제안): 호실(ID 순) → 회원 행 → 리프레시 토큰. 연결처럼 호실을 먼저 잠그는 흐름과 같은 방향이다. 그래서 두 단계로
  * 나눈다.
