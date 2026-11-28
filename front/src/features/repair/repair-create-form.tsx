@@ -9,14 +9,16 @@ import { PhotoField } from "@/components/common/photo-field"
 import { useApi } from "@/api/hooks"
 import { errorMessage } from "@/api/errors"
 import type { Room } from "@/data/demo"
-import { readZonePart, ZONE_PART_ERROR } from "@/lib/record-commands"
+import { ZONE_PART_ERROR } from "@/lib/record-commands"
+import { splitPartLabel, type RoomPart } from "@/lib/room-parts"
 
 // 같은 곳 재발이면 이전 수리 건과 그 부위로 시작해요(상태와 규칙 D 재발)
 export interface RepairPrefill {
   recurrenceOf: string
   recurrenceTitle?: string
+  // 이전 수리 건의 부위. ID가 없는 이전 기록은 화면 글자("구역 · 부위")로 같은 부위를 찾아요
+  roomPartId?: string
   zone: string
-  part: string
 }
 
 // 하자 등록(S-11, REP-1). 수리 건 API로 보내요(POST /api/rooms/{id}/repair-cases). 판단은 서버(지금은 목업)가 해요.
@@ -35,8 +37,8 @@ export function RepairCreateForm({
   onCancel: () => void
 }) {
   const api = useApi()
-  const [zone, setZone] = useState(prefill?.zone ?? "욕실")
-  const [part, setPart] = useState(prefill?.part ?? "천장")
+  // 부위 칸이 넘긴 부위만 둬요. 이전 수리 건의 부위 ID는 부위 칸이 고를 수 있는지 본 뒤에 넘겨요(#402)
+  const [part, setPart] = useState<RoomPart>()
   const [photos, setPhotos] = useState<string[]>([])
   const [shareChoice, setShareChoice] = useState<"now" | "later" | null>(null)
   const [error, setError] = useState("")
@@ -47,8 +49,7 @@ export function RepairCreateForm({
       onError={setError}
       onCancel={onCancel}
       onSubmit={(text) => {
-        const place = readZonePart(zone, part, text)
-        if (!place) {
+        if (!part) {
           setError(ZONE_PART_ERROR)
           return
         }
@@ -64,7 +65,7 @@ export function RepairCreateForm({
         api.repairCases
           .create({ accountId }, room.id, {
             title: text("title"),
-            zone: `${place.zone} · ${place.part}`,
+            roomPartId: part.id,
             description: text("description"),
             photos,
             recurrenceOf: prefill?.recurrenceOf || undefined,
@@ -80,12 +81,14 @@ export function RepairCreateForm({
         </Notice>
       )}
       <PartField
-        zone={zone}
-        part={part}
-        onChange={(z, p) => {
-          setZone(z)
-          setPart(p)
-        }}
+        roomId={room.id}
+        value={part?.id ?? ""}
+        onChange={setPart}
+        defaultPart={
+          prefill
+            ? { ...splitPartLabel(prefill.zone), id: prefill.roomPartId }
+            : { zone: "욕실", name: "천장" }
+        }
       />
       <div className="field">
         <label htmlFor="title">기록 제목</label>

@@ -74,6 +74,20 @@ public class RepairPhotos {
   }
 
   /**
+   * 업로드 표를 수리 건 사진으로 붙이되 단계를 고른다(사진 추가 {@code ADD_PHOTO}, 06 REP-7g: 수리 전 {@code BEFORE}·수리 후
+   * {@code AFTER}). 그 밖에는 {@link #attach}와 같다.
+   */
+  List<PhotoDigest> attach(
+      ActionCommand command, UUID repairCaseId, PhotoStage stage, List<String> uploadTickets) {
+    return attach(
+        command,
+        repairCaseId,
+        new PhotoTarget.Ref(PhotoTargetType.REPAIR_CASE, repairCaseId),
+        stage,
+        uploadTickets);
+  }
+
+  /**
    * 업로드 표를 진행 상황 사진으로 붙인다. 진행 상황 행은 먼저 DB에 내보내 있어야 한다(사진 행이 그 행을 가리킴). 그 밖에는 {@link #attach}와 같다.
    */
   List<PhotoDigest> attachToNote(

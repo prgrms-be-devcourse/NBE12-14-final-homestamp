@@ -171,6 +171,7 @@ public class RepairTransitions implements Transitions<RepairState> {
       case CLOSE_ALONE -> closeAlone(now, action);
       case ASK_PROGRESS -> askProgress(now, action);
       case NOTE_PROGRESS -> noteProgress(now, action);
+      case ADD_PHOTO -> addPhoto(now, action);
       case CORRECT, RESPOND_CORRECTION -> followCorrection(now, action);
       default -> throw new BusinessException(ErrorCode.INVALID_STATE);
     };
@@ -382,6 +383,17 @@ public class RepairTransitions implements Transitions<RepairState> {
           rerequestInterval);
     }
     return now.withSituationCheck(new SituationCheck(action.createdAt(), check.opening()));
+  }
+
+  /**
+   * 사진 추가(06 REP-7g): 덧붙이기라 같이 확인한 판·하자 인정·수리 진행을 바꾸지 않는다(03 "덧붙이기, 새 기록, 고치기"). 상대가 볼 수 없는 기록이면
+   * 등록한 측만 더할 수 있다. 거주 종료 뒤는 pipeline이 {@code ROOM_ENDED}로({@code ActionType.blockedAfterEnded}),
+   * 공유를 그만둔 사람이 그만두기 전 수리 건에 더하는 것은 저장 방법이 {@code SHARING_STOPPED}로 막는다(03 B, 측마다 달라 상태에 두지 않음).
+   */
+  private static RepairState addPhoto(RepairState now, ActionEntry action) {
+    requireVisible(now, action);
+    requireSide(action);
+    return now;
   }
 
   /** 두 시각 중 늦은 것. 둘 다 없으면 null. */

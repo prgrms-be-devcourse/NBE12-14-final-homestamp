@@ -3,21 +3,27 @@ import { Loader2, LogOut } from "lucide-react"
 import { errorMessage } from "@/api/errors"
 import { Button } from "@/components/ui/button"
 import { FormDialog } from "@/components/common/form-dialog"
-import type { Account } from "@/api/auth"
+import type { Account, AcknowledgementKind } from "@/api/auth"
 import { maskPhone } from "@/lib/phone"
+import { ACKNOWLEDGEMENT_LABELS } from "@/features/member/terms-text"
 
-// 내 계정(이름·이메일·인증한 휴대폰)과 로그아웃. 보내는 칸이 없어 아래 버튼 줄도 없어요.
+const KINDS = Object.keys(ACKNOWLEDGEMENT_LABELS) as AcknowledgementKind[]
+
+// 내 계정(이름·이메일·인증한 휴대폰), 약관·확인 항목, 로그아웃. 보내는 칸이 없어 아래 버튼 줄도 없어요.
 export function AccountPanel({
   account,
   roomCount,
   invitationCount,
   onLogout,
+  onOpenTerms,
   onCancel,
 }: {
   account: Account
   roomCount: number
   invitationCount: number
   onLogout: () => Promise<void>
+  // 약관 다시 확인 창을 열어요(06 S-18 [다시 확인], CONS-4)
+  onOpenTerms: () => void
   onCancel: () => void
 }) {
   const [busy, setBusy] = useState(false)
@@ -33,6 +39,7 @@ export function AccountPanel({
       setBusy(false)
     }
   }
+  const pending = account.pendingAcknowledgements
   return (
     <FormDialog
       title="내 계정"
@@ -60,6 +67,31 @@ export function AccountPanel({
         <p className="muted">
           연결된 호실 {roomCount}곳 · 받은 초대 {invitationCount}건
         </p>
+        {/* 06 S-18 "약관·처리방침". 서버가 알려 주는 것은 다시 확인할 새 판뿐이라 그것만 판을 보여 줘요.
+            옛 판·바뀐 점은 실제로 제공된 문구가 없어 보여 주지 않아요 */}
+        <section aria-labelledby="account-terms" className="space-y-2">
+          <h3 id="account-terms" className="font-medium">
+            약관·확인 항목
+          </h3>
+          <dl className="svc-facts">
+            {KINDS.map((kind) => {
+              const p = pending.find((x) => x.kind === kind)
+              return (
+                <div key={kind}>
+                  <dt>{ACKNOWLEDGEMENT_LABELS[kind]}</dt>
+                  <dd>
+                    {p ? `새 판 ${p.textVersion} · 확인 전` : "확인했어요"}
+                  </dd>
+                </div>
+              )
+            })}
+          </dl>
+          {pending.length > 0 && (
+            <Button type="button" className="w-full" onClick={onOpenTerms}>
+              다시 확인
+            </Button>
+          )}
+        </section>
         <Button
           type="button"
           variant="outline"

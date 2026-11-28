@@ -192,7 +192,10 @@ export function Timeline({
         ? e.text.slice(stripTitle.length + 3)
         : e.text
     let subject: string | undefined
-    if (!stripTitle && e.target) {
+    // 서버 경과 줄은 대상 이름을 글자와 따로 둬요(http-timeline). 상세(stripTitle)에서는 대상 이름을 보이지 않아요
+    if (e.subject !== undefined) {
+      if (!stripTitle) subject = e.subject
+    } else if (!stripTitle && e.target) {
       const [first, ...others] = body.split(" · ")
       if (others.length) {
         subject = first
@@ -253,7 +256,9 @@ export function Timeline({
                 <div className="min-w-0 flex-1">
                   <div className="history-meta">
                     <span className="history-who">
-                      {g.by === "서버 자동" ? g.by : sideText(g.by)}
+                      {g.by === "서버 자동" || g.by === "운영"
+                        ? g.by
+                        : sideText(g.by)}
                     </span>
                     <time title={g.at}>{g.time}</time>
                   </div>

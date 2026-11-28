@@ -18,6 +18,7 @@ import com.chilsuitjo.back.notification.repository.SmsGateway;
 import com.chilsuitjo.back.notification.rule.DeliveryOutcome;
 import com.chilsuitjo.back.notification.rule.DeliveryPollSchedule;
 import com.chilsuitjo.back.notification.rule.NoticeKind;
+import com.chilsuitjo.back.notification.service.FakeSmsOptOuts;
 import com.chilsuitjo.back.notification.service.InMemoryRecipientDirectory;
 import com.chilsuitjo.back.notification.service.InviteLinks;
 import com.chilsuitjo.back.notification.service.NoticeOutbox;
@@ -474,6 +475,7 @@ class SmsCancellationServiceTest {
             noticeRepository,
             inviteLinks,
             directory,
+            new FakeSmsOptOuts(),
             never,
             clock,
             transactionManager,
@@ -573,6 +575,7 @@ class SmsCancellationServiceTest {
             noticeRepository,
             inviteLinks,
             recipients,
+            new FakeSmsOptOuts(),
             blocking,
             clock,
             transactionManager,

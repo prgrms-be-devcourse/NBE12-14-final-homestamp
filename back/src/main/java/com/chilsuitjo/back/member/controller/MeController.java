@@ -1,6 +1,7 @@
 package com.chilsuitjo.back.member.controller;
 
 import com.chilsuitjo.back.global.security.LoginMember;
+import com.chilsuitjo.back.member.dto.AgreementsRequest;
 import com.chilsuitjo.back.member.dto.MeResponse;
 import com.chilsuitjo.back.member.dto.MeUpdateRequest;
 import com.chilsuitjo.back.member.service.MeService;
@@ -33,5 +34,15 @@ public class MeController {
   public MeResponse update(
       @LoginMember UUID memberId, @Valid @RequestBody MeUpdateRequest request) {
     return meService.update(memberId, request);
+  }
+
+  /**
+   * 바뀐 약관·확인 항목을 다시 확인하고 200과 내 정보(CONS-4). 이미 그 판으로 확인한 항목은 다시 남기지 않는다. 같은 종류가 두 번이거나 칸이 틀리면
+   * {@code VALIDATION_FAILED}(400), 지금 판이 아니면 {@code VERSION_CONFLICT}(409).
+   */
+  @PostMapping("/api/me/agreements")
+  public MeResponse acknowledge(
+      @LoginMember UUID memberId, @Valid @RequestBody AgreementsRequest request) {
+    return meService.acknowledge(memberId, request);
   }
 }

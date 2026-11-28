@@ -14,7 +14,8 @@ export function lastActivity(r: Repair, events: Event[]) {
       (e) =>
         e.target?.kind === "repair" &&
         e.target.id === r.id &&
-        e.by !== "서버 자동",
+        e.by !== "서버 자동" &&
+        e.by !== "운영",
     )
     .map((e) => recordTimeMs(e.at))
     .filter((t): t is number => t !== undefined)

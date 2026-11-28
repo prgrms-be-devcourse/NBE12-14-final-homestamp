@@ -11,16 +11,19 @@ import com.chilsuitjo.back.notification.dto.SoloCheck;
 import com.chilsuitjo.back.notification.dto.SoloQuery;
 import com.chilsuitjo.back.notification.entity.ResponseRequest;
 import com.chilsuitjo.back.notification.repository.ResponseRequestRepository;
+import com.chilsuitjo.back.notification.rule.CloseAllScope;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.rule.RequestStatus;
 import com.chilsuitjo.back.notification.rule.SoloReason;
 import com.chilsuitjo.back.notification.rule.SoloRule;
+import java.time.Duration;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,16 +39,16 @@ import org.springframework.transaction.annotation.Transactional;
  * <p><b>아직 하지 않는 것.</b>
  *
  * <ul>
- *   <li>통지·문자: 요청을 열어도 통지를 만들지 않는다(요청 → 통지 연결은 NOTI-1, #100). 그래서 {@code first_notified_at}·기한은 비어
- *       있고 요청은 {@code WAITING}에서 넘어가지 않는다
- *   <li>기한 다시 세기({@code restart}의 "다시 센다"): 기한을 정하는 코드가 아직 없어 기한이 있으면 조용히 옛 기한을 남기지 않고 {@code
- *       IllegalStateException}이다(기다림 타이머 d3에서 정함)
- *   <li>{@link #closeAll}: 닫는 범위가 #113에서 아직 정해지지 않았고 부르는 곳도 없어 {@code
+ *   <li>통지·문자: 요청을 열어도 통지를 만들지 않는다(요청 → 통지 연결은 NOTI-1, #100). 기다림 시작({@code first_notified_at}·재통지
+ *       기한)은 요청에 걸린 통지가 닿을 때 {@link NoticeWaitStart}가 적는다. 재통지·미확인 작업자가 없어 요청은 {@code WAITING}에서
+ *       넘어가지 않는다
+ *   <li>재통지 뒤 기한 다시 세기: {@code unconfirmed_due_at}이 있으면 {@code IllegalStateException}이다(기다림 타이머
+ *       d3에서 정함)
+ *   <li>{@link #closeAll}: 상대 탈퇴와 거주 종료(#370 B-1)만 닫고, 공유 중단·정산 완료는 #113에서 정하기 전이라 {@code
  *       UnsupportedOperationException}이다
  * </ul>
  */
 @Service
-@RequiredArgsConstructor
 public class JpaWaitService implements WaitService, WaitQuery {
 
   private static final Set<RequestStatus> OPEN =
@@ -54,6 +57,18 @@ public class JpaWaitService implements WaitService, WaitQuery {
   private final ResponseRequestRepository requests;
   private final CounterpartReader counterparts;
   private final ActionRequestContext requestContext;
+  private final Duration renotifyAfter;
+
+  public JpaWaitService(
+      ResponseRequestRepository requests,
+      CounterpartReader counterparts,
+      ActionRequestContext requestContext,
+      @Value("${app.wait.renotify:48h}") Duration renotifyAfter) {
+    this.requests = requests;
+    this.counterparts = counterparts;
+    this.requestContext = requestContext;
+    this.renotifyAfter = WaitDurations.require(renotifyAfter, "app.wait.renotify");
+  }
 
   @Override
   @Transactional(propagation = Propagation.MANDATORY)
@@ -117,15 +132,16 @@ public class JpaWaitService implements WaitService, WaitQuery {
         throw new IllegalStateException(
             "상대 쪽 제안 요청이 열려 있어요. 역제안이면 answered 다음 open을 불러 주세요(05 proposal ③)");
       }
-      request.rewait();
+      request.rewait(requestContext.at(), renotifyAfter);
     } else if (command.kind() == RequestKind.CORRECTION_CONFIRM
         && request.getStatus() == RequestStatus.UNCONFIRMED) {
       // 미확인 뒤 같은 기록을 또 고치면 새 요청을 열지 않고 같은 요청이 다시 기다림이 된다(03 1-4 "미확인 뒤 다시 고침", #104)
-      request.rewait();
-    } else if (!SoloRule.opensSolo(command.kind())) {
-      // 고친 내용 확인 등은 마지막으로 더한 시각부터 다시 센다(03 1-4 "기한"). 기한을 정하는 타이머 전이라 기한이 있으면 거절한다.
-      // 혼자 진행이 열리는 종류는 기한이 보낸 뒤 고정이라 묶기만 한다(미확인이어도 상태 그대로)
-      request.requireNoDeadline();
+      request.rewait(requestContext.at(), renotifyAfter);
+    } else if (!SoloRule.opensSolo(command.kind())
+        && request.getStatus() == RequestStatus.WAITING) {
+      // 고친 내용 확인 등은 마지막으로 더한 시각부터 다시 센다(03 1-4 "기한"). 혼자 진행이 열리는 종류는 기한이 보낸 뒤 고정이라 묶기만
+      // 한다(미확인이어도 상태·기한 그대로)
+      request.recount(requestContext.at(), renotifyAfter);
     }
     return new RequestHandle(request.getId(), false);
   }
@@ -141,10 +157,26 @@ public class JpaWaitService implements WaitService, WaitQuery {
     }
   }
 
-  /** 닫는 범위가 #113에서 정해지지 않아 구현하지 않는다. 부르는 곳이 없고, 조용히 0을 돌려주면 닫히지 않은 요청이 남는다. */
+  /**
+   * 정해진 범위({@link CloseAllScope}: 상대 탈퇴, 거주 종료)만 닫는다. 그 밖의 이유는 #113에서 정하기 전이라 {@code
+   * UnsupportedOperationException}이다(조용히 0을 돌려주면 닫히지 않은 요청이 남음). 닫힌 시각은 행동 시각이고, 부르는 쪽이 호실을 잠근
+   * {@code save} 안에서 부른다.
+   */
   @Override
+  @Transactional(propagation = Propagation.MANDATORY)
   public int closeAll(UUID roomRecordId, ClosedReason reason, Set<RequestKind> kinds) {
-    throw new UnsupportedOperationException("closeAll은 #113에서 닫는 범위를 정한 뒤 구현해요");
+    Map<RequestKind, Set<RequestStatus>> targets = CloseAllScope.targets(reason, kinds);
+    Set<RequestStatus> anyStatus = EnumSet.noneOf(RequestStatus.class);
+    targets.values().forEach(anyStatus::addAll);
+    List<ResponseRequest> open =
+        requests.findInRoom(roomRecordId, targets.keySet(), anyStatus).stream()
+            .filter(r -> targets.get(r.getKind()).contains(r.getStatus()))
+            .toList();
+    if (!open.isEmpty()) {
+      var at = requestContext.at();
+      open.forEach(r -> r.close(reason, at));
+    }
+    return open.size();
   }
 
   @Override
@@ -218,7 +250,7 @@ public class JpaWaitService implements WaitService, WaitQuery {
     return open.stream().findFirst();
   }
 
-  private static RequestView view(ResponseRequest r) {
+  static RequestView view(ResponseRequest r) {
     return new RequestView(
         r.getKind(),
         r.target(),

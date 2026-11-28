@@ -25,6 +25,7 @@ import com.chilsuitjo.back.room.service.RoomAccessService;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -156,6 +157,89 @@ class RoomCreateApiTest {
       assertThat(part.get("enabled")).isEqualTo(true);
       assertThat(part.get("hidden_at")).isNull();
     }
+  }
+
+  @Test
+  void 상대_번호를_넣으면_반대쪽_자리가_번호만이고_초대도_문자도_없다() throws Exception {
+    UUID member = member(newPhone());
+
+    UUID room =
+        created(
+            create(member, key(), body("TENANT", region, alias(), null, "010-1234 5678"))
+                .andExpect(status().isCreated()));
+
+    assertThat(seats(room))
+        .containsExactlyInAnyOrder(
+            List.of("TENANT", member.toString(), "CONNECTED"),
+            List.of("LANDLORD", "-", "NUMBER_ONLY"));
+    // 숫자만 남겨 저장한다(06 4-0 "전화번호")
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT invite_phone FROM state.party WHERE room_record_id = ? AND side = 'LANDLORD'",
+                String.class,
+                room))
+        .isEqualTo("01012345678");
+    // 첫 문자는 초대할 때(03 B): 링크·통지·초대 행동이 생기지 않는다
+    assertThat(count("SELECT count(*) FROM state.link WHERE room_record_id = ?", room)).isZero();
+    assertThat(count("SELECT count(*) FROM state.notice WHERE room_record_id = ?", room)).isZero();
+    // 번호는 행동 기록에 남기지 않는다(04 "개인정보 로그")
+    assertThat(
+            jdbc.queryForList(
+                "SELECT type, payload FROM record.action WHERE room_record_id = ?", room))
+        .singleElement()
+        .satisfies(action -> {
+          assertThat(action.get("type")).isEqualTo("CREATE_ROOM");
+          assertThat(action.get("payload")).isNull();
+        });
+  }
+
+  @Test
+  void 상대_번호가_비었거나_공백뿐이면_빈_자리로_만든다() throws Exception {
+    UUID member = member(newPhone());
+
+    for (String blank : new String[] {"", "   "}) {
+      UUID room =
+          created(
+              create(member, key(), body("LANDLORD", region, alias(), null, blank))
+                  .andExpect(status().isCreated()));
+      assertThat(seats(room)).contains(List.of("TENANT", "-", "EMPTY"));
+    }
+  }
+
+  @Test
+  void 휴대폰_번호가_아니면_VALIDATION_FAILED이고_아무것도_남지_않는다() throws Exception {
+    UUID member = member(newPhone());
+
+    for (String phone : List.of("02-123-4567", "0101234", "01512345678", "abc")) {
+      create(member, key(), body("TENANT", region, alias(), null, phone))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
+    assertThat(roomsOf(member)).isZero();
+  }
+
+  @Test
+  void 내_인증_번호를_상대_번호로_넣으면_SELF_INVITE이고_아무것도_남지_않는다() throws Exception {
+    String mine = newPhone();
+    UUID member = member(mine);
+    String dashed = mine.substring(0, 3) + "-" + mine.substring(3, 7) + "-" + mine.substring(7);
+
+    create(member, key(), body("TENANT", region, alias(), null, dashed))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("SELF_INVITE"));
+    assertThat(roomsOf(member)).isZero();
+  }
+
+  @Test
+  void 인증_번호가_없는_회원도_상대_번호를_넣을_수_있다() throws Exception {
+    UUID member = member();
+
+    UUID room =
+        created(
+            create(member, key(), body("TENANT", region, alias(), null, newPhone()))
+                .andExpect(status().isCreated()));
+
+    assertThat(seats(room)).contains(List.of("LANDLORD", "-", "NUMBER_ONLY"));
   }
 
   @Test
@@ -408,6 +492,11 @@ class RoomCreateApiTest {
   }
 
   private static String body(String side, String regionCode, String alias, String moveInDate) {
+    return body(side, regionCode, alias, moveInDate, null);
+  }
+
+  private static String body(
+      String side, String regionCode, String alias, String moveInDate, String counterpartPhone) {
     return "{"
         + field("side", side)
         + ","
@@ -416,6 +505,8 @@ class RoomCreateApiTest {
         + field("alias", alias)
         + ","
         + field("moveInDate", moveInDate)
+        + ","
+        + field("counterpartPhone", counterpartPhone)
         + "}";
   }
 
@@ -430,6 +521,25 @@ class RoomCreateApiTest {
             + " VALUES (?, 'ACTIVE', CURRENT_TIMESTAMP, 0)",
         id);
     return id;
+  }
+
+  /** 이 번호를 인증해 둔 회원. */
+  private UUID member(String verifiedPhone) {
+    UUID id = UUID.randomUUID();
+    jdbc.update(
+        "INSERT INTO state.member (id, phone, phone_verified_at, status, created_at, version)"
+            + " VALUES (?, ?, CURRENT_TIMESTAMP, 'ACTIVE', CURRENT_TIMESTAMP, 0)",
+        id,
+        verifiedPhone);
+    return id;
+  }
+
+  private static String newPhone() {
+    return "010" + String.format("%08d", ThreadLocalRandom.current().nextInt(100_000_000));
+  }
+
+  private int count(String sql, UUID room) {
+    return jdbc.queryForObject(sql, Integer.class, room);
   }
 
   /** [측, 회원 ID 또는 "-", 상태]. */

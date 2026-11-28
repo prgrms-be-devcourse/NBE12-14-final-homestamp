@@ -11,7 +11,9 @@ import {
 } from "@/data/demo"
 import {
   addCauseNote,
+  addProgressNote,
   addRepairPhotos,
+  askProgress,
   confirmClose,
   confirmDefect,
   confirmSoloClosed,
@@ -20,6 +22,7 @@ import {
   requestClose,
   respondCauseNote,
   respondDefect,
+  respondProgressNote,
   roomSoloReason,
   soloClose,
   startRepair,
@@ -28,6 +31,7 @@ import {
 } from "@/lib/repair-rules"
 import { canAccessRoom, logRepairNotice, sideOf } from "@/lib/workflows"
 import { versionOf } from "@/lib/versions"
+import { partLabel } from "@/lib/room-parts"
 import { recordAction, type MockStore } from "./store"
 import { repairAvailableActions } from "./repair-actions"
 import { roomAvailableActions } from "./room-actions"
@@ -51,8 +55,18 @@ export function createMockRepairCases(store: MockStore): RepairCasesApi {
     room.status === "정산 완료" || Boolean(room.preJoinOf)
   function view(s: Session, id: string): RepairCaseView {
     const { repair, room, role } = locate(s, id)
+    const shown = structuredClone(repair)
+    // 진행 상황마다 답할 수 있는지는 서버처럼 보는 사람에 따라 정해요(06 4-6 canRespond)
+    shown.progressNotes = shown.progressNotes?.map((n) => ({
+      ...n,
+      canRespond:
+        !readOnly(room) &&
+        n.asksCheck &&
+        n.by !== role &&
+        n.response?.answer !== "맞아요",
+    }))
     return {
-      repair: structuredClone(repair),
+      repair: shown,
       availableActions: repairAvailableActions(repair, room, role, {
         readOnly: readOnly(room),
       }),
@@ -245,6 +259,23 @@ export function createMockRepairCases(store: MockStore): RepairCasesApi {
           )
         if (!b.title.trim())
           return fail(400, "VALIDATION_FAILED", "제목을 입력해 주세요.")
+        // 부위(06 4-6): 그 호실의 부위가 아니면 NOT_FOUND, 숨긴 부위·꺼 둔 설비·가전은 VALIDATION_FAILED(ROOM-3a·3d)
+        if (!b.roomPartId)
+          return fail(400, "VALIDATION_FAILED", "부위를 골라 주세요.")
+        const part = d.roomParts?.[roomId]?.find((p) => p.id === b.roomPartId)
+        if (!part) return fail(404, "NOT_FOUND", "이 호실의 부위가 아니에요.")
+        if (part.hidden)
+          return fail(
+            400,
+            "VALIDATION_FAILED",
+            "숨긴 부위예요. 다시 보이게 한 뒤 등록해 주세요.",
+          )
+        if (!part.enabled)
+          return fail(
+            400,
+            "VALIDATION_FAILED",
+            "꺼 둔 설비·가전이에요. 켠 뒤 등록해 주세요.",
+          )
         if (!b.photos.length)
           return fail(
             400,
@@ -261,7 +292,8 @@ export function createMockRepairCases(store: MockStore): RepairCasesApi {
               id,
               roomId,
               title: b.title,
-              zone: b.zone,
+              roomPartId: part.id,
+              zone: partLabel(part),
               description: b.description,
               photos: b.photos,
               art: "wall",
@@ -325,6 +357,45 @@ export function createMockRepairCases(store: MockStore): RepairCasesApi {
           (r, role) =>
             `원인 설명${(r.causes || []).some((c) => c.by === role && !c.supersededBy) ? " · 새 설명" : ""} · 근거 ${b.basis}`,
           (r, role) => addCauseNote(r, role, b, causeId),
+        )
+      }),
+    askProgress: (s, id) =>
+      later(() =>
+        command(
+          s,
+          id,
+          "ask-progress",
+          () => "진행 상황 묻기",
+          (r) => askProgress(r),
+        ),
+      ),
+    addProgressNote: (s, id, b) =>
+      later(() => {
+        const noteId = uid()
+        return command(
+          s,
+          id,
+          "progress-notes",
+          () =>
+            `진행 상황${b.asksCheck ? " · 상황이 바뀌었어요" : ""}${b.text.trim() ? ` · ${b.text.trim()}` : ""}`,
+          (r, role) => addProgressNote(r, role, b, noteId),
+        )
+      }),
+    respondProgressNote: (s, id, noteId, b) =>
+      later(() => {
+        const answer =
+          b.answer === "ACK"
+            ? "맞아요"
+            : b.answer === "NEED_MORE"
+              ? "보류"
+              : "이견"
+        return command(
+          s,
+          id,
+          "progress-notes",
+          () => `바뀐 상황 응답 · ${answer}${b.reason ? ` · ${b.reason}` : ""}`,
+          (r, role) =>
+            respondProgressNote(r, role, noteId, answer, b.reason ?? ""),
         )
       }),
     respondCauseNote: (s, id, causeId, b) =>

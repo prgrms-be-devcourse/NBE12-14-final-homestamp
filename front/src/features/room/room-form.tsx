@@ -4,12 +4,12 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { FormDialog } from "@/components/common/form-dialog"
 import { post, roomSide } from "@/api/records"
 import { endpoints } from "@/api/endpoints"
-import { useApi } from "@/api/hooks"
 
 import type { Account } from "@/api/auth"
 import { uid, type Role } from "@/data/demo"
 import { RegionPicker } from "@/features/room/region-picker"
 import { todayKey } from "@/lib/workflows"
+import { copyDefaultParts } from "@/lib/room-parts"
 import { type Send } from "@/lib/record-commands"
 import {
   isMobilePhone,
@@ -37,8 +37,6 @@ export function RoomForm({
 }) {
   const [side, setSide] = useState<Role>(initialSide)
   const [error, setError] = useState("")
-  // 서버는 만들 때 상대 번호를 아직 받지 않아요(초대 ROOM-4에서 받음, #163). HTTP에서는 칸을 숨기고 초대 때 넣게 안내해요.
-  const askPhone = useApi().mode === "mock"
   return (
     <FormDialog
       title="호실 기록 만들기"
@@ -66,17 +64,19 @@ export function RoomForm({
         // 입주일도 비워 두면 그대로 비워 둬요(자동 날짜 없음). 입주 점검을 시작할 때 묻는 것은 INSP-2b
         const id = uid()
         // 처음 입력한 상대 번호는 이 호실의 기준 연락처로 저장만 하고, 초대·연결은 하지 않아요.
+        // 서버는 상대 자리를 번호만(NUMBER_ONLY)으로 두고 문자를 보내지 않아요(06 4-3, 첫 문자는 초대할 때).
         const me = account.id
         const name = text("title"),
           address = text("address"),
           since = text("date")
         void send(
-          // 서버 모양(06 4-3, CreateRoomRequest). 목업이 쓰는 상대 번호는 아래 update에만 넣어요.
+          // 서버 모양(06 4-3, CreateRoomRequest). 비운 번호는 보내지 않아요(서버는 빈 자리 EMPTY로 만들어요).
           post(endpoints.rooms, {
             side: roomSide(side),
             regionCode: text("regionCode"),
             alias: name,
             moveInDate: since || undefined,
+            counterpartPhone: phone || undefined,
           }),
           side,
           "새 호실 기록 만들기",
@@ -94,6 +94,8 @@ export function RoomForm({
               members: { [side]: me },
               phone: phone || undefined,
             })
+            // 서버처럼 기본 부위 29개를 이 호실의 부위로 복사해요(ROOM-1a). 호실마다 새 부위 ID예요
+            d.roomParts = { ...d.roomParts, [id]: copyDefaultParts() }
           },
           { roomId: id, notify: false },
         ).then((done) => {
@@ -171,30 +173,23 @@ export function RoomForm({
               비워 두면 입주 점검을 시작할 때 물어요.
             </small>
           </div>
-          {askPhone ? (
-            <div className="field">
-              <label htmlFor="room-phone">
-                {side === "임차인" ? "집주인" : "세입자"} 휴대폰 번호 · 선택
-              </label>
-              <Input
-                id="room-phone"
-                name="phone"
-                type="tel"
-                inputMode="numeric"
-                autoComplete="off"
-                className="bg-white"
-                placeholder="초대할 때 넣어도 돼요"
-              />
-              <small className="muted">
-                번호를 넣어도 바로 초대되지 않아요. 초대할 때 이 번호를 써요.
-              </small>
-            </div>
-          ) : (
-            <p className="muted m-0 self-end text-[13px]">
-              {side === "임차인" ? "집주인" : "세입자"} 휴대폰 번호는 상대를
-              초대할 때 넣을 수 있어요.
-            </p>
-          )}
+          <div className="field">
+            <label htmlFor="room-phone">
+              {side === "임차인" ? "집주인" : "세입자"} 휴대폰 번호 · 선택
+            </label>
+            <Input
+              id="room-phone"
+              name="phone"
+              type="tel"
+              inputMode="numeric"
+              autoComplete="off"
+              className="bg-white"
+              placeholder="초대할 때 넣어도 돼요"
+            />
+            <small className="muted">
+              번호를 넣어도 바로 초대되지 않아요. 초대할 때 이 번호를 써요.
+            </small>
+          </div>
         </div>
       </section>
     </FormDialog>

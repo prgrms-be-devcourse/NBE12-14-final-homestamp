@@ -14,6 +14,8 @@ import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.dto.RequestView;
 import com.chilsuitjo.back.notification.dto.SoloCheck;
 import com.chilsuitjo.back.notification.dto.SoloQuery;
+import com.chilsuitjo.back.notification.repository.ResponseRequestRepository;
+import com.chilsuitjo.back.notification.rule.CloseAllScope;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.rule.RequestStatus;
 import com.chilsuitjo.back.notification.rule.SoloReason;
@@ -21,8 +23,12 @@ import com.chilsuitjo.back.notification.service.JpaWaitService;
 import com.chilsuitjo.back.notification.service.WaitService;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import java.sql.Timestamp;
+import java.time.Duration;
 import java.time.Instant;
+import java.util.EnumSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
@@ -39,6 +45,7 @@ class JpaWaitServiceTest extends SchemaTestSupport {
 
   @Autowired private JpaWaitService waits;
   @Autowired private ActionRequestContext requestContext;
+  @Autowired private ResponseRequestRepository requests;
   @PersistenceContext private EntityManager entityManager;
 
   @Test
@@ -221,6 +228,60 @@ class JpaWaitServiceTest extends SchemaTestSupport {
   }
 
   @Test
+  void 기다림이_시작된_고친_내용_확인에_더하면_더한_시각부터_재통지_기한을_다시_센다() {
+    UUID room = room();
+    RequestTarget repair = repairCase(room);
+    RequestHandle request = open(room, RequestKind.CORRECTION_CONFIRM, repair, PartySide.TENANT);
+    started(request.requestId(), AT);
+
+    restart(room, RequestKind.CORRECTION_CONFIRM, repair, PartySide.TENANT);
+
+    // 03 1-4 "기한": 재통지 전이면 재통지 48시간을 마지막으로 더한 시각부터 다시 정함
+    assertThat(row(request.requestId()))
+        .containsEntry("renotify_due_at", Timestamp.from(LATER.plus(Duration.ofHours(48))))
+        .containsEntry("first_notified_at", Timestamp.from(AT));
+  }
+
+  @Test
+  void 기다림이_시작된_열리는_요청은_보충해도_기한이_그대로다() {
+    UUID room = room();
+    RequestTarget repair = repairCase(room);
+    RequestHandle defect = open(room, RequestKind.DEFECT_CONFIRM, repair, PartySide.TENANT);
+    started(defect.requestId(), AT);
+
+    restart(room, RequestKind.DEFECT_CONFIRM, repair, PartySide.TENANT);
+
+    // 03 1-4 "열리는 요청의 기한은 보낸 뒤 고정"
+    assertThat(row(defect.requestId()))
+        .containsEntry("renotify_due_at", Timestamp.from(AT.plus(Duration.ofHours(48))));
+  }
+
+  @Test
+  void 재통지_뒤_미확인이_된_고친_내용에_더하면_기한_다시_세기를_타이머_전이라_거절한다() {
+    UUID room = room();
+    RequestTarget repair = repairCase(room);
+    RequestHandle request = open(room, RequestKind.CORRECTION_CONFIRM, repair, PartySide.TENANT);
+    entityManager.flush();
+    jdbc.update(
+        "UPDATE state.response_request SET status = 'UNCONFIRMED', first_notified_at = ?,"
+            + " unconfirmed_due_at = ? WHERE id = ?",
+        Timestamp.from(AT),
+        Timestamp.from(AT.plus(Duration.ofHours(72))),
+        request.requestId());
+    entityManager.clear();
+
+    // 같은 요청을 다시 기다림으로 돌리는 것은 정했지만(#104), 재통지 뒤 "미확인 72시간을 다시 정함"(03 1-4 "기한")을 어떻게 저장할지는
+    // 기다림 타이머(d3)에서 정한다. 조용히 옛 기한을 남기지 않고 거절한다. 타이머 전이라 운영에서는 미확인이 생기지 않는다
+    assertThatThrownBy(
+            () -> restart(room, RequestKind.CORRECTION_CONFIRM, repair, PartySide.TENANT))
+        .isInstanceOf(IllegalStateException.class);
+    entityManager.clear();
+    assertThat(row(request.requestId()))
+        .containsEntry("status", "UNCONFIRMED")
+        .containsEntry("unconfirmed_due_at", Timestamp.from(AT.plus(Duration.ofHours(72))));
+  }
+
+  @Test
   void 호실_단계에서_열_수_없는_종류는_restart가_거절한다() {
     UUID room = room();
     jdbc.update(
@@ -236,13 +297,146 @@ class JpaWaitServiceTest extends SchemaTestSupport {
   }
 
   @Test
-  void 일괄_닫기는_범위가_정해지기_전이라_조용히_넘어가지_않는다() {
+  void 정하지_않은_범위의_호실_전체_닫기는_조용히_넘기지_않고_예외다() {
     UUID room = room();
 
-    assertThatThrownBy(() ->
-            waits.closeAll(
-                room, ClosedReason.ROOM_ENDED, java.util.Set.of(RequestKind.DEFECT_CONFIRM)))
+    assertThatThrownBy(
+            () -> closeAll(room, ClosedReason.SHARING_STOPPED, Set.of(RequestKind.DEFECT_CONFIRM)))
         .isInstanceOf(UnsupportedOperationException.class);
+    assertThatThrownBy(
+            () -> closeAll(room, ClosedReason.ROOM_ENDED, Set.of(RequestKind.CLOSE_CONFIRM)))
+        .isInstanceOf(IllegalArgumentException.class); // 거주 종료는 넷을 함께
+    assertThatThrownBy(() -> closeAll(room, ClosedReason.SETTLED, CloseAllScope.roomEndedKinds()))
+        .isInstanceOf(UnsupportedOperationException.class);
+    assertThatThrownBy(() ->
+            closeAll(room, ClosedReason.COUNTERPART_WITHDRAWN, Set.of(RequestKind.DEFECT_CONFIRM)))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void 거주_종료는_수리_3종의_열린_요청과_기다리던_종료_확인만_닫는다() {
+    UUID room = room();
+    UUID otherRoom = room();
+    RequestHandle defect =
+        open(room, RequestKind.DEFECT_CONFIRM, repairCase(room), PartySide.TENANT);
+    RequestHandle defectUnconfirmed =
+        open(room, RequestKind.DEFECT_CONFIRM, repairCase(room), PartySide.LANDLORD);
+    setStatus(defectUnconfirmed.requestId(), "UNCONFIRMED");
+    RequestHandle progress =
+        open(room, RequestKind.PROGRESS_CHECK, repairCase(room), PartySide.TENANT);
+    setStatus(progress.requestId(), "UNCONFIRMED");
+    RequestHandle situation =
+        open(room, RequestKind.SITUATION_CHECK, progressNote(room), PartySide.LANDLORD);
+    RequestHandle situationUnconfirmed =
+        open(room, RequestKind.SITUATION_CHECK, progressNote(room), PartySide.TENANT);
+    setStatus(situationUnconfirmed.requestId(), "UNCONFIRMED");
+    RequestHandle closeWaiting =
+        open(room, RequestKind.CLOSE_CONFIRM, repairCase(room), PartySide.TENANT);
+    RequestHandle closeUnconfirmed =
+        open(room, RequestKind.CLOSE_CONFIRM, repairCase(room), PartySide.LANDLORD);
+    setStatus(closeUnconfirmed.requestId(), "UNCONFIRMED");
+    RequestHandle answered =
+        open(room, RequestKind.DEFECT_CONFIRM, repairCase(room), PartySide.TENANT);
+    setStatus(answered.requestId(), "ANSWERED");
+    RequestHandle correction =
+        open(room, RequestKind.CORRECTION_CONFIRM, repairCase(room), PartySide.TENANT);
+    RequestHandle elsewhere =
+        open(otherRoom, RequestKind.DEFECT_CONFIRM, repairCase(otherRoom), PartySide.TENANT);
+
+    int closed = closeAll(room, ClosedReason.ROOM_ENDED, CloseAllScope.roomEndedKinds());
+
+    assertThat(closed).isEqualTo(6);
+    for (RequestHandle h :
+        java.util.List.of(
+            defect, defectUnconfirmed, progress, situation, situationUnconfirmed, closeWaiting)) {
+      assertThat(row(h.requestId()))
+          .containsEntry("status", "CLOSED")
+          .containsEntry("closed_reason", "ROOM_ENDED");
+      assertThat(((java.sql.Timestamp) row(h.requestId()).get("closed_at")).toInstant())
+          .isEqualTo(LATER);
+    }
+    assertThat(status(closeUnconfirmed)).isEqualTo("UNCONFIRMED");
+    assertThat(status(answered)).isEqualTo("ANSWERED");
+    assertThat(status(correction)).isEqualTo("WAITING");
+    assertThat(status(elsewhere)).isEqualTo("WAITING");
+
+    // 다시 불러도 이미 닫힌 것은 그대로(닫힌 이유·시각 유지)
+    assertThat(
+            at(
+                LATER.plusSeconds(60),
+                () ->
+                    waits.closeAll(room, ClosedReason.ROOM_ENDED, CloseAllScope.roomEndedKinds())))
+        .isZero();
+    assertThat(((java.sql.Timestamp) row(defect.requestId()).get("closed_at")).toInstant())
+        .isEqualTo(LATER);
+  }
+
+  @Test
+  void 거주_종료로_닫힌_요청은_늦은_답에도_닫힌_그대로다() {
+    UUID room = room();
+    RequestTarget repair = repairCase(room);
+    RequestHandle defect = open(room, RequestKind.DEFECT_CONFIRM, repair, PartySide.TENANT);
+    closeAll(room, ClosedReason.ROOM_ENDED, CloseAllScope.roomEndedKinds());
+
+    at(
+        LATER.plusSeconds(60),
+        () -> {
+          waits.answered(repair, RequestKind.DEFECT_CONFIRM, PartySide.LANDLORD);
+          return null;
+        });
+
+    assertThat(row(defect.requestId()))
+        .containsEntry("status", "CLOSED")
+        .containsEntry("closed_reason", "ROOM_ENDED");
+  }
+
+  @Test
+  void 탈퇴로_닫힌_요청은_늦게_온_전달_증거로_다시_열리지_않는다() {
+    UUID room = room();
+    RequestHandle request =
+        open(room, RequestKind.DEFECT_CONFIRM, repairCase(room), PartySide.TENANT);
+    Instant delivered = LATER.minusSeconds(600);
+    started(request.requestId(), delivered);
+
+    closeAll(room, ClosedReason.COUNTERPART_WITHDRAWN, EnumSet.allOf(RequestKind.class));
+    started(request.requestId(), delivered.minusSeconds(300)); // 더 이른 증거가 닫힌 뒤 도착
+
+    Map<String, Object> row = row(request.requestId());
+    assertThat(row)
+        .containsEntry("status", "CLOSED")
+        .containsEntry("closed_reason", "COUNTERPART_WITHDRAWN");
+    assertThat(((java.sql.Timestamp) row.get("first_notified_at")).toInstant())
+        .isEqualTo(delivered);
+    assertThat(((java.sql.Timestamp) row.get("renotify_due_at")).toInstant())
+        .isEqualTo(delivered.plusSeconds(48 * 3600));
+  }
+
+  @Test
+  void 탈퇴는_그_호실의_열린_요청을_양방향_모두_닫는다() {
+    UUID room = room();
+    UUID otherRoom = room();
+    RequestHandle mine = open(room, RequestKind.DEFECT_CONFIRM, repairCase(room), PartySide.TENANT);
+    RequestHandle theirs =
+        open(room, RequestKind.CLOSE_CONFIRM, repairCase(room), PartySide.LANDLORD);
+    setStatus(theirs.requestId(), "UNCONFIRMED");
+    RequestHandle answered =
+        open(room, RequestKind.DEFECT_CONFIRM, repairCase(room), PartySide.LANDLORD);
+    setStatus(answered.requestId(), "ANSWERED");
+    RequestHandle elsewhere =
+        open(otherRoom, RequestKind.DEFECT_CONFIRM, repairCase(otherRoom), PartySide.TENANT);
+
+    int closed =
+        closeAll(room, ClosedReason.COUNTERPART_WITHDRAWN, EnumSet.allOf(RequestKind.class));
+
+    assertThat(closed).isEqualTo(2);
+    assertThat(row(mine.requestId()))
+        .containsEntry("status", "CLOSED")
+        .containsEntry("closed_reason", "COUNTERPART_WITHDRAWN");
+    assertThat(((java.sql.Timestamp) row(mine.requestId()).get("closed_at")).toInstant())
+        .isEqualTo(LATER);
+    assertThat(status(theirs)).isEqualTo("CLOSED");
+    assertThat(status(answered)).isEqualTo("ANSWERED");
+    assertThat(status(elsewhere)).isEqualTo("WAITING");
   }
 
   @Test
@@ -324,6 +518,17 @@ class JpaWaitServiceTest extends SchemaTestSupport {
         });
   }
 
+  private int closeAll(UUID room, ClosedReason reason, Set<RequestKind> kinds) {
+    return at(LATER, () -> waits.closeAll(room, reason, kinds));
+  }
+
+  /** 통지가 닿은 것처럼 기다림을 시작한다(작업자가 같은 엔티티 메서드를 부름). */
+  private void started(UUID requestId, Instant at) {
+    entityManager.flush();
+    requests.findById(requestId).orElseThrow().startWaiting(at, Duration.ofHours(48));
+    entityManager.flush();
+  }
+
   private <T> T at(Instant at, Supplier<T> work) {
     T result = RequestContextTestSupport.within(requestContext, at, work);
     entityManager.flush();
@@ -337,6 +542,18 @@ class JpaWaitServiceTest extends SchemaTestSupport {
 
   private RequestTarget repairCase(UUID room) {
     return RequestTarget.of(TargetKind.REPAIR_CASE, repair(room));
+  }
+
+  /** 이 호실 수리 건의 진행 상황 하나(상황 변화 확인의 대상). */
+  private RequestTarget progressNote(UUID room) {
+    UUID id = UUID.randomUUID();
+    jdbc.update(
+        "INSERT INTO record.progress_note (id, room_record_id, repair_case_id, side, text,"
+            + " created_at) VALUES (?, ?, ?, 'LANDLORD', '업체 불렀어요', CURRENT_TIMESTAMP)",
+        id,
+        room,
+        repair(room));
+    return RequestTarget.of(TargetKind.PROGRESS_NOTE, id);
   }
 
   private UUID inspection(UUID room) {
@@ -365,7 +582,8 @@ class JpaWaitServiceTest extends SchemaTestSupport {
   private Map<String, Object> row(UUID requestId) {
     entityManager.flush();
     return jdbc.queryForMap(
-        "SELECT status, closed_reason, closed_at, first_notified_at, unconfirmed_due_at"
+        "SELECT status, closed_reason, closed_at, first_notified_at, renotify_due_at,"
+            + " unconfirmed_due_at"
             + " FROM state.response_request WHERE id = ?",
         requestId);
   }

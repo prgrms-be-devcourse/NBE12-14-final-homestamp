@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { createHttpAuth, SignedUpLoginError } from "../src/api/auth"
-import { createHttpClient } from "../src/api/http-client"
+import {
+  createHttpAuth,
+  createSession,
+  SignedUpLoginError,
+} from "../src/api/auth"
 import { maskPhone } from "../src/lib/phone"
 
 // 서버 대신 응답을 정해 두는 fetch. 보낸 요청(주소·헤더)을 calls에 남겨요.
@@ -34,16 +37,12 @@ const ME = {
   displayName: "정서윤",
   phone: "01012345678",
   smsEnabled: true,
+  pendingAcknowledgements: [],
 }
 
 function setup() {
-  let t: string | undefined
-  const store = { get: () => t, set: (v?: string) => void (t = v) }
-  const auth = createHttpAuth(
-    createHttpClient({ baseUrl: "", getToken: store.get }),
-    store,
-  )
-  return { auth, store }
+  const session = createSession("")
+  return { auth: createHttpAuth(session), store: session.token }
 }
 
 afterEach(() => {
@@ -63,6 +62,7 @@ describe("createHttpAuth", () => {
       email: ME.email,
       name: "정서윤",
       phone: "01012345678",
+      pendingAcknowledgements: [],
     })
     expect(calls.map((c) => c.key)).toEqual([
       "POST /api/auth/login",
@@ -89,8 +89,28 @@ describe("createHttpAuth", () => {
   it("내 정보를 못 받으면 로그아웃을 보내고 토큰을 지워 로그인을 되돌린다", async () => {
     const calls = fakeServer({
       "POST /api/auth/login": () => json({ accessToken: "A1" }),
-      "GET /api/me": () => problem(401, "LOGIN_REQUIRED"),
+      "GET /api/me": () => problem(500, "INTERNAL_ERROR"),
       "POST /api/auth/logout": () => new Response(null, { status: 204 }),
+    })
+    const { auth, store } = setup()
+
+    await expect(auth.login("a@b.com", "pw")).rejects.toMatchObject({
+      status: 500,
+    })
+    expect(calls.map((c) => c.key)).toEqual([
+      "POST /api/auth/login",
+      "GET /api/me",
+      "POST /api/auth/logout",
+    ])
+    expect(calls[2].headers.Authorization).toBe("Bearer A1")
+    expect(store.get()).toBeUndefined()
+  })
+
+  it("재발급해도 내 정보가 401이면(탈퇴한 회원의 남은 토큰) 세션이 끝나 로그아웃 없이 로그인을 되돌린다", async () => {
+    const calls = fakeServer({
+      "POST /api/auth/login": () => json({ accessToken: "A1" }),
+      "GET /api/me": () => problem(401, "LOGIN_REQUIRED"),
+      "POST /api/auth/refresh": () => json({ accessToken: "A2" }),
     })
     const { auth, store } = setup()
 
@@ -100,9 +120,9 @@ describe("createHttpAuth", () => {
     expect(calls.map((c) => c.key)).toEqual([
       "POST /api/auth/login",
       "GET /api/me",
-      "POST /api/auth/logout",
+      "POST /api/auth/refresh",
+      "GET /api/me",
     ])
-    expect(calls[2].headers.Authorization).toBe("Bearer A1")
     expect(store.get()).toBeUndefined()
   })
 
@@ -182,13 +202,18 @@ describe("createHttpAuth", () => {
   })
 
   it("리프레시 쿠키도 없으면 로그아웃은 오류 없이 끝난다", async () => {
-    fakeServer({
+    const calls = fakeServer({
       "POST /api/auth/logout": () => problem(401, "LOGIN_REQUIRED"),
       "POST /api/auth/refresh": () => problem(401, "LOGIN_REQUIRED"),
     })
     const { auth, store } = setup()
+    store.set("A1-expired")
 
     await expect(auth.logout()).resolves.toBeUndefined()
+    expect(calls.map((c) => c.key)).toEqual([
+      "POST /api/auth/logout",
+      "POST /api/auth/refresh",
+    ])
     expect(store.get()).toBeUndefined()
   })
 })
@@ -385,9 +410,11 @@ describe("로그아웃 실패와 이미 끝난 세션", () => {
       "POST /api/auth/logout": () => problem(401, "LOGIN_REQUIRED"),
       "POST /api/auth/refresh": offline,
     })
-    const { auth } = setup()
+    const { auth, store } = setup()
+    store.set("A1-expired")
 
     await expect(auth.logout()).rejects.toMatchObject({ code: "NETWORK" })
+    expect(store.get()).toBe("A1-expired")
   })
 
   it("재발급은 됐는데 다시 보낸 로그아웃이 실패하면 실패로 알리고 새 토큰으로 다시 보낼 수 있다", async () => {

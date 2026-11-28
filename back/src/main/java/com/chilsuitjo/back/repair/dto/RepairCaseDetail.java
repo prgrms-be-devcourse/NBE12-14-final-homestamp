@@ -4,6 +4,8 @@ import com.chilsuitjo.back.correction.rule.CorrectionStatus;
 import com.chilsuitjo.back.global.common.AckState;
 import com.chilsuitjo.back.global.common.ClosedReason;
 import com.chilsuitjo.back.global.common.PartySide;
+import com.chilsuitjo.back.notification.rule.RequestStatus;
+import com.chilsuitjo.back.notification.rule.SoloReason;
 import com.chilsuitjo.back.photo.dto.PhotoCard;
 import com.chilsuitjo.back.repair.rule.CauseBasis;
 import com.chilsuitjo.back.repair.rule.ClosedBy;
@@ -41,6 +43,9 @@ import java.util.UUID;
  *     erased})으로 남는다(03 3-1, 불변식 16). 주소는 {@code POST /api/photos/view-urls}로 따로 받는다
  * @param causeNotes 원인 설명(06 REP-8). 측마다 지금 설명 하나이고 고치기 전 설명은 {@code previous}에 접혀 있다. 공유를 그만둔 뒤에는
  *     {@code asOf}까지의 설명·응답과 보는 사람 자신의 것만 보인다(03 6-6 9번)
+ * @param progressNotes 진행 상황(06 REP-6, 남긴 순서). 공유를 그만둔 뒤에는 그 시각까지 남긴 것과 보는 사람 자신의 것만 보인다(03 6-6 9번)
+ * @param closeRequest 종료 확인 요청 중 가장 최근 것(06 4-6, REP-5, #339). 요청이 없었으면 null. 공유를 그만둔 뒤에는 그 시각 뒤에
+ *     상대가 연 요청이면 null이다({@code RepairSight}와 같은 기준)
  * @param corrections 내용(부위·제목·설명)의 고친 내용(06 REP-7, 만든 순서). 기다림·보류·이견은 앞모습 아래 상자에, 확인됨·거둠·대신됨·닫힘은
  *     [고친 이력 ▸]에 그린다(03 G "화면 규칙 네 줄"). 공유를 그만둔 뒤에는 {@code asOf}까지 고친 것과 보는 사람 자신이 고친 것만 보이고, 그 뒤
  *     상대의 응답은 드러나지 않는다(03 6-6 9번)
@@ -65,8 +70,31 @@ public record RepairCaseDetail(
     Money money,
     List<PhotoCard> photos,
     List<CauseNote> causeNotes,
+    List<ProgressNote> progressNotes,
+    CloseRequest closeRequest,
     List<Correction> corrections,
     List<String> availableActions) {
+
+  /**
+   * 종료 확인 요청(06 4-6 {@code closeRequest}). 화면의 "종료 요청됨 · ○○ 님 확인 없음(날짜부터) · 이유"의 날짜는 미확인이 된 기한
+   * {@code dueAt}, 이유는 {@code soloReason}이고, 답 없이 닫혔으면 {@code closedReason}이다(03 4장 "'확인 없음' 화면
+   * 표시").
+   *
+   * @param status {@code WAITING}·{@code ANSWERED}·{@code UNCONFIRMED}·{@code WITHDRAWN}·{@code
+   *     CLOSED}
+   * @param openedAt 처음 연 시각
+   * @param dueAt 미확인이 되는 기한. 아직 정해지지 않았으면 null(NOTI-4b)
+   * @param soloReason 혼자 진행이 열린 이유. 없으면 null
+   * @param closedReason 답 없이 닫혔으면 그 이유, 아니면 null
+   * @param closedAt 닫힌 시각, 닫히지 않았으면 null
+   */
+  public record CloseRequest(
+      RequestStatus status,
+      Instant openedAt,
+      Instant dueAt,
+      SoloReason soloReason,
+      ClosedReason closedReason,
+      Instant closedAt) {}
 
   /**
    * 고친 내용 하나(03 G). 상대 화면은 앞모습({@code content})과 새 값을 비교해 바뀐 글자만 표시한다(REP-7f).
@@ -101,6 +129,36 @@ public record RepairCaseDetail(
       Instant createdAt,
       List<PhotoCard> photos,
       List<String> availableActions) {}
+
+  /**
+   * 진행 상황 하나(06 REP-6). 상태는 바꾸지 않는 기록이라 고칠 수 없다(판이 하나).
+   *
+   * @param side 남긴 측
+   * @param text 글. 사진만 남겼으면 빈 글자
+   * @param asksCheck [상황이 바뀌었어요]를 켜서 상대에게 확인을 요청했는지(REP-6d)
+   * @param photos 진행 상황 사진(단계 {@code PROGRESS})
+   * @param response 상대의 지금 답. [상황이 바뀌었어요]가 아니거나 아직 답이 없으면 null
+   * @param canRespond 보는 사람이 답할 수 있는지(상황 변화 확인 요청이고 상대 측이며 맞아요가 아님, {@code POST
+   *     /api/progress-notes/{id}/respond})
+   */
+  public record ProgressNote(
+      UUID id,
+      PartySide side,
+      String text,
+      boolean asksCheck,
+      Instant createdAt,
+      List<PhotoCard> photos,
+      ProgressResponse response,
+      boolean canRespond) {}
+
+  /**
+   * [상황이 바뀌었어요]로 남긴 진행 상황에 상대가 한 지금 답(06 REP-6d). 보는 사람에게 보이는 응답 중 마지막 것이다.
+   *
+   * @param answer 맞아요 / 보류 / 이견
+   * @param reason 보류·이견의 사유. 맞아요면 null
+   * @param at 답한 시각
+   */
+  public record ProgressResponse(AckState answer, String reason, Instant at) {}
 
   /**
    * 원인 설명 하나(03 D-2 "원인에 대한 설명"). 화면은 "세입자의 설명 · 근거: 내 추측"처럼 보이고 "원인 확인됨"·"책임 있음"은 쓰지 않는다.
@@ -159,8 +217,10 @@ public record RepairCaseDetail(
    *
    * @param ack 확인 기다림 / 맞아요 / 보류 / 이견 / 확인 없음
    * @param nextRerequestAt 다음에 보충할 수 있는 시각("○월 ○일부터 다시 요청할 수 있어요"). 보충한 적이 없으면 null
+   * @param ackAt 같이 확인한 시각(하자에 맞아요가 남은 시각). 아직이면 null. 사진 {@code createdAt}이 이보다 뒤면 화면이 "확인 뒤 추가"로
+   *     보인다(06 REP-7g)
    */
-  public record Defect(AckState ack, Instant nextRerequestAt) {}
+  public record Defect(AckState ack, Instant nextRerequestAt, Instant ackAt) {}
 
   /**
    * 수리비 부담. 지불·부담 제안은 그 기능을 만들 때 칸을 더한다.

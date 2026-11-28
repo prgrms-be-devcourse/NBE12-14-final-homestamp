@@ -10,6 +10,8 @@ export const endpoints = {
   refresh: "/api/auth/refresh",
   logout: "/api/auth/logout",
   me: "/api/me",
+  // 바뀐 약관·확인 항목 다시 확인(CONS-4)
+  agreements: "/api/me/agreements",
   // 4-2 홈·알림
   home: "/api/me/home",
   notifications: "/api/me/notifications",
@@ -27,6 +29,8 @@ export const endpoints = {
   roomPage: (size: number, cursor?: string) =>
     `/api/rooms?size=${size}${cursor ? `&cursor=${id(cursor)}` : ""}`,
   room: (rid: string) => `/api/rooms/${id(rid)}`,
+  // 부위 목록·부위 더하기(ROOM-3)
+  roomParts: (rid: string) => `/api/rooms/${id(rid)}/parts`,
   timeline: (rid: string) => `/api/rooms/${id(rid)}/timeline`,
   // 내려받기 목록(기록.json 내용 + 사진 묶음, DL-1)
   roomDownload: (rid: string) => `/api/rooms/${id(rid)}/download`,
@@ -59,6 +63,8 @@ export const endpoints = {
   repairCase: (cid: string) => `/api/repair-cases/${id(cid)}`,
   // 원인 설명 응답(06 4장 POST /api/cause-notes/{id}/respond)
   causeNoteRespond: (nid: string) => `/api/cause-notes/${id(nid)}/respond`,
+  progressNoteRespond: (nid: string) =>
+    `/api/progress-notes/${id(nid)}/respond`,
   repairAction: (
     cid: string,
     // 06 4장 수리 건 행동(하자 응답은 /respond 하나: ACK·NEED_MORE·DISPUTE)

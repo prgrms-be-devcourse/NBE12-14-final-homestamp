@@ -13,4 +13,12 @@ import jakarta.validation.constraints.Size;
  */
 public record MeUpdateRequest(
     @Size(max = 50) @Pattern(regexp = "(?s).*\\S.*", message = "이름을 넣어 주세요") String displayName,
-    Boolean smsEnabled) {}
+    Boolean smsEnabled) {
+
+  /**
+   * 문자 끄기만 하는 요청인지(이름 없음 + {@code smsEnabled=false}). 바뀐 약관을 확인하기 전에도 받는다(CONS-4, NOTI-8 문자 그만 받기).
+   */
+  public boolean onlyTurnsSmsOff() {
+    return displayName == null && Boolean.FALSE.equals(smsEnabled);
+  }
+}

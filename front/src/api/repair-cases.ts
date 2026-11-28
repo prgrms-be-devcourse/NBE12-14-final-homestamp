@@ -19,7 +19,8 @@ export type RespondAnswer = "ACK" | "NEED_MORE" | "DISPUTE"
 // 백엔드가 생기면 업로드 표(upload-tickets, PHO-1) 번호로 바뀌어요.
 export interface NewRepairCase {
   title: string
-  zone: string
+  // 그 호실의 부위(06 4-6 roomPartId). 숨긴 부위·꺼 둔 설비·가전은 VALIDATION_FAILED
+  roomPartId: string
   description: string
   photos: string[]
   // 같은 곳 재발이면 이전 수리 건(REP 재발)
@@ -35,6 +36,13 @@ export interface NewCauseNote {
   photos: string[]
   // 고칠 때는 내 지금 설명 ID(06 4-6 `previousId`). 처음 남기면 비워요
   previousId?: string
+}
+
+// 진행 상황 남기기(REP-6, 08 5-2): 글이나 사진 하나 이상. asksCheck면 상대에게 확인 요청(하자를 둘 다 확인한 건만, 7일에 한 번)
+export interface NewProgressNote {
+  text: string
+  photos: string[]
+  asksCheck: boolean
 }
 
 export interface RepairCasesApi {
@@ -67,6 +75,21 @@ export interface RepairCasesApi {
     id: string,
     causeId: string,
     body: { answer: "ACK" | "DISPUTE"; reason?: string },
+  ): Promise<RepairCaseView>
+  // POST /ask-progress: 진행 상황 묻기(본문 없음, 누가 물었든 한 건에 7일에 한 번)
+  askProgress(s: Session, id: string): Promise<RepairCaseView>
+  // POST /progress-notes {text, uploadTickets, asksCheck}
+  addProgressNote(
+    s: Session,
+    id: string,
+    body: NewProgressNote,
+  ): Promise<RepairCaseView>
+  // POST /api/progress-notes/{noteId}/respond: [상황이 바뀌었어요]에 상대가 답해요(맞아요·보류·이견)
+  respondProgressNote(
+    s: Session,
+    id: string,
+    noteId: string,
+    body: { answer: RespondAnswer; reason?: string },
   ): Promise<RepairCaseView>
   // POST /respond {answer, reason, seenVersionNo}
   respond(
