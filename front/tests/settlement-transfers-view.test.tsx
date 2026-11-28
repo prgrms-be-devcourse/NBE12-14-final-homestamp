@@ -90,6 +90,19 @@ test("합계는 서버가 센 확인된 송금이고, 상태는 기록한 측과
   expect(screen.getByText("세입자 받았어요")).toBeTruthy()
   // 집주인이 남긴 추가 송금 = 받은 쪽 기록([받았어요(혼자)]): 보낸 쪽(세입자) 확인 기다림
   expect(screen.getByText("세입자 확인 기다림")).toBeTruthy()
+  // 보증금·정산 항목이 없는 서버 정산은 0원 기준 계산 금액·차액을 실제 값처럼 보이지 않아요(#453 리뷰)
+  expect(screen.queryByText("차액")).toBeNull()
+  expect(screen.getByText(/계산한 금액을 보여 드리지 않아요/)).toBeTruthy()
+})
+
+test("서버 정산의 송금 기록 창은 금액을 미리 채우지 않고 방향은 반환으로 열어요", () => {
+  view("임대인", serverOf([]))
+  fireEvent.click(screen.getByRole("button", { name: "반환·수령 기록 추가" }))
+  const amountInput = document.getElementById(
+    "financial-amount",
+  ) as HTMLInputElement
+  expect(amountInput.value === "" || amountInput.value === "0").toBe(true)
+  expect(screen.getByRole("combobox").textContent).toContain("반환")
 })
 
 test("보낸 쪽 기록에는 받은 쪽이 [받았어요]로 답하고, 본 판 번호를 보내요", () => {

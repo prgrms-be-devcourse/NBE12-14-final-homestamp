@@ -155,6 +155,9 @@ export function RoomFinancials({
   const offer = room.depositOffer
   const item = allItems.find((s) => s.id === itemId)
   const total = settlementTotal(room.deposit ?? 0, items)
+  // 서버 정산은 아직 보증금·정산 항목을 주지 않아(06 4-8 지금 응답) 계산 금액을 알 수 없어요.
+  // 0원 기준 값이 실제 금액처럼 보이지 않게 계산 금액·차액을 숨기고, 송금 창도 미리 채우지 않아요(#453 리뷰)
+  const totalKnown = !server
   // 송금 합계는 상대가 확인한 송금만(SET-4b, 03 J, 08 10장). 확인 전 송금은 따로 보여요.
   // 서버 정산이면 합계는 서버가 센 값이고(같은 송금으로 묶인 건 한 번), 확인 중은 아직 답이 없는 기록만 더해요
   const paid = server
@@ -265,7 +268,7 @@ export function RoomFinancials({
     setError("")
     setItemId(s?.id || "")
     setDirection(s?.direction || "차감")
-    setTransferDirection(total < 0 ? "추가 송금" : "반환")
+    setTransferDirection(totalKnown && total < 0 ? "추가 송금" : "반환")
     setSameAs(undefined)
   }
   // 상대 기록에 금액이 달라요를 단 뒤 실제 받은 금액을 같은 송금으로 묶어 적어요(SET-4e)
@@ -941,12 +944,21 @@ export function RoomFinancials({
       </Panel>
       <div className="mt-5">
         <Panel title="합의된 항목으로 계산한 금액">
-          <div className={cn(amount, "text-primary")}>{won(total)}</div>
-          <p className="muted">보증금 − 합의된 차감 + 합의된 가산</p>
-          <p className="muted">
-            확인 대기·이견 {unsettled.length}건 제외
-            {!depositAgreed ? " · 보증금 확인 전 기준 계산" : ""}
-          </p>
+          {totalKnown ? (
+            <>
+              <div className={cn(amount, "text-primary")}>{won(total)}</div>
+              <p className="muted">보증금 − 합의된 차감 + 합의된 가산</p>
+              <p className="muted">
+                확인 대기·이견 {unsettled.length}건 제외
+                {!depositAgreed ? " · 보증금 확인 전 기준 계산" : ""}
+              </p>
+            </>
+          ) : (
+            <p className="muted">
+              보증금과 정산 항목이 아직 연결되지 않아 계산한 금액을 보여 드리지
+              않아요.
+            </p>
+          )}
           {/* 정해지지 않은 금액: 항목마다 금액을 따로(계산에는 넣지 않아요) */}
           {unsettled.length > 0 && (
             <div className="mt-3 rounded-[12px] bg-soft px-4 py-3">
@@ -999,15 +1011,17 @@ export function RoomFinancials({
               </dd>
             </div>
           )}
-          <div
-            className="flex items-baseline justify-between gap-3 px-4 py-3"
-            aria-live="polite"
-          >
-            <dt className="text-[15px] font-semibold text-ink">차액</dt>
-            <dd className="text-2xl font-extrabold text-primary tabular-nums">
-              {won(total - paid)}
-            </dd>
-          </div>
+          {totalKnown && (
+            <div
+              className="flex items-baseline justify-between gap-3 px-4 py-3"
+              aria-live="polite"
+            >
+              <dt className="text-[15px] font-semibold text-ink">차액</dt>
+              <dd className="text-2xl font-extrabold text-primary tabular-nums">
+                {won(total - paid)}
+              </dd>
+            </div>
+          )}
         </dl>
         <div className="flex flex-col gap-2">
           {transfers.map((t) => (
@@ -1245,7 +1259,7 @@ export function RoomFinancials({
                       ? (offer?.amount ?? room.deposit)
                       : mode === "item"
                         ? item?.amount
-                        : mode === "transfer"
+                        : mode === "transfer" && totalKnown
                           ? Math.abs(total - paid)
                           : undefined
                   }
