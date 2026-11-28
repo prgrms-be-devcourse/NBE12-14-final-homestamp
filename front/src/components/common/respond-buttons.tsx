@@ -18,6 +18,7 @@ export function RespondButtons({
   answered,
   note,
   size = "default",
+  ackLabel = "맞아요",
 }: {
   // 오류 문구를 돌려주면 창이나 버튼 옆에 보여요
   onRespond: (
@@ -29,6 +30,8 @@ export function RespondButtons({
   // 버튼 아래 한 줄(예: 하자의 "수리비는 따로 정해요")
   note?: string
   size?: "default" | "sm"
+  // [맞아요] 자리의 말. 보낸 쪽 송금 기록에 받은 쪽이 답할 때는 [받았어요](08 10장)
+  ackLabel?: string
 }) {
   const [open, setOpen] = useState(false)
   const [answer, setAnswer] = useState<"NEED_MORE" | "DISPUTE" | "">("")
@@ -51,7 +54,7 @@ export function RespondButtons({
     <div className="space-y-1.5">
       <div className="actions">
         <Button size={size} onClick={ack}>
-          맞아요
+          {ackLabel}
         </Button>
         <Button
           size={size}

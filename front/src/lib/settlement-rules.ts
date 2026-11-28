@@ -5,6 +5,10 @@ import { VERSION_CONFLICT_MESSAGE } from "@/lib/versions"
 
 // 정산 끝내기(06 SET-5a~e, 03 1-4)와 송금 합계(06 SET-4, 03 J, 08 10장).
 
+// 송금을 받는 측(03 J): 반환은 세입자, 추가 송금은 집주인. 받는 측이 남긴 기록이 [받았어요(혼자)]예요
+export const receiverOf = (d: "반환" | "추가 송금"): Role =>
+  d === "반환" ? "임차인" : "임대인"
+
 /* ── 송금 합계: 상대가 확인한 송금만 더해요. 확인 전 송금은 "받았는지 확인 중"으로 따로 보여요. ── */
 const signed = (t: { direction: "반환" | "추가 송금"; amount: number }) =>
   t.direction === "반환" ? t.amount : -t.amount

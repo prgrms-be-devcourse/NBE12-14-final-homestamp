@@ -1,7 +1,8 @@
 import {
   post,
   proposalIdOf,
-  settlementIdOf,
+  settlementIdIn,
+  transferDirection as transferDirectionOf,
   type RecordRequest,
 } from "@/api/records"
 import { endpoints } from "@/api/endpoints"
@@ -27,7 +28,14 @@ import {
 import { proposalHead } from "@/lib/words"
 import { cn } from "cn"
 import { parseMoney } from "@/lib/money"
-import { newAmountOffer, respondToOffer, roomTransfers } from "@/lib/workflows"
+import {
+  newAmountOffer,
+  respondToOffer,
+  roomTransfers,
+  todayKey,
+} from "@/lib/workflows"
+import { RespondButtons } from "@/components/common/respond-buttons"
+import { Input } from "@/components/ui/input"
 import {
   confirmedTransferTotal,
   confirmFinish,
@@ -35,6 +43,7 @@ import {
   finishAlone,
   finishState,
   pendingTransferTotal,
+  receiverOf,
   rejectFinish,
   requestFinish,
 } from "@/lib/settlement-rules"
@@ -53,6 +62,7 @@ import {
   type DemoState,
   type AmountOffer,
   type Transfer,
+  type SettlementServerState,
 } from "@/data/demo"
 import { sideName, sideText } from "@/lib/words"
 import {
@@ -78,6 +88,16 @@ interface Props {
   actions: readonly SettlementAction[]
   itemActionsOf: (s: Settlement) => readonly SettlementItemAction[]
   transferActionsOf: (t: Transfer) => readonly TransferAction[]
+  // HTTP: 서버가 준 정산 머리(room.settlement). 있으면 보증금 상태·끝내기는 서버 값으로 보이고,
+  // 끝내기 행동은 화면이 규칙을 미리 검사하지 않아요(서버가 검사). 목업에는 없어요
+  server?: SettlementServerState
+}
+// 보증금 확인 상태의 화면 말(08 10장 "보증금 카드": "제안·합의" 대신 "적기·확인", SET-1b)
+const DEPOSIT_TEXT: Record<SettlementServerState["depositStatus"], string> = {
+  NOT_ENTERED: "보증금 금액을 아직 적지 않았어요",
+  PENDING: "보증금 확인 전",
+  AGREED: "보증금 · 둘 다 확인 ✓",
+  DISPUTE: "보증금 금액이 서로 달라요",
 }
 type Mode =
   | "deposit"
@@ -120,6 +140,7 @@ export function RoomFinancials({
   actions,
   itemActionsOf,
   transferActionsOf,
+  server,
 }: Props) {
   const has = (a: SettlementAction) => hasAction(actions, a)
   // 빼기 제안에 상대가 동의한 항목은 정산 계산과 세 칸에서 빠지고, 아래 '뺀 항목'에 보존됩니다.
@@ -134,24 +155,94 @@ export function RoomFinancials({
   const offer = room.depositOffer
   const item = allItems.find((s) => s.id === itemId)
   const total = settlementTotal(room.deposit ?? 0, items)
+  // 서버 정산은 아직 보증금·정산 항목을 주지 않아(06 4-8 지금 응답) 계산 금액을 알 수 없어요.
+  // 0원 기준 값이 실제 금액처럼 보이지 않게 계산 금액·차액을 숨기고, 송금 창도 미리 채우지 않아요(#453 리뷰)
+  const totalKnown = !server
   // 송금 합계는 상대가 확인한 송금만(SET-4b, 03 J, 08 10장). 확인 전 송금은 따로 보여요.
-  const paid = confirmedTransferTotal(room)
-  const pendingPaid = pendingTransferTotal(room)
+  // 서버 정산이면 합계는 서버가 센 값이고(같은 송금으로 묶인 건 한 번), 확인 중은 아직 답이 없는 기록만 더해요
+  const paid = server
+    ? server.confirmedRefund - server.confirmedExtra
+    : confirmedTransferTotal(room)
+  const pendingPaid = server
+    ? server.transfers
+        .filter((t) => t.server?.response === "PENDING")
+        .reduce(
+          (s, t) => s + (t.direction === "반환" ? t.amount : -t.amount),
+          0,
+        )
+    : pendingTransferTotal(room)
+  // 같은 송금으로 묶어 남긴 받은 금액(SET-4e)은 묶인 보낸 쪽 기록 아래에 함께 보여요
+  const linkedTo = (t: Transfer) =>
+    server?.transfers.find((v) => v.server?.sameAsTransferId === t.id)
+  // 받은 금액을 묶어 적을 송금(받은 쪽에서 [받았어요(혼자)])
+  const [sameAs, setSameAs] = useState<Transfer>()
+  // 서버 송금 한 줄의 상태(03 J, 08 10장). 답하는 쪽은 기록하지 않은 측이에요
+  const transferStatus = (t: Transfer) => {
+    const answerer = sideName(other(t.by))
+    switch (t.server?.response) {
+      case "ACK":
+        return t.server.byReceiver
+          ? "둘 다 확인"
+          : `${sideName(receiverOf(t.direction))} 받았어요`
+      case "NEED_MORE":
+        return `${answerer}: 더 필요해요`
+      case "DISPUTE":
+        return `${answerer}: 금액이 달라요`
+      default:
+        // 보낸 쪽 기록은 받은 쪽이, [받았어요(혼자)]는 보낸 쪽이 확인해요
+        return t.server?.byReceiver
+          ? `${answerer} 확인 기다림`
+          : "받았는지 확인 중"
+    }
+  }
+  // 송금 응답(06 4-8 respond): 본 판 번호를 함께 보내요. 보낸 쪽 기록에는 받은 쪽이 [받았어요]로 답해요(08 10장)
+  const transferRespond = (t: Transfer) =>
+    hasAction(transferActionsOf(t), "respond") &&
+    t.server && (
+      <RespondButtons
+        size="sm"
+        ackLabel={t.server.byReceiver ? "맞아요" : "받았어요"}
+        answered={
+          t.server.response === "NEED_MORE" || t.server.response === "DISPUTE"
+            ? t.server.response
+            : undefined
+        }
+        onRespond={(answer, reason) =>
+          onAction(
+            post(endpoints.transferRespond(t.id), {
+              answer,
+              ...(reason ? { reason } : {}),
+              seenVersionNo: t.server!.versionNo,
+            }),
+            `${t.direction} ${won(t.amount)} · 송금 응답`,
+            () => {},
+          )
+        }
+      />
+    )
+  // 상대가 남긴 보낸 기록에 더 필요해요·금액이 달라요로 답한 받은 쪽은 실제 받은 금액을 같은 송금으로 묶어 적어요(SET-4e)
+  const canWriteReceived = (t: Transfer) =>
+    !t.server?.byReceiver &&
+    receiverOf(t.direction) === role &&
+    (t.server?.response === "NEED_MORE" || t.server?.response === "DISPUTE") &&
+    !linkedTo(t)
   const finish = finishState(room, allItems)
   const [finishError, setFinishError] = useState("")
   // 정산 끝내기 행동: 먼저 복사본에 적용해 규칙 위반을 확인한 뒤 기록해요.
-  const sid = settlementIdOf(room.id)
+  // 서버 정산이면 미리 검사하지 않아요(화면 모델에 끝내기 요청 칸이 없고, 서버가 같은 규칙으로 거절해요)
+  const sid = server?.id ?? settlementIdIn(room)
   const runFinish = (
     request: RecordRequest,
     text: string,
     update: (r: Room, list: Settlement[]) => void,
   ) => {
-    try {
-      update(structuredClone(room), structuredClone(allItems))
-    } catch (e) {
-      setFinishError(e instanceof Error ? e.message : "처리할 수 없어요.")
-      return
-    }
+    if (!server)
+      try {
+        update(structuredClone(room), structuredClone(allItems))
+      } catch (e) {
+        setFinishError(e instanceof Error ? e.message : "처리할 수 없어요.")
+        return
+      }
     setFinishError("")
     onAction(request, text, (d) =>
       update(
@@ -160,7 +251,12 @@ export function RoomFinancials({
       ),
     )
   }
-  const transfers = roomTransfers(room)
+  const transfers = server
+    ? server.transfers.filter((t) => !t.server?.sameAsTransferId)
+    : roomTransfers(room)
+  const depositAgreed = server
+    ? server.depositStatus === "AGREED"
+    : room.depositConfirmed || offer?.status === "합의됨"
   const myConfirmed =
     room.depositConfirmed || offer?.by === role || offer?.status === "합의됨"
   const otherConfirmed =
@@ -172,7 +268,14 @@ export function RoomFinancials({
     setError("")
     setItemId(s?.id || "")
     setDirection(s?.direction || "차감")
-    setTransferDirection(total < 0 ? "추가 송금" : "반환")
+    setTransferDirection(totalKnown && total < 0 ? "추가 송금" : "반환")
+    setSameAs(undefined)
+  }
+  // 상대 기록에 금액이 달라요를 단 뒤 실제 받은 금액을 같은 송금으로 묶어 적어요(SET-4e)
+  function openReceived(t: Transfer) {
+    open("transfer")
+    setTransferDirection(t.direction)
+    setSameAs(t)
   }
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -192,6 +295,16 @@ export function RoomFinancials({
       !Number.isFinite(amount)
     ) {
       setError("0 이상의 원화 정수를 입력해 주세요.")
+      return
+    }
+    // 송금 기록은 1원 이상이고 보낸(받은) 날짜가 있어야 해요(06 4-8 transfers)
+    const paidOn = String(f.get("paidOn") || "")
+    if (mode === "transfer" && amount < 1) {
+      setError("1원 이상 입력해 주세요.")
+      return
+    }
+    if (mode === "transfer" && !paidOn) {
+      setError("날짜를 골라 주세요.")
       return
     }
     if (mode !== "transfer" && !reason) {
@@ -363,13 +476,17 @@ export function RoomFinancials({
         `정산 끝내기 · 아직 안 끝났어요 · ${reason}`,
         (r) => rejectFinish(r, role, reason),
       )
-    } else if (mode === "transfer")
+    } else if (mode === "transfer") {
+      // 보낸 기록인지 [받았어요(혼자)]인지는 서버가 보낸 사람의 측으로 정해요(반환을 세입자가 남기면 받았어요(혼자))
+      const dir = transferDirection as Transfer["direction"]
       onAction(
         post(endpoints.settlementAction(sid, "transfers"), {
-          direction: transferDirection,
+          direction: transferDirectionOf(dir),
           amount,
+          paidOn,
+          ...(sameAs ? { sameAsTransferId: sameAs.id } : {}),
         }),
-        `${transferDirection} 사실 기록 · ${won(amount)} · 한쪽 기록`,
+        `${dir} 사실 기록 · ${won(amount)} · 한쪽 기록`,
         (d) => {
           const r = d.rooms.find((r) => r.id === room.id)!
           r.transfers = [
@@ -378,13 +495,14 @@ export function RoomFinancials({
               id: uid(),
               by: role,
               amount,
-              direction: transferDirection as "반환" | "추가 송금",
+              direction: dir,
               confirmed: false,
-              at: new Date().toLocaleString("ko-KR"),
+              at: paidOn,
             },
           ]
         },
       )
+    }
     setMode(null)
   }
   // 정해지지 않은 금액(문서 10장): 합의되지 않은 항목의 금액을 따로 보여 줘요. 계산(total)에는 넣지 않아요.
@@ -545,30 +663,41 @@ export function RoomFinancials({
       <div className="my-[22px]">
         <Panel title="보증금 기준 금액">
           <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
-            <div className="min-w-0">
+            {/* 서버 정산은 아직 보증금 금액을 주지 않아 확인 상태만 보여요(#442) */}
+            {server ? (
               <div className={cn(amount, "text-ink")}>
-                {room.deposit != null ? won(room.deposit) : "미입력"}
+                {DEPOSIT_TEXT[server.depositStatus]}
               </div>
-              {room.deposit == null && (
-                <p className="muted">
-                  호실을 만들 때 보증금을 입력하지 않았어요. 보증금
-                  확인·제안으로 금액을 남길 수 있어요.
-                </p>
-              )}
-            </div>
-            <div className="flex flex-wrap items-center gap-1.5">
-              <Status>내 확인 · {myConfirmed ? "확인" : "확인 전"}</Status>
-              <Status>상대 확인 · {otherConfirmed ? "확인" : "확인 전"}</Status>
-              <Status>
-                {room.depositConfirmed || offer?.status === "합의됨"
-                  ? "보증금 · 둘 다 확인 ✓"
-                  : offer?.status === "이견"
-                    ? "이견"
-                    : myConfirmed || otherConfirmed
-                      ? "상대 확인 대기"
-                      : "보증금 확인 전"}
-              </Status>
-            </div>
+            ) : (
+              <>
+                <div className="min-w-0">
+                  <div className={cn(amount, "text-ink")}>
+                    {room.deposit != null ? won(room.deposit) : "미입력"}
+                  </div>
+                  {room.deposit == null && (
+                    <p className="muted">
+                      호실을 만들 때 보증금을 입력하지 않았어요. 보증금
+                      확인·제안으로 금액을 남길 수 있어요.
+                    </p>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <Status>내 확인 · {myConfirmed ? "확인" : "확인 전"}</Status>
+                  <Status>
+                    상대 확인 · {otherConfirmed ? "확인" : "확인 전"}
+                  </Status>
+                  <Status>
+                    {room.depositConfirmed || offer?.status === "합의됨"
+                      ? "보증금 · 둘 다 확인 ✓"
+                      : offer?.status === "이견"
+                        ? "이견"
+                        : myConfirmed || otherConfirmed
+                          ? "상대 확인 대기"
+                          : "보증금 확인 전"}
+                  </Status>
+                </div>
+              </>
+            )}
           </div>
           {offer && (
             <CurrentProposal
@@ -815,14 +944,21 @@ export function RoomFinancials({
       </Panel>
       <div className="mt-5">
         <Panel title="합의된 항목으로 계산한 금액">
-          <div className={cn(amount, "text-primary")}>{won(total)}</div>
-          <p className="muted">보증금 − 합의된 차감 + 합의된 가산</p>
-          <p className="muted">
-            확인 대기·이견 {unsettled.length}건 제외
-            {!room.depositConfirmed && offer?.status !== "합의됨"
-              ? " · 보증금 확인 전 기준 계산"
-              : ""}
-          </p>
+          {totalKnown ? (
+            <>
+              <div className={cn(amount, "text-primary")}>{won(total)}</div>
+              <p className="muted">보증금 − 합의된 차감 + 합의된 가산</p>
+              <p className="muted">
+                확인 대기·이견 {unsettled.length}건 제외
+                {!depositAgreed ? " · 보증금 확인 전 기준 계산" : ""}
+              </p>
+            </>
+          ) : (
+            <p className="muted">
+              보증금과 정산 항목이 아직 연결되지 않아 계산한 금액을 보여 드리지
+              않아요.
+            </p>
+          )}
           {/* 정해지지 않은 금액: 항목마다 금액을 따로(계산에는 넣지 않아요) */}
           {unsettled.length > 0 && (
             <div className="mt-3 rounded-[12px] bg-soft px-4 py-3">
@@ -875,15 +1011,17 @@ export function RoomFinancials({
               </dd>
             </div>
           )}
-          <div
-            className="flex items-baseline justify-between gap-3 px-4 py-3"
-            aria-live="polite"
-          >
-            <dt className="text-[15px] font-semibold text-ink">차액</dt>
-            <dd className="text-2xl font-extrabold text-primary tabular-nums">
-              {won(total - paid)}
-            </dd>
-          </div>
+          {totalKnown && (
+            <div
+              className="flex items-baseline justify-between gap-3 px-4 py-3"
+              aria-live="polite"
+            >
+              <dt className="text-[15px] font-semibold text-ink">차액</dt>
+              <dd className="text-2xl font-extrabold text-primary tabular-nums">
+                {won(total - paid)}
+              </dd>
+            </div>
+          )}
         </dl>
         <div className="flex flex-col gap-2">
           {transfers.map((t) => (
@@ -899,10 +1037,34 @@ export function RoomFinancials({
                   {t.at} · 기록한 쪽 {sideName(t.by)}
                 </p>
                 <Status>
-                  {t.confirmed ? "둘 다 확인" : "받았는지 확인 중"}
+                  {server
+                    ? transferStatus(t)
+                    : t.confirmed
+                      ? "둘 다 확인"
+                      : "받았는지 확인 중"}
                 </Status>
+                {/* 같은 송금으로 묶어 적은 받은 금액(SET-4e, 08 10장). 합계에는 확인된 쪽만 한 번 들어가요 */}
+                {(() => {
+                  const l = linkedTo(t)
+                  if (!l) return null
+                  return (
+                    <div className="mt-2 space-y-1.5 border-t border-line pt-2">
+                      <p className="text-sm text-ink">
+                        받은 금액 {won(l.amount)}({sideName(l.by)} 기록) ·{" "}
+                        <Status>{transferStatus(l)}</Status>
+                      </p>
+                      {transferRespond(l)}
+                    </div>
+                  )
+                })()}
               </div>
-              {hasAction(transferActionsOf(t), "respond") && (
+              {server && transferRespond(t)}
+              {server && has("transfers") && canWriteReceived(t) && (
+                <Button variant="outline" onClick={() => openReceived(t)}>
+                  받았어요(혼자)
+                </Button>
+              )}
+              {!server && hasAction(transferActionsOf(t), "respond") && (
                 <Button
                   onClick={() =>
                     onAction(
@@ -959,12 +1121,26 @@ export function RoomFinancials({
                     : ""}
                 </p>
               )}
+              {/* 끝내기 확인 화면에 내가 아직 답하지 않은 확인 수(SET-5g). 확인은 막지 않아요 */}
+              {has("finish-confirm") &&
+                server &&
+                server.unansweredForMe > 0 && (
+                  <p className="text-sm text-warn-ink">
+                    아직 답하지 않은 확인 {server.unansweredForMe}건
+                  </p>
+                )}
               <div className="actions">
                 {has("finish-confirm") && (
                   <Button
                     onClick={() =>
                       runFinish(
-                        post(endpoints.settlementAction(sid, "finish/confirm")),
+                        // 본 정산 모습 번호를 함께 보내요. 그사이 바뀌었으면 서버가 VERSION_CONFLICT로 거절해요(SET-5e)
+                        post(
+                          endpoints.settlementAction(sid, "finish/confirm"),
+                          server
+                            ? { seenVersionNo: server.snapshotNo }
+                            : undefined,
+                        ),
                         "정산 끝내기 · 양측 확인",
                         (r, list) => confirmFinish(r, list, role),
                       )
@@ -1054,7 +1230,9 @@ export function RoomFinancials({
             <DialogDescription>
               {mode === "deposit" || mode === "deposit-dispute"
                 ? "보증금은 계약서 금액을 맞추는 거예요. 둘이 같은 금액이면 둘 다 확인으로 남아요."
-                : "한쪽의 제안은 상대가 같은 안에 동의해야 합의됩니다."}
+                : mode === "transfer"
+                  ? "돈이 오간 사실을 남겨요. 상대가 확인한 기록만 송금 합계에 들어가요."
+                  : "한쪽의 제안은 상대가 같은 안에 동의해야 합의됩니다."}
             </DialogDescription>
           </DialogHeader>
           <form className="modal-form" onSubmit={submit}>
@@ -1081,7 +1259,7 @@ export function RoomFinancials({
                       ? (offer?.amount ?? room.deposit)
                       : mode === "item"
                         ? item?.amount
-                        : mode === "transfer"
+                        : mode === "transfer" && totalKnown
                           ? Math.abs(total - paid)
                           : undefined
                   }
@@ -1101,19 +1279,47 @@ export function RoomFinancials({
             )}
             {mode === "transfer" ? (
               <>
-                <Choice
-                  label="송금 방향"
-                  value={transferDirection}
-                  values={["반환", "추가 송금"]}
-                  onChange={setTransferDirection}
-                />
+                {/* 같은 송금으로 묶어 적을 때는 방향이 그 기록과 같아요(SET-4e) */}
+                {sameAs ? (
+                  <p className="muted">
+                    {sideName(sameAs.by)} 기록 {sameAs.direction}{" "}
+                    {won(sameAs.amount)}과 같은 송금으로 묶어 실제 받은 금액을
+                    남겨요.
+                  </p>
+                ) : (
+                  <Choice
+                    label="송금 방향"
+                    value={transferDirection}
+                    values={["반환", "추가 송금"]}
+                    onChange={setTransferDirection}
+                  />
+                )}
                 <p className="muted">
                   {transferDirection === "반환"
                     ? "집주인 → 세입자"
                     : "세입자 → 집주인"}{" "}
-                  · {sideText(role)}의 한쪽 기록으로 남겨 상대에게 확인을
-                  요청해요.
+                  ·{" "}
+                  {receiverOf(transferDirection as Transfer["direction"]) ===
+                  role
+                    ? "받은 쪽 기록([받았어요(혼자)])으로 남겨 보낸 쪽에게 확인을 요청해요."
+                    : `${sideText(role)}의 한쪽 기록으로 남겨 상대에게 확인을 요청해요.`}
                 </p>
+                <div className="field">
+                  <label htmlFor="financial-paid-on">
+                    {receiverOf(transferDirection as Transfer["direction"]) ===
+                    role
+                      ? "받은 날짜"
+                      : "보낸 날짜"}
+                  </label>
+                  <Input
+                    id="financial-paid-on"
+                    name="paidOn"
+                    type="date"
+                    defaultValue={todayKey()}
+                    max={todayKey()}
+                    required
+                  />
+                </div>
               </>
             ) : (
               <div className="field">

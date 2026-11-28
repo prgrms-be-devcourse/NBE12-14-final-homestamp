@@ -14,6 +14,12 @@ import {
   inspectionFromDetail,
   moveInInspectionId,
 } from "./http-inspection-view"
+import {
+  getRoomSettlement,
+  isSettlementBody,
+  settlementFromDetail,
+  type SettlementDetailBody,
+} from "./http-settlement-view"
 import { endpoints } from "./endpoints"
 import { ApiError } from "./errors"
 import type { HttpRequest } from "./http-client"
@@ -29,7 +35,13 @@ import {
   roomFromDetail,
   roomFromSummary,
 } from "./http-rooms"
-import { inspectionIdOf, isMissing, isNone, type RecordsApi } from "./records"
+import {
+  inspectionIdOf,
+  isMissing,
+  isNone,
+  settlementIdOf,
+  type RecordsApi,
+} from "./records"
 import type { Session } from "./types"
 
 // 점검을 아직 받지 못해 서버 점검 ID를 모를 때(받기가 실패했거나 받는 중)
@@ -38,6 +50,13 @@ const inspectionNotLoaded = () =>
     status: 0,
     code: "INSPECTION_NOT_LOADED",
     detail: "점검을 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.",
+  })
+// 정산을 아직 받지 못해 서버 정산 ID를 모를 때(#442)
+const settlementNotLoaded = () =>
+  new ApiError({
+    status: 0,
+    code: "SETTLEMENT_NOT_LOADED",
+    detail: "정산을 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.",
   })
 
 // HTTP 기록 API: 서버에서 받은 기록을 화면 모델로 바꿔 두고, 기록을 바꾸는 요청은 POST로 보낸 뒤 다시 받아요.
@@ -96,6 +115,21 @@ export function createHttpRecords(request: HttpRequest): RecordsApi {
   }
   const keptMoveIn = (roomId: string) =>
     state.rooms.find((r) => r.id === roomId)?.moveIn
+  const keptSettlement = (roomId: string) =>
+    state.rooms.find((r) => r.id === roomId)?.settlement
+  // 호실의 정산(GET /api/rooms/{id}/settlement, #442). 404면 아직 열지 않은 정산(null)이고,
+  // 다른 오류거나 모양이 다르면 앞서 받은 정산을 둬요(점검과 같아요. 다음 받기 때 다시 받아요)
+  const settlementOf = (
+    roomId: string,
+    r: PromiseSettledResult<SettlementDetailBody>,
+  ) =>
+    r.status === "fulfilled"
+      ? isSettlementBody(r.value)
+        ? settlementFromDetail(r.value)
+        : keptSettlement(roomId)
+      : isNotFound(r.reason)
+        ? null
+        : keptSettlement(roomId)
   const moveInOf = async (timeline: RoomTimelineBody | undefined) => {
     if (!timeline) return undefined
     try {
@@ -111,15 +145,22 @@ export function createHttpRecords(request: HttpRequest): RecordsApi {
     roomId: string,
     before?: Room,
   ): Promise<Detail> => {
-    const [d, l, t] = await Promise.allSettled([
+    const [d, l, t, st] = await Promise.allSettled([
       getRoomDetail(request, roomId),
       listAllRepairs(request, roomId),
       getTimeline(request, roomId),
+      getRoomSettlement(request, roomId),
     ])
     if (d.status === "rejected") {
       if (isNotFound(d.reason))
         return { room: null, list: { asOf: null, items: [] }, inspections: [] }
-      const room = before ? { ...before, moveIn: keptMoveIn(roomId) } : null
+      const room = before
+        ? {
+            ...before,
+            moveIn: keptMoveIn(roomId),
+            settlement: keptSettlement(roomId),
+          }
+        : null
       return { room, error: d.reason }
     }
     // 줄 모양은 withEvents가 확인해요(다르면 그 호실은 앞서 받은 경과를 둬요)
@@ -133,6 +174,7 @@ export function createHttpRecords(request: HttpRequest): RecordsApi {
       room: {
         ...room,
         moveIn: moveIn ? moveIn.session : keptMoveIn(roomId),
+        settlement: settlementOf(roomId, st),
       },
       list: l.status === "fulfilled" ? l.value : undefined,
       timeline,
@@ -211,7 +253,7 @@ export function createHttpRecords(request: HttpRequest): RecordsApi {
     const startedAt = ++tick
     // 06 4장의 목록 조회로 받을 수 있는 것: 내 호실, 알림.
     // 호실 화면 칸(입주일·만든 측·행동)은 상세에만 있어 호실마다 상세도 받아요.
-    // 수리 건 목록·경과도 호실마다 상세와 함께 받아요(detailOf). 점검·부위 사진·정산은 서버 응답 모양이 정해지면 여기에서 채워요.
+    // 수리 건 목록·경과·입주 점검·정산 머리도 호실마다 상세와 함께 받아요(detailOf). 부위 사진·정산 항목은 서버 응답 모양이 정해지면 여기에서 채워요.
     const [summaries, notices] = await Promise.all([
       listAllRooms(request),
       request<unknown>("GET", endpoints.notifications)
@@ -307,6 +349,10 @@ export function createHttpRecords(request: HttpRequest): RecordsApi {
       )
     if (has("out")) return notConnected()
     if (has("in") && isConnected("POST", path)) return inspectionNotLoaded()
+    // 정산도 같아요: 받기 전 자리표(호실 ID)로 연결된 정산 행동을 보내지 않아요(#442)
+    const settlementPlaceholder = `/api/settlements/${encodeURIComponent(settlementIdOf(roomId))}/`
+    if (path.startsWith(settlementPlaceholder) && isConnected("POST", path))
+      return settlementNotLoaded()
     return undefined
   }
   return {
@@ -336,7 +382,12 @@ export function createHttpRecords(request: HttpRequest): RecordsApi {
           })
       } catch (e) {
         // 상대가 먼저 점검을 시작했으면 그 점검을 다시 받아 열어요(06 4-7 INSPECTION_EXISTS "그쪽으로 열게요")
-        if (e instanceof ApiError && e.code === "INSPECTION_EXISTS" && before)
+        // 정산도 같아요(06 4-8 SETTLEMENT_EXISTS): 호실의 정산을 다시 받아 그 정산을 열어요(#442)
+        if (
+          e instanceof ApiError &&
+          (e.code === "INSPECTION_EXISTS" || e.code === "SETTLEMENT_EXISTS") &&
+          before
+        )
           await loadRoom(s, before.id).catch(() => {})
         throw e
       }

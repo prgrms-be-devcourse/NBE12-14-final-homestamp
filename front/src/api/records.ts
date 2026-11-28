@@ -65,6 +65,9 @@ export const noRequest = (why: string): NoRequest => ({ none: why })
 // 요청 본문의 호실 쪽 값(06 4-3 side, 05 party.side). 화면의 임차인·임대인을 서버 값으로 바꿔요
 export const roomSide = (r: Role): "TENANT" | "LANDLORD" =>
   r === "임차인" ? "TENANT" : "LANDLORD"
+// 송금 방향의 서버 값(06 4-8 transfers): 반환(집주인 → 세입자)은 REFUND, 추가 송금(세입자 → 집주인)은 EXTRA
+export const transferDirection = (d: "반환" | "추가 송금") =>
+  d === "반환" ? ("REFUND" as const) : ("EXTRA" as const)
 // 목업에는 점검·정산의 서버 ID가 없어 호실 ID로 대신해요(목업은 주소로 보내지 않아요).
 // 아직 서버에 연결하지 않은 점검 행동(항목 더하기·부위 사진, #356)도 이 자리표를 써요.
 export const inspectionIdOf = (roomId: string, kind: "in" | "out") =>
@@ -74,6 +77,9 @@ export const inspectionIdIn = (room: Room, kind: "in" | "out") =>
   (kind === "in" ? room.moveIn : room.moveOut)?.server?.id ??
   inspectionIdOf(room.id, kind)
 export const settlementIdOf = (roomId: string) => roomId
+// 정산 주소에 쓸 ID. 서버에서 받은 정산이면 서버 정산 ID(06 4-8, #442), 목업이면 자리표예요.
+export const settlementIdIn = (room: Room) =>
+  room.settlement?.id ?? settlementIdOf(room.id)
 // 사진도 화면 모델에서는 기록 안의 자리(b:0, a:기록:0)로만 알아서, 서버의 사진 ID가 생기기 전까지 이것으로 대신해요.
 export const photoIdOf = (recordId: string, key: string) => `${recordId}:${key}`
 // 부담 제안(돈 안건)도 지금 화면 모델에 ID가 없어 '그 기록의 지금 안'으로 대신해요.

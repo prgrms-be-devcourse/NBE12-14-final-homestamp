@@ -40,6 +40,22 @@ export interface Transfer {
   direction: "반환" | "추가 송금"
   at: string
   confirmed: boolean
+  // HTTP: 서버가 준 송금 값(06 4-8 정산 상세의 transfers). 목업에는 없어요.
+  server?: TransferServerState
+}
+export interface TransferServerState {
+  // 이 송금의 판 번호. 응답할 때 본 번호(seenVersionNo)로 보내요
+  versionNo: number
+  // 기록하지 않은 측의 지금 응답
+  response: "PENDING" | "ACK" | "NEED_MORE" | "DISPUTE"
+  // 받은 측이 남긴 기록([받았어요(혼자)])인지. 반환은 세입자, 추가 송금은 집주인이 받은 측이에요
+  byReceiver: boolean
+  // 상대가 확인한 금액(확인 전이면 null)
+  confirmedAmount: number | null
+  // 같은 송금으로 묶인 보낸 쪽 기록(SET-4e: 금액이 달라 받은 금액을 따로 적음)
+  sameAsTransferId: string | null
+  // 이 송금에 지금 누를 수 있는 행동(respond)
+  availableActions: string[]
 }
 export interface CauseClaim {
   id: string
@@ -433,6 +449,27 @@ export interface Room {
   // HTTP: 서버가 준 원래 값(06 4-3 GET /api/rooms, /api/rooms/{id}). 위 화면 칸은 이 값에서 바꿔 채우고,
   // 바꾸며 뭉뚱그린 상태(공유 그만둠·탈퇴·합류 전)는 여기서 그대로 읽어요. 목업에는 없어요.
   server?: RoomServerState
+  // HTTP: 서버가 준 정산 머리(06 4-8 GET /api/rooms/{id}/settlement). null이면 아직 열지 않은 정산(404),
+  // 없으면 아직 받지 못했어요(받는 중이거나 받기가 실패함). 목업에는 없어요.
+  settlement?: SettlementServerState | null
+}
+// 정산 머리와 송금(06 4-8 GET /api/settlements/{id}). 보증금 금액·항목은 그 기능을 연결할 때 칸을 더해요(#442)
+export interface SettlementServerState {
+  // 서버의 정산 ID(요청 주소에 써요)
+  id: string
+  // 보증금 확인 상태(05 settlement.deposit_status). 화면 말은 "보증금 확인 전"/"둘 다 확인"(08 10장)
+  depositStatus: "NOT_ENTERED" | "PENDING" | "AGREED" | "DISPUTE"
+  // 정산 모습 번호. 끝내기 확인 때 본 번호(seenVersionNo)로 보내요(SET-5e)
+  snapshotNo: number
+  createdAt: string
+  // 내가 아직 답하지 않은 확인 요청 수(SET-5g)
+  unansweredForMe: number
+  // 정산에 지금 누를 수 있는 행동(transfers·finish·finish-confirm·finish-not-yet·finish-alone)
+  availableActions: string[]
+  // 송금 기록(SET-4). 송금 합계는 서버가 센 값(상대가 확인한 것만, 같은 송금으로 묶인 건 한 번)
+  transfers: Transfer[]
+  confirmedRefund: number
+  confirmedExtra: number
 }
 // 당사자 자리 상태(05 party.status). 서버 값 그대로예요.
 export type PartyStatus =
