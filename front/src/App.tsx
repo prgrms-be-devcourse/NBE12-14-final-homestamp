@@ -51,6 +51,8 @@ import {
   type RecordRequest,
 } from "@/api/records"
 import { endpoints } from "@/api/endpoints"
+import { RoomEndCard } from "@/features/room/room-end-card"
+import { moveOutEndsNow, roomEndView } from "@/lib/room-end"
 import { createAuth, type Account, type AuthApi } from "@/api/auth"
 import { AuthScreen } from "@/features/auth/auth-screen"
 import { TermsReconfirmDialog } from "@/features/member/terms-reconfirm-dialog"
@@ -589,20 +591,21 @@ function HomeStampApp({
     eventRoomId = roomId,
     privateTo?: Role,
     recordTarget?: RecordTarget,
-  ) {
+  ): Promise<boolean> {
     const targetRoom = db.rooms.find((r) => r.id === eventRoomId)
     if (
       targetRoom &&
       !(sideOf(targetRoom, accountId) && canAccessRoom(targetRoom, role))
     ) {
       toast("호실 연결 후에 기록할 수 있어요.")
-      return
+      return Promise.resolve(false)
     }
     if (/거주 종료$|정산 끝내기/.test(text)) {
       setPending({ request, text, update })
-      return
+      return Promise.resolve(true)
     }
-    void act(
+    // 저장 결과(성공 true, 실패 false)를 돌려줘요. 창이 기다렸다가 성공일 때만 닫게요(실패면 쓴 내용을 그대로 둬요)
+    return act(
       request,
       text,
       update,
@@ -612,9 +615,10 @@ function HomeStampApp({
       privateTo,
       recordTarget,
     ).then((ok) => {
-      if (!ok) return
+      if (!ok) return false
       toast("기록했어요.")
       setModal(null)
+      return true
     })
   }
   // 공유받은 기록 한 건 보기(받은 초대에서 '공유받은 기록 보기')
@@ -1167,6 +1171,57 @@ function HomeStampApp({
                       />
                     )}
                   {page === "home" && (
+                    <RoomEndCard
+                      view={roomEndView(room, role)}
+                      role={role}
+                      canMoveOut={roomHas("move-out")}
+                      canConfirm={roomHas("move-out-confirm")}
+                      canReject={roomHas("move-out-reject")}
+                      onMoveOut={() => {
+                        // 바로 거주 종료가 되면 확인 창을 먼저 띄워요(되돌릴 수 없어서). 판단은 lib/room-end(moveOutEndsNow)
+                        const direct = moveOutEndsNow(room, role)
+                        commit(
+                          post(endpoints.moveOut(roomId)),
+                          role === "임차인"
+                            ? "이사했어요 · 거주 종료"
+                            : direct
+                              ? "이사함 · 거주 종료"
+                              : "거주 종료 요청",
+                          (d) => {
+                            const r = d.rooms.find((r) => r.id === roomId)!
+                            if (direct) r.status = "거주 종료"
+                            else r.endRequested = true
+                          },
+                        )
+                      }}
+                      onConfirm={() =>
+                        commit(
+                          post(endpoints.moveOutAnswer(roomId, "confirm")),
+                          "거주 종료 요청에 맞아요 · 거주 종료",
+                          (d) => {
+                            const r = d.rooms.find((r) => r.id === roomId)!
+                            r.status = "거주 종료"
+                            r.endRequested = false
+                            r.endWait = undefined
+                          },
+                        )
+                      }
+                      onReject={(reason) =>
+                        commit(
+                          post(endpoints.moveOutAnswer(roomId, "reject"), {
+                            reason,
+                          }),
+                          `거주 종료 요청 · 아직 살고 있어요 · ${reason}`,
+                          (d) => {
+                            const r = d.rooms.find((r) => r.id === roomId)!
+                            r.endRequested = false
+                            r.endWait = undefined
+                          },
+                        )
+                      }
+                    />
+                  )}
+                  {page === "home" && (
                     <HomePage
                       showFirstSteps={showFirstSteps}
                       onStartInspection={() => go("inspection")}
@@ -1278,7 +1333,6 @@ function HomeStampApp({
                       inspectionAct={inspectionAct}
                       itemMasks={itemMasks}
                       photoContent={photoContent}
-                      roomActions={roomActions}
                     />
                   )}
                   {page === "connection" && (
