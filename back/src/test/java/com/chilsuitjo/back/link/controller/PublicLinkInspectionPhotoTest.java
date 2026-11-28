@@ -51,15 +51,16 @@ class PublicLinkInspectionPhotoTest {
 
   @BeforeEach
   void setUp() {
+    // 이 테스트만 쓰는 지역 코드. 시·도 목록(RegionApiTest)은 코드 앞 두 자리마다 이름이 하나여야 해서 다른 99 지역과 같은 이름을 쓴다
     jdbc.update(
-        "INSERT INTO state.region (code, sido, dong) VALUES ('9999999997', '서울특별시', '사진동')"
+        "INSERT INTO state.region (code, sido, dong) VALUES ('9999999972', '테스트', '사진동')"
             + " ON CONFLICT DO NOTHING");
     room = UUID.randomUUID();
     jdbc.update(
         """
         INSERT INTO state.room_record
           (id, region_code, alias, move_in_date, status, created_by_side, created_at, version)
-        VALUES (?, '9999999997', '별칭', DATE '2026-03-01', 'LIVING', 'TENANT', CURRENT_TIMESTAMP, 0)
+        VALUES (?, '9999999972', '별칭', DATE '2026-03-01', 'LIVING', 'TENANT', CURRENT_TIMESTAMP, 0)
         """,
         room);
     tenant = UUID.randomUUID();
