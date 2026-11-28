@@ -33,7 +33,7 @@ class RenotifyTransitionsTest {
         ActionType.RENOTIFY,
         null,
         "server",
-        "renotify:r1:1",
+        "rn:r1:-",
         null,
         null,
         null,

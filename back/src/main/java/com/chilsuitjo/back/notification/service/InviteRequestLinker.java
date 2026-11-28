@@ -190,6 +190,10 @@ public class InviteRequestLinker {
   /**
    * 이 요청에 닿은 문자 통지(요청·초대·재통지)가 있고, 그 링크가 모두 번호 고치기로 무효({@code REINVITED})인가. 하나라도 지금 번호에 닿은 통지(유효한
    * 링크나 링크 없는 통지)가 있으면 false다. 부르는 쪽(room의 번호 고치기 저장)이 이 호출 전에 그 자리 링크를 {@code REINVITED}로 닫는다.
+   *
+   * <p>번호 고치기 전에 다른 이유로 이미 무효였던 링크(무효 이유는 처음 것이 남음)면 false다. 번호를 고칠 수 있는 자리(초대됨·거절됨)에서 그런 링크는 초대
+   * 거절의 {@code INVITE_REJECTED}뿐인데(#478), 거절이 초대한 측의 열린 요청을 닫아 여기 오는 기다림이 없고 새로 연 요청은 처음 통지로 간다.
+   * 문자가 아닌 통지(IN_APP 대체, NOTI-1 뒤)만 닿았으면 비어 false다. 그때 이 조건을 다시 본다.
    */
   private boolean startedOnlyByOldNumber(UUID requestId) {
     List<Notice> reached =

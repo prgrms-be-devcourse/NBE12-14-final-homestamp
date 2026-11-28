@@ -30,7 +30,7 @@ public class RenotifyScheduler {
       RenotifyWorker worker,
       @Value("${app.wait.renotify-worker.page-size:100}") int pageSize,
       @Value("${" + SmsMode.PROPERTY + ":}") String smsMode) {
-    // disabled면 OutboxWorker가 보내지 않고 끝내는데 재통지는 이미 남아 "이미 재통지함"이 된다. 요청당 한 번(03 1-4)을 실제로
+    // disabled면 OutboxWorker가 보내지 않고 끝내는데 재통지는 이미 남아 "이미 재통지함"이 된다. 응답 기회당 한 번(03 1-4)을 실제로
     // 보내지 않고 써 버리지 않게 이 조합으로는 기동하지 않는다(SmsModeGuard처럼 기동 전에 거절)
     if (SmsMode.parse(smsMode).orElse(null) == SmsMode.DISABLED) {
       throw new IllegalStateException(

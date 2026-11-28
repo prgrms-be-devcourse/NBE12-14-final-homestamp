@@ -20,7 +20,6 @@ import com.chilsuitjo.back.notification.service.CounterpartReader;
 import com.chilsuitjo.back.notification.service.InviteLinks;
 import com.chilsuitjo.back.notification.service.NoticeOutbox;
 import java.time.Clock;
-import java.util.Collections;
 import java.util.EnumSet;
 import java.util.Objects;
 import java.util.Optional;
@@ -36,8 +35,8 @@ import org.springframework.stereotype.Component;
  * RenotifySkipped}이고 아무것도 쓰지 않는다:
  *
  * <ul>
- *   <li>요청이 지금도 기다림이고, 기다림이 시작됐고(첫 전달 증거가 있어야 기한이 생김), 저장된 재통지 기한이 지났고, 그 요청에 재통지 통지가 아직 없다(03 1-4
- *       "재통지 문자는 요청당 한 번", 상태 무관)
+ *   <li>요청이 지금도 기다림이고, 기다림이 시작됐고(첫 전달 증거가 있어야 기한이 생김), 저장된 재통지 기한이 지났고, 지금 응답 기회에 재통지가 아직 없다(03 1-4
+ *       "재통지 문자는 응답 기회당 한 번", 상태 무관. 링크가 번호 고치기로 무효인 재통지는 옛 기회, #370 T-2)
  *   <li>지금 호실 단계에서 그 종류를 열 수 있다({@code RoomParties.canOpen}: 정산 완료면 없음, 거주 종료 뒤면 정산을 마무리하는 종류만, 03
  *       K "거주 종료 뒤"). 합류 전 기록이 아니다
  *   <li>답할 자리가 연결 전이나 연결됨이고, 어느 쪽도 공유 중단 제한이 없다. 거절·탈퇴·공유 중단 때 요청을 어떻게 정리할지는 각 결정을 따르고 여기서 문자를 내지
@@ -52,9 +51,9 @@ import org.springframework.stereotype.Component;
 @Component
 public class RenotifyStateStore implements StateStore<RenotifyPlan> {
 
-  /** 재통지의 자리·링크를 정할 통지: 요청에 걸려 이미 닿은 요청 통지. 작업자의 후보 조회도 같은 집합을 쓴다. */
-  public static final Set<NoticeKind> EVIDENCE_KINDS =
-      Collections.unmodifiableSet(EnumSet.of(NoticeKind.REQUEST, NoticeKind.INVITE));
+  /** 재통지의 자리·링크를 정할 통지: 요청에 걸려 이미 닿은 요청 통지. */
+  private static final Set<NoticeKind> EVIDENCE_KINDS =
+      EnumSet.of(NoticeKind.REQUEST, NoticeKind.INVITE);
 
   private static final Set<NoticeStatus> REACHED =
       EnumSet.of(NoticeStatus.DELIVERED, NoticeStatus.VIEWED);

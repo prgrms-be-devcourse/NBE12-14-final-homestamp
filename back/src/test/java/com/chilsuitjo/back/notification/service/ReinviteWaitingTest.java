@@ -26,7 +26,9 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -59,7 +61,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @ActiveProfiles("test")
 class ReinviteWaitingTest {
 
-  private static final String REGION = "9799999902";
+  private static final String REGION = "9799999904";
   private static final Duration RENOTIFY = Duration.ofHours(48);
 
   @Autowired private MockMvc mvc;
@@ -79,6 +81,23 @@ class ReinviteWaitingTest {
   private UUID room;
   private UUID seat;
   private UUID request;
+
+  /**
+   * 같은 DB를 쓰는 다른 테스트가 이 호실의 요청·문자를 집지 않게 치운다: 재통지 후보에서 빼고(기한 비움), 보낼 문자 줄을
+   * 닫는다(CounterpartPhoneApiTest와 같은 방식).
+   */
+  @AfterEach
+  void cleanUp() {
+    jdbc.update(
+        "UPDATE state.response_request SET renotify_due_at = NULL WHERE room_record_id = ?", room);
+    jdbc.update(
+        """
+        UPDATE state.outbox SET status = 'DONE'
+        WHERE status = 'PENDING'
+          AND dedupe_key IN (SELECT 'sms:' || id FROM state.notice WHERE room_record_id = ?)
+        """,
+        room);
+  }
 
   @BeforeEach
   void setUp() throws Exception {
@@ -467,6 +486,18 @@ class ReinviteWaitingTest {
     new TransactionTemplate(txManager)
         .executeWithoutResult(tx -> {
           waitStart.lockRoomOf(noticeId);
+          // 새 기회의 요청·초대 통지는 실제로 옛 재통지보다 뒤에 닿는다. 이 테스트는 시각을 앞당겨 쓰므로 그 순서를 맞춘다(옛 재통지를 닿은 시각 1분 전으로)
+          jdbc.update(
+              """
+              UPDATE state.notice SET created_at = ?
+              WHERE kind = 'RENOTIFY' AND created_at > ?
+                AND response_request_id = (
+                  SELECT response_request_id FROM state.notice
+                  WHERE id = ? AND kind IN ('REQUEST', 'INVITE'))
+              """,
+              Timestamp.from(at.minusSeconds(60)),
+              Timestamp.from(at),
+              noticeId);
           Notice notice = notices.findForUpdate(noticeId).orElseThrow();
           jdbc.update(
               "UPDATE state.notice SET status = 'DELIVERED',"
@@ -496,6 +527,7 @@ class ReinviteWaitingTest {
   private void runInLockOrder(Work first, Work second) throws Exception {
     CountDownLatch locked = new CountDownLatch(1);
     CountDownLatch release = new CountDownLatch(1);
+    AtomicInteger holderPid = new AtomicInteger();
     ExecutorService pool = Executors.newFixedThreadPool(3);
     try {
       Future<?> holder =
@@ -504,6 +536,7 @@ class ReinviteWaitingTest {
                 .executeWithoutResult(tx -> {
                   jdbc.queryForList(
                       "SELECT id FROM state.room_record WHERE id = ? FOR UPDATE", room);
+                  holderPid.set(jdbc.queryForObject("SELECT pg_backend_pid()", Integer.class));
                   locked.countDown();
                   try {
                     release.await(60, TimeUnit.SECONDS);
@@ -513,19 +546,21 @@ class ReinviteWaitingTest {
                 });
             return null;
           });
-      locked.await(30, TimeUnit.SECONDS);
+      if (!locked.await(30, TimeUnit.SECONDS)) {
+        throw new AssertionError("테스트가 호실을 잠그지 못했어요");
+      }
       Future<?> a =
           pool.submit(() -> {
             first.run();
             return null;
           });
-      awaitRoomLockWaiters(1);
+      awaitRoomLockWaiters(holderPid.get(), 1);
       Future<?> b =
           pool.submit(() -> {
             second.run();
             return null;
           });
-      awaitRoomLockWaiters(2);
+      awaitRoomLockWaiters(holderPid.get(), 2);
       release.countDown();
       holder.get(60, TimeUnit.SECONDS);
       a.get(60, TimeUnit.SECONDS);
@@ -536,24 +571,32 @@ class ReinviteWaitingTest {
     }
   }
 
-  /** 호실 행 잠금을 기다리는 연결이 {@code count}개가 될 때까지 DB를 본다. */
-  private void awaitRoomLockWaiters(int count) {
+  /**
+   * 테스트가 쥔 호실 잠금({@code holder} 연결) 뒤에 줄 선 연결이 {@code count}개가 될 때까지 DB를 본다. 첫 대기자는 {@code holder}에
+   * 막히고 둘째는 첫 대기자(행 잠금 대기열)에 막히므로 둘 다 센다. 같은 DB의 다른 연결은 세지 않는다.
+   */
+  private void awaitRoomLockWaiters(int holder, int count) {
     long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
     while (System.nanoTime() < deadline) {
       Integer waiting =
           jdbc.queryForObject(
               """
-              SELECT count(*) FROM pg_stat_activity
-              WHERE datname = current_database() AND wait_event_type = 'Lock'
-                AND query ILIKE '%room_record%'
+              WITH w AS (
+                SELECT pid, pg_blocking_pids(pid) AS blockers FROM pg_stat_activity
+                WHERE datname = current_database() AND wait_event_type = 'Lock')
+              SELECT count(*) FROM w
+              WHERE ? = ANY(blockers)
+                 OR blockers && (SELECT coalesce(array_agg(pid), '{}') FROM w WHERE ? = ANY(blockers))
               """,
-              Integer.class);
+              Integer.class,
+              holder,
+              holder);
       if (waiting != null && waiting >= count) {
         return;
       }
       LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(20));
     }
-    throw new AssertionError("호실 잠금을 기다리는 연결이 " + count + "개가 되지 않았어요");
+    throw new AssertionError("호실 잠금 뒤에 줄 선 연결이 " + count + "개가 되지 않았어요");
   }
 
   /** 번호 고치기가 바꿀 수 있는 이 호실의 모든 것. */

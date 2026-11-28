@@ -30,8 +30,9 @@ import org.springframework.stereotype.Service;
  * 보낸 것만으로는 미확인 기한이 생기지 않고, 재통지가 실패해도 미확인으로 바꾸지 않는다(미확인 작업자 {@code MARK_UNCONFIRMED}는 아직 없음).
  *
  * <p><b>대상.</b> 기한은 첫 통지가 닿을 때만 생긴다({@code ResponseRequest.startWaiting}). 그래서 전달 증거가 없는 요청은 후보가
- * 아니다. 요청 종류로 거르지 않는다(03 1-1 "모든 응답 필요"). 거르는 것은 호실 단계·자리·링크다({@link RenotifyStateStore#check}).
- * 요청당 한 번이다: 같은 요청이 다시 기다림이 되어도({@code rewait}) 재통지는 늘지 않고, 닫힌 뒤 새로 연 요청은 새 요청이라 따로 센다.
+ * 아니다. 요청 종류로 거르지 않는다(03 1-1 "모든 응답 필요"). 거르는 것은 호실 단계·자리·링크다({@link RenotifyStateStore#check}). 응답
+ * 기회(요청 + 그 링크)마다 한 번이다: 같은 요청이 다시 기다림이 되어도({@code rewait}) 재통지는 늘지 않고, 번호를 고쳐 기다림을 다시 시작하면 새 기회라 한
+ * 번 더 간다(#370 T-2). 닫힌 뒤 새로 연 요청은 새 요청이라 따로 센다.
  *
  * <p><b>잠금·멱등.</b> pipeline이 호실을 잠근 뒤 접근 검증에서 다시 본다(멱등 조회보다 먼저라 재생도 지금 상태를 통과해야 함). 잠금 순서는 다른 행동과
  * 같다(호실 → 통지·요청, 이 작업자는 통지를 새로 넣기만 하고 잠그지 않음). 행동 키는 {@link RenotifyKey}({@code rn:<요청>:<링크>}, 응답
@@ -86,7 +87,6 @@ public class RenotifyWorker {
               afterDue,
               afterId,
               NoticeKind.RENOTIFY,
-              RenotifyStateStore.EVIDENCE_KINDS,
               Limit.of(pageSize));
       for (ResponseRequest request : page) {
         try {
