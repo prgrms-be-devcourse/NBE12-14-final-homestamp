@@ -16,6 +16,10 @@ V1은 부모 삭제 보호·수신 거부 UPDATE 금지·회원 확인 기록 �
 
 `infra/db/bootstrap_roles.sql`은 운영 DB의 역할과 최소 선행 권한을 준비한다. 운영 역할 이름은 Owner `hs_owner`, Migration `hs_migrator`, App `hs_app`, Purge `hs_purge`, Human 읽기 그룹 `hs_human_read`다(decisions 2026-11-28). 같은 이름을 Bootstrap 변수, 이미지의 `db/grants/roles.properties`, Migration 비밀 파일(`spring.datasource.username`·`app.migration.owner-role`), App SSM `spring.datasource.username`에 쓴다. 통합 테스트의 `homestamp_*`·`hs_login_*` 같은 이름(`DatabaseRoleBootstrapIntegrationTest`, `DatabaseGrantsIntegrationTest`, `MigrationRunnerIntegrationTest`의 접속용 역할)은 테스트 전용이다. 이미지의 `roles.properties`를 검사하는 테스트(`MigrationModeTest`, `MigrationRunnerIntegrationTest`의 `G_*`, `infra/deploy/test/integration-test.sh`)만 운영 이름을 쓴다. 실행할 때 다섯 이름을 `psql` 변수로 명시한다. `human_role`은 사람 계정이 아니라 NOLOGIN Human 읽기 그룹(decisions 2026-11-25)이다. GRANT는 이 그룹에 한 번만 주고, 사람별 LOGIN 역할은 Bootstrap이 만들지 않으며 아래 「사람별 Human 계정」 절차로 그룹에 넣고 뺀다.
 
+**첫 운영 배포 이미지**: 첫 운영 배포는 `roles.properties`가 위 운영 이름인 이미지(#426 이후 커밋으로 만든 digest)로 한다. 그 전 이미지에는 테스트 이름 `homestamp_*`가 들어 있어, `hs_*`로 Bootstrap한 DB에서 `--apply-grants` 사전 검사가 역할을 찾지 못하고 실패한다(`DatabaseGrantsIntegrationTest` "없는 역할"). 그러면 `deploy.sh`는 종료 12로 멈추고 새 앱을 시작하지 않는다.
+- 12로 멈춰도 DB가 자동으로 이전 상태로 돌아가지 않는다. GRANT는 한 트랜잭션이라 권한은 바뀌지 않지만, 그 이미지의 `--migrate`는 이미 반영됐을 수 있다. 활성 앱(있다면)은 그대로 돈다
+- 다시 하기 전에 `deploy.sh --status`로 활성 서비스, 마스터 세션에서 Flyway 이력(`flyway_schema_history`)을 보고, 운영 이름을 가진 이미지가 그 이력을 모두 아는지(같거나 더 새 V 파일) 확인한다. 그 이미지 digest로 배포-블루그린의 보통 배포를 다시 한다(Migration은 할 일이 없거나 남은 것만, 이어서 GRANT). 같은 digest 재배포(noop)는 GRANT를 돌리지 않으므로 해결이 아니다
+
 | 역할 | LOGIN | 상속 및 멤버십 |
 |---|---:|---|
 | Owner | 아니오 | `NOINHERIT`; 객체 소유 및 Flyway가 `SET ROLE`로 사용 |
