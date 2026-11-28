@@ -122,8 +122,13 @@ public interface NoticeRepository extends JpaRepository<Notice, UUID> {
       @Param("requestId") UUID responseRequestId,
       @Param("statuses") Collection<NoticeStatus> statuses);
 
-  /** 이 요청에 이 종류의 통지가 있나(상태 무관). 재통지는 요청당 한 번이라(03 1-4 "기한") 있으면 다시 만들지 않는다. */
-  boolean existsByResponseRequestIdAndKind(UUID responseRequestId, NoticeKind kind);
+  /**
+   * 이 요청에 걸린 이 종류 통지의 링크 ID(상태 무관, 링크가 없는 통지는 {@code null}). 재통지가 지금 응답 기회의 것인지 볼 때 쓴다: 링크가 번호 고치기로
+   * 무효({@code REINVITED})면 옛 기회다({@code RenotifyStateStore.check}, #370 T-2). 잠그지 않는다(호실을 잠근 뒤 부름).
+   */
+  @Query("select n.linkId from Notice n where n.responseRequestId = :requestId and n.kind = :kind")
+  List<UUID> findLinkIdsByRequestAndKind(
+      @Param("requestId") UUID responseRequestId, @Param("kind") NoticeKind kind);
 
   /**
    * 이 요청에 걸린 통지 중 종류가 {@code kinds}, 채널이 {@code channel}, 상태가 {@code statuses}인 것(만든 순서 거꾸로, 같으면 ID

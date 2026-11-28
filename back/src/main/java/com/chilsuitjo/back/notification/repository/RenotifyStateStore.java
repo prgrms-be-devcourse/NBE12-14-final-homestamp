@@ -20,6 +20,7 @@ import com.chilsuitjo.back.notification.service.CounterpartReader;
 import com.chilsuitjo.back.notification.service.InviteLinks;
 import com.chilsuitjo.back.notification.service.NoticeOutbox;
 import java.time.Clock;
+import java.util.Collections;
 import java.util.EnumSet;
 import java.util.Objects;
 import java.util.Optional;
@@ -35,8 +36,8 @@ import org.springframework.stereotype.Component;
  * RenotifySkipped}이고 아무것도 쓰지 않는다:
  *
  * <ul>
- *   <li>요청이 지금도 기다림이고, 기다림이 시작됐고(첫 전달 증거가 있어야 기한이 생김), 저장된 재통지 기한이 지났고, 그 요청에 재통지 통지가 아직 없다(03 1-4
- *       "재통지 문자는 요청당 한 번", 상태 무관)
+ *   <li>요청이 지금도 기다림이고, 기다림이 시작됐고(첫 전달 증거가 있어야 기한이 생김), 저장된 재통지 기한이 지났고, 지금 응답 기회에 재통지가 아직 없다(03 1-4
+ *       "재통지 문자는 응답 기회당 한 번", 상태 무관. 링크가 번호 고치기로 무효인 재통지는 옛 기회, #370 T-2)
  *   <li>지금 호실 단계에서 그 종류를 열 수 있다({@code RoomParties.canOpen}: 정산 완료면 없음, 거주 종료 뒤면 정산을 마무리하는 종류만, 03
  *       K "거주 종료 뒤"). 합류 전 기록이 아니다
  *   <li>답할 자리가 연결 전이나 연결됨이고, 어느 쪽도 공유 중단 제한이 없다. 거절·탈퇴·공유 중단 때 요청을 어떻게 정리할지는 각 결정을 따르고 여기서 문자를 내지
@@ -51,9 +52,9 @@ import org.springframework.stereotype.Component;
 @Component
 public class RenotifyStateStore implements StateStore<RenotifyPlan> {
 
-  /** 재통지의 자리·링크를 정할 통지: 요청에 걸려 이미 닿은 요청 통지. */
-  private static final Set<NoticeKind> EVIDENCE_KINDS =
-      EnumSet.of(NoticeKind.REQUEST, NoticeKind.INVITE);
+  /** 재통지의 자리·링크를 정할 통지: 요청에 걸려 이미 닿은 요청 통지. 작업자의 후보 조회도 같은 종류로 새 기회를 가린다. */
+  public static final Set<NoticeKind> EVIDENCE_KINDS =
+      Collections.unmodifiableSet(EnumSet.of(NoticeKind.REQUEST, NoticeKind.INVITE));
 
   private static final Set<NoticeStatus> REACHED =
       EnumSet.of(NoticeStatus.DELIVERED, NoticeStatus.VIEWED);
@@ -95,12 +96,12 @@ public class RenotifyStateStore implements StateStore<RenotifyPlan> {
     ResponseRequest request =
         requests.findById(requestId).orElseThrow(() -> new RenotifySkipped("없음"));
     if (request.getStatus() != RequestStatus.WAITING
-        || request.getFirstNotifiedAt() == null
+        || !request.isWaitStarted()
         || request.getRenotifyDueAt() == null
         || request.getRenotifyDueAt().isAfter(clock.instant())) {
       throw new RenotifySkipped("기다림 아님 또는 기한 전");
     }
-    if (notices.existsByResponseRequestIdAndKind(requestId, NoticeKind.RENOTIFY)) {
+    if (hasCurrentRenotify(requestId)) {
       throw new RenotifySkipped("이미 재통지함");
     }
     RoomParties parties = counterparts.read(roomRecordId, request.getRequestedBySide());
@@ -127,6 +128,35 @@ public class RenotifyStateStore implements StateStore<RenotifyPlan> {
     }
     return new RenotifyPlan(
         roomRecordId, requestId, answering.partyId(), evidence.get().getLinkId());
+  }
+
+  /**
+   * 지금 응답 기회에 재통지가 있나(상태 무관, 취소된 것도 셈). 재통지는 응답 기회(요청 + 그 링크)마다 한 번이다(03 1-4 "기한"). 링크가 번호 고치기로
+   * 무효({@code REINVITED})인 재통지는 고치기 전 번호의 기회라 세지 않는다(#370 T-2). 다른 이유의 무효(연결·거주 종료·공유 중단 등)는 초대 단계가
+   * 끝난 것이라 그대로 센다. 링크가 없는 재통지도 센다. 시각을 비교하지 않으므로 같은 시각에 만든 통지에도 흔들리지 않는다.
+   */
+  private boolean hasCurrentRenotify(UUID requestId) {
+    return notices.findLinkIdsByRequestAndKind(requestId, NoticeKind.RENOTIFY).stream()
+        .anyMatch(link -> link == null || !inviteLinks.isReinvited(link));
+  }
+
+  /**
+   * 재통지 행동 키에 넣을 링크: 이 요청의 가장 최근 요청·초대 통지의 링크(상태 무관, 없으면 {@code null}). 잠그기 전에 notification 표만 읽는다.
+   * 번호를 고치면 새 링크의 통지가 생겨 바뀐다({@link RenotifyKey}). 잠근 뒤 실제로 고른 링크와 드물게 다를 수 있으나(그 사이 번호 고치기와 새 전달까지
+   * 끝난 경우) 한 기회에 한 번은 잠근 뒤 확인이 지킨다.
+   *
+   * <p>"가장 최근"은 서버가 통지를 만든 시각 순서다. 새 기회의 통지는 옛 기회의 요청·초대 통지보다 적어도 사람 행동 하나(처음 초대 → 번호 고치기) 뒤에
+   * 만들어지므로 같은 서버 시계에서 뒤집히지 않는다. 링크 무효 여부는 잠그기 전이라 보지 않는다({@code InviteLinks}는 잠근 뒤에만 부름). 뒤집히면 키가 옛
+   * 기회의 키와 같아져 그 재통지는 재생으로 끝나므로, 인스턴스를 늘릴 때 후보 조회와 함께 다시 본다(decisions 2026-11-29 T-2).
+   */
+  public UUID keyLink(UUID requestId) {
+    return notices
+        .findByRequest(
+            requestId, EVIDENCE_KINDS, NoticeChannel.SMS, EnumSet.allOf(NoticeStatus.class))
+        .stream()
+        .findFirst()
+        .map(Notice::getLinkId)
+        .orElse(null);
   }
 
   @Override

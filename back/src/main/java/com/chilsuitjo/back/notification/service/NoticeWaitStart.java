@@ -36,7 +36,8 @@ import org.springframework.transaction.annotation.Transactional;
  * <p><b>고치기 전 번호로 간 통지</b>: 링크가 번호 고치기로 무효({@code REINVITED})가 된 통지가 닿은 것은 시작점이 아니다. 그 문자는 지금 상대가
  * 아닌 옛 번호로 갔다(#370 T-2, #399). 업체의 전달 사실은 통지에 그대로 남고(부르는 쪽이 이미 적음), 요청의 기다림만 시작하거나 앞당기지 않는다.
  * 연결({@code CONNECTED})로 무효가 된 링크는 맞는 사람이 연결한 것이라 그대로 시작점이다. 다른 이유로 무효인 링크는 지금처럼 요청이 열려 있는지로만 본다.
- * 번호를 고치기 <b>전에</b> 이미 닿아 시작된 기다림은 번호 고치기 처리(T-2 (2) "새 전달부터 기한을 다시 셈")가 다룬다.
+ * 번호를 고치기 <b>전에</b> 이미 닿아 시작된 기다림은 번호 고치기 때 {@link InviteRequestLinker}가 처음으로 되돌린다({@link
+ * ResponseRequest#restartForNewNumber}, T-2 (2) "새 전달부터 기한을 다시 셈", 첫 통지 시각은 그대로).
  */
 @Component
 public class NoticeWaitStart {
