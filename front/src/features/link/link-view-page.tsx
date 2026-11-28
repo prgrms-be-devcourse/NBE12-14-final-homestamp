@@ -55,14 +55,19 @@ function outcomeOf(e: unknown): Outcome {
   return { state: "error", message: SERVER_ERROR }
 }
 
+// 로그인 복원이 아직 끝나지 않았을 때(#411 리뷰). 회원인지 몰라 가입·로그인·앱으로 가기 대신 확인 중이나 다시 불러오기를 보여요
+export type SessionCheck = { error?: string; onRetry: () => void }
+
 export function LinkViewPage({
   member,
+  session,
   onSignup,
   onLogin,
   onContinue,
 }: {
   // 로그인한 회원이 연 경우. 가입·로그인 대신 받은 초대로 이어 가요
   member: boolean
+  session?: SessionCheck
   onSignup: () => void
   onLogin: () => void
   onContinue: () => void
@@ -110,6 +115,7 @@ export function LinkViewPage({
         <Shown
           view={current.view}
           member={member}
+          session={session}
           onSignup={onSignup}
           onLogin={onLogin}
           onContinue={onContinue}
@@ -157,6 +163,7 @@ const formatted = (f: Intl.DateTimeFormat, at: string) => {
 function Shown({
   view,
   member,
+  session,
   onSignup,
   onLogin,
   onContinue,
@@ -164,6 +171,7 @@ function Shown({
 }: {
   view: LinkView
   member: boolean
+  session?: SessionCheck
   onSignup: () => void
   onLogin: () => void
   onContinue: () => void
@@ -176,6 +184,7 @@ function Shown({
         <p>금액과 항목은 가입하고 호실에 연결한 뒤에 볼 수 있어요.</p>
         <Join
           member={member}
+          session={session}
           signup="가입하고 확인하기"
           login="이미 회원이에요: 로그인하고 확인하기"
           onSignup={onSignup}
@@ -206,6 +215,7 @@ function Shown({
         </div>
         <Join
           member={member}
+          session={session}
           signup="가입하고 연결하기"
           login="이미 회원이에요: 로그인하고 연결하기"
           onSignup={onSignup}
@@ -237,6 +247,7 @@ function Shown({
         <p>여기서 보기만 해서는 답한 것으로 남지 않아요</p>
         <Join
           member={member}
+          session={session}
           signup="가입하고 응답하기"
           login="이미 회원이에요: 로그인하고 응답하기"
           signupNote="이메일과 휴대폰 인증, 약 2분"
@@ -251,6 +262,7 @@ function Shown({
 
 function Join({
   member,
+  session,
   signup,
   login,
   signupNote,
@@ -259,6 +271,7 @@ function Join({
   onContinue,
 }: {
   member: boolean
+  session?: SessionCheck
   signup: string
   login: string
   signupNote?: string
@@ -266,6 +279,12 @@ function Join({
   onLogin: () => void
   onContinue: () => void
 }) {
+  if (session)
+    return session.error ? (
+      <ErrorState message={session.error} onRetry={session.onRetry} />
+    ) : (
+      <LoadingState label="로그인 상태를 확인하는 중이에요" />
+    )
   if (member)
     return (
       <div className="flex flex-col gap-2">

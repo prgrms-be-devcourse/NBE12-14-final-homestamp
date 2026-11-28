@@ -197,26 +197,19 @@ export default function App() {
     replaceUrl(null, "", "/")
     setLinkOpen(false)
   }
-  if (restoring)
-    return (
-      <div className="auth-loading">
-        {restoreError ? (
-          <ErrorState
-            message={restoreError}
-            onRetry={() => {
-              setRestoreError(undefined)
-              setRestoreTry((n) => n + 1)
-            }}
-          />
-        ) : (
-          <LoadingState label="HomeStamp를 여는 중이에요" />
-        )}
-      </div>
-    )
+  const retryRestore = () => {
+    setRestoreError(undefined)
+    setRestoreTry((n) => n + 1)
+  }
+  // 문자 링크는 로그인과 상관없는 공개 열람이라 로그인 복원을 기다리지 않고, 복원이 실패해도 열어요(#411 리뷰).
+  // 복원이 끝나기 전에는 회원인지 몰라 가입·로그인 대신 확인 중이나 다시 불러오기를 보여요(누르면 복원 화면에 갇히지 않게)
   if (linkOpen && !authOpen)
     return (
       <LinkViewPage
         member={Boolean(account)}
+        session={
+          restoring ? { error: restoreError, onRetry: retryRestore } : undefined
+        }
         onSignup={() => {
           setAuthMode("signup")
           setAuthOpen(true)
@@ -227,6 +220,16 @@ export default function App() {
         }}
         onContinue={leaveLink}
       />
+    )
+  if (restoring)
+    return (
+      <div className="auth-loading">
+        {restoreError ? (
+          <ErrorState message={restoreError} onRetry={retryRestore} />
+        ) : (
+          <LoadingState label="HomeStamp를 여는 중이에요" />
+        )}
+      </div>
     )
   if (!account && (!(link || linkOpen) || authOpen))
     return (
