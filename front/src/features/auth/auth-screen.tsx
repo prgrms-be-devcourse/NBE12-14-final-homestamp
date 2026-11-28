@@ -570,11 +570,17 @@ function PhoneCodeStep({
   // [다시 받기]를 누를 수 있는 시각(verify.resend.interval)과 하루 횟수를 다 썼는지(DAILY_LIMIT)
   const [resendAt, setResendAt] = useState(0)
   const [dailyLimit, setDailyLimit] = useState(false)
+  // 인증번호 남은 시간과 [다시 받기] 대기 시간을 1초마다 다시 그려요. 첫 요청부터 RATE_LIMITED라
+  // 아직 인증번호가 없어도 대기 시간은 흘러야 해요(06 4-1 phone-verifications 재발송 간격, #420)
   useEffect(() => {
-    if (!verification) return
-    const t = window.setInterval(() => setNow(Date.now()), 1000)
+    if (!verification && resendAt <= Date.now()) return
+    const t = window.setInterval(() => {
+      const n = Date.now()
+      setNow(n)
+      if (!verification && resendAt <= n) window.clearInterval(t)
+    }, 1000)
     return () => window.clearInterval(t)
-  }, [verification])
+  }, [verification, resendAt])
   const left = verification
     ? Math.max(0, Math.ceil((verification.expiresAt - now) / 1000))
     : 0

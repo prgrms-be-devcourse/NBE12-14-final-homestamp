@@ -1,6 +1,7 @@
-import { expect, test } from "vitest"
-import { fireEvent, render, screen } from "@testing-library/react"
+import { expect, test, vi } from "vitest"
+import { act, fireEvent, render, screen } from "@testing-library/react"
 import { createLocalAuth, DEV_FIXED_CODE } from "../src/api/auth"
+import { ApiError } from "../src/api/errors"
 import { AuthScreen } from "../src/features/auth/auth-screen"
 
 // 로그인 화면의 비밀번호 재설정(06 S-02, ACC-5b·5c, #416). 서버 없이 개발할 때의 계정(createLocalAuth)으로 돌려요.
@@ -66,6 +67,53 @@ test("회원이 없는 번호도 인증 문자는 같게 받고, 재설정에서
   expect(alert.textContent).not.toContain("가입하지 않은")
   // 인증 단계로 돌아가요
   expect(screen.getByRole("button", { name: "인증번호 받기" })).toBeTruthy()
+})
+
+test("첫 인증번호 요청이 RATE_LIMITED여도 대기 시간이 흐르고, 끝나면 다시 받을 수 있다(06 4-1 재발송 간격)", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true })
+  try {
+    const auth = createLocalAuth()
+    const request = auth.requestPhoneCode.bind(auth)
+    let calls = 0
+    // 화면을 다시 연 직후라 서버가 첫 요청부터 429를 줘요
+    auth.requestPhoneCode = async (phone, purpose) => {
+      calls += 1
+      if (calls === 1)
+        throw new ApiError({
+          status: 429,
+          code: "RATE_LIMITED",
+          detail: "잠시 뒤에 다시 받아 주세요",
+          retryAfter: 3,
+        })
+      return request(phone, purpose)
+    }
+    render(<AuthScreen auth={auth} onDone={() => undefined} />)
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "비밀번호를 잊었나요?" }),
+    )
+    fireEvent.change(screen.getByLabelText("휴대폰 번호"), {
+      target: { value: "010-1111-2222" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "인증번호 받기" }))
+
+    expect(await screen.findByText("3초 뒤 다시 받을 수 있어요")).toBeTruthy()
+    const send = screen.getByRole("button", { name: "인증번호 받기" })
+    expect((send as HTMLButtonElement).disabled).toBe(true)
+
+    // 인증번호를 아직 받지 않았어도 남은 시간이 줄어요
+    await act(() => vi.advanceTimersByTimeAsync(1000))
+    expect(screen.getByText("2초 뒤 다시 받을 수 있어요")).toBeTruthy()
+    await act(() => vi.advanceTimersByTimeAsync(2000))
+    expect(screen.queryByText(/초 뒤 다시 받을 수 있어요/)).toBeNull()
+    expect((send as HTMLButtonElement).disabled).toBe(false)
+
+    fireEvent.click(send)
+    expect(await screen.findByLabelText(/인증번호 6자리/)).toBeTruthy()
+    expect(calls).toBe(2)
+  } finally {
+    vi.useRealTimers()
+  }
 })
 
 test("가입 인증 표로는 비밀번호를 다시 정할 수 없다", async () => {
