@@ -17,6 +17,7 @@ import {
 import { endpoints } from "./endpoints"
 import { ApiError } from "./errors"
 import type { HttpRequest } from "./http-client"
+import { createHttpPhotoUploads, type PhotoUploadsApi } from "./photo-uploads"
 import {
   eventsFromTimeline,
   getTimeline,
@@ -55,7 +56,11 @@ const atMs = (r: Repair) => (r.createdAt ? Date.parse(r.createdAt) || 0 : 0)
 const newestFirst = (a: Repair, b: Repair) =>
   atMs(b) - atMs(a) || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0)
 
-export function createHttpRecords(request: HttpRequest): RecordsApi {
+// photoUploads: 사진을 함께 보내는 요청(ApiRequest.photos)의 사진을 올려 업로드 표로 바꿔요(06 4-5)
+export function createHttpRecords(
+  request: HttpRequest,
+  photoUploads: PhotoUploadsApi = createHttpPhotoUploads(request),
+): RecordsApi {
   let state: DemoState = emptyState()
   const listeners = new Set<() => void>()
   const emit = () => listeners.forEach((l) => l())
@@ -330,13 +335,31 @@ export function createHttpRecords(request: HttpRequest): RecordsApi {
         if (e) throw e
       }
       try {
-        for (const r of list)
+        for (const r of list) {
+          // 연결 전 주소면 사진을 올리지 않고 http-client가 "연결 전"으로 안내해요(쓰이지 않을 업로드 표를 받지 않게)
+          const body =
+            r.photos && isConnected("POST", r.path)
+              ? {
+                  ...(r.body as Record<string, unknown>),
+                  uploadTickets: await photoUploads.upload(
+                    c.options.roomId,
+                    r.photos,
+                  ),
+                }
+              : r.body
           made = await request<{ id?: string } | undefined>("POST", r.path, {
-            body: r.body,
+            body,
           })
+        }
       } catch (e) {
         // 상대가 먼저 점검을 시작했으면 그 점검을 다시 받아 열어요(06 4-7 INSPECTION_EXISTS "그쪽으로 열게요")
-        if (e instanceof ApiError && e.code === "INSPECTION_EXISTS" && before)
+        // 그사이 상대가 먼저 행동해 지금 상태와 맞지 않으면(INVALID_STATE, 예: 세입자가 먼저 답한 거주 종료 요청)
+        // 호실을 다시 받아 지금 버튼으로 그려요(#445)
+        if (
+          e instanceof ApiError &&
+          (e.code === "INSPECTION_EXISTS" || e.code === "INVALID_STATE") &&
+          before
+        )
           await loadRoom(s, before.id).catch(() => {})
         throw e
       }

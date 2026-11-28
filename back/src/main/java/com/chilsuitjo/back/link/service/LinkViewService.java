@@ -1,6 +1,7 @@
 package com.chilsuitjo.back.link.service;
 
 import com.chilsuitjo.back.action.dto.ActionBatch;
+import com.chilsuitjo.back.action.dto.ActionEntry;
 import com.chilsuitjo.back.action.dto.ActionTarget;
 import com.chilsuitjo.back.action.dto.Actor;
 import com.chilsuitjo.back.action.rule.ActionType;
@@ -16,12 +17,16 @@ import com.chilsuitjo.back.link.dto.LinkViewRequest;
 import com.chilsuitjo.back.link.dto.LinkViewResponse;
 import com.chilsuitjo.back.link.entity.Link;
 import com.chilsuitjo.back.link.repository.LinkRepository;
+import com.chilsuitjo.back.link.repository.LinkViewStateStore;
 import com.chilsuitjo.back.link.rule.LinkKind;
 import com.chilsuitjo.back.link.rule.LinkToken;
+import com.chilsuitjo.back.link.rule.LinkViewTransitions;
+import com.chilsuitjo.back.notification.service.NoticeWaitStart.EvidenceNotRecorded;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Map;
+import java.time.temporal.ChronoUnit;
+import java.util.List;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,6 +53,7 @@ public class LinkViewService {
   private final LinkContentSource content;
   private final ActionPipeline pipeline;
   private final ActionReader actions;
+  private final LinkViewStateStore viewStore;
   private final Clock clock;
   private final Duration viewDedupe;
 
@@ -56,12 +62,14 @@ public class LinkViewService {
       LinkContentSource content,
       ActionPipeline pipeline,
       ActionReader actions,
+      LinkViewStateStore viewStore,
       Clock clock,
       @Value("${app.link.view-dedupe:10m}") Duration viewDedupe) {
     this.links = links;
     this.content = content;
     this.pipeline = pipeline;
     this.actions = actions;
+    this.viewStore = viewStore;
     this.clock = clock;
     if (viewDedupe == null
         || viewDedupe.isZero()
@@ -109,32 +117,72 @@ public class LinkViewService {
   }
 
   /**
-   * 링크 열람 행동. 같은 링크는 {@code link.view.dedupe}(10분) 안에서 한 줄이다(06 4-4, 멱등 키 {@code
-   * link-view:<링크>:<구간>}). pipeline이 호실을 잠근 뒤 링크를 잠그고 무효 여부를 다시 확인한다. 멱등 replay도 이 검증 뒤에만 수행한다.
+   * 링크 열람 행동. 같은 링크는 {@code app.link.view-dedupe}(10분) 안에서 한 줄이다(06 4-4 LINK-1a, 멱등 키 {@code
+   * link-view:<링크>:<구간>}). 예외: 그 링크로 보냈는데 아직 전달 증거가 없는 문자(SENT, {@link
+   * LinkViewStateStore#unviewedSent})가 있으면 최근 열람 안이라도 한 줄을 더 남기고 그 줄의 {@code save}가 증거를 적는다(06
+   * NOTI-3b, decisions 2026-11-28). 그 줄의 키는 {@code link-view:n:<가장 이른 후보 통지 ID>}다(행동 주체 키가 링크 단위라
+   * 링크 ID는 넣지 않는다. 키 한도 {@code ActionBatch.MAX_KEY_LENGTH} 64자, 구간 키와 모양이 달라 겹치지 않는다). 그 통지는 이 줄로
+   * 열람이 되어 다시 후보가 되지 않으므로 키가 다시 쓰이지 않고, 같은 증거로 동시에 온 요청은 같은 키·호실 잠금으로 한 줄만 남긴다.
+   *
+   * <p>키는 pipeline 밖에서(잠그기 전) 정해야 해서 미리 읽어 정하고, pipeline이 호실을 잠근 뒤 링크를 잠그고 다시 확인한다({@link
+   * #requireCurrentLink}). 그사이 후보가 바뀌어 이 키로는 맞지 않으면(새 후보가 생겼는데 구간 키라 앞 줄이 재생될 수 있음, 키의 통지가 이미 열람됨)
+   * 아무것도 쓰지 않고 {@link EvidenceChanged}로 멈춰 한 번만 다시 정한다. 최근 열람이고 후보가 없으면 지금처럼 새 줄 없이 성공이다.
    *
    * <p>최근 열람이라 새 줄을 남기지 않는 경우와 같은 키의 재생도 성공으로 끝나기 전에, 접근 검증이 붙은 요청이라 pipeline이 잠근 호실의 지금 상태로 호실 단위
    * 거절을 먼저 한다({@code ActionBatch.accessCheck}). 미리 거른 {@code content.room}은 잠그기 전 값이라, 그 사이 정산
    * 완료·합류가 되면 거기서 막히고 {@link #view}가 {@code LINK_INVALID}로 덮는다(#89 리뷰).
    */
   private void recordView(Link link, LinkRoom room) {
-    var observedAt = clock.instant();
-    long window = observedAt.getEpochSecond() / viewDedupe.toSeconds();
-    String key = "link-view:" + link.getId() + ":" + window;
     Actor actor = Actor.link(link.getId(), room.recipientSide());
-    try {
-      pipeline.executeAll(
-          ActionBatch.of(link.getRoomRecordId(), actor, key)
-              .accessCheck(() -> requireCurrentLink(link, observedAt))
-              .record(
-                  ActionType.LINK_VIEW,
-                  done -> ActionTarget.of(TargetKind.LINK, link.getId()),
-                  Map.of()));
-    } catch (RecentLinkView ignored) {
-      // 링크 행과 호실 행을 잠근 뒤 확인한 최근 열람이다. 성공 응답만 돌리고 새 행동은 남기지 않는다.
+    for (int attempt = 1; ; attempt++) {
+      Instant observedAt = clock.instant();
+      List<UUID> candidates =
+          viewStore.unviewedSent(link.getRoomRecordId(), link.getId(), micros(observedAt));
+      UUID evidence = candidates.isEmpty() ? null : candidates.getFirst();
+      String key =
+          evidence == null
+              ? "link-view:"
+                  + link.getId()
+                  + ":"
+                  + observedAt.getEpochSecond() / viewDedupe.toSeconds()
+              : LinkViewStateStore.EVIDENCE_KEY_PREFIX + evidence;
+      try {
+        pipeline.executeAll(
+            ActionBatch.of(link.getRoomRecordId(), actor, key)
+                .accessCheck(() -> requireCurrentLink(link, observedAt, evidence))
+                // 열람 행동이 처음 남을 때 같은 트랜잭션에서 전달 증거를 적는다(LinkViewStateStore, 06 NOTI-3b)
+                .step(
+                    ActionType.LINK_VIEW,
+                    done -> ActionTarget.of(TargetKind.LINK, link.getId()),
+                    viewStore,
+                    LinkViewTransitions.INSTANCE));
+        return;
+      } catch (RecentLinkView ignored) {
+        // 링크 행과 호실 행을 잠근 뒤 확인한 최근 열람이고 새 증거가 없다. 성공 응답만 돌리고 새 행동은 남기지 않는다.
+        return;
+      } catch (EvidenceChanged | EvidenceNotRecorded changed) {
+        // EvidenceNotRecorded: 저장 단계가 키의 통지를 열람으로 바꾸지 못해(서버 시계가 뒤로 감) 행동·키까지 함께 되돌아갔다. 키가 소비되지 않아
+        // 다시 정한다
+        if (attempt >= 2) {
+          // 잠그는 사이 후보가 또 바뀌었다. 더 다시 하지 않고 다음 열람이나 전달 결과가 증거가 된다(열람은 그대로 성공, decisions 2026-11-28)
+          log.warn(
+              "링크 열람 증거를 두 번 다 남기지 못함(후보 바뀜 또는 시계 역행): link={}, reason={}",
+              link.getId(),
+              changed.getClass().getSimpleName());
+          return;
+        }
+      }
     }
   }
 
-  private void requireCurrentLink(Link resolved, Instant observedAt) {
+  /**
+   * 잠근 뒤 확인. 링크를 잠그고 무효 여부를 다시 본 뒤 최근 열람과 새 증거 후보를 본다. 읽기만 하고 쓰지 않는다(쓰기는 {@code
+   * LinkViewStateStore.save}). 후보는 행동 시각({@code at}, 이 확인 뒤에 정해짐)보다 늦지 않은 시각으로 읽어, 여기서 본 후보는 {@code
+   * save}가 모두 처리한다.
+   *
+   * @param evidence 키를 정할 때 본 가장 이른 후보 통지(없으면 구간 키)
+   */
+  private void requireCurrentLink(Link resolved, Instant observedAt, UUID evidence) {
     Link current = links.findByIdForUpdate(resolved.getId()).orElseThrow(LinkViewService::invalid);
     if (current.isInvalidated() || !current.getRoomRecordId().equals(resolved.getRoomRecordId())) {
       throw invalid();
@@ -146,13 +194,38 @@ public class LinkViewService {
             .room(current.getRoomRecordId(), current.getPartyId())
             .orElseThrow(LinkViewService::invalid));
     Instant cutoff = observedAt.minus(viewDedupe);
-    boolean recordedRecently =
+    List<ActionEntry> views =
         actions.findByTarget(ActionTarget.of(TargetKind.LINK, resolved.getId())).stream()
-            .anyMatch(action ->
-                action.type() == ActionType.LINK_VIEW && !action.createdAt().isBefore(cutoff));
-    if (recordedRecently) {
+            .filter(action -> action.type() == ActionType.LINK_VIEW)
+            .toList();
+    boolean recordedRecently =
+        views.stream().anyMatch(action -> !action.createdAt().isBefore(cutoff));
+    List<UUID> candidates =
+        viewStore.unviewedSent(
+            resolved.getRoomRecordId(), resolved.getId(), micros(clock.instant()));
+    if (evidence == null) {
+      // 구간 키: 최근 열람이 없으면 이 구간 키는 쓰인 적이 없다. 최근 열람이 있는데 새 후보가 생겼으면 이 키는 앞 줄을 재생하므로 다시 정한다
+      if (!recordedRecently) {
+        return;
+      }
+      if (candidates.isEmpty()) {
+        throw new RecentLinkView();
+      }
+      throw new EvidenceChanged();
+    }
+    // 증거 키: 그 통지가 아직 후보면 이 키는 쓰인 적이 없다(쓰였다면 그 줄이 그 통지를 열람으로 바꿨다)
+    if (candidates.contains(evidence)) {
+      return;
+    }
+    if (candidates.isEmpty() && recordedRecently) {
       throw new RecentLinkView();
     }
+    throw new EvidenceChanged();
+  }
+
+  /** 행동 시각과 같은 정밀도(마이크로초). 후보를 읽는 시각이 행동 시각보다 늦지 않게 한다. */
+  private static Instant micros(Instant at) {
+    return at.truncatedTo(ChronoUnit.MICROS);
   }
 
   /**
@@ -225,6 +298,13 @@ public class LinkViewService {
 
   private static final class RecentLinkView extends RuntimeException {
     private RecentLinkView() {
+      super(null, null, false, false);
+    }
+  }
+
+  /** 키를 정한 뒤 잠그는 사이 새 증거 후보가 바뀌었다. 아무것도 쓰지 않았고 키를 다시 정한다. */
+  private static final class EvidenceChanged extends RuntimeException {
+    private EvidenceChanged() {
       super(null, null, false, false);
     }
   }
