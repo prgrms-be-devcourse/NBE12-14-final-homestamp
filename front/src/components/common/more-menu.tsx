@@ -55,7 +55,7 @@ export function MoreMenu({
       {open && (
         <div
           role="menu"
-          className="absolute top-full right-0 z-20 mt-1 flex w-52 flex-col overflow-hidden rounded-[12px] border border-line bg-white shadow-[0_8px_24px_#17203314]"
+          className="absolute top-full right-0 z-20 mt-1 flex w-52 flex-col overflow-hidden rounded-[12px] border border-line bg-white shadow-[0_8px_24px_#1f2a3314]"
         >
           {items.map((it) => (
             <button
