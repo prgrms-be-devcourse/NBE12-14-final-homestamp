@@ -51,4 +51,25 @@ public interface InAppNotificationRepository extends JpaRepository<InAppNotifica
       """)
   int markReadIfUnread(
       @Param("id") UUID id, @Param("memberId") UUID memberId, @Param("at") Instant at);
+
+  /**
+   * 만료된 알림(만료 시각 ≤ {@code now}, 목록·안 읽은 수·읽음에서 빠지는 기준과 같음)을 오래된 것부터 {@code limit}줄까지 실제로 지우고 지운 줄
+   * 수를 돌려준다(04 "만료 데이터 정리"). 다른 작업자가 잠근 줄은 건너뛰어(SKIP LOCKED) 두 앱이 함께 돌아도 서로 기다리거나 같은 줄을 두 번 지우지
+   * 않는다. 알림만 지우고 다른 표·행동 기록은 건드리지 않는다(이 표를 가리키는 FK 없음). 만료 정리는 삭제 기록을 남기지 않는다(05 {@code
+   * deletion_log}는 탈퇴·수신 거부 해제만).
+   */
+  @Modifying
+  @Query(
+      value =
+          """
+          DELETE FROM state.in_app_notification
+          WHERE id IN (
+            SELECT id FROM state.in_app_notification
+            WHERE expires_at <= :now
+            ORDER BY expires_at, id
+            LIMIT :limit
+            FOR UPDATE SKIP LOCKED)
+          """,
+      nativeQuery = true)
+  int deleteExpired(@Param("now") Instant now, @Param("limit") int limit);
 }
