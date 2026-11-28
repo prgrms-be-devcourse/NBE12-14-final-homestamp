@@ -266,6 +266,28 @@ public class Notice {
   }
 
   /**
+   * 받은 사람이 이 문자의 링크를 열었다(06 NOTI-3b, 05 4장 "집주인 링크 열람"). 보낸(SENT) 통지와 전달된(DELIVERED) 통지만
+   * 열람(VIEWED)이 되고, 바뀌었는지를 돌려준다. 결과가 아직 없어도(SENT) 열었으면 전달된 것으로 보고, 더 묻지 않으므로 전달 결과 조회 칸을 지운다(늦게 온
+   * 업체 결과는 SENT가 아니라 적지 않는다). 아직 보내지 않은 통지(REQUESTED), 취소·최종 실패한 통지, 이미 열람한 통지는 그대로 둔다: 이 문자가 보내지지
+   * 않았거나 닿지 않은 사실을 같은 링크의 다른 문자 열람으로 덮지 않는다. {@code delivered_at}은 바꾸지 않는다(서버가 업체 조회로 확인한 시각만 담는다).
+   *
+   * @param at 서버가 링크 열람을 받은 시각
+   */
+  public boolean markViewed(Instant at) {
+    Objects.requireNonNull(at, "at");
+    if (status != NoticeStatus.SENT && status != NoticeStatus.DELIVERED) {
+      return false;
+    }
+    this.status = NoticeStatus.VIEWED;
+    this.viewedAt = at;
+    this.nextPollAt = null;
+    deliveryPollToken = null;
+    deliveryPollStartedAt = null;
+    deliveryPollProtectedUntil = null;
+    return true;
+  }
+
+  /**
    * 보낸 문자가 전달되지 않았다고 끝났다(업체의 최종 실패 결과, 또는 전달 확인 기한({@link #deliveryCheckDueAt})까지 결과 없음, 04 4-2·05
    * {@code notice}). 보낸(SENT) 통지만 바뀌고 그 밖의 상태는 그대로 둔다. 보내기 전 실패는 {@link #markFailed}다. 더 묻지 않으므로 다음
    * 조회 시각을 지운다.
