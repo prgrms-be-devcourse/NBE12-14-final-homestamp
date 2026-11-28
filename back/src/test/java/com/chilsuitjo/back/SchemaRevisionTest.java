@@ -219,7 +219,7 @@ class SchemaRevisionTest extends SchemaTestSupport {
 
   private void notification(UUID member, String values) {
     jdbc.update(
-        // V14: 알려 줌·서비스 안내는 주제가 있어야 한다(ck_in_app_topic_kind)
+        // V15: 알려 줌·서비스 안내는 주제가 있어야 한다(ck_in_app_topic_kind)
         "INSERT INTO state.in_app_notification (id, member_id, kind, topic, group_key, group_count, expires_at, created_at, version) VALUES (?, ?, 'SERVICE', 'PHONE_VERIFICATION_RELEASED', "
             + values
             + ", CURRENT_TIMESTAMP + interval '30 days', CURRENT_TIMESTAMP, 0)",

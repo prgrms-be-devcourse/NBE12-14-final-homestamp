@@ -887,7 +887,7 @@ class DatabaseGrantsIntegrationTest {
 
   // ======================================================== JDBC 실행 계약(트랜잭션·역할·잠금·롤백)
 
-  /** 테스트마다 새 DB: #185 선행 권한 → #173과 같은 Flyway(V1~V14). 역할은 클러스터 전체라 한 번만 만든다. */
+  /** 테스트마다 새 DB: #185 선행 권한 → #173과 같은 Flyway(V1~V15). 역할은 클러스터 전체라 한 번만 만든다. */
   private static String freshDatabase(String db) throws Exception {
     try (Connection connection = adminConnection();
         Statement statement = connection.createStatement()) {
@@ -896,11 +896,11 @@ class DatabaseGrantsIntegrationTest {
     prepareDatabasePrivileges(db);
     migrate(db);
     assertEquals(
-        "14",
+        "15",
         scalarAsAdmin(
             db,
             "SELECT max(version::int)::text FROM public.flyway_schema_history WHERE success AND version IS NOT NULL"),
-        "이 테스트가 쓰는 DB 버전은 V14");
+        "이 테스트가 쓰는 DB 버전은 V15");
     return db;
   }
 
