@@ -16,10 +16,14 @@ import java.util.UUID;
  */
 record RoomSeats(RoomRecord room, List<Party> parties) {
 
-  /** 이 회원의 자리. 이 호실의 당사자가 아니면 {@code NOT_FOUND}다(06 ROOM-2a: 남의 호실은 있는지조차 알 수 없다). */
+  /**
+   * 이 회원의 자리. 이 호실의 당사자가 아니면 {@code NOT_FOUND}다(06 ROOM-2a: 남의 호실은 있는지조차 알 수 없다). 탈퇴한 자리도 당사자가 아니다:
+   * 탈퇴 뒤 만료 전 액세스 토큰이 남아 있어도 호실을 읽거나 행동할 수 없다(03 L "토큰 폐기", 06 KEEP-4).
+   */
   Party seatOf(UUID memberId) {
     return parties.stream()
         .filter(party -> memberId.equals(party.getMemberId()))
+        .filter(party -> party.getStatus() != PartyStatus.WITHDRAWN)
         .findFirst()
         .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
   }
@@ -47,6 +51,18 @@ record RoomSeats(RoomRecord room, List<Party> parties) {
    */
   Instant visibleCutoffFor(Party mine) {
     if (counterpartOf(mine).getStatus() == PartyStatus.WITHDRAWN) {
+      return null;
+    }
+    return earliestSharingStoppedAt();
+  }
+
+  /**
+   * 상대가 탈퇴했을 때 그 측 기록을 계속 빼는 시각: 남아 있는 공유 중단 시각(누가 그만뒀든) 중 이른 것. 상대가 탈퇴하지 않았거나 아무도 그만둔 적이 없으면
+   * null이다. 중단 동안 탈퇴자가 남긴 기록은 상대가 본 적이 없어 숨긴다(03 6-4, #288). 상태는 다시 계산하지 않고 보이는지만 가른다(수리 {@code
+   * RepairSight.departed}, 경과·내려받기 {@code ActionVisibility.Cutoff.departed}와 같은 기준).
+   */
+  Instant departedCutoffFor(Party mine) {
+    if (counterpartOf(mine).getStatus() != PartyStatus.WITHDRAWN) {
       return null;
     }
     return earliestSharingStoppedAt();

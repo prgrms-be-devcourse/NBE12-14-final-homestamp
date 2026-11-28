@@ -83,9 +83,18 @@ public class PartyStateStore {
       return inviteeState(command);
     }
 
-    /** 자리 → 호실 → 링크 순서로 한 트랜잭션에 넣는다. 시각은 행동 기록과 같은 {@code at()}이다. */
+    /**
+     * 자리 → 호실 → 링크 순서로 한 트랜잭션에 넣는다. 시각은 행동 기록과 같은 {@code at()}이다.
+     *
+     * <p>먼저 연결하는 회원 행을 공유 잠금하고 활동 중인지 다시 본다({@link MemberQueryService#holdActive}, #424). 같은 회원의
+     * 탈퇴가 진행 중이면 그 탈퇴가 끝날 때까지 기다렸다가 {@code LOGIN_REQUIRED}로 거절된다(탈퇴한 회원의 남은 토큰과 같음). 이 잠금을 먼저 잡았으면
+     * 탈퇴가 이 연결이 끝나기를 기다렸다가 새 자리를 보고 다시 시도한다({@code WithdrawService}). 잠금 순서는 둘 다 호실 → 회원 행이다.
+     */
     @Override
     public SavedState save(ActionCommand command, PartyState next) {
+      if (!members.holdActive(command.actor().memberId())) {
+        throw new BusinessException(ErrorCode.LOGIN_REQUIRED);
+      }
       Party party = row(command);
       RoomRecord room =
           rooms

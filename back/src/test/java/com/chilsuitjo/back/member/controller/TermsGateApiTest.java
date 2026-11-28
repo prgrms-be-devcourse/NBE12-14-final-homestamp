@@ -59,11 +59,7 @@ class TermsGateApiTest {
    * 지우기의 {@code redactedUpload}(가린 사본 등록)를 확인 전에 받을지는 그때 정한다(#338 리뷰 4).
    */
   private static final Set<String> NOT_YET_MAPPED =
-      Set.of(
-          "/api/me/withdraw",
-          "/api/me/notifications/*/read",
-          "/api/rooms/*/stop-sharing",
-          "/api/photos/*/erase");
+      Set.of("/api/me/notifications/*/read", "/api/rooms/*/stop-sharing", "/api/photos/*/erase");
 
   private static final Path SPEC = Path.of("../docs/rules/06-요구사항-명세.md");
 

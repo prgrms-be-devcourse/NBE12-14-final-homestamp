@@ -105,6 +105,14 @@ public class Member {
   }
 
   /**
+   * 지금 비밀번호 해시가 이 값과 같은가. {@link #checkLogin}으로 확인한 뒤 그사이 비밀번호가 바뀌지 않았는지 잠근 행에서 다시 볼 때 쓴다(탈퇴,
+   * #424). 해시는 밖으로 내보내지 않고 비교만 한다.
+   */
+  public boolean hasPasswordHash(String hash) {
+    return passwordHash != null && passwordHash.equals(hash);
+  }
+
+  /**
    * 표시용 이름을 바꾼다(06 ACC-4). 신원 칸이라 값은 행동 기록에 남기지 않는다(05 0장).
    *
    * @param displayName 입력 규칙은 부르는 쪽({@code MeUpdateRequest})이 먼저 본다
@@ -147,5 +155,26 @@ public class Member {
       throw new IllegalStateException("탈퇴한 회원의 비밀번호는 바꾸지 않는다");
     }
     this.passwordHash = Objects.requireNonNull(passwordHash);
+  }
+
+  /**
+   * 탈퇴한다(03 L "탈퇴", 05 {@code member}). 이메일·비밀번호 해시·이름·번호를 지우고 행은 남긴다(행동 기록이 회원 ID로 이 행을 가리킴). 받을
+   * 번호가 없으므로 문자 설정도 끈다. 지운 이메일·번호는 바로 다른 가입에 쓸 수 있고, 새 계정은 옛 호실에 붙지 않는다(06 KEEP-4d, 자리는 옛 회원 ID를
+   * 가리킴).
+   *
+   * @throws IllegalStateException 이미 탈퇴한 회원
+   */
+  public void withdraw(Instant at) {
+    if (status != MemberStatus.ACTIVE) {
+      throw new IllegalStateException("이미 탈퇴한 회원이에요");
+    }
+    this.email = null;
+    this.passwordHash = null;
+    this.displayName = null;
+    this.phone = null;
+    this.phoneVerifiedAt = null;
+    this.smsEnabled = false;
+    this.status = MemberStatus.WITHDRAWN;
+    this.withdrawnAt = Objects.requireNonNull(at);
   }
 }

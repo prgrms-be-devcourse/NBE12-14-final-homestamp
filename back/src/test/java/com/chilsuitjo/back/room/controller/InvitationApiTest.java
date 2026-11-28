@@ -167,7 +167,8 @@ class InvitationApiTest {
   }
 
   @Test
-  void 초대한_사람이_탈퇴했으면_이름이_없다() throws Exception {
+  void 초대한_사람이_탈퇴했으면_초대가_보이지_않는다() throws Exception {
+    // 상대가 연결된 적 없는 호실이라 탈퇴하면 바로 누구에게도 보이지 않는다(03 6-4 "혼자만 쓴 기록", 06 KEEP-4a, #424)
     UUID gone = UUID.randomUUID();
     jdbc.update(
         "INSERT INTO state.member (id, status, withdrawn_at, created_at, version)"
@@ -177,9 +178,7 @@ class InvitationApiTest {
     seat(room, "TENANT", gone, "WITHDRAWN", null);
     seat(room, "LANDLORD", null, "INVITED", phone);
 
-    list(me)
-        .andExpect(jsonPath("$.length()").value(1))
-        .andExpect(jsonPath("$[0].inviterName").doesNotExist());
+    list(me).andExpect(jsonPath("$.length()").value(0));
   }
 
   @Test

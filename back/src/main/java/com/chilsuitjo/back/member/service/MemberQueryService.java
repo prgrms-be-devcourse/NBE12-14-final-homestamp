@@ -28,4 +28,11 @@ public interface MemberQueryService {
    * <p>번호는 로그·예외 문구·응답에 남기지 않는다(04 "개인정보 로그"). 비교나 조회 조건에만 쓴다.
    */
   Optional<String> verifiedPhone(UUID memberId);
+
+  /**
+   * 회원 행을 공유 잠금하고({@code FOR SHARE}, 트랜잭션이 끝날 때 풀림) 활동 중인지 본다. 탈퇴가 진행 중이면(회원 행 쓰기 잠금) 그 탈퇴가 끝날 때까지
+   * 기다렸다가 거짓이다. 연결(06 ROOM-5a)이 호실을 잠근 뒤 부른다: 탈퇴가 자리 목록을 읽은 뒤 같은 회원의 연결이 끼어들어 탈퇴한 회원의 연결된 자리가 남는 일을
+   * 막는다(#424). 잠금 순서는 호실 → 회원 행이라 탈퇴(호실 → 회원 행)와 같다. 부르는 쪽 트랜잭션 안에서만 부른다.
+   */
+  boolean holdActive(UUID memberId);
 }

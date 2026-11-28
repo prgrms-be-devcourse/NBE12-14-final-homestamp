@@ -17,6 +17,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -64,6 +65,12 @@ public class JpaMemberQueryService implements MemberQueryService {
       return Optional.empty();
     }
     return Optional.ofNullable(member.getPhone());
+  }
+
+  @Override
+  @Transactional(propagation = Propagation.MANDATORY)
+  public boolean holdActive(UUID memberId) {
+    return members.lockActiveForShare(memberId).isPresent();
   }
 
   private Member find(UUID memberId) {
