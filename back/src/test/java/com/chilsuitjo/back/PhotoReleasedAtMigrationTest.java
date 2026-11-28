@@ -44,6 +44,8 @@ class PhotoReleasedAtMigrationTest {
   private static UUID requestedCounterpartPhoto;
   private static UUID requestedRoom;
   private static UUID requestedItem;
+  // 확인 요청이 두 번 기록된 점검(지금 전이로는 생기지 않음, V13 백필이 첫 요청을 고르는지)
+  private static UUID twiceRequestedAuthorPhoto;
 
   @BeforeAll
   static void migrateToPreviousThenAddLegacyRowsThenMigrate() {
@@ -96,7 +98,21 @@ class PhotoReleasedAtMigrationTest {
             null,
             "LANDLORD",
             ATTACHED);
-    requestAction(requestedRoom, requested, REQUESTED);
+    requestAction(requestedRoom, requested, 1, REQUESTED);
+
+    UUID twiceRoom = room();
+    UUID twicePart = part(twiceRoom);
+    UUID twice = inspection(twiceRoom, "REQUESTED");
+    twiceRequestedAuthorPhoto =
+        photo(
+            twiceRoom,
+            "inspection_item_id",
+            item(twiceRoom, twice, twicePart, "TENANT"),
+            null,
+            "TENANT",
+            ATTACHED);
+    requestAction(twiceRoom, twice, 1, AFTER_REQUEST);
+    requestAction(twiceRoom, twice, 2, REQUESTED);
 
     flyway(dataSource, "latest").migrate();
   }
@@ -126,6 +142,11 @@ class PhotoReleasedAtMigrationTest {
   @Test
   void 확인_요청_뒤에_붙인_기준_측_사진은_붙인_때부터_보인다() {
     assertThat(releasedAt(requestedAuthorLaterPhoto)).isEqualTo(AFTER_REQUEST);
+  }
+
+  @Test
+  void 확인_요청이_여럿이면_첫_요청_시각부터_보인다() {
+    assertThat(releasedAt(twiceRequestedAuthorPhoto)).isEqualTo(REQUESTED);
   }
 
   @Test
@@ -249,15 +270,16 @@ class PhotoReleasedAtMigrationTest {
     return id;
   }
 
-  private static void requestAction(UUID room, UUID inspection, Instant at) {
+  private static void requestAction(UUID room, UUID inspection, int seq, Instant at) {
     jdbc.update(
         """
         INSERT INTO record.action (id, room_record_id, room_seq, prev_hash, hash, actor_side,
           actor_key, type, idempotency_key, request_id, hash_version, inspection_id, created_at)
-        VALUES (?, ?, 1, ?, ?, 'TENANT', 'server', 'REQUEST_INSPECTION_CONFIRM', ?, ?, 1, ?, ?)
+        VALUES (?, ?, ?, ?, ?, 'TENANT', 'server', 'REQUEST_INSPECTION_CONFIRM', ?, ?, 1, ?, ?)
         """,
         UUID.randomUUID(),
         room,
+        seq,
         bytes32(),
         bytes32(),
         UUID.randomUUID().toString(),
