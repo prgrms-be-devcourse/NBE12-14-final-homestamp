@@ -21,11 +21,13 @@ import com.chilsuitjo.back.room.repository.RoomRecordRepository;
 import com.chilsuitjo.back.room.rule.NextStep;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Limit;
@@ -45,7 +47,8 @@ public class RoomViewService {
 
   /**
    * 호실 상세 {@code availableActions}에 넣는 행동과 이름(API 끝 단어, 06 4-0). 지금 API가 있는 행동만 둔다. 초대({@code
-   * invite}, #163)·거주 종료({@code move-out}) 등은 그 API를 만드는 PR에서 더한다(decisions 2026-11-24).
+   * invite}, #163) 등은 그 API를 만드는 PR에서 더한다(decisions 2026-11-24). 거주 종료({@code move-out}·{@code
+   * confirm}·{@code reject})는 측과 요청 상태로 갈려서 {@link RoomEndActions}가 따로 더한다(#445).
    *
    * <p>{@code inspections}는 지금 <b>입주 점검 시작만</b> 뜻한다(#357). 같은 주소({@code POST
    * /api/rooms/{id}/inspections})를 쓰는 퇴거 점검 시작은 이 이름에 들어가지 않고, 퇴거 점검 작업 때 이름을 따로 정한다.
@@ -58,6 +61,7 @@ public class RoomViewService {
   private final RoomGateReader gates;
   private final ActionReader actions;
   private final InspectionStartCheck inspectionStarts;
+  private final RoomEndActions endActions;
 
   /**
    * 내가 당사자인 호실 기록, 새것부터 {@code size}개. 합류 전 기록도 쓴 사람에게는 보인다(03 3-1). {@code cursor}는 앞 쪽 응답의 {@code
@@ -112,12 +116,15 @@ public class RoomViewService {
         rooms.findById(roomRecordId).orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
     RoomSeats seats = new RoomSeats(room, parties.findByRoomRecordId(roomRecordId));
     Party mine = seats.seatOf(memberId);
-    List<String> actions =
-        ACTION_NAMES.entrySet().stream()
-            .filter(action -> gate.rejection(action.getKey()).isEmpty())
-            .filter(action -> allowedByDomain(action.getKey(), roomRecordId, mine))
-            .map(Map.Entry::getValue)
-            .toList();
+    List<String> available = new ArrayList<>();
+    ACTION_NAMES.entrySet().stream()
+        .filter(action -> gate.rejection(action.getKey()).isEmpty())
+        .filter(action -> allowedByDomain(action.getKey(), roomRecordId, mine))
+        .map(Map.Entry::getValue)
+        .forEach(available::add);
+    available.addAll(endActions.actions(roomRecordId, mine.getSide(), gate));
+    // 행동 기록은 필요한 칸(공유 중단 뒤 입주일, 답한 거주 종료 요청, 거주 종료 이유)이 있을 때만 한 번 읽는다
+    Supplier<List<ActionEntry>> roomActions = once(() -> actions.findByRoom(roomRecordId));
     Instant cutoff = seats.visibleCutoffFor(mine);
     Party counterpart = seats.counterpartOf(mine);
     // 상대 번호는 만든 측이 적은 값이라 그 측에만 가린 모양으로 준다(03 "가린 번호만", #407 리뷰)
@@ -129,7 +136,7 @@ public class RoomViewService {
         room.getId(),
         room.getAlias(),
         region(room.getRegionCode()),
-        visibleMoveInDate(room, mine, cutoff),
+        visibleMoveInDate(room, mine, cutoff, roomActions),
         room.getStatus(),
         mine.getSide(),
         room.getCreatedBySide(),
@@ -138,8 +145,11 @@ public class RoomViewService {
         gate.joinedAway(),
         cutoff,
         room.getCreatedAt(),
-        actions,
-        maskedPhone);
+        List.copyOf(available),
+        maskedPhone,
+        endActions.endRequest(roomRecordId, roomActions),
+        room.getEndedAt(),
+        room.getEndedAt() == null ? null : RoomEndActions.endSoloReason(roomActions.get()));
   }
 
   /**
@@ -147,16 +157,31 @@ public class RoomViewService {
    * RoomMoveInDates#FILLED_PAYLOAD_KEY}에 남는다({@link RoomMoveInDates}). 보이는 범위가 고정된 뒤({@code
    * cutoff}) 상대 측이 채운 입주일이면 보는 사람에게는 비어 있는 것으로 준다. 호실을 만들 때 적은 입주일은 공유 중단보다 늘 먼저라 그대로 보인다.
    */
-  private LocalDate visibleMoveInDate(RoomRecord room, Party mine, Instant cutoff) {
+  private static LocalDate visibleMoveInDate(
+      RoomRecord room, Party mine, Instant cutoff, Supplier<List<ActionEntry>> roomActions) {
     if (room.getMoveInDate() == null || cutoff == null) {
       return room.getMoveInDate();
     }
     boolean filledByCounterpartAfterCutoff =
-        actions.findByRoom(room.getId()).stream()
+        roomActions.get().stream()
             .filter(RoomViewService::filledMoveInDate)
             .anyMatch(
                 entry -> entry.actorSide() != mine.getSide() && entry.createdAt().isAfter(cutoff));
     return filledByCounterpartAfterCutoff ? null : room.getMoveInDate();
+  }
+
+  private static <T> Supplier<T> once(Supplier<T> source) {
+    return new Supplier<>() {
+      private T value;
+
+      @Override
+      public T get() {
+        if (value == null) {
+          value = source.get();
+        }
+        return value;
+      }
+    };
   }
 
   private static boolean filledMoveInDate(ActionEntry entry) {
