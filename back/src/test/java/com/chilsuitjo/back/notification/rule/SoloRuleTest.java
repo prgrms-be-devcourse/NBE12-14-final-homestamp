@@ -38,12 +38,22 @@ class SoloRuleTest {
     assertThat(check.since()).isNull();
   }
 
+  @Test
+  void 상대가_연결_전이면_정산_끝내기는_바로_혼자_진행한다() {
+    // 03 1-4 ③ "거주 종료 뒤에도 연결 전이면 정산은 혼자 정리하고 바로 혼자 끝낼 수 있다". 연결 전 상대에게는 돈 요청이 없어 성립 시각이 없다
+    SoloCheck check =
+        SoloRule.direct(parties(seat(PartyPresence.INVITED, null)), RequestKind.SETTLE_FINISH);
+
+    assertThat(check).isEqualTo(SoloCheck.allowedBecause(SoloReason.NOT_CONNECTED));
+    assertThat(check.since()).isNull();
+  }
+
   @ParameterizedTest
   @EnumSource(
       value = RequestKind.class,
-      names = {"DEFECT_CONFIRM", "CLOSE_CONFIRM", "INSPECTION_CONFIRM", "SETTLE_FINISH"})
-  void 상대가_연결_전이면_거주_종료_말고는_바로_열지_않는다(RequestKind kind) {
-    // 링크로 볼 수 있는 기록은 03 1-1 ⑥(72시간 뒤 "아직 연결하지 않았어요", 요청 이력이 필요). 정산 끝내기는 정산 계약과 함께 따로 넣는다
+      names = {"DEFECT_CONFIRM", "CLOSE_CONFIRM", "INSPECTION_CONFIRM"})
+  void 상대가_연결_전이면_링크로_볼_수_있는_기록은_바로_열지_않는다(RequestKind kind) {
+    // 링크로 볼 수 있는 기록은 03 1-1 ⑥(72시간 뒤 "아직 연결하지 않았어요", 요청 이력이 필요)
     assertThat(SoloRule.direct(parties(seat(PartyPresence.INVITED, null)), kind))
         .isEqualTo(SoloCheck.notYet(null));
   }
@@ -54,6 +64,25 @@ class SoloRuleTest {
       names = {"REJECTED", "WITHDRAWN"})
   void 상대가_거절_탈퇴이면_거주_종료도_바로_열지_않는다(PartyPresence presence) {
     assertThat(SoloRule.direct(parties(seat(presence, null)), RequestKind.END_REQUEST))
+        .isEqualTo(SoloCheck.notYet(null));
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = PartyPresence.class,
+      names = {"REJECTED", "WITHDRAWN"})
+  void 상대가_거절_탈퇴이면_정산_끝내기도_바로_열지_않는다(PartyPresence presence) {
+    // 거절은 #421 조건 5(정산 끝내기는 따로), 탈퇴는 접근 차단(KEEP-4) 전이라 그대로다
+    assertThat(SoloRule.direct(parties(seat(presence, null)), RequestKind.SETTLE_FINISH))
+        .isEqualTo(SoloCheck.notYet(null));
+  }
+
+  @Test
+  void 연결된_상대면_정산_끝내기는_바로_열지_않는다() {
+    // 끝내기 전에 연결하면 연결된 상대의 규칙(03 1-4 ③ 끝 문장)
+    assertThat(
+            SoloRule.direct(
+                parties(seat(PartyPresence.CONNECTED, null)), RequestKind.SETTLE_FINISH))
         .isEqualTo(SoloCheck.notYet(null));
   }
 

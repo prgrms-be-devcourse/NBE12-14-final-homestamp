@@ -107,6 +107,21 @@ class WaitServiceDirectSoloContextTest {
   }
 
   @Test
+  void 연결_전_자리면_정산_끝내기는_바로_혼자_진행하고_거절한_자리는_열지_않는다() {
+    // 03 1-4 ③: 연결 전이면 정산은 혼자 정리하고 바로 끝낸다. 진짜 자리 읽기로 본다
+    UUID invited = room();
+    party(invited, "TENANT", member(), "CONNECTED", null);
+    party(invited, "LANDLORD", null, "INVITED", null);
+    UUID rejected = room();
+    party(rejected, "TENANT", member(), "CONNECTED", null);
+    party(rejected, "LANDLORD", null, "REJECTED", null);
+
+    assertThat(waits.canGoSoloDirectly(settleFinish(invited)))
+        .isEqualTo(SoloCheck.allowedBecause(SoloReason.NOT_CONNECTED));
+    assertThat(waits.canGoSoloDirectly(settleFinish(rejected))).isEqualTo(SoloCheck.notYet(null));
+  }
+
+  @Test
   void 탈퇴한_자리는_남은_공유_중단_시각이_있어도_아직_열지_않는다() {
     UUID room = room();
     party(room, "TENANT", member(), "CONNECTED", null);
@@ -120,6 +135,14 @@ class WaitServiceDirectSoloContextTest {
     assertThatThrownBy(() -> waits.canGoSoloDirectly(close(UUID.randomUUID())))
         .isInstanceOfSatisfying(
             BusinessException.class, e -> assertThat(e.errorCode()).isEqualTo(ErrorCode.NOT_FOUND));
+  }
+
+  private SoloQuery settleFinish(UUID room) {
+    return new SoloQuery(
+        room,
+        RequestKind.SETTLE_FINISH,
+        RequestTarget.of(TargetKind.SETTLEMENT, UUID.randomUUID()),
+        PartySide.TENANT);
   }
 
   private SoloQuery close(UUID room) {
