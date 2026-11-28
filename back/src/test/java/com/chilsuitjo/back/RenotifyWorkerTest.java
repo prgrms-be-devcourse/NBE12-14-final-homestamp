@@ -44,7 +44,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 @ActiveProfiles("test")
 class RenotifyWorkerTest {
 
-  private static final String REGION = "9999999993";
+  /** 다른 테스트와 겹치지 않는 지역 코드. RoomQueryApiTest의 9999999993과 겹치면 먼저 넣은 시·도 이름이 남아 그쪽 검증이 깨진다. */
+  private static final String REGION = "9999999991";
+
   private static final Duration UNCONFIRMED = Duration.ofHours(24);
 
   @Autowired private RenotifyWorker worker;
