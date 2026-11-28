@@ -42,6 +42,15 @@ public interface MemberRepository extends JpaRepository<Member, UUID> {
   Optional<String> lockPasswordHashForShare(@Param("id") UUID id);
 
   /**
+   * 활동 중인 회원이면 그 행을 공유 잠금하고 ID를 돌려준다({@code FOR SHARE}). 탈퇴의 쓰기 잠금과 서로 기다린다. 탈퇴했거나 없으면 비어 있다(#424,
+   * #432와 같은 이름·모양·SQL).
+   */
+  @Query(
+      value = "SELECT id FROM state.member WHERE id = :id AND status = 'ACTIVE' FOR SHARE",
+      nativeQuery = true)
+  Optional<UUID> lockActiveForShare(@Param("id") UUID id);
+
+  /**
    * 회원 행을 쓰기 잠금하고 읽는다({@code FOR UPDATE}, 트랜잭션이 끝날 때 풀림). 같은 회원의 약관 다시 확인이 동시에 와도 확인 기록이 두 줄이 되지 않게
    * 다시 확인 트랜잭션에서 부른다(CONS-4). 탈퇴 확인 기록 삭제 함수({@code record.purge_member_acknowledgements})도 같은 행을
    * 잠근다.

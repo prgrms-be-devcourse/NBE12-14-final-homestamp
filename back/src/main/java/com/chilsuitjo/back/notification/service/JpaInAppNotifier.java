@@ -20,17 +20,20 @@ import org.springframework.transaction.annotation.Transactional;
 public class JpaInAppNotifier implements InAppNotifier {
 
   private final InAppNotificationRepository notifications;
+  private final ActiveRecipients recipients;
   private final Clock clock;
   private final Duration ttl;
 
   public JpaInAppNotifier(
       InAppNotificationRepository notifications,
+      ActiveRecipients recipients,
       Clock clock,
       @Value("${app.notification.ttl:30d}") Duration ttl) {
     if (ttl == null || ttl.isNegative() || ttl.isZero() || ttl.getNano() % 1_000 != 0) {
       throw new IllegalArgumentException("app.notification.ttl은 0보다 크고 마이크로초 단위여야 해요");
     }
     this.notifications = notifications;
+    this.recipients = recipients;
     this.clock = clock;
     this.ttl = ttl;
   }
@@ -38,6 +41,10 @@ public class JpaInAppNotifier implements InAppNotifier {
   @Override
   @Transactional(propagation = Propagation.MANDATORY)
   public void notify(InfoCommand command) {
+    // 탈퇴했거나 탈퇴 중인 회원에게는 만들지 않는다. 받는 회원 행을 붙잡아 탈퇴의 알림 삭제와 순서를 정한다(ActiveRecipients, #424)
+    if (!recipients.holdActive(command.recipientMemberId())) {
+      return;
+    }
     Instant now = clock.instant();
     notifications.saveAndFlush(
         InAppNotification.ofTopic(
