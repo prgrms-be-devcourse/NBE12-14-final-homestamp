@@ -84,7 +84,7 @@ class RoomTransitionsTest {
 
   @Test
   void 답할_수_없는_세입자_자리에는_거주_종료_요청을_보내지_않는다() {
-    // 연결 전·거절·탈퇴(D 확인 전, #415)
+    // 거절·탈퇴(연결 전은 바로 거주 종료라 요청까지 오지 않음)
     assertInvalid(
         living(LANDLORD, false, false, false), entry(ActionType.REQUEST_END, LANDLORD, null));
   }

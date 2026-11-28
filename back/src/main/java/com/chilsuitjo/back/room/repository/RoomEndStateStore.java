@@ -167,10 +167,11 @@ public class RoomEndStateStore implements StateStore<RoomState> {
 
   /**
    * 집주인 측이 요청 없이 바로 거주 종료할 수 있나. 판단은 D의 {@code SoloRule}이다. 거주 종료 요청은 상대 공유 중단을 이유로 쓰지 않아서(03 1-1
-   * ④) 지금 열리는 이유는 상대 없음(성립 시각 없음)뿐이다. 성립 시각이 있는 이유가 오면 "그 뒤 상대 행동" 확인을 room이 하지 않으므로 열지 않는다.
+   * ④) 지금 열리는 이유는 상대 없음과 연결 전(03 A "이사함 기록", 둘 다 성립 시각 없음)이다. 성립 시각이 있는 이유가 오면 "그 뒤 상대 행동" 확인을
+   * room이 하지 않으므로 열지 않는다.
    *
-   * <p>03 A "이사함 기록"은 세입자가 <b>연결 전</b>이어도 바로 거주 종료라고 하지만 {@code SoloRule}은 연결 전·거절·탈퇴에서 열지 않는다.
-   * room이 따로 판단하지 않고 D 확인을 기다린다(#415). 그동안 이 자리들에서는 거주 종료 요청도 보낼 수 없어 {@code INVALID_STATE}다.
+   * <p>세입자 자리가 거절·탈퇴이면 {@code SoloRule}이 열지 않고(거절은 03 1-1의 이유가 아님, 탈퇴는 KEEP-4 전) 거주 종료 요청도 보낼 수 없어
+   * {@code INVALID_STATE}다.
    */
   private SoloCheck soloEnd(UUID roomRecordId) {
     SoloCheck check =

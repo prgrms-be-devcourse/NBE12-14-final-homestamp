@@ -179,9 +179,18 @@ class RoomEndDetailApiTest {
   }
 
   @Test
-  void 세입자_자리가_연결_전_거절_탈퇴이면_집주인에게_이사함이_없다() throws Exception {
-    // 실제 요청이 INVALID_STATE인 동안(#415)은 버튼도 없다. #428·#421 댓글 3번이 판단을 바꾸면 같은 함수라 함께 바뀐다
-    for (String seatStatus : new String[] {"INVITED", "REJECTED", "WITHDRAWN"}) {
+  void 세입자_자리가_연결_전이면_집주인에게_이사함이_있다() throws Exception {
+    // #428: 연결 전이면 집주인 측도 바로 거주 종료(NOT_CONNECTED)라 실제 요청과 같은 함수로 버튼도 보인다
+    UUID room = room(jdbc, "LIVING");
+    seat(jdbc, room, "TENANT", null, "INVITED");
+    seat(jdbc, room, "LANDLORD", landlord, "CONNECTED");
+    detail(mvc, room, landlord).andExpect(jsonPath("$.availableActions", hasItem("move-out")));
+  }
+
+  @Test
+  void 세입자_자리가_거절_탈퇴이면_집주인에게_이사함이_없다() throws Exception {
+    // 실제 요청이 INVALID_STATE인 동안(#415, #421 댓글 3번)은 버튼도 없다. 판단이 바뀌면 같은 함수라 함께 바뀐다
+    for (String seatStatus : new String[] {"REJECTED", "WITHDRAWN"}) {
       UUID room = room(jdbc, "LIVING");
       seat(jdbc, room, "TENANT", null, seatStatus);
       seat(jdbc, room, "LANDLORD", landlord, "CONNECTED");
