@@ -87,6 +87,7 @@ public class RenotifyWorker {
               afterDue,
               afterId,
               NoticeKind.RENOTIFY,
+              RenotifyStateStore.EVIDENCE_KINDS,
               Limit.of(pageSize));
       for (ResponseRequest request : page) {
         try {

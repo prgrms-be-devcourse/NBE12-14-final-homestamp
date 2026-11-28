@@ -3,8 +3,13 @@ package com.chilsuitjo.back;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.chilsuitjo.back.notification.entity.Notice;
+import com.chilsuitjo.back.notification.entity.ResponseRequest;
 import com.chilsuitjo.back.notification.repository.NoticeRepository;
+import com.chilsuitjo.back.notification.repository.RenotifyStateStore;
+import com.chilsuitjo.back.notification.repository.ResponseRequestRepository;
+import com.chilsuitjo.back.notification.rule.NoticeKind;
 import com.chilsuitjo.back.notification.rule.RenotifyKey;
+import com.chilsuitjo.back.notification.rule.RequestStatus;
 import com.chilsuitjo.back.notification.service.NoticeWaitStart;
 import com.chilsuitjo.back.notification.service.RenotifyWorker;
 import java.sql.Timestamp;
@@ -27,6 +32,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.domain.Limit;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -53,6 +59,7 @@ class RenotifyWorkerTest {
   @Autowired private RenotifyWorker worker;
   @Autowired private NoticeWaitStart waitStart;
   @Autowired private NoticeRepository notices;
+  @Autowired private ResponseRequestRepository requests;
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private JdbcTemplate jdbc;
 
@@ -139,6 +146,38 @@ class RenotifyWorkerTest {
   }
 
   // ---- 멱등 ----
+
+  @Test
+  void 재통지_뒤_같은_기회에서_기한을_다시_정한_요청은_후보가_아니다() {
+    // 고친 내용 확인을 재통지 뒤(닿기 전) 또 고치면 recount가 재통지 기한을 늦춘다. 새 요청·초대 통지가 없으니 같은 기회라 후보에 다시 오지 않는다(#370
+    // T-2)
+    UUID link = inviteLink(room, landlord, null);
+    UUID request = startedRequest(room, "TENANT", "WAITING", now.minusSeconds(60));
+    reachedNotice(request, landlord, link, "REQUEST", "DELIVERED");
+    worker.runOnce(50);
+    assertThat(renotices(request)).hasSize(1);
+    jdbc.update(
+        "UPDATE notice SET created_at = ? WHERE response_request_id = ? AND kind = 'RENOTIFY'",
+        Timestamp.from(now.minus(Duration.ofHours(10))),
+        request);
+    jdbc.update(
+        "UPDATE response_request SET renotify_due_at = ? WHERE id = ?",
+        Timestamp.from(now.minus(Duration.ofHours(1))),
+        request);
+
+    List<ResponseRequest> due =
+        requests.findRenotifyDue(
+            RequestStatus.WAITING,
+            now,
+            Instant.EPOCH,
+            new UUID(0, 0),
+            NoticeKind.RENOTIFY,
+            RenotifyStateStore.EVIDENCE_KINDS,
+            Limit.of(10_000));
+    assertThat(due).extracting(ResponseRequest::getId).doesNotContain(request);
+    worker.runOnce(50);
+    assertThat(renotices(request)).hasSize(1);
+  }
 
   @Test
   void 두_번_돌려도_재통지는_요청당_한_번이다() {

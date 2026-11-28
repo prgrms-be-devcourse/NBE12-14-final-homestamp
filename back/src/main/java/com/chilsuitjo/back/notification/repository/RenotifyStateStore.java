@@ -20,6 +20,7 @@ import com.chilsuitjo.back.notification.service.CounterpartReader;
 import com.chilsuitjo.back.notification.service.InviteLinks;
 import com.chilsuitjo.back.notification.service.NoticeOutbox;
 import java.time.Clock;
+import java.util.Collections;
 import java.util.EnumSet;
 import java.util.Objects;
 import java.util.Optional;
@@ -51,9 +52,9 @@ import org.springframework.stereotype.Component;
 @Component
 public class RenotifyStateStore implements StateStore<RenotifyPlan> {
 
-  /** 재통지의 자리·링크를 정할 통지: 요청에 걸려 이미 닿은 요청 통지. */
-  private static final Set<NoticeKind> EVIDENCE_KINDS =
-      EnumSet.of(NoticeKind.REQUEST, NoticeKind.INVITE);
+  /** 재통지의 자리·링크를 정할 통지: 요청에 걸려 이미 닿은 요청 통지. 작업자의 후보 조회도 같은 종류로 새 기회를 가린다. */
+  public static final Set<NoticeKind> EVIDENCE_KINDS =
+      Collections.unmodifiableSet(EnumSet.of(NoticeKind.REQUEST, NoticeKind.INVITE));
 
   private static final Set<NoticeStatus> REACHED =
       EnumSet.of(NoticeStatus.DELIVERED, NoticeStatus.VIEWED);
