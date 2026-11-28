@@ -36,8 +36,10 @@ import org.springframework.stereotype.Component;
  *
  * <p>판이 바뀌면 같은 트랜잭션에서 정산 모습 번호를 올린다(05 2-7, 불변식 19).
  *
- * <p><b>현재 구현 범위의 한계</b>: 확인 뒤 고친 내용을 요청만 하고(앞모습 그대로) 아직 확인되지 않은 때에는 정산 모습 번호를 올리지 않는다({@code
- * Correctable}에 그 때를 알리는 자리가 없음). 송금에는 사진이 붙지 않아 다시 요청의 근거 사진은 받지 않는다.
+ * <p>확인 뒤 고친 내용을 요청·다시 요청하거나 상대가 거절해도(판은 그대로) 정산이 바뀐 것으로 본다({@link #pendingChanged}).
+ *
+ * <p><b>현재 구현 범위의 한계</b>: 고친 내용을 거두면({@code withdraw}) 정산 모습 번호를 올리지 않는다(거두기 저장에는 대상 기록 창구가 없음).
+ * 송금에는 사진이 붙지 않아 다시 요청의 근거 사진은 받지 않는다.
  */
 @Component
 @RequiredArgsConstructor
@@ -128,6 +130,15 @@ public class SettlementTransferCorrectable implements Correctable {
     transfers.flush();
     changes.changed(row.getSettlementId());
     return applied(added);
+  }
+
+  /**
+   * 확인 뒤 고친 내용을 요청·다시 요청했거나 상대가 거절했다. 판은 그대로지만 정산 내용이 바뀐 것이라 정산 모습 번호를 올리고 기다리던 끝내기 요청을 닫는다(06
+   * SET-5b, 불변식 19).
+   */
+  @Override
+  public void pendingChanged(UUID targetId) {
+    changes.changed(row(targetId).getSettlementId());
   }
 
   @Override

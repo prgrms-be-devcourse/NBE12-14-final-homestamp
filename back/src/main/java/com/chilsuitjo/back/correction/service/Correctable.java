@@ -48,6 +48,15 @@ public interface Correctable {
    */
   AppliedVersion mergeConfirmed(UUID targetId, UUID baseVersionId, String field, Object newValue);
 
+  /**
+   * 판은 그대로인데 이 기록의 확인 전 고친 내용이 생기거나 바뀌었다: 도장 뒤 고친 내용을 요청함, 거절된 것을 다시 보냄, 상대가 보류·이견으로 거절함. 판이 바뀌는
+   * 때({@link #applyNow}·{@link #mergeConfirmed})에는 부르지 않는다. {@code save} 안에서 부른다.
+   *
+   * <p>기본은 아무것도 하지 않는다. 정산 송금처럼 기록이 바뀌면 같은 트랜잭션에서 해야 할 일이 있는 기록만 구현한다(정산 모습 번호, 끝내기 요청 닫기, 06
+   * SET-5b).
+   */
+  default void pendingChanged(UUID targetId) {}
+
   /** 확인할 때 본 판의 지문 재료({@code RESPOND_CORRECTION}([모두 확인] 포함)의 {@code content_digest}). */
   DigestInput digestOf(UUID versionId);
 
