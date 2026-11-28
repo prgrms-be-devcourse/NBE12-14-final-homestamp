@@ -21,6 +21,9 @@ const KINDS = Object.keys(ACKNOWLEDGEMENT_LABELS) as AcknowledgementKind[]
 
 export const NAME_SAVED_MESSAGE = "이름을 바꿨어요."
 export const SMS_ON_MESSAGE = "문자를 다시 받아요."
+// 문자를 끄기 전에 보여 줄 안내(03 K "회원의 문자 설정")
+export const SMS_OFF_NOTE =
+  "문자를 끄면, 72시간 동안 답이 없을 때 상대 쪽에 '확인 없음'이 표시되고, 요청에 따라 상대가 혼자 진행할 수 있어요."
 // 본인이 요청한 인증번호 문자는 문자 설정과 상관없이 가요(03 K "인증 문자", 06 NOTI-8b)
 export const SMS_OFF_MESSAGE =
   "문자를 껐어요. 알림은 서비스 안에서 받아요. 가입·비밀번호 재설정 같은 인증번호 문자는 계속 가요."
@@ -234,11 +237,20 @@ export function AccountPanel({
             꺼도 알림은 서비스 안에서 받아요. 인증번호 문자는 설정과 상관없이
             가요.
           </small>
+          {/* 끄기 전에 알 수 있게, 켜 둔 동안 버튼 위에 보여요(03 K "회원의 문자 설정") */}
+          {account.smsEnabled && (
+            <p id="account-sms-off-note" className="text-sm">
+              {SMS_OFF_NOTE}
+            </p>
+          )}
           <Button
             type="button"
             variant="outline"
             className="w-full"
             disabled={busy !== undefined}
+            aria-describedby={
+              account.smsEnabled ? "account-sms-off-note" : undefined
+            }
             onClick={() => void toggleSms()}
           >
             {busy === "sms" && <Loader2 className="animate-spin" />}

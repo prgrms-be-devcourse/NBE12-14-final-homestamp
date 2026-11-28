@@ -132,6 +132,28 @@ test("문자를 끄고 다시 켤 수 있다", async () => {
   expect(ctl.updates).toEqual([{ smsEnabled: false }, { smsEnabled: true }])
 })
 
+test("문자를 끄기 전에 72시간 안내를 보여 주고, 끈 뒤에는 감춘다(03 K)", async () => {
+  render(<App />)
+  await login()
+  const dialog = await openAccount()
+
+  const off = within(dialog).getByRole("button", { name: "문자 끄기" })
+  const note = within(dialog).getByText(/72시간 동안 답이 없을 때/)
+  expect(note.textContent).toContain("'확인 없음'이 표시되고")
+  expect(note.textContent).toContain("상대가 혼자 진행할 수 있어요")
+  // 버튼의 설명으로 이어져 화면 낭독기도 누르기 전에 읽어요
+  expect(off.getAttribute("aria-describedby")).toBe(note.id)
+
+  fireEvent.click(off)
+  expect(await within(dialog).findByText("꺼 둠")).toBeTruthy()
+  expect(within(dialog).queryByText(/72시간 동안 답이 없을 때/)).toBeNull()
+  expect(
+    within(dialog)
+      .getByRole("button", { name: "문자 켜기" })
+      .getAttribute("aria-describedby"),
+  ).toBeNull()
+})
+
 test("약관 확인 전 이름 바꾸기는 확인 창을 열고, 확인한 뒤에도 다시 보내지 않는다(#401)", async () => {
   ctl.pending = [{ kind: "TERMS_AGREED", textVersion: "2026-12-01" }]
   render(<App />)
