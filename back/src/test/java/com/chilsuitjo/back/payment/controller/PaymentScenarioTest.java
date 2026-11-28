@@ -191,6 +191,30 @@ class PaymentScenarioTest {
     assertThat(payments.confirmedTotal(other, repair)).isZero();
   }
 
+  /**
+   * 공유를 그만둔 동안 상대가 남기고 탈퇴했으면 그 지불은 나에게 보이지 않는다(03 6-4, 불변식 18). 탈퇴로 내 공유 중단 제한이 풀려 내가 다시 기록할 수
+   * 있어도(06 CONS-3p) 그 지불은 중복 후보에 들지 않고, 답하려 하면 없는 기록과 같은 404다(ROOM-2a).
+   */
+  @Test
+  void 공유를_그만둔_동안_탈퇴한_상대가_남긴_지불은_중복으로_세지_않고_답할_수도_없다() throws Exception {
+    jdbc.update(
+        "UPDATE state.party SET status = 'SHARING_STOPPED', sharing_stopped_at = clock_timestamp()"
+            + " WHERE room_record_id = ? AND side = 'TENANT'",
+        room);
+    UUID hidden = idOf(record(landlord, "l1", "TENANT", "VENDOR", 82_000, PAID_ON, false));
+    jdbc.update(
+        "UPDATE state.party SET status = 'WITHDRAWN', member_id = NULL"
+            + " WHERE room_record_id = ? AND side = 'LANDLORD'",
+        room);
+
+    record(tenant, "t1", "TENANT", "VENDOR", 82_000, PAID_ON, false)
+        .andExpect(status().isCreated());
+    respond(tenant, hidden, "t2", "ACK", null)
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+    assertThat(countPayments()).isEqualTo(2);
+  }
+
   /** 지불 기록 요청. 낸 사람이나 받는 사람이 제3자면 관계 설명 "윗집"을 넣는다. */
   private ResultActions record(
       UUID memberId,
