@@ -76,6 +76,14 @@ app:
   # 기다림 기한(06 0-1). 기한은 생길 때 시각으로 저장해서 값을 바꿔도 이미 정한 기한은 그대로다
   wait:
     renotify: 48h
+    # 재통지가 전달된(또는 열린) 뒤 상대 미확인까지(06 0-1 wait.unconfirmed). 재통지가 닿을 때 unconfirmed_due_at으로 저장한다
+    unconfirmed: 24h
+    # 재통지 작업자(06 NOTI-5a). 기본은 꺼 둔다: 요청 → 통지(NOTI-1)와 전달 결과 조회가 운영에서 켜진 뒤에 켠다
+    renotify-worker:
+      enabled: false
+      initial-delay-ms: 5000
+      interval-ms: 60000
+      page-size: 100
   delivery:
     unknown-after: 3d
     # 전달 결과 조회 일정: 보내고 첫 조회, 보내고 두 번째 조회, 그 뒤 조회 간격(06 0-1)

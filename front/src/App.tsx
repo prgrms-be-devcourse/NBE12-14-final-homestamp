@@ -42,6 +42,7 @@ import { hasAction, type RoomAction } from "@/api/actions"
 import { ApiProvider } from "@/api"
 import { useApi } from "@/api/hooks"
 import { repairStub } from "@/api/http-repair-view"
+import { rejectInvitation, withAccountPhone } from "@/api/http-invitations"
 import { errorMessage, shouldReload } from "@/api/errors"
 import { createApi } from "@/api/create-api"
 import {
@@ -86,6 +87,7 @@ import {
 import {
   canAccessRoom,
   isPreJoin,
+  partsLockedReason,
   canSeeInspection,
   declineInvitation,
   canReceiveInvitation,
@@ -102,6 +104,7 @@ import "./service.css"
 import { sideText } from "@/lib/words"
 import { Notice } from "@/components/common/notice"
 import { Welcome } from "@/features/room/welcome"
+import { RoomPartsCard } from "@/features/room/room-parts-card"
 import { SideMenu } from "@/components/common/side-menu"
 import { AppTopbar } from "@/components/common/app-topbar"
 import { PageHeading } from "@/components/common/page-heading"
@@ -434,7 +437,13 @@ function HomeStampApp({
   )
   const sharedPhoto = db.partPhotos.find((p) => p.id === sharedPhotoId)
   const sharedRepair = sharedKind === "repair" ? repair : undefined
-  const sharedRoom = db.rooms.find(
+  // HTTP의 받은 초대(GET /api/invitations)는 내 호실 목록 밖이라 따로 받아 둬요. 서버가 내 인증 번호로 온 것만 주니
+  // 그 번호를 넣어 목업과 같은 받은 초대 확인을 지나게 해요(api/http-invitations)
+  const invitationRooms = withAccountPhone(
+    db.invitations ?? [],
+    account?.phone ?? "",
+  )
+  const sharedRoom = [...db.rooms, ...invitationRooms].find(
     (r) =>
       r.id ===
       (sharedKind === "part-photo"
@@ -492,7 +501,7 @@ function HomeStampApp({
   const accessibleRooms = myRooms
   // 받은 초대: 가입할 때 인증한 번호로 온, 아직 연결하지 않은 초대
   const receivedInvitations = account
-    ? db.rooms.filter(
+    ? [...db.rooms, ...invitationRooms].filter(
         (r) =>
           !sideOf(r, accountId) &&
           canReceiveInvitation(r, inviteeSide(r), account.phone),
@@ -736,8 +745,9 @@ function HomeStampApp({
       !canReceiveInvitation(sharedRoom, role, account.phone)
     )
       return
+    // 서버가 거절을 받은 뒤에만 창을 닫고 알려요. 실패하면 send가 오류를 알리고 창은 그대로 둬요
     void act(
-      post(endpoints.rejectInvitation(sharedRoom.id)),
+      rejectInvitation(sharedRoom),
       "호실 연결 거절 · 제 집이 아니에요",
       (d) =>
         declineInvitation(
@@ -748,12 +758,14 @@ function HomeStampApp({
       true,
       sharedRoom.id,
       true,
-    )
-    setGuest(false)
-    setModal(null)
-    replaceUrl(null, "", "/")
-    navigate((r) => ({ ...r, page: "home", roomId: "" }))
-    toast("초대를 거절했어요. 그 호실 기록에는 접근할 수 없어요.")
+    ).then((ok) => {
+      if (!ok) return
+      setGuest(false)
+      setModal(null)
+      replaceUrl(null, "", "/")
+      navigate((r) => ({ ...r, page: "home", roomId: "" }))
+      toast("초대를 거절했어요. 그 호실 기록에는 접근할 수 없어요.")
+    })
   }
   function detail(id: string) {
     setRepairId(id)
@@ -1304,6 +1316,15 @@ function HomeStampApp({
                           }}
                         />
                       )}
+                    />
+                  )}
+                  {page === "home" && hasRoomAccess && (
+                    // 부위 관리(ROOM-3, #456). 바꾸는 버튼은 서버가 준 availableActions의 parts로만 그려요
+                    <RoomPartsCard
+                      key={room.id}
+                      roomId={room.id}
+                      canEdit={roomHas("parts")}
+                      lockedReason={partsLockedReason(room)}
                     />
                   )}
                   {page === "rooms" && (
