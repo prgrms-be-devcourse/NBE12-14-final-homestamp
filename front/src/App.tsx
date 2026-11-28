@@ -796,7 +796,7 @@ function HomeStampApp({
     update: (d: DemoState) => void,
     targetId: string,
   ) {
-    commit(
+    return commit(
       request,
       text,
       update,

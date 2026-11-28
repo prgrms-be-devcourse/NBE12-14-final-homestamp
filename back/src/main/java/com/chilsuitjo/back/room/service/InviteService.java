@@ -12,6 +12,7 @@ import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.notification.dto.RequestTarget;
+import com.chilsuitjo.back.room.dto.CounterpartPhoneRequest;
 import com.chilsuitjo.back.room.dto.InviteRequest;
 import com.chilsuitjo.back.room.dto.Invited;
 import com.chilsuitjo.back.room.entity.Party;
@@ -69,6 +70,43 @@ public class InviteService {
                     ActionType.INVITE,
                     done -> ActionTarget.party(partyId),
                     store.inviting(phone, record),
+                    rules));
+    Party party = parties.findById(partyId).orElseThrow();
+    return new Invited.Result(new Invited(partyId, party.getStatus()), result.replayed());
+  }
+
+  /**
+   * 상대 번호 고쳐 다시 초대(06 4-3 {@code POST /api/rooms/{id}/counterpart-phone}, ROOM-4·LINK-4, #437).
+   * 초대됨·거절됨 자리만 받는다. 받는 사람이 바뀌어 초대처럼 공유 동의({@code SHARE_CONSENT})를 다시 남기고, 번호 고치기({@code
+   * CHANGE_INVITE_PHONE})는 번호 값 없이 바꾼 사실만 남긴다(05 1-3, 04 "개인정보 로그"). 저장 순서는 {@code
+   * PartyStateStore.changingPhone}.
+   *
+   * <p>오류: 판이 없으면 {@code CONSENT_REQUIRED}, 번호가 없거나 모양이 틀리면 {@code VALIDATION_FAILED}(여기서 먼저), 당사자가
+   * 아니면 {@code NOT_FOUND}, 정산 완료·합류 전 기록·공유 중단이면 pipeline 거절, 지금 초대 번호와 같으면 {@code
+   * VALIDATION_FAILED}, 만든 측이 아니거나 거주 종료이거나 초대됨·거절됨 자리가 아니면 {@code INVALID_STATE}, 내 인증 번호면 {@code
+   * SELF_INVITE}, 수신 거부 목록에 있는 번호면 {@code PHONE_OPTED_OUT}.
+   *
+   * <p>호실 상세 {@code availableActions}에는 아직 넣지 않는다. 초대 링크를 새로 발급하므로 상대 초대와 같이 #370 활성화 조건이 채워진 뒤
+   * 더한다.
+   */
+  public Invited.Result changePhone(
+      UUID roomRecordId, UUID memberId, String idempotencyKey, CounterpartPhoneRequest request) {
+    String consentVersion =
+        ConsentVersion.require(request == null ? null : request.consentVersion());
+    String phone = optionalPhone(request.phone());
+    if (phone == null) {
+      throw new BusinessException(ErrorCode.VALIDATION_FAILED);
+    }
+    UUID partyId = counterpartSeat(roomRecordId);
+
+    BatchResult result =
+        pipeline.executeAll(
+            ActionBatch.of(roomRecordId, Actor.member(memberId), idempotencyKey)
+                .record(ActionType.SHARE_CONSENT, Map.of("consentVersion", consentVersion))
+                .step(
+                    ActionType.CHANGE_INVITE_PHONE,
+                    done -> ActionTarget.party(partyId),
+                    store.changingPhone(phone),
                     rules));
     Party party = parties.findById(partyId).orElseThrow();
     return new Invited.Result(new Invited(partyId, party.getStatus()), result.replayed());
