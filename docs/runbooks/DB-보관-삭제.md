@@ -14,7 +14,7 @@ V1은 부모 삭제 보호·수신 거부 UPDATE 금지·회원 확인 기록 �
 
 ### 운영 Role Bootstrap
 
-`infra/db/bootstrap_roles.sql`은 운영 DB의 역할과 최소 선행 권한을 준비한다. 역할 이름은 현재 운영 설정에서 확정되지 않았다. 통합 테스트의 `homestamp_owner`, `homestamp_migration`, `homestamp_app`, `homestamp_purge`, `homestamp_human_read`(`DatabaseRoleBootstrapIntegrationTest`, `DatabaseGrantsIntegrationTest`의 `homestamp_human`도 같다)는 테스트 전용 이름이며 운영 이름으로 간주하지 않는다. 실행할 때 다섯 이름을 `psql` 변수로 명시한다. `human_role`은 사람 계정이 아니라 NOLOGIN Human 읽기 그룹(예: `homestamp_human_read`, decisions 2026-11-25)이다. GRANT는 이 그룹에 한 번만 주고, 사람별 LOGIN 역할은 Bootstrap이 만들지 않으며 아래 「사람별 Human 계정」 절차로 그룹에 넣고 뺀다.
+`infra/db/bootstrap_roles.sql`은 운영 DB의 역할과 최소 선행 권한을 준비한다. 운영 역할 이름은 Owner `hs_owner`, Migration `hs_migrator`, App `hs_app`, Purge `hs_purge`, Human 읽기 그룹 `hs_human_read`다(decisions 2026-11-28). 같은 이름을 Bootstrap 변수, 이미지의 `db/grants/roles.properties`, Migration 비밀 파일(`spring.datasource.username`·`app.migration.owner-role`), App SSM `spring.datasource.username`에 쓴다. 통합 테스트의 `homestamp_*`·`hs_login_*` 같은 이름(`DatabaseRoleBootstrapIntegrationTest`, `DatabaseGrantsIntegrationTest`, `MigrationRunnerIntegrationTest`의 접속용 역할)은 테스트 전용이다. 이미지의 `roles.properties`를 검사하는 테스트(`MigrationModeTest`, `MigrationRunnerIntegrationTest`의 `G_*`, `infra/deploy/test/integration-test.sh`)만 운영 이름을 쓴다. 실행할 때 다섯 이름을 `psql` 변수로 명시한다. `human_role`은 사람 계정이 아니라 NOLOGIN Human 읽기 그룹(decisions 2026-11-25)이다. GRANT는 이 그룹에 한 번만 주고, 사람별 LOGIN 역할은 Bootstrap이 만들지 않으며 아래 「사람별 Human 계정」 절차로 그룹에 넣고 뺀다.
 
 | 역할 | LOGIN | 상속 및 멤버십 |
 |---|---:|---|
@@ -25,17 +25,17 @@ V1은 부모 삭제 보호·수신 거부 UPDATE 금지·회원 확인 기록 �
 | Human 읽기 그룹 | 아니오 | `NOINHERIT`; Owner 멤버십 없음, 읽기 권한만 `grants.sql`에서 부여 |
 | 사람별 Human 계정 | 예, 사람마다 | Bootstrap이 만들지 않음. `NOINHERIT`, `VALID UNTIL` 필수; Human 읽기 그룹에 `INHERIT TRUE`, `SET FALSE`, `ADMIN FALSE` 멤버십 하나만, 직접 권한 없음 |
 
-모든 역할은 `NOSUPERUSER`, `NOCREATEDB`, `NOCREATEROLE`, `NOREPLICATION`, `NOBYPASSRLS`로 생성한다. PostgreSQL 18에서 비슈퍼유저 `CREATEROLE` 실행자는 생성한 역할마다 `ADMIN`만 가진 멤버십을 받으므로 Bootstrap 수행자도 신뢰된 DB 관리자여야 한다. 이 관리자 멤버십은 `INHERIT FALSE`, `SET FALSE`이며 App·Purge·Human·Migration 역할에 부여하지 않는다. Bootstrap은 로그인 역할의 비밀번호를 만들거나 변경하지 않는다. 운영 자격증명은 별도 안전한 계정 준비 절차에서 설정한다. 공급 경로는 역할마다 다르다. App은 앱 SSM 경로(`/homestamp/prod/app/`, #165)에서 읽는다. Migration은 SSM이 아니라 호스트가 Migration 컨테이너에만 마운트하는 전용 파일(`/run/secrets/homestamp-migration/`, B-1′, #173)에서 읽는다. 웹 EC2 역할은 앱 경로만 읽기 때문이다(#189). Purge·Human 자격증명의 공급 경로와 비밀번호 최초 발급·교체·복구 절차는 아직 정하지 않았다. 비밀번호를 SQL, 셸 인자, 로그에 넣지 않는다.
+모든 역할은 `NOSUPERUSER`, `NOCREATEDB`, `NOCREATEROLE`, `NOREPLICATION`, `NOBYPASSRLS`로 생성한다. PostgreSQL 18에서 비슈퍼유저 `CREATEROLE` 실행자는 생성한 역할마다 `ADMIN`만 가진 멤버십을 받으므로 Bootstrap 수행자도 신뢰된 DB 관리자여야 한다. 이 관리자 멤버십은 `INHERIT FALSE`, `SET FALSE`이며 App·Purge·Human·Migration 역할에 부여하지 않는다. Bootstrap은 로그인 역할의 비밀번호를 만들거나 변경하지 않는다. 운영 자격증명은 별도 안전한 계정 준비 절차에서 설정한다. 공급 경로는 역할마다 다르다. App은 앱 SSM 경로(`/homestamp/prod/app/`, #165)에서 읽는다. Migration은 SSM이 아니라 호스트가 Migration 컨테이너에만 마운트하는 전용 파일(`/run/secrets/homestamp-migration/`, B-1′, #173)에서 읽는다. 웹 EC2 역할은 앱 경로만 읽기 때문이다(#189). `hs_purge`는 LOGIN이지만 삭제 작업자를 만들 때까지 비밀번호를 정하지 않는다. 비밀번호가 없으면 비밀번호 인증이 실패하고 RDS IAM DB 인증은 꺼져 있어(`rds.tf` `iam_database_authentication_enabled = false`, `rds_iam` 부여 없음) 지금의 운영 인증 방식으로는 이 역할로 직접 로그인할 수 없다. 역할 자체는 관리자(마스터)가 그대로 관리할 수 있고, 비밀번호를 정하거나 `rds_iam`을 주는 것은 작업자를 도입할 때의 절차로 정한다. Purge·Human 자격증명의 공급 경로와 비밀번호 최초 발급·교체·복구 절차는 그때 정한다. 비밀번호를 SQL, 셸 인자, 로그에 넣지 않는다.
 
 실행 전용 DB 관리자는 역할 생성 권한(`CREATEROLE`) 외에도 대상 DB에 `CREATE`·`CONNECT` 권한을 부여할 수 있어야 하며, `public` 스키마 ACL을 바꿀 권한도 있어야 한다. 스크립트는 대상 데이터베이스에 Owner `CREATE`, Migration·App·Purge와 Human 읽기 그룹의 `CONNECT`(사람 계정은 그룹에서 상속)를 부여하고 `PUBLIC`의 임시 객체 생성 권한을 회수하며, `public` 스키마의 `PUBLIC` 권한을 회수한 뒤 Owner에 `USAGE, CREATE`를 준다. 따라서 App·Purge·Human은 임시 테이블도 만들 수 없다. 기존 역할 속성·역할 멤버십·직접 `public` ACL이 기대와 다르면 자동 수정하지 않고 실패한다. `public` 스키마 소유자가 Migration·App·Purge·Human 읽기 그룹이나 그 그룹의 사람 계정이면 소유권을 바꾸지 않고 실패한다(ACL 검사는 소유자의 암묵 권한을 보지 못하므로 따로 검사한다). 그룹을 만들 때 ADMIN 전용 멤버십을 받은 실행 관리자는 사람 계정으로 보지 않으므로(위 멤버십 검사와 같은 예외), 그 관리자가 `public`을 소유해도 통과한다. 사람 계정이 Human 읽기 그룹에 `INHERIT TRUE`, `SET FALSE`, `ADMIN FALSE`로 들어 있는 것만 허용하고, 다른 옵션의 그룹 멤버십은 실패한다. 이미 있는 `record`, `state`, `log` 스키마와 객체가 Owner 소유가 아니거나, `public.flyway_schema_history`가 Owner 소유가 아니면 소유권을 바꾸지 않고 중단한다. 실행은 `psql`에서 `ON_ERROR_STOP`을 켜고 트랜잭션으로 처리하므로 오류는 0이 아닌 종료와 롤백으로 이어져야 한다.
 
 ```sh
 psql -X -v ON_ERROR_STOP=1 \
-  -v owner_role='<owner identifier>' \
-  -v migration_role='<migration login identifier>' \
-  -v app_role='<app login identifier>' \
-  -v purge_role='<purge login identifier>' \
-  -v human_role='<NOLOGIN human read group identifier>' \
+  -v owner_role=hs_owner \
+  -v migration_role=hs_migrator \
+  -v app_role=hs_app \
+  -v purge_role=hs_purge \
+  -v human_role=hs_human_read \
   -d '<dedicated database>' -f infra/db/bootstrap_roles.sql
 ```
 
@@ -117,7 +117,7 @@ GRANT SQL은 `back/src/main/resources/db/grants/grants.sql` 하나다(앱 이미
 
 - 먼저 `flyway.validate()`로 DB 이력이 이 이미지의 Migration과 정확히 같은지 확인한다. 대기 중인 Migration(아직 `--migrate` 안 함), 미래 버전, 체크섬 차이, 이미지에 없는 적용 버전, 실패한 버전, 이력이 없는 DB는 모두 실패(종료 코드 1)이고 GRANT SQL을 실행하지 않는다.
 - GRANT 트랜잭션 안에서 잠금을 잡은 뒤 Flyway 이력 지문을 다시 읽어 검증 때와 다르면 실패한다(검증과 GRANT 사이에 다른 Migration이 끼어든 경우).
-- 대상 역할: Owner는 비밀 파일 `app.migration.owner-role`, App·Purge·Human은 이미지 안의 `db/grants/roles.properties`(`app-role`, `purge-role`, `human-role`)에서만 읽는다. 환경변수·Spring 설정으로 바꿀 수 없다. 모르는 키·중복 키·빠진 키·형식 밖 이름·겹치는 이름·Migration 로그인 이름은 DB에 닿기 전에 실패한다. **지금 값은 테스트 이름(`homestamp_*`)이고 운영 이름이 확정되면 이 파일을 바꾼다.**
+- 대상 역할: Owner는 비밀 파일 `app.migration.owner-role`, App·Purge·Human은 이미지 안의 `db/grants/roles.properties`(`app-role`, `purge-role`, `human-role`)에서만 읽는다. 환경변수·Spring 설정으로 바꿀 수 없다. 모르는 키·중복 키·빠진 키·형식 밖 이름·겹치는 이름·Migration 로그인 이름은 DB에 닿기 전에 실패한다. **값은 운영 이름 `hs_app`·`hs_purge`·`hs_human_read`다(decisions 2026-11-28). 바꾸려면 Bootstrap 변수·Migration 비밀 파일·App SSM 사용자 이름과 함께 바꾼다.**
 - Human은 NOLOGIN 읽기 그룹 하나(`human-role`, decisions 2026-11-25 "Human 그룹")이고 GRANT는 그 그룹에만 준다. LOGIN 역할을 넣으면 `grants.sql` 사전 검사가 실패하고 아무것도 바꾸지 않는다. 사람별 LOGIN 역할은 이 실행이 만들거나 바꾸지 않는다(아래 "사람별 Human 계정"의 발급·회수 절차). 그래서 사람이 바뀌어도 이 파일과 이미지는 바뀌지 않는다.
 - 실패 로그에는 SQLState와 grants.sql 사전 검사의 고정 메시지(테이블·컬럼 이름 목록 포함, 앞 600자)만 남기고 비밀번호·SQL 본문은 남기지 않는다. Flyway가 INFO로 남기는 접속 주소 줄(`Database: <JDBC 주소>`)은 `--migrate`·`--apply-grants` 모두 끈다(호스트·DB 이름·인증서 경로를 로그에 남기지 않음).
 
