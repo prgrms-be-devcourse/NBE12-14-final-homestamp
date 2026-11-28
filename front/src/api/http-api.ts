@@ -21,7 +21,7 @@ export function createHttpApi(request: HttpRequest): HomeStampApi {
     mode: "http",
     repairCases: createHttpRepairCases(request, photoUploads, parts.partsOf),
     parts,
-    records: createHttpRecords(request),
+    records: createHttpRecords(request, photoUploads),
     actions: httpAvailableActions,
     downloads: createHttpDownloads(request),
     photoUploads,

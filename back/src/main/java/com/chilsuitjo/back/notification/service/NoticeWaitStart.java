@@ -6,9 +6,12 @@ import com.chilsuitjo.back.notification.entity.Notice;
 import com.chilsuitjo.back.notification.entity.ResponseRequest;
 import com.chilsuitjo.back.notification.repository.NoticeRepository;
 import com.chilsuitjo.back.notification.repository.ResponseRequestRepository;
+import com.chilsuitjo.back.notification.rule.NoticeChannel;
 import com.chilsuitjo.back.notification.rule.NoticeKind;
+import com.chilsuitjo.back.notification.rule.NoticeStatus;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -27,8 +30,8 @@ import org.springframework.transaction.annotation.Transactional;
  * 문자 한 통이 초대이자 그 점검의 확인 요청 통지일 때뿐이다({@link InviteRequestLinker}, #370 A-7). 재통지({@code RENOTIFY})가
  * 닿으면 기다림을 시작하지 않고 미확인 기한(06 0-1 {@code wait.unconfirmed})을 적는다({@link
  * ResponseRequest#renotifyReached}, {@link RenotifyWorker}). 알림({@code INFO})은 답을 묻지 않는다. 정산
- * 초대({@code SETTLEMENT_INVITE})에는 요청을 걸지 않는다. 지금 이것을 부르는 곳은 문자 전달 결과뿐이다. 링크 열람·알림 열람도 같은 메서드를 부르면
- * 된다(빠른 쪽이 시작점).
+ * 초대({@code SETTLEMENT_INVITE})에는 요청을 걸지 않는다. 부르는 곳은 문자 전달 결과와 링크 열람({@link #linkViewed})이다(빠른 쪽이
+ * 시작점, 03 1-1 "타이머 시작점"·06 NOTI-3b). 재통지 문자의 링크를 열어도 전달과 같이 미확인 기한을 적는다. 회원의 알림 열람은 아직 없다.
  *
  * <p><b>고치기 전 번호로 간 통지</b>: 링크가 번호 고치기로 무효({@code REINVITED})가 된 통지가 닿은 것은 시작점이 아니다. 그 문자는 지금 상대가
  * 아닌 옛 번호로 갔다(#370 T-2, #399). 업체의 전달 사실은 통지에 그대로 남고(부르는 쪽이 이미 적음), 요청의 기다림만 시작하거나 앞당기지 않는다.
@@ -64,6 +67,72 @@ public class NoticeWaitStart {
   @Transactional(propagation = Propagation.MANDATORY)
   public void lockRoomOf(UUID noticeId) {
     notices.findRequestRoomId(noticeId).ifPresent(room -> rooms.lockAndRead(room, Actor.server()));
+  }
+
+  /**
+   * 링크 열람 기록({@code LINK_VIEW})이 새로 남는 같은 트랜잭션에서 부른다(06 NOTI-3b, 05 4장 "집주인 링크 열람 →
+   * notice(VIEWED)"). 그 링크를 담아 <b>이미 보낸</b> 문자 통지(SENT·DELIVERED)를 열람으로 바꾸고({@link
+   * Notice#markViewed}), 각각 {@link #reached}로 걸린 요청의 기다림을 시작한다. 아직 보내지 않았거나 취소·최종 실패한 통지는 바꾸지 않는다(그
+   * 문자가 닿았다는 증거가 아님).
+   *
+   * <p>부르는 쪽이 이미 호실 행과 링크 행을 잠갔고, 링크가 지금 유효하며 열 수 있다는 것을 확인한 뒤여야 한다(링크 열람 행동의 {@code save}, {@code
+   * LinkViewStateStore}). 그래서 무효(번호 고치기 등)가 된 옛 링크나 실패한 열람으로는 여기까지 오지 않는다. 통지는 다른 곳({@code
+   * lockByLinks}·전달 결과 작업자)과 같은 ID 순서로 잠근다(호실 → 링크 → 통지 → 요청). 이 트랜잭션이 되돌아가면 열람 표시와 기다림 시작도 함께
+   * 되돌아간다.
+   *
+   * @param at 이 열람 행동의 기록 시각({@code LINK_VIEW.created_at}). 보낸 시각이 이보다 늦은 통지는 이 열람으로 바꾸지 않는다
+   * @return 열람으로 바꾼 통지 수
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public int linkViewed(UUID roomRecordId, UUID linkId, Instant at) {
+    return linkViewed(roomRecordId, linkId, at, null);
+  }
+
+  /**
+   * {@link #linkViewed(UUID, UUID, Instant)}와 같고, {@code required}가 있으면 그 통지를 이번에 실제로 열람으로 바꿨는지
+   * 확인한다. 바꾸지 못했으면(그사이 처리됐거나, 열람 시각이 그 통지의 보낸 시각보다 앞섬: 서버 시계가 뒤로 감) {@link EvidenceNotRecorded}를 던져
+   * 부른 쪽 트랜잭션을 되돌린다. 링크 열람이 그 통지의 증거 키로 행동을 남길 때 쓴다: 키만 쓰이고 증거가 남지 않으면 같은 키의 재생이 그 통지를 다시 보지 않기
+   * 때문이다.
+   *
+   * @param required 이번 열람이 반드시 증거를 남겨야 하는 통지. 없으면 null
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public int linkViewed(UUID roomRecordId, UUID linkId, Instant at, UUID required) {
+    int viewed = 0;
+    boolean requiredViewed = required == null;
+    for (Notice notice : notices.lockByLinks(roomRecordId, List.of(linkId), NoticeChannel.SMS)) {
+      // 열람 뒤에 보낸 문자는 이 열람의 증거가 아니다(그 문자를 받기 전에 이미 링크를 가지고 있었다). 시각을 끌어올려 맞추지 않는다
+      if (notice.getSentAt() != null && notice.getSentAt().isAfter(at)) {
+        continue;
+      }
+      if (notice.markViewed(at)) {
+        viewed++;
+        reached(notice, at);
+        requiredViewed |= notice.getId().equals(required);
+      }
+    }
+    if (!requiredViewed) {
+      throw new EvidenceNotRecorded();
+    }
+    return viewed;
+  }
+
+  /** 반드시 증거를 남겨야 하는 통지를 이번 열람으로 바꾸지 못했다. 부른 쪽 트랜잭션이 되돌아가 아무것도 남지 않는다. */
+  public static final class EvidenceNotRecorded extends RuntimeException {
+    public EvidenceNotRecorded() {
+      super("링크 열람이 증거 통지를 열람으로 바꾸지 못함", null, false, false);
+    }
+  }
+
+  /**
+   * 이 링크로 보냈는데 아직 전달 증거가 없는 문자 통지({@code SENT}, 보낸 시각 ≤ {@code at})의 ID(ID 순서). 링크 열람이 최근 열람 안이라도 새
+   * 행동을 남길지 본다(06 LINK-1a 예외, decisions 2026-11-28). 업체가 전달을 알린 {@code DELIVERED}와 이미 열람인 {@code
+   * VIEWED}는 새 증거가 필요 없어 넣지 않는다. 마지막 열람 뒤에 보낸 것만이 아니라, 앞 열람 때 아직 보냄으로 적히지 않아(작업자가 결과를 늦게 적음) 처리되지
+   * 않은 통지도 들어간다. 잠그지 않는 읽기라 부르는 쪽이 잠근 뒤 다시 부르고, 실제 변경은 {@link #linkViewed}가 통지를 잠그고 한다.
+   */
+  public List<UUID> unviewedSent(UUID roomRecordId, UUID linkId, Instant at) {
+    return notices.findSentIdsByLink(
+        roomRecordId, linkId, NoticeChannel.SMS, NoticeStatus.SENT, at);
   }
 
   /**

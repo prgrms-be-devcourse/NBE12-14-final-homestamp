@@ -294,7 +294,12 @@ public class JpaPhotoService implements PhotoService {
     List<String> pendingKeys = new ArrayList<>();
     for (Checked photo : checked) {
       Photo card = photos.save(card(command, photo, order));
-      visibilities.save(new PhotoVisibility(card.getId(), uploader.roomRecordId(), command.at()));
+      visibilities.save(
+          new PhotoVisibility(
+              card.getId(),
+              uploader.roomRecordId(),
+              command.at(),
+              command.released() ? command.at() : null));
       digests.add(new PhotoDigest(card.getId(), card.getOriginalSha256(), order));
       order++;
       pendingKeys.add(photo.pending().claims().originalKey());
@@ -371,18 +376,26 @@ public class JpaPhotoService implements PhotoService {
     }
   }
 
+  /** 작성 중에 붙여 아직 상대에게 보이지 않은 사진을 행동 시각부터 보이게 한다(#295). 부르는 쪽 행동의 트랜잭션 안에서만 부른다. */
+  @Override
+  @Transactional(propagation = Propagation.MANDATORY)
+  public void release(UUID roomRecordId, Collection<PhotoTarget> targets, Instant at) {
+    targetPhotos.releaseByTargets(roomRecordId, targets, at);
+  }
+
   // ---- 읽기: 회원 카드·링크 사진 ----
   //
   // 두 메서드는 같은 틀이다: 사진과 공개 상태를 한 번씩 읽고(read) → 보는 사람에 맞게 거르고 → 대상별로 묶는다(byTarget).
   // 다른 것은 거르는 조건과 한 장을 무엇으로 바꾸는지뿐이다.
   //   cards       회원. PhotoSight로 거르고, 링크에서 숨긴 사진도 남긴다. 주소 없음(화면이 view-urls로 받음)
-  //   linkPhotos  링크 열람자. 링크에서 숨긴 사진을 빼고, 남은 사진에 5분 주소를 붙인다
+  //   linkPhotos  링크 열람자. 아직 안 보인 사진과 링크에서 숨긴 사진을 빼고, 남은 사진에 5분 주소를 붙인다
 
   /**
    * 회원 화면 카드. 보이는 범위는 {@link PhotoSight}로 Java에서 거른다. view-urls와 같은 함수라 같은 규칙을 SQL에 또 적지 않는다.
    *
-   * <p><b>보지 않는 것</b>: 사진이 붙은 대상이 가려졌는지. 부르는 쪽이 보는 사람에게 보이는 대상만 넘긴다({@code InspectionQueryService}는
-   * {@code InspectionSight}로 항목을 거른 뒤 부른다). 상대의 작성 중 점검 사진은 #295에서 공개 상태 칸으로 가린다.
+   * <p>상대의 작성 중 점검 사진은 {@code released_at}이 비어 있어 부르는 쪽이 그 대상을 넘겨도 빠진다(#295). 그 밖에 대상이 가려졌는지는 보지
+   * 않으므로 부르는 쪽이 보는 사람에게 보이는 대상만 넘긴다({@code InspectionQueryService}는 {@code InspectionSight}로 항목을 거른
+   * 뒤 부른다).
    *
    * <p>{@code availableActions}는 빈 목록이다. 사진 행동(PHO-3·5·9)을 만들 때 그 판단과 같은 함수로 채운다(decisions
    * 2026-11-24).
@@ -397,7 +410,7 @@ public class JpaPhotoService implements PhotoService {
             .filter(stored ->
                 PhotoSight.visibleTo(
                     stored.photo().getUploadedBySide(),
-                    stored.photo().getCreatedAt(),
+                    stored.state().getReleasedAt(),
                     viewer.side(),
                     viewer.sharingStoppedAt()))
             .toList();
@@ -405,8 +418,9 @@ public class JpaPhotoService implements PhotoService {
   }
 
   /**
-   * 링크 열람 화면 사진. 링크에서 숨긴 사진은 빼고, 남은 사진은 썸네일·원본 모두 요청마다 새로 서명한 {@code photo.url.short} 주소에 {@code
-   * no-store}다({@link PhotoUrlRules#forLink}). 한 번 부를 때의 주소는 모두 같은 서명 시각·만료다.
+   * 링크 열람 화면 사진. 링크에서 숨긴 사진과 아직 상대에게 보이지 않은 사진(작성 중 점검, 03 3-1 링크 열람자 ✕, #295)은 빼고, 남은 사진은 썸네일·원본
+   * 모두 요청마다 새로 서명한 {@code photo.url.short} 주소에 {@code no-store}다({@link PhotoUrlRules#forLink}). 한
+   * 번 부를 때의 주소는 모두 같은 서명 시각·만료다.
    *
    * <p>{@link PhotoSight}로 거르지 않는다: 공유를 그만두면 링크가 닫혀서(03 B "공유 그만두기") 링크 열람자에게 공유 중단 뒤의 사진이 갈 일이 없다.
    * 링크가 유효한지, 대상이 링크가 가리키는 기록의 것인지는 부르는 쪽(link)이 본다.
@@ -420,7 +434,8 @@ public class JpaPhotoService implements PhotoService {
     Set<PhotoTarget> keys = new LinkedHashSet<>(targets);
     List<Stored> shown =
         read(roomRecordId, keys).stream()
-            .filter(stored -> !stored.state().isHiddenOnLink())
+            .filter(stored ->
+                stored.state().getReleasedAt() != null && !stored.state().isHiddenOnLink())
             .toList();
     // 지운 사진만 있으면 서명할 것이 없어 자격 증명도 읽지 않는다(PhotoViewService.needsUrl과 같음)
     UrlPlan plan =

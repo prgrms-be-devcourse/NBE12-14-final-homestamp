@@ -78,6 +78,24 @@ public interface NoticeRepository extends JpaRepository<Notice, UUID> {
   long countSentWithoutDeliveryCheckDue();
 
   /**
+   * 이 링크로 보낸 문자 통지 가운데 상태가 {@code status}이고 {@code at} 이전에 보낸 것의 ID(ID 순서). 잠그지 않는다(링크 열람의 최근 열람 예외
+   * 판단, {@code NoticeWaitStart#unviewedSent}).
+   */
+  @Query(
+      """
+      SELECT n.id FROM Notice n
+      WHERE n.roomRecordId = :roomRecordId AND n.linkId = :linkId AND n.channel = :channel
+        AND n.status = :status AND n.sentAt <= :at
+      ORDER BY n.id
+      """)
+  List<UUID> findSentIdsByLink(
+      @Param("roomRecordId") UUID roomRecordId,
+      @Param("linkId") UUID linkId,
+      @Param("channel") NoticeChannel channel,
+      @Param("status") NoticeStatus status,
+      @Param("at") Instant at);
+
+  /**
    * 이 호실에서 넘겨받은 링크를 가리키는 문자 통지를 모두 잠근다(#100 U2 취소). 상태로 거르지 않는다: 문자 줄이 {@code PENDING}인데 통지가 {@code
    * REQUESTED}가 아닌 이상한 조합도 찾아야 해서다. 작업자가 결과를 적을 때와 같이 통지를 문자 줄보다 먼저 잠그고, 여러 행은 ID 순서로 잠근다.
    */
