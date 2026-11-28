@@ -43,12 +43,12 @@ export const CONNECTED_APIS: readonly {
   // 사진 올리기: 업로드 표 받기(06 4-5, PHO-1, #365). S3에는 화면이 presigned POST로 직접 올려요
   { method: "POST", path: /^\/api\/rooms\/[^/]+\/upload-tickets$/ },
   // 입주 점검 시작·상세·확인 요청·항목 응답·남은 항목 모두 확인·보충(06 4-7, INSP-1, #357).
-  // 점검 ID는 위 호실 경과에서 찾아요. 항목 더하기·부위 사진은 아직 연결 전이에요
+  // 점검 ID는 위 호실 경과에서 찾아요. 항목 더하기(사진은 업로드 표로)도 연결했어요. 부위 사진은 아직 연결 전이에요
   { method: "POST", path: /^\/api\/rooms\/[^/]+\/inspections$/ },
   { method: "GET", path: /^\/api\/inspections\/[^/]+$/ },
   {
     method: "POST",
-    path: /^\/api\/inspections\/[^/]+\/(request-confirm|confirm-all)$/,
+    path: /^\/api\/inspections\/[^/]+\/(items|request-confirm|confirm-all)$/,
   },
   {
     method: "POST",
@@ -75,6 +75,8 @@ export const CONNECTED_APIS: readonly {
   { method: "POST", path: /^\/api\/me$/ },
   { method: "POST", path: /^\/api\/me\/password$/ },
   { method: "POST", path: /^\/api\/auth\/reset-password$/ },
+  // 가입 전 링크 열람(06 4-4 `POST /api/public/links/view`, S-16, #303). 문자 그만 받기(`links/stop`)는 서버에 아직 없어요
+  { method: "POST", path: /^\/api\/public\/links\/view$/ },
 ]
 
 export const NOT_CONNECTED_MESSAGE = "아직 서버에 연결되지 않은 기능이에요."

@@ -203,6 +203,67 @@ class PartyTransitionsTest {
     expect(ErrorCode.INVALID_STATE, rules.initial(), ActionType.CONNECT);
   }
 
+  // ---- 번호 고쳐 다시 초대(#437) ----
+
+  @ParameterizedTest
+  @EnumSource(
+      value = PartyStatus.class,
+      names = {"INVITED", "REJECTED"})
+  void 만든_측이_거주_중에_초대됨이나_거절됨_자리의_번호를_고치면_초대됨이다(PartyStatus status) {
+    PartyState next = rules.apply(inviting(status), entry(ActionType.CHANGE_INVITE_PHONE));
+
+    assertThat(next.status()).isEqualTo(PartyStatus.INVITED);
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = PartyStatus.class,
+      names = {"INVITED", "REJECTED"},
+      mode = EnumSource.Mode.EXCLUDE)
+  void 초대됨이나_거절됨이_아닌_자리는_번호를_고칠_수_없다(PartyStatus status) {
+    expect(ErrorCode.INVALID_STATE, inviting(status), ActionType.CHANGE_INVITE_PHONE);
+  }
+
+  @Test
+  void 번호_고치기도_만든_측_거주_중_내_번호_수신_거부를_초대와_같이_본다() {
+    expect(
+        ErrorCode.INVALID_STATE,
+        new PartyState(PartyStatus.INVITED, false, true, false, null, null, false),
+        ActionType.CHANGE_INVITE_PHONE);
+    expect(
+        ErrorCode.INVALID_STATE,
+        new PartyState(PartyStatus.INVITED, true, false, false, null, null, false),
+        ActionType.CHANGE_INVITE_PHONE);
+    expect(
+        ErrorCode.SELF_INVITE,
+        new PartyState(PartyStatus.REJECTED, true, true, true, null, null, true),
+        ActionType.CHANGE_INVITE_PHONE);
+    expect(
+        ErrorCode.PHONE_OPTED_OUT,
+        new PartyState(PartyStatus.REJECTED, true, true, false, null, null, true),
+        ActionType.CHANGE_INVITE_PHONE);
+  }
+
+  @Test
+  void 예전_초대_회차로_온_연결과_거절은_번호가_같아도_INVALID_STATE다() {
+    // X → Y → X로 다시 초대했을 때 예전 초대 화면의 늦은 요청(#437, #370 ①)
+    PartyState stale =
+        new PartyState(PartyStatus.INVITED, null, null, null, true, false, null, false);
+    expect(ErrorCode.INVALID_STATE, stale, ActionType.CONNECT);
+    expect(ErrorCode.INVALID_STATE, stale, ActionType.REJECT_INVITE);
+    PartyState staleOtherPhone =
+        new PartyState(PartyStatus.INVITED, null, null, null, false, false, null, false);
+    expect(ErrorCode.INVALID_STATE, staleOtherPhone, ActionType.CONNECT);
+  }
+
+  @Test
+  void 다시_계산하면_번호_고치기도_초대됨이다() {
+    PartyState invited = rules.apply(rules.initial(), entry(ActionType.INVITE));
+    PartyState rejected = rules.apply(invited, entry(ActionType.REJECT_INVITE));
+    assertThat(rules.apply(rejected, entry(ActionType.CHANGE_INVITE_PHONE)).status())
+        .isEqualTo(PartyStatus.INVITED);
+  }
+
   private void expect(ErrorCode code, PartyState now, ActionType type) {
     assertThatThrownBy(() -> rules.apply(now, entry(type)))
         .isInstanceOfSatisfying(
