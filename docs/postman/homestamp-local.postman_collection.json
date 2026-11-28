@@ -4127,6 +4127,40 @@
               "body": "{\n  \"slots\": [\n    {\n      \"index\": 0,\n      \"ticket\": \"<서명된 업로드 표>\",\n      \"ticketExpiresAt\": \"2026-11-25T13:00:00Z\",\n      \"original\": {\n        \"url\": \"https://example-photos.s3.ap-northeast-2.amazonaws.com\",\n        \"fields\": {\n          \"key\": \"pending/<호실 기록 ID>/<업로드 ID>/original.jpg\",\n          \"Content-Type\": \"image/jpeg\",\n          \"x-amz-checksum-algorithm\": \"SHA256\",\n          \"x-amz-checksum-sha256\": \"3w36OScoEXmgbVtGdmPWsRpW+4/SaBsKH36fOYM46VM=\",\n          \"x-amz-algorithm\": \"AWS4-HMAC-SHA256\",\n          \"x-amz-credential\": \"<AWS 액세스 키 ID>/20261125/ap-northeast-2/s3/aws4_request\",\n          \"x-amz-date\": \"20261125T010000Z\",\n          \"policy\": \"<Base64 POST 정책>\",\n          \"x-amz-signature\": \"<SigV4 서명>\"\n        },\n        \"expiresAt\": \"2026-11-25T01:05:00Z\"\n      },\n      \"thumb\": {\n        \"url\": \"https://example-photos.s3.ap-northeast-2.amazonaws.com\",\n        \"fields\": {\n          \"key\": \"pending/<호실 기록 ID>/<업로드 ID>/thumb.jpg\",\n          \"Content-Type\": \"image/jpeg\",\n          \"x-amz-checksum-algorithm\": \"SHA256\",\n          \"x-amz-checksum-sha256\": \"vFnygueSzRICb3AjCkcSA/sZVSxGq5ixFKueoy8kO6s=\",\n          \"x-amz-algorithm\": \"AWS4-HMAC-SHA256\",\n          \"x-amz-credential\": \"<AWS 액세스 키 ID>/20261125/ap-northeast-2/s3/aws4_request\",\n          \"x-amz-date\": \"20261125T010000Z\",\n          \"policy\": \"<Base64 POST 정책>\",\n          \"x-amz-signature\": \"<SigV4 서명>\"\n        },\n        \"expiresAt\": \"2026-11-25T01:05:00Z\"\n      }\n    }\n  ]\n}"
             }
           ]
+        },
+        {
+          "name": "사진 주소 받기",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"photoIds\": [\"{{photoId}}\"],\n  \"variant\": \"THUMB\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/photos/view-urls",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "photos",
+                "view-urls"
+              ]
+            },
+            "description": "호실 회원이 사진 1~50장의 주소를 받는다(PHO-2). variant는 THUMB(썸네일) 또는 ORIGINAL(원본, 짧은 주소)이다. 응답 items는 요청한 순서대로이고, 지운 사진은 url 대신 erased 흔적이 온다.\n\n사진 줄을 DB에서 읽으므로 photo.service=jpa와 PHOTO_S3_BUCKET·AWS 자격 증명을 준비한 서버에서 실제로 붙인 사진만 찾는다. 기본값(photo.service=fake)으로 붙인 사진은 메모리에만 있어 404 NOT_FOUND다.\n\nphotoId는 호실 기록(GET /api/rooms/{{roomId}}/timeline)의 items[].photos[].photoId에서 골라 Variables에 직접 넣는다. 볼 수 없는 사진(없는 ID, 다른 호실, 공유를 그만둔 뒤 상대가 올린 사진, 상대의 작성 중 점검 사진)이 한 장이라도 섞이면 요청 전체가 404다. 같은 ID를 두 번 넣거나 51장 이상이면 400 VALIDATION_FAILED다."
+          },
+          "response": []
         }
       ]
     },
@@ -4165,6 +4199,10 @@
     },
     {
       "key": "roomId",
+      "value": ""
+    },
+    {
+      "key": "photoId",
       "value": ""
     },
     {
