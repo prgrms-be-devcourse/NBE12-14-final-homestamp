@@ -25,6 +25,7 @@ import com.chilsuitjo.back.proposal.rule.AgendaKind;
 import com.chilsuitjo.back.proposal.service.ProposalService;
 import com.chilsuitjo.back.repair.dto.RepairCaseList;
 import com.chilsuitjo.back.repair.dto.RepairCaseSummary;
+import com.chilsuitjo.back.repair.dto.StaleRepairCase;
 import com.chilsuitjo.back.repair.entity.CauseNote;
 import com.chilsuitjo.back.repair.entity.ProgressNote;
 import com.chilsuitjo.back.repair.entity.RepairCase;
@@ -38,8 +39,10 @@ import com.chilsuitjo.back.repair.repository.RepairStateStore;
 import com.chilsuitjo.back.repair.rule.RepairSight;
 import com.chilsuitjo.back.repair.rule.RepairState;
 import com.chilsuitjo.back.repair.rule.RepairTransitions;
+import com.chilsuitjo.back.repair.rule.StaleRule;
 import com.chilsuitjo.back.room.service.RoomAccessService;
 import com.chilsuitjo.back.room.service.RoomQueryService;
+import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -85,6 +88,8 @@ public class RepairListService {
   private final PhotoService photos;
   private final RoomAccessService access;
   private final WaitQuery waits;
+  private final StaleRule staleRule;
+  private final Clock clock;
 
   /**
    * 이 호실의 수리 건, 새것부터 {@code size}개. 남의 호실은 {@code NOT_FOUND}(ROOM-2a), 틀린 커서·크기는 {@code
@@ -164,6 +169,53 @@ public class RepairListService {
               cards.getOrDefault(
                   new PhotoTarget.Ref(PhotoTargetType.REPAIR_CASE, item.id()), List.of()));
         })
+        .toList();
+  }
+
+  /**
+   * 이 호실에서 오래 멈춘 수리 건(홈 "오래 멈춘 건", 06 REP-6a·6e, #370 B-2). 다른 도메인이 부르는 창구다(홈, D). 마지막 당사자 행동이 오래된
+   * 것부터, 같으면 ID 순이다. 호실 당사자가 아니면 {@code NOT_FOUND}다.
+   *
+   * <ul>
+   *   <li>기준은 {@link StaleRule}: 처리 중, 또는 시작 전이면서 하자가 보충 요청됨인 건 가운데 {@code lastActionAt}에서 {@code
+   *       repair.stale-after}가 지난 건
+   *   <li>보이는 범위·판·부위 이름·{@code lastActionAt}은 {@link #list}와 같은 계산이다(상대가 탈퇴했으면 탈퇴자가 중단 동안 남긴 행동은
+   *       빠짐)
+   *   <li>공유를 그만둔 뒤(어느 쪽이든, 제한이 살아 있을 때, {@code asOf})에는 빈 목록이다. 진행 상황 묻기가 공유 중단 동안 허용되지 않아 홈의 [진행
+   *       상황 묻기]를 누를 수 없고, {@code lastActionAt}이 중단 시각에 묶여 날수만 늘어나기 때문이다
+   *   <li>호실 단계(거주 중만)는 보지 않는다. 부르는 쪽(홈)이 거주 중인 호실만 부른다
+   * </ul>
+   */
+  @Transactional(readOnly = true)
+  public List<StaleRepairCase> stale(UUID roomRecordId, UUID memberId) {
+    RoomGate gate = gates.read(roomRecordId, Actor.member(memberId));
+    PartySide viewer = gate.side();
+    RepairSight sight = store.sightFor(roomRecordId, viewer);
+    if (sight.asOf() != null) {
+      return List.of();
+    }
+    Instant hiddenAfter =
+        store.hiddenAfter(roomRecordId, counterpartOf(viewer)).orElse(NOTHING_HIDDEN);
+    // 고정되지 않았으니 줄의 상태는 상태 행 그대로다. 줄을 만들기 전에 상태로 먼저 걸러 행동을 덜 읽는다
+    List<RepairCase> candidates =
+        cases.findVisible(roomRecordId, viewer, hiddenAfter, Limit.unlimited()).stream()
+            .filter(row -> StaleRule.reasonOf(row.getStatus(), row.getDefectAck()).isPresent())
+            .toList();
+    Instant now = clock.instant();
+    return lines(roomRecordId, memberId, sight, candidates).stream()
+        .map(Line::item)
+        .filter(item -> staleRule.isStale(item.lastActionAt(), now))
+        .map(item ->
+            new StaleRepairCase(
+                item.id(),
+                item.content().no(),
+                item.content().title(),
+                item.content().partName(),
+                StaleRule.reasonOf(item.status(), item.defect().ack()).orElseThrow(),
+                item.lastActionAt()))
+        .sorted(
+            Comparator.comparing(StaleRepairCase::lastActionAt)
+                .thenComparing(StaleRepairCase::repairCaseId))
         .toList();
   }
 
