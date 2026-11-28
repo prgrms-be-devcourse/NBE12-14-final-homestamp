@@ -38,6 +38,11 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         .ifPresent(wait -> response.header(HttpHeaders.RETRY_AFTER, String.valueOf(seconds(wait))));
     ProblemDetail body = problem(code, code.status(), null);
     e.photoIndex().ifPresent(index -> body.setProperty("photoIndex", index));
+    e.duplicate()
+        .ifPresent(duplicate -> {
+          body.setProperty("duplicateOf", duplicate.existingId());
+          body.setProperty("similar", duplicate.similar());
+        });
     return response.body(body);
   }
 
