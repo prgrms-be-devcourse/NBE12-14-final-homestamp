@@ -101,10 +101,10 @@ public final class InspectionLinkRecord {
 
   private static LinkRecordResponse.Photo photo(LinkPhoto photo) {
     if (photo.erased() != null) {
-      return LinkRecordResponse.Photo.erased(photo.id(), photo.erased().at());
+      return LinkRecordResponse.Photo.erased(photo.id(), photo.erased());
     }
-    return new LinkRecordResponse.Photo(
-        photo.id(), photo.thumbUrl(), photo.originalUrl(), photo.expiresAt(), false, null);
+    return LinkRecordResponse.Photo.shown(
+        photo.id(), photo.thumbUrl(), photo.originalUrl(), photo.expiresAt());
   }
 
   /**

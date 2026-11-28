@@ -83,8 +83,9 @@ class InspectionLinkRecordTest {
             org.assertj.core.groups.Tuple.tuple("벽", "얼룩", "세입자 확인 ✓"));
     assertThat(record.items().getFirst().photos())
         .containsExactly(
-            new LinkRecordResponse.Photo(shot, "thumb", "orig", CREATED, false, null),
-            LinkRecordResponse.Photo.erased(erased, erasedAt));
+            LinkRecordResponse.Photo.shown(shot, "thumb", "orig", CREATED),
+            new LinkRecordResponse.Photo(
+                erased, null, null, null, true, erasedAt, PartySide.TENANT, EraseReason.PRIVACY));
     assertThat(record.items().get(1).photos()).isEmpty();
   }
 

@@ -121,6 +121,9 @@ class PublicLinkInspectionPhotoTest {
             .andExpect(jsonPath("$.record.items[0].photos[0].expiresAt").isNotEmpty())
             .andExpect(jsonPath("$.record.items[0].photos[1].id").value(erased.toString()))
             .andExpect(jsonPath("$.record.items[0].photos[1].erased").value(true))
+            .andExpect(jsonPath("$.record.items[0].photos[1].erasedSide").value("TENANT"))
+            .andExpect(jsonPath("$.record.items[0].photos[1].erasedReason").value("PRIVACY"))
+            .andExpect(jsonPath("$.record.items[0].photos[1].erasedAt").isNotEmpty())
             .andExpect(jsonPath("$.record.items[0].photos[1].thumbUrl").doesNotExist())
             .andExpect(jsonPath("$.record.items[0].photos[1].originalUrl").doesNotExist())
             .andReturn()
@@ -128,6 +131,29 @@ class PublicLinkInspectionPhotoTest {
             .getContentAsString();
 
     assertThat(body).doesNotContain(hidden.toString()).doesNotContain(item.toString());
+  }
+
+  @Test
+  void 다른_사람의_요청으로_지운_사진은_측_없이_사유와_시각만_보인다() throws Exception {
+    // 03 6-1·불변식 16: 본인이 지운 사진(측·시각)과 운영자가 다른 사람의 요청으로 지운 사진(측 없음)을 링크 화면이 구분한다
+    UUID inspection = requestedInspection();
+    UUID item =
+        jdbc.queryForObject(
+            "SELECT id FROM state.inspection_item WHERE inspection_id = ?", UUID.class, inspection);
+    UUID mine = photo(item, 0, false, "PRIVACY");
+    UUID requested = photo(item, 1, false, "THIRD_PARTY");
+
+    view(link(inspection))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.record.items[0].photos[0].id").value(mine.toString()))
+        .andExpect(jsonPath("$.record.items[0].photos[0].erasedSide").value("TENANT"))
+        .andExpect(jsonPath("$.record.items[0].photos[0].erasedReason").value("PRIVACY"))
+        .andExpect(jsonPath("$.record.items[0].photos[1].id").value(requested.toString()))
+        .andExpect(jsonPath("$.record.items[0].photos[1].erased").value(true))
+        .andExpect(jsonPath("$.record.items[0].photos[1].erasedSide").doesNotExist())
+        .andExpect(jsonPath("$.record.items[0].photos[1].erasedReason").value("THIRD_PARTY"))
+        .andExpect(jsonPath("$.record.items[0].photos[1].erasedAt").isNotEmpty())
+        .andExpect(jsonPath("$.record.items[0].photos[1].thumbUrl").doesNotExist());
   }
 
   @Test
@@ -140,6 +166,11 @@ class PublicLinkInspectionPhotoTest {
   // ---- 도우미 ----
 
   private UUID photo(UUID item, int sortOrder, boolean hiddenOnLink, boolean erased) {
+    return photo(item, sortOrder, hiddenOnLink, erased ? "PRIVACY" : null);
+  }
+
+  private UUID photo(UUID item, int sortOrder, boolean hiddenOnLink, String eraseReason) {
+    boolean erased = eraseReason != null;
     UUID id = UUID.randomUUID();
     Instant at = Instant.now().minusSeconds(60);
     jdbc.update(
@@ -162,7 +193,7 @@ class PublicLinkInspectionPhotoTest {
         room,
         hiddenOnLink,
         erased ? Timestamp.from(at.plusSeconds(1)) : null,
-        erased ? "PRIVACY" : null,
+        eraseReason,
         Timestamp.from(at));
     return id;
   }
