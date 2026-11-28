@@ -66,7 +66,7 @@ class DatabaseGrantsIntegrationTest {
                   "withdrawn_at",
                   "created_at",
                   "version"),
-              List.of("email", "password_hash", "display_name", "phone")),
+              List.of("email", "password_hash", "display_name", "phone", "phone_hmac")),
           "state.refresh_token",
           List.of(
               List.of(
@@ -619,6 +619,7 @@ class DatabaseGrantsIntegrationTest {
     assertFunctionPermissions("record.forbid_change()", false, false, false);
     assertFunctionPermissions(
         "record.purge_member_acknowledgements(uuid, timestamp with time zone)", true, false, false);
+    assertFunctionPermissions("state.clear_stale_member_phone_hmac()", false, false, false);
     assertFunctionPermissions("state.forbid_link_revalidate()", false, false, false);
     assertFunctionPermissions("state.guard_room_delete()", false, false, false);
     assertFunctionPermissions("state.purge_room_record(uuid)", false, true, false);
@@ -887,7 +888,7 @@ class DatabaseGrantsIntegrationTest {
 
   // ======================================================== JDBC 실행 계약(트랜잭션·역할·잠금·롤백)
 
-  /** 테스트마다 새 DB: #185 선행 권한 → #173과 같은 Flyway(V1~V14). 역할은 클러스터 전체라 한 번만 만든다. */
+  /** 테스트마다 새 DB: #185 선행 권한 → #173과 같은 Flyway(V1~V15). 역할은 클러스터 전체라 한 번만 만든다. */
   private static String freshDatabase(String db) throws Exception {
     try (Connection connection = adminConnection();
         Statement statement = connection.createStatement()) {
@@ -896,11 +897,11 @@ class DatabaseGrantsIntegrationTest {
     prepareDatabasePrivileges(db);
     migrate(db);
     assertEquals(
-        "14",
+        "15",
         scalarAsAdmin(
             db,
             "SELECT max(version::int)::text FROM public.flyway_schema_history WHERE success AND version IS NOT NULL"),
-        "이 테스트가 쓰는 DB 버전은 V14");
+        "이 테스트가 쓰는 DB 버전은 V15");
     return db;
   }
 
