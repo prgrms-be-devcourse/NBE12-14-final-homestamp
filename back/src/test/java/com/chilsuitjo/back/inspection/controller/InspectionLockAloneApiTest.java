@@ -16,6 +16,7 @@ import com.chilsuitjo.back.action.dto.ActionTarget;
 import com.chilsuitjo.back.action.rule.ActionType;
 import com.chilsuitjo.back.action.rule.Replay;
 import com.chilsuitjo.back.action.service.ActionReader;
+import com.chilsuitjo.back.global.common.ClosedReason;
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.inspection.rule.InspectionState;
@@ -25,6 +26,9 @@ import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.rule.RequestStatus;
 import com.chilsuitjo.back.notification.service.FakeWaitService;
+import java.sql.Timestamp;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -215,6 +219,103 @@ class InspectionLockAloneApiTest {
         .andExpect(status().isConflict())
         .andExpect(jsonPath("$.code").value("INVALID_STATE"));
     assertThat(inspectionRow(moveOut)).containsEntry("status", "REQUESTED");
+  }
+
+  // ---- 상대 공유 중단(since = 그만둔 시각) ----
+
+  @Test
+  void 상대가_공유를_그만두면_혼자_잠그고_그만둔_뒤_상대_행동은_보이지_않아_막지_않는다() throws Exception {
+    UUID landlord = member();
+    connectedSeat(PartySide.LANDLORD, landlord);
+    UUID inspection = requestedWith(2);
+    Instant stoppedAt = clock.instant();
+    clock.advance(Duration.ofHours(1));
+    // 그만둔 시각보다 뒤의 상대 응답: since 뒤지만 보이는 범위(asOf) 밖이라 세지 않는다
+    respond(landlord, items(inspection)[0], "a1").andExpect(status().isOk());
+    stopSharingAndCloseRequests(inspection, stoppedAt);
+
+    lockAlone(inspection, "solo").andExpect(status().isOk());
+
+    assertThat(inspectionRow(inspection)).containsEntry("lock_reason", "SOLO");
+    assertThat(lockPayload(inspection)).contains("\"SHARING_STOPPED\"");
+  }
+
+  @Test
+  void 상대가_공유를_그만두기_전의_상대_행동은_막지_않는다() throws Exception {
+    UUID landlord = member();
+    connectedSeat(PartySide.LANDLORD, landlord);
+    UUID inspection = requestedWith(2);
+    respond(landlord, items(inspection)[0], "a1").andExpect(status().isOk());
+    clock.advance(Duration.ofHours(1));
+    stopSharingAndCloseRequests(inspection, clock.instant());
+
+    lockAlone(inspection, "solo").andExpect(status().isOk());
+
+    assertThat(lockPayload(inspection)).contains("\"SHARING_STOPPED\"");
+  }
+
+  @Test
+  void 상대가_공유를_그만둬도_확인_요청이_기다리는_중이면_SOLO_NOT_ALLOWED() throws Exception {
+    // 공유 중단의 요청 닫기(#370 A-6)가 빠진 상태: 되돌릴 수 없는 잠금보다 기다린다
+    connectedSeat(PartySide.LANDLORD, member());
+    UUID inspection = requestedWith(1);
+    stopSharing(PartySide.LANDLORD, clock.instant());
+
+    lockAlone(inspection, "solo")
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("SOLO_NOT_ALLOWED"));
+  }
+
+  @Test
+  void 내가_공유를_그만뒀으면_SHARING_STOPPED이고_당사자가_아니면_NOT_FOUND() throws Exception {
+    seatWithoutMember(PartySide.LANDLORD, "EMPTY", null);
+    UUID inspection = requestedWith(1);
+
+    mvc.perform(
+            post("/api/inspections/{id}/lock-alone", inspection)
+                .with(loginAs(member()))
+                .header("Idempotency-Key", "stranger"))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+
+    stopSharing(PartySide.TENANT, clock.instant());
+    lockAlone(inspection, "solo").andExpect(jsonPath("$.code").value("SHARING_STOPPED"));
+    assertThat(lockActions(inspection)).isZero();
+  }
+
+  private void stopSharingAndCloseRequests(UUID inspection, Instant at) {
+    stopSharing(PartySide.LANDLORD, at);
+    // 공유 중단 API의 closeAll(SHARING_STOPPED)(#370 A-6)이 할 일을 가짜로 대신한다
+    waits.close(
+        RequestTarget.of(TargetKind.INSPECTION, inspection),
+        RequestKind.INSPECTION_CONFIRM,
+        ClosedReason.SHARING_STOPPED);
+  }
+
+  private void stopSharing(PartySide side, Instant at) {
+    jdbc.update(
+        "UPDATE state.party SET status = 'SHARING_STOPPED', sharing_stopped_at = ?"
+            + " WHERE room_record_id = ? AND side = ?",
+        Timestamp.from(at),
+        room,
+        side.name());
+  }
+
+  private ResultActions respond(UUID member, UUID item, String key) throws Exception {
+    return mvc.perform(
+        post("/api/inspection-items/{id}/respond", item)
+            .with(loginAs(member))
+            .header("Idempotency-Key", key)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"answer\":\"ACK\",\"seenVersionNo\":1}"));
+  }
+
+  private UUID[] items(UUID inspection) {
+    return jdbc.queryForList(
+            "SELECT id FROM state.inspection_item WHERE inspection_id = ? ORDER BY id",
+            UUID.class,
+            inspection)
+        .toArray(UUID[]::new);
   }
 
   private void assertReplayedLock(UUID inspection) {
