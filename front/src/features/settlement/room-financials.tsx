@@ -2,6 +2,7 @@ import {
   post,
   proposalIdOf,
   settlementIdIn,
+  transferDirection as transferDirectionOf,
   type RecordRequest,
 } from "@/api/records"
 import { endpoints } from "@/api/endpoints"
@@ -27,7 +28,14 @@ import {
 import { proposalHead } from "@/lib/words"
 import { cn } from "cn"
 import { parseMoney } from "@/lib/money"
-import { newAmountOffer, respondToOffer, roomTransfers } from "@/lib/workflows"
+import {
+  newAmountOffer,
+  respondToOffer,
+  roomTransfers,
+  todayKey,
+} from "@/lib/workflows"
+import { RespondButtons } from "@/components/common/respond-buttons"
+import { Input } from "@/components/ui/input"
 import {
   confirmedTransferTotal,
   confirmFinish,
@@ -35,6 +43,7 @@ import {
   finishAlone,
   finishState,
   pendingTransferTotal,
+  receiverOf,
   rejectFinish,
   requestFinish,
 } from "@/lib/settlement-rules"
@@ -147,13 +156,78 @@ export function RoomFinancials({
   const item = allItems.find((s) => s.id === itemId)
   const total = settlementTotal(room.deposit ?? 0, items)
   // 송금 합계는 상대가 확인한 송금만(SET-4b, 03 J, 08 10장). 확인 전 송금은 따로 보여요.
-  const paid = confirmedTransferTotal(room)
-  const pendingPaid = pendingTransferTotal(room)
+  // 서버 정산이면 합계는 서버가 센 값이고(같은 송금으로 묶인 건 한 번), 확인 중은 아직 답이 없는 기록만 더해요
+  const paid = server
+    ? server.confirmedRefund - server.confirmedExtra
+    : confirmedTransferTotal(room)
+  const pendingPaid = server
+    ? server.transfers
+        .filter((t) => t.server?.response === "PENDING")
+        .reduce(
+          (s, t) => s + (t.direction === "반환" ? t.amount : -t.amount),
+          0,
+        )
+    : pendingTransferTotal(room)
+  // 같은 송금으로 묶어 남긴 받은 금액(SET-4e)은 묶인 보낸 쪽 기록 아래에 함께 보여요
+  const linkedTo = (t: Transfer) =>
+    server?.transfers.find((v) => v.server?.sameAsTransferId === t.id)
+  // 받은 금액을 묶어 적을 송금(받은 쪽에서 [받았어요(혼자)])
+  const [sameAs, setSameAs] = useState<Transfer>()
+  // 서버 송금 한 줄의 상태(03 J, 08 10장). 답하는 쪽은 기록하지 않은 측이에요
+  const transferStatus = (t: Transfer) => {
+    const answerer = sideName(other(t.by))
+    switch (t.server?.response) {
+      case "ACK":
+        return t.server.byReceiver
+          ? "둘 다 확인"
+          : `${sideName(receiverOf(t.direction))} 받았어요`
+      case "NEED_MORE":
+        return `${answerer}: 더 필요해요`
+      case "DISPUTE":
+        return `${answerer}: 금액이 달라요`
+      default:
+        // 보낸 쪽 기록은 받은 쪽이, [받았어요(혼자)]는 보낸 쪽이 확인해요
+        return t.server?.byReceiver
+          ? `${answerer} 확인 기다림`
+          : "받았는지 확인 중"
+    }
+  }
+  // 송금 응답(06 4-8 respond): 본 판 번호를 함께 보내요. 보낸 쪽 기록에는 받은 쪽이 [받았어요]로 답해요(08 10장)
+  const transferRespond = (t: Transfer) =>
+    hasAction(transferActionsOf(t), "respond") &&
+    t.server && (
+      <RespondButtons
+        size="sm"
+        ackLabel={t.server.byReceiver ? "맞아요" : "받았어요"}
+        answered={
+          t.server.response === "NEED_MORE" || t.server.response === "DISPUTE"
+            ? t.server.response
+            : undefined
+        }
+        onRespond={(answer, reason) =>
+          onAction(
+            post(endpoints.transferRespond(t.id), {
+              answer,
+              ...(reason ? { reason } : {}),
+              seenVersionNo: t.server!.versionNo,
+            }),
+            `${t.direction} ${won(t.amount)} · 송금 응답`,
+            () => {},
+          )
+        }
+      />
+    )
+  // 상대가 남긴 보낸 기록에 더 필요해요·금액이 달라요로 답한 받은 쪽은 실제 받은 금액을 같은 송금으로 묶어 적어요(SET-4e)
+  const canWriteReceived = (t: Transfer) =>
+    !t.server?.byReceiver &&
+    receiverOf(t.direction) === role &&
+    (t.server?.response === "NEED_MORE" || t.server?.response === "DISPUTE") &&
+    !linkedTo(t)
   const finish = finishState(room, allItems)
   const [finishError, setFinishError] = useState("")
   // 정산 끝내기 행동: 먼저 복사본에 적용해 규칙 위반을 확인한 뒤 기록해요.
   // 서버 정산이면 미리 검사하지 않아요(화면 모델에 끝내기 요청 칸이 없고, 서버가 같은 규칙으로 거절해요)
-  const sid = settlementIdIn(room)
+  const sid = server?.id ?? settlementIdIn(room)
   const runFinish = (
     request: RecordRequest,
     text: string,
@@ -174,7 +248,9 @@ export function RoomFinancials({
       ),
     )
   }
-  const transfers = roomTransfers(room)
+  const transfers = server
+    ? server.transfers.filter((t) => !t.server?.sameAsTransferId)
+    : roomTransfers(room)
   const depositAgreed = server
     ? server.depositStatus === "AGREED"
     : room.depositConfirmed || offer?.status === "합의됨"
@@ -190,6 +266,13 @@ export function RoomFinancials({
     setItemId(s?.id || "")
     setDirection(s?.direction || "차감")
     setTransferDirection(total < 0 ? "추가 송금" : "반환")
+    setSameAs(undefined)
+  }
+  // 상대 기록에 금액이 달라요를 단 뒤 실제 받은 금액을 같은 송금으로 묶어 적어요(SET-4e)
+  function openReceived(t: Transfer) {
+    open("transfer")
+    setTransferDirection(t.direction)
+    setSameAs(t)
   }
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -209,6 +292,16 @@ export function RoomFinancials({
       !Number.isFinite(amount)
     ) {
       setError("0 이상의 원화 정수를 입력해 주세요.")
+      return
+    }
+    // 송금 기록은 1원 이상이고 보낸(받은) 날짜가 있어야 해요(06 4-8 transfers)
+    const paidOn = String(f.get("paidOn") || "")
+    if (mode === "transfer" && amount < 1) {
+      setError("1원 이상 입력해 주세요.")
+      return
+    }
+    if (mode === "transfer" && !paidOn) {
+      setError("날짜를 골라 주세요.")
       return
     }
     if (mode !== "transfer" && !reason) {
@@ -380,13 +473,17 @@ export function RoomFinancials({
         `정산 끝내기 · 아직 안 끝났어요 · ${reason}`,
         (r) => rejectFinish(r, role, reason),
       )
-    } else if (mode === "transfer")
+    } else if (mode === "transfer") {
+      // 보낸 기록인지 [받았어요(혼자)]인지는 서버가 보낸 사람의 측으로 정해요(반환을 세입자가 남기면 받았어요(혼자))
+      const dir = transferDirection as Transfer["direction"]
       onAction(
         post(endpoints.settlementAction(sid, "transfers"), {
-          direction: transferDirection,
+          direction: transferDirectionOf(dir),
           amount,
+          paidOn,
+          ...(sameAs ? { sameAsTransferId: sameAs.id } : {}),
         }),
-        `${transferDirection} 사실 기록 · ${won(amount)} · 한쪽 기록`,
+        `${dir} 사실 기록 · ${won(amount)} · 한쪽 기록`,
         (d) => {
           const r = d.rooms.find((r) => r.id === room.id)!
           r.transfers = [
@@ -395,13 +492,14 @@ export function RoomFinancials({
               id: uid(),
               by: role,
               amount,
-              direction: transferDirection as "반환" | "추가 송금",
+              direction: dir,
               confirmed: false,
-              at: new Date().toLocaleString("ko-KR"),
+              at: paidOn,
             },
           ]
         },
       )
+    }
     setMode(null)
   }
   // 정해지지 않은 금액(문서 10장): 합의되지 않은 항목의 금액을 따로 보여 줘요. 계산(total)에는 넣지 않아요.
@@ -925,10 +1023,34 @@ export function RoomFinancials({
                   {t.at} · 기록한 쪽 {sideName(t.by)}
                 </p>
                 <Status>
-                  {t.confirmed ? "둘 다 확인" : "받았는지 확인 중"}
+                  {server
+                    ? transferStatus(t)
+                    : t.confirmed
+                      ? "둘 다 확인"
+                      : "받았는지 확인 중"}
                 </Status>
+                {/* 같은 송금으로 묶어 적은 받은 금액(SET-4e, 08 10장). 합계에는 확인된 쪽만 한 번 들어가요 */}
+                {(() => {
+                  const l = linkedTo(t)
+                  if (!l) return null
+                  return (
+                    <div className="mt-2 space-y-1.5 border-t border-line pt-2">
+                      <p className="text-sm text-ink">
+                        받은 금액 {won(l.amount)}({sideName(l.by)} 기록) ·{" "}
+                        <Status>{transferStatus(l)}</Status>
+                      </p>
+                      {transferRespond(l)}
+                    </div>
+                  )
+                })()}
               </div>
-              {hasAction(transferActionsOf(t), "respond") && (
+              {server && transferRespond(t)}
+              {server && has("transfers") && canWriteReceived(t) && (
+                <Button variant="outline" onClick={() => openReceived(t)}>
+                  받았어요(혼자)
+                </Button>
+              )}
+              {!server && hasAction(transferActionsOf(t), "respond") && (
                 <Button
                   onClick={() =>
                     onAction(
@@ -1141,19 +1263,47 @@ export function RoomFinancials({
             )}
             {mode === "transfer" ? (
               <>
-                <Choice
-                  label="송금 방향"
-                  value={transferDirection}
-                  values={["반환", "추가 송금"]}
-                  onChange={setTransferDirection}
-                />
+                {/* 같은 송금으로 묶어 적을 때는 방향이 그 기록과 같아요(SET-4e) */}
+                {sameAs ? (
+                  <p className="muted">
+                    {sideName(sameAs.by)} 기록 {sameAs.direction}{" "}
+                    {won(sameAs.amount)}과 같은 송금으로 묶어 실제 받은 금액을
+                    남겨요.
+                  </p>
+                ) : (
+                  <Choice
+                    label="송금 방향"
+                    value={transferDirection}
+                    values={["반환", "추가 송금"]}
+                    onChange={setTransferDirection}
+                  />
+                )}
                 <p className="muted">
                   {transferDirection === "반환"
                     ? "집주인 → 세입자"
                     : "세입자 → 집주인"}{" "}
-                  · {sideText(role)}의 한쪽 기록으로 남겨 상대에게 확인을
-                  요청해요.
+                  ·{" "}
+                  {receiverOf(transferDirection as Transfer["direction"]) ===
+                  role
+                    ? "받은 쪽 기록([받았어요(혼자)])으로 남겨 보낸 쪽에게 확인을 요청해요."
+                    : `${sideText(role)}의 한쪽 기록으로 남겨 상대에게 확인을 요청해요.`}
                 </p>
+                <div className="field">
+                  <label htmlFor="financial-paid-on">
+                    {receiverOf(transferDirection as Transfer["direction"]) ===
+                    role
+                      ? "받은 날짜"
+                      : "보낸 날짜"}
+                  </label>
+                  <Input
+                    id="financial-paid-on"
+                    name="paidOn"
+                    type="date"
+                    defaultValue={todayKey()}
+                    max={todayKey()}
+                    required
+                  />
+                </div>
               </>
             ) : (
               <div className="field">

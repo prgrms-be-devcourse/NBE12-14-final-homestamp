@@ -3,6 +3,7 @@ import { createHttpRecords } from "../src/api/http-records"
 import {
   settlementFromDetail,
   type SettlementDetailBody,
+  type SettlementTransferBody,
 } from "../src/api/http-settlement-view"
 import { httpAvailableActions } from "../src/api/http-available-actions"
 import { isConnected } from "../src/api/connected"
@@ -13,6 +14,7 @@ import {
   post,
   settlementIdIn,
   settlementIdOf,
+  transferDirection,
   type RecordChange,
 } from "../src/api/records"
 import type { Room } from "../src/data/demo"
@@ -33,6 +35,27 @@ const settlement = (
   createdAt: "2026-11-27T00:00:00Z",
   unansweredForMe: 2,
   availableActions: [],
+  transfers: [],
+  confirmedRefund: 0,
+  confirmedExtra: 0,
+  ...over,
+})
+const transfer = (
+  over: Partial<SettlementTransferBody> = {},
+): SettlementTransferBody => ({
+  id: "t-1",
+  direction: "REFUND",
+  recordedBySide: "LANDLORD",
+  amount: 9_845_000,
+  paidOn: "2026-11-27",
+  versionNo: 1,
+  response: "PENDING",
+  confirmedAmount: null,
+  sameAsTransferId: null,
+  receiptConfirmedAt: null,
+  createdAt: "2026-11-27T01:00:00Z",
+  corrections: [],
+  availableActions: ["respond", "corrections"],
   ...over,
 })
 const roomDetail = {
@@ -107,11 +130,19 @@ const change = (request: RecordChange["request"]): RecordChange => ({
 const roomOf = (records: ReturnType<typeof createHttpRecords>) =>
   records.getSnapshot().rooms.find((r) => r.id === ROOM) as Room
 
-test("서버 정산을 화면 모델로 바꾼다: 버튼은 연결한 끝내기 행동만 남긴다", () => {
+test("서버 정산을 화면 모델로 바꾼다: 버튼은 연결한 송금·끝내기 행동만 남긴다", () => {
   expect(
     settlementFromDetail(
       settlement({
-        availableActions: ["finish-confirm", "finish-not-yet", "items", "x"],
+        availableActions: [
+          "transfers",
+          "finish-confirm",
+          "finish-not-yet",
+          "items",
+          "x",
+        ],
+        confirmedRefund: 9_800_000,
+        confirmedExtra: 30_000,
       }),
     ),
   ).toEqual({
@@ -120,8 +151,99 @@ test("서버 정산을 화면 모델로 바꾼다: 버튼은 연결한 끝내기
     snapshotNo: 3,
     createdAt: "2026-11-27T00:00:00Z",
     unansweredForMe: 2,
-    availableActions: ["finish-confirm", "finish-not-yet"],
+    availableActions: ["transfers", "finish-confirm", "finish-not-yet"],
+    transfers: [],
+    confirmedRefund: 9_800_000,
+    confirmedExtra: 30_000,
   })
+})
+
+test("서버 송금을 화면 모델로 바꾼다: 방향·기록한 측·받은 쪽 기록·묶인 송금·버튼(respond만)", () => {
+  const [sent, received] = settlementFromDetail(
+    settlement({
+      transfers: [
+        transfer({ response: "DISPUTE" }),
+        transfer({
+          id: "t-2",
+          recordedBySide: "TENANT",
+          amount: 9_800_000,
+          sameAsTransferId: "t-1",
+          availableActions: [],
+        }),
+      ],
+    }),
+  ).transfers
+  expect(sent).toEqual({
+    id: "t-1",
+    by: "임대인",
+    amount: 9_845_000,
+    direction: "반환",
+    at: "2026-11-27",
+    confirmed: false,
+    server: {
+      versionNo: 1,
+      response: "DISPUTE",
+      byReceiver: false,
+      confirmedAmount: null,
+      sameAsTransferId: null,
+      // 송금 고치기는 고치기 API를 연결할 때 더해요
+      availableActions: ["respond"],
+    },
+  })
+  // 세입자가 남긴 반환 = [받았어요(혼자)]
+  expect(received.server).toMatchObject({
+    byReceiver: true,
+    sameAsTransferId: "t-1",
+  })
+  expect(httpAvailableActions.transfer(sent, "임차인")).toEqual(["respond"])
+  expect(
+    httpAvailableActions.transfer(sent, "임차인", { readOnly: true }),
+  ).toEqual([])
+})
+
+test("송금 기록·응답은 06 4-8 모양으로 보낸다(방향 REFUND/EXTRA, 본 판 번호)", async () => {
+  const server = fakeServer({ opened: true })
+  const records = createHttpRecords(server.request)
+  await records.load(s)
+  const sid = settlementIdIn(roomOf(records))
+  await records.send(
+    s,
+    change(
+      post(endpoints.settlementAction(sid, "transfers"), {
+        direction: transferDirection("반환"),
+        amount: 9_800_000,
+        paidOn: "2026-11-27",
+        sameAsTransferId: "t-1",
+      }),
+    ),
+  )
+  await records.send(
+    s,
+    change(
+      post(endpoints.transferRespond("t-1"), {
+        answer: "ACK",
+        seenVersionNo: 1,
+      }),
+    ),
+  )
+  expect(server.calls.filter((c) => c.method === "POST")).toEqual([
+    {
+      method: "POST",
+      path: `/api/settlements/${SETTLEMENT}/transfers`,
+      body: {
+        direction: "REFUND",
+        amount: 9_800_000,
+        paidOn: "2026-11-27",
+        sameAsTransferId: "t-1",
+      },
+    },
+    {
+      method: "POST",
+      path: "/api/settlement-transfers/t-1/respond",
+      body: { answer: "ACK", seenVersionNo: 1 },
+    },
+  ])
+  expect(transferDirection("추가 송금")).toBe("EXTRA")
 })
 
 test("호실을 받을 때 정산도 받고, 아직 열지 않았으면(404) null이다", async () => {
@@ -210,7 +332,7 @@ test("버튼은 서버가 준 것만 꺼내고, 읽기만 하는 화면이면 �
   ).toEqual([])
 })
 
-test("연결한 정산 API만 서버로 보낸다(보증금·항목·송금·초대는 연결 전)", () => {
+test("연결한 정산 API만 서버로 보낸다(보증금·항목·초대·송금 고치기는 연결 전)", () => {
   expect(isConnected("POST", endpoints.openSettlement(ROOM))).toBe(true)
   expect(isConnected("GET", endpoints.openSettlement(ROOM))).toBe(true)
   expect(isConnected("GET", endpoints.settlement(SETTLEMENT))).toBe(true)
@@ -219,18 +341,15 @@ test("연결한 정산 API만 서버로 보낸다(보증금·항목·송금·초
     "finish/confirm",
     "finish/not-yet",
     "finish/alone",
+    "transfers",
   ] as const)
     expect(isConnected("POST", endpoints.settlementAction(SETTLEMENT, a))).toBe(
       true,
     )
-  for (const a of [
-    "deposit-proposals",
-    "items",
-    "transfers",
-    "invite",
-  ] as const)
+  for (const a of ["deposit-proposals", "items", "invite"] as const)
     expect(isConnected("POST", endpoints.settlementAction(SETTLEMENT, a))).toBe(
       false,
     )
-  expect(isConnected("POST", endpoints.transferRespond("t"))).toBe(false)
+  expect(isConnected("POST", endpoints.transferRespond("t"))).toBe(true)
+  expect(isConnected("POST", endpoints.corrections)).toBe(false)
 })

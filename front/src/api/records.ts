@@ -65,6 +65,9 @@ export const noRequest = (why: string): NoRequest => ({ none: why })
 // 요청 본문의 호실 쪽 값(06 4-3 side, 05 party.side). 화면의 임차인·임대인을 서버 값으로 바꿔요
 export const roomSide = (r: Role): "TENANT" | "LANDLORD" =>
   r === "임차인" ? "TENANT" : "LANDLORD"
+// 송금 방향의 서버 값(06 4-8 transfers): 반환(집주인 → 세입자)은 REFUND, 추가 송금(세입자 → 집주인)은 EXTRA
+export const transferDirection = (d: "반환" | "추가 송금") =>
+  d === "반환" ? ("REFUND" as const) : ("EXTRA" as const)
 // 목업에는 점검·정산의 서버 ID가 없어 호실 ID로 대신해요(목업은 주소로 보내지 않아요).
 // 아직 서버에 연결하지 않은 점검 행동(항목 더하기·부위 사진, #356)도 이 자리표를 써요.
 export const inspectionIdOf = (roomId: string, kind: "in" | "out") =>

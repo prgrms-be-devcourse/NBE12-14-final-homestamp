@@ -54,7 +54,10 @@ export const CONNECTED_APIS: readonly {
   { method: "GET", path: /^\/api\/rooms\/[^/]+\/settlement$/ },
   { method: "GET", path: /^\/api\/settlements\/[^/]+$/ },
   // 정산 끝내기 제안·확인·아직 안 끝났어요·혼자 끝내기(06 4-8, SET-5, #442). 버튼은 서버가 availableActions에 줄 때만 보여요.
-  // 보증금·항목·송금은 요청 본문이 서버와 맞춰지면 더해요
+  // 보증금·항목은 요청 본문이 서버와 맞춰지면 더해요
+  // 송금 기록·송금 응답(06 4-8, SET-4). 송금 금액·날짜 고치기(POST /api/corrections)는 고치기 연결 때 더해요
+  { method: "POST", path: /^\/api\/settlements\/[^/]+\/transfers$/ },
+  { method: "POST", path: /^\/api\/settlement-transfers\/[^/]+\/respond$/ },
   {
     method: "POST",
     path: /^\/api\/settlements\/[^/]+\/finish(\/(confirm|not-yet|alone))?$/,

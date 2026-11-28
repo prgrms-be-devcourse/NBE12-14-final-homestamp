@@ -27,7 +27,8 @@ export const httpAvailableActions: AvailableActionsApi = {
   // 정산은 호실의 정산(GET /api/rooms/{id}/settlement)의 값을 room.settlement에 둬요(http-settlement-view, #442)
   settlement: (room, _role, v) => fromServer(room.settlement, v),
   settlementItem: (item, _role, v) => fromServer(item, v),
-  transfer: (t, _role, v) => fromServer(t, v),
+  // 송금은 정산 상세의 송금마다 준 값을 transfer.server에 둬요(http-settlement-view)
+  transfer: (t, _role, v) => fromServer(t.server, v),
   payment: (p, _role, v) => fromServer(p, v),
   correction: (c, _role, _list, v) => fromServer(c, v),
 }
