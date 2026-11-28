@@ -4,9 +4,11 @@ import type { MockStore } from "./store"
 import type { Notice } from "@/data/demo"
 import { canAccessRoom, sideOf } from "@/lib/workflows"
 import { createMockRepairCases } from "./repair-cases"
+import { createMockRoomParts } from "./parts"
 import { createMockRecords } from "./records"
 import { mockAvailableActions } from "./available-actions"
 import { mockDownloads } from "../downloads"
+import { mockPhotoUploads } from "../photo-uploads"
 
 // Mock API: 실제 서버처럼 비동기로 응답합니다. 테스트에서는 지연 없이 바로 응답해요.
 const delay = () =>
@@ -25,9 +27,11 @@ export function createMockApi(store: MockStore): HomeStampApi {
   return {
     mode: "mock",
     repairCases: createMockRepairCases(store),
+    parts: createMockRoomParts(store),
     records: createMockRecords(store),
     actions: mockAvailableActions,
     downloads: mockDownloads,
+    photoUploads: mockPhotoUploads,
     async listRooms(s) {
       await delay()
       return store.getState().rooms.filter((r) => {

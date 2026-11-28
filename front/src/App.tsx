@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react"
+import { clearTakenAt } from "@/lib/photos"
 import { Plus, ShieldCheck } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -10,7 +11,6 @@ import {
 } from "@/components/ui/dialog"
 import { Panel } from "@/components/common/blocks"
 import {
-  partGroups,
   type Role,
   type Repair,
   type DemoState,
@@ -43,7 +43,7 @@ import { repairStub } from "@/api/http-repair-view"
 import { errorMessage } from "@/api/errors"
 import { createApi } from "@/api/create-api"
 import {
-  inspectionIdOf,
+  inspectionIdIn,
   noRequest,
   notInSpec,
   post,
@@ -51,8 +51,9 @@ import {
   type RecordRequest,
 } from "@/api/records"
 import { endpoints } from "@/api/endpoints"
-import { createAuth, type Account } from "@/api/auth"
+import { createAuth, type Account, type AuthApi } from "@/api/auth"
 import { AuthScreen } from "@/features/auth/auth-screen"
+import { TermsReconfirmDialog } from "@/features/member/terms-reconfirm-dialog"
 import { PhotoGallery } from "@/features/photo/photo-gallery"
 import { ReceivedInvitations } from "@/features/room/received-invitations"
 import { RoomDownload } from "@/features/download/room-download"
@@ -229,10 +230,12 @@ export default function App() {
       />
     )
   return (
-    <ApiProvider api={api}>
+    <ApiProvider api={api} accountId={account?.id}>
       <HomeStampApp
         key={account?.id ?? "guest"}
         account={account}
+        auth={auth}
+        onAccountChange={setAccount}
         onRequireAuth={() => setAuthOpen(true)}
         // 로그아웃이 서버에서 끝났을 때만 로그인 화면으로 가요. 실패하면 오류를 내 계정 창에 알리고 로그인 상태를 지켜요
         onLogout={() =>
@@ -250,15 +253,40 @@ export default function App() {
 
 function HomeStampApp({
   account,
+  auth,
+  onAccountChange,
   onRequireAuth,
   onLogout,
 }: {
   account: Account | null
+  auth: AuthApi
+  onAccountChange: (a: Account) => void
   onRequireAuth: () => void
   onLogout: () => Promise<void>
 }) {
   const query = new URLSearchParams(window.location.search)
   const accountId = account?.id
+  // 바뀐 약관 다시 확인(CONS-4a). 이 화면은 계정마다 새로 그려져(key) 로그인·복원 직후 확인할 문구가 있으면 먼저 열어요(03 6-2)
+  const [termsOpen, setTermsOpen] = useState(() =>
+    Boolean(account?.pendingAcknowledgements.length),
+  )
+  // 상태를 바꾸는 요청이 TERMS_UPDATE_REQUIRED로 거절되면 확인할 문구를 다시 받아 확인 창을 열어요.
+  // 거절된 요청은 그 화면이 오류로 안내하고, 확인한 뒤에도 다시 보내지 않아요(사람이 다시 눌러요)
+  useEffect(
+    () =>
+      auth.onTermsRequired(() => {
+        auth.reload().then(
+          (a) => {
+            onAccountChange(a)
+            if (a.pendingAcknowledgements.length) setTermsOpen(true)
+          },
+          () => undefined,
+        )
+      }),
+    [auth, onAccountChange],
+  )
+  // 계정이 바뀌면 앞 계정이 고른 사진의 촬영 시각을 비워요(lib/photos, #371 리뷰)
+  useEffect(() => clearTakenAt(), [accountId])
   const api = useApi()
   // 공용 입력 창이 수리 건을 바꾸면 상세 화면이 다시 불러오게 올리는 번호
   const [repairTick, setRepairTick] = useState(0)
@@ -508,7 +536,7 @@ function HomeStampApp({
           ? r.server?.joinedAway
             ? "합류 전 기록이에요 · 읽기 전용"
             : "정산이 끝난 기록이에요 · 읽기 전용"
-          : "새로 확인할 일이 없어요"
+          : "새로 답할 일이 없어요"
     const openRepairs = db.repairs.filter(
       (x) => x.roomId === r.id && x.status !== "처리 완료",
     ).length
@@ -522,7 +550,7 @@ function HomeStampApp({
             ? "퇴거 정산을 마무리해 주세요"
             : openRepairs
               ? `진행 중인 수리 ${openRepairs}건`
-              : "새로 확인할 일이 없어요"
+              : "새로 답할 일이 없어요"
   }
   // 하자·수리 / 수리비 목록의 탭별 건수
   const tabCount = (v: string) =>
@@ -711,7 +739,7 @@ function HomeStampApp({
     commit(
       post(
         endpoints.inspectionAction(
-          inspectionIdOf(roomId, sessKind),
+          inspectionIdIn(room, sessKind),
           "request-confirm",
         ),
       ),
@@ -739,13 +767,12 @@ function HomeStampApp({
   }
   // 같은 곳 재발: 이전 수리 건과 그 부위로 하자 등록 창을 열어요
   function recur(prev: Repair) {
-    const [z, p] = prev.zone.split(" · ")
     open("repair")
     setRepairPrefill({
       recurrenceOf: prev.id,
       recurrenceTitle: prev.title,
-      zone: partGroups[z] ? z : "기타",
-      part: p || "기타",
+      roomPartId: prev.roomPartId,
+      zone: prev.zone,
     })
   }
   function patchRepair(
@@ -860,6 +887,7 @@ function HomeStampApp({
           invitationCount={receivedInvitations.length}
           onCancel={closeModal}
           onLogout={onLogout}
+          onOpenTerms={() => setTermsOpen(true)}
         />
       )}
       {modal === "room" && account && (
@@ -1385,6 +1413,21 @@ function HomeStampApp({
           {forms}
         </DialogContent>
       </Dialog>
+      {account && (
+        <TermsReconfirmDialog
+          open={termsOpen}
+          pending={account.pendingAcknowledgements}
+          onClose={() => setTermsOpen(false)}
+          onAcknowledge={async (items) =>
+            onAccountChange(await auth.acknowledge(items))
+          }
+          onReload={async () => onAccountChange(await auth.reload())}
+          onDone={(message) => {
+            setTermsOpen(false)
+            toast(message)
+          }}
+        />
+      )}
       <Dialog
         open={Boolean(pending)}
         onOpenChange={(v) => {

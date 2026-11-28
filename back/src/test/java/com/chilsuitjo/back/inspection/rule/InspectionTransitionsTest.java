@@ -51,6 +51,21 @@ class InspectionTransitionsTest {
         .hasMessage(ErrorCode.INSPECTION_EXISTS.name());
   }
 
+  @Test
+  void 시작_버튼은_실제_시작과_같은_판단이다() {
+    InspectionState none = InspectionState.notStarted(false, false);
+    InspectionState ended = InspectionState.notStarted(false, true);
+    InspectionState existing = draft(PartySide.TENANT, NOW, null);
+
+    assertThat(rules.canStart(none, InspectionKind.MOVE_IN)).isTrue();
+    assertThat(rules.canStart(existing, InspectionKind.MOVE_IN)).isFalse();
+    // 거주 종료 뒤 입주 점검은 막고(INVALID_STATE), 퇴거 점검은 시작한다(INSP-3)
+    assertThat(rules.canStart(ended, InspectionKind.MOVE_IN)).isFalse();
+    assertThatThrownBy(() -> rules.apply(ended, start(PartySide.TENANT, "MOVE_IN", null)))
+        .hasMessage(ErrorCode.INVALID_STATE.name());
+    assertThat(rules.canStart(ended, InspectionKind.MOVE_OUT)).isTrue();
+  }
+
   // ---- 확인 요청(INSP-1f) ----
 
   @Test
@@ -297,8 +312,34 @@ class InspectionTransitionsTest {
 
   @Test
   void 점검_규칙은_다른_행동을_받지_않는다() {
-    assertThatThrownBy(
-            () -> rules.apply(InspectionState.NONE, entry(ActionType.LOCK, null, Map.of())))
+    assertThatThrownBy(() ->
+            rules.apply(InspectionState.NONE, entry(ActionType.FINISH_INSPECTION, null, Map.of())))
+        .hasMessage(ErrorCode.INVALID_STATE.name());
+  }
+
+  // ---- 잠금(#326) ----
+
+  @Test
+  void 재계산은_서버_잠금으로_확인_요청을_잠김으로_옮긴다() {
+    InspectionState folded =
+        Replay.fold(
+            rules,
+            List.of(
+                start(PartySide.TENANT, "MOVE_IN", null),
+                request(PartySide.TENANT, NOW),
+                entry(ActionType.LOCK, null, Map.of(InspectionLock.LOCK_REASON, "ALL_RESOLVED"))));
+
+    assertThat(folded.status()).isEqualTo(InspectionStatus.LOCKED);
+  }
+
+  @Test
+  void 확인_요청이_아니면_잠금을_받지_않는다() {
+    InspectionState draft = draft(PartySide.TENANT, NOW, true);
+    InspectionState locked = draft.withStatus(InspectionStatus.LOCKED);
+
+    assertThatThrownBy(() -> rules.apply(draft, entry(ActionType.LOCK, null, Map.of())))
+        .hasMessage(ErrorCode.INVALID_STATE.name());
+    assertThatThrownBy(() -> rules.apply(locked, entry(ActionType.LOCK, null, Map.of())))
         .hasMessage(ErrorCode.INVALID_STATE.name());
   }
 

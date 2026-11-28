@@ -9,6 +9,9 @@ on:
       - .github/scripts/**
       - infra/terraform/deploy.tf
       - infra/terraform/ssm/**
+      - infra/deploy/deploy-front.sh
+      - infra/deploy/deploy.sh
+      - infra/deploy/test/**
 
 permissions:
   contents: read
@@ -16,7 +19,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -31,3 +34,14 @@ jobs:
         run: bash .github/scripts/test/ssm-deploy-test.sh
       - name: SSM 문서 명령(가짜 deploy.sh, 주입·변조·권한)
         run: bash .github/scripts/test/deploy-command-test.sh
+      - name: 화면 SSM 문서 명령·배포 역할 IAM(가짜 deploy-front.sh)
+        run: bash .github/scripts/test/deploy-front-command-test.sh
+      - name: 화면 파일 계약(check-front.sh와 deploy-front.sh가 같은 판단)
+        run: bash .github/scripts/test/front-contract-test.sh
+      # Linux 커널이 bind mount 권한을 실제로 강제하는 곳에서 deploy.sh 격리 시험(Migration 비밀 폴더 검사, 앱 UID 10001 읽기 거절 포함).
+      # Docker Desktop(macOS)은 권한을 강제하지 않아 로컬에서는 이 검사 일부를 건너뛴다. AWS·비밀값 없음(가짜 값)
+      # deploy.sh는 runner 컨테이너 안 root로 상태 파일을 0640으로 쓴다. 운영처럼 root(sudo)로 읽어야 한다
+      - name: deploy.sh 격리 시험(가짜 앱·로컬 레지스트리)
+        run: |
+          mkdir -p "$RUNNER_TEMP/hs-deploy-work"
+          sudo bash infra/deploy/test/local-test.sh "$RUNNER_TEMP/hs-deploy-work"

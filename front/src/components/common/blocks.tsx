@@ -11,25 +11,33 @@ import {
 } from "@/components/ui/select"
 import type { Event } from "@/data/demo"
 import { recordTimeMs } from "@/lib/repair-rules"
-import { plainText } from "@/lib/plain-words"
+import {
+  plainText,
+  statusText,
+  statusTone,
+  dropCheck,
+  type StatusTone,
+} from "@/lib/plain-words"
 import { sideText } from "@/lib/words"
 
-export function Status({ children }: { children: ReactNode }) {
+// 상태 꼬리표. 색은 상태 표시(statusTone)만 쓰고, 오래 멈춘 건은 부르는 쪽이 tone="stale"로 알려요.
+// 끝남 꼬리표는 앞에 ✓를 그리므로 글 안의 ✓는 빼요(✓가 두 번 보이지 않게).
+export function Status({
+  children,
+  tone,
+}: {
+  children: ReactNode
+  tone?: StatusTone
+}) {
   const parts = Array.isArray(children) ? children : [children]
   const plain = parts.every(
     (p) => typeof p === "string" || typeof p === "number",
   )
   const t = plain ? parts.join("") : String(children)
-  if (plain) children = plainText(t)
-  const tone = /이견|미확인/.test(t)
-    ? "rose"
-    : /대기|미정|초대/.test(t)
-      ? "amber"
-      : /완료|합의됨|확인됨|연결됨/.test(t)
-        ? "green"
-        : "blue"
+  const toneOf = tone ?? statusTone(t)
+  if (plain) children = dropCheck(statusText(t), toneOf)
   return (
-    <Badge variant="secondary" className={`status ${tone}`}>
+    <Badge variant="secondary" className={`status ${toneOf}`}>
       {children}
     </Badge>
   )
@@ -248,7 +256,7 @@ export function Timeline({
                 <span
                   className={
                     compact
-                      ? "absolute top-[7px] -left-[5px] size-[9px] rounded-full border-2 border-[#afc6ed] bg-white"
+                      ? "absolute top-[7px] -left-[5px] size-[9px] rounded-full border-2 border-[#cbd2d8] bg-white"
                       : "event-dot"
                   }
                   aria-hidden

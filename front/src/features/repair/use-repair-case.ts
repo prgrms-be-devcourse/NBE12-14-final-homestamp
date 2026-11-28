@@ -22,8 +22,14 @@ export function useRepairCase(
   roomId?: string,
 ) {
   const api = useApi()
-  const query = useApiQuery<RepairCaseView | null>(
-    (a) => (session ? a.repairCases.get(session, id) : Promise.resolve(null)),
+  // 응답이 어느 계정·수리 건 것인지 함께 둬요. useApiQuery는 다시 받는 동안 앞의 값을 두므로,
+  // 계정이나 수리 건이 바뀐 직후 앞 건의 사진·내용이 보이지 않게 지금 것과 같을 때만 써요(#371 리뷰)
+  const key = `${session?.accountId ?? ""}:${id}`
+  const query = useApiQuery<{ key: string; view: RepairCaseView } | null>(
+    (a) =>
+      session
+        ? a.repairCases.get(session, id).then((view) => ({ key, view }))
+        : Promise.resolve(null),
     [id, session?.accountId, refreshKey, tick],
   )
   const { reload } = query
@@ -44,7 +50,7 @@ export function useRepairCase(
     [api, session, reload, roomId],
   )
   return {
-    view: query.data ?? undefined,
+    view: query.data?.key === key ? query.data.view : undefined,
     loading: query.loading,
     // 실패 원인 그대로 돌려줘요. 화면이 404(남의 건·없는 건)를 일반 오류와 가르려면 상태 코드가 있어야 해요(#270 리뷰)
     error: query.failure,

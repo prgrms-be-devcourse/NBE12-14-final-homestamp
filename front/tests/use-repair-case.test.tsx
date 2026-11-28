@@ -76,3 +76,32 @@ describe("useRepairCase 행동 뒤 호실 다시 받기", () => {
     expect(loaded).toEqual(["room1"])
   })
 })
+
+// 다시 받는 동안 앞 수리 건의 사진·내용이 보이지 않아야 해요(#371 리뷰)
+describe("useRepairCase 수리 건 전환", () => {
+  test("다른 수리 건으로 바꾸면 새 응답이 올 때까지 앞 건의 상세를 돌려주지 않아요", async () => {
+    const api = createMockApi(createMockStore())
+    let release: (v: unknown) => void = () => {}
+    const get = (_s: unknown, id: string) =>
+      id === "a"
+        ? Promise.resolve({
+            repair: { id: "a" },
+            availableActions: [],
+          } as never)
+        : (new Promise((r) => (release = r)) as never)
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <ApiProvider api={{ ...api, repairCases: { ...api.repairCases, get } }}>
+        {children}
+      </ApiProvider>
+    )
+    const { result, rerender } = renderHook(
+      ({ id }) => useRepairCase(id, { accountId: "a1" }),
+      { wrapper, initialProps: { id: "a" } },
+    )
+    await waitFor(() => expect(result.current.view?.repair.id).toBe("a"))
+    rerender({ id: "b" })
+    expect(result.current.view).toBeUndefined()
+    release({ repair: { id: "b" }, availableActions: [] })
+    await waitFor(() => expect(result.current.view?.repair.id).toBe("b"))
+  })
+})

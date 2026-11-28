@@ -1,8 +1,13 @@
 package com.chilsuitjo.back.room.controller;
 
 import static com.chilsuitjo.back.global.security.SecurityTestSupport.loginAs;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -219,10 +224,41 @@ class RoomQueryApiTest {
         .andExpect(jsonPath("$.joinedAway").value(false))
         .andExpect(jsonPath("$.asOf").doesNotExist())
         .andExpect(jsonPath("$.createdAt").isNotEmpty())
-        .andExpect(jsonPath("$.availableActions.length()").value(1))
+        .andExpect(jsonPath("$.availableActions.length()").value(2))
         .andExpect(jsonPath("$.availableActions[0]").value("repair-cases"))
+        .andExpect(jsonPath("$.availableActions[1]").value("inspections"))
         // 이름은 가리지 않은 값이든 가린 값이든 주지 않는다(이번 범위 밖, #190)
-        .andExpect(jsonPath("$.counterpartName").doesNotExist());
+        .andExpect(jsonPath("$.counterpartName").doesNotExist())
+        // 상대 번호가 없으면(비어 있음) 가린 번호도 없다
+        .andExpect(jsonPath("$.counterpartMaskedPhone").doesNotExist());
+  }
+
+  @Test
+  void 만든_쪽은_상대_자리에_저장한_번호를_가린_모양으로만_받는다() throws Exception {
+    // 초대 화면에서 저장한 번호를 초대 전에 확인하게 한다(#407 리뷰, 03 "가린 번호만"). 원래 번호는 주지 않는다
+    UUID room = room("번호만 호실", "TENANT");
+    seat(room, "TENANT", tenant, "CONNECTED");
+    seatWithPhone(room, "LANDLORD", "NUMBER_ONLY", "01012345678");
+
+    detail(room, tenant)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.counterpartStatus").value("NUMBER_ONLY"))
+        .andExpect(jsonPath("$.counterpartMaskedPhone").value("010-****-5678"))
+        .andExpect(content().string(not(containsString("01012345678"))));
+  }
+
+  @Test
+  void 초대됨과_거절됨에서도_남아_있는_번호를_가린_모양으로_받는다() throws Exception {
+    UUID invited = room("초대한 호실", "LANDLORD");
+    seat(invited, "LANDLORD", landlord, "CONNECTED");
+    seatWithPhone(invited, "TENANT", "INVITED", "0111234567");
+    UUID rejected = room("거절된 호실", "LANDLORD");
+    seat(rejected, "LANDLORD", landlord, "CONNECTED");
+    seatWithPhone(rejected, "TENANT", "REJECTED", "01099998888");
+
+    detail(invited, landlord).andExpect(jsonPath("$.counterpartMaskedPhone").value("011-***-4567"));
+    detail(rejected, landlord)
+        .andExpect(jsonPath("$.counterpartMaskedPhone").value("010-****-8888"));
   }
 
   @Test
@@ -332,6 +368,70 @@ class RoomQueryApiTest {
     register(room, landlord).andExpect(status().isCreated());
   }
 
+  // ---- 입주 점검 시작(inspections, #357) ----
+
+  @Test
+  void 입주_점검_시작이_보이면_실제_시작도_되고_시작한_뒤에는_양쪽_모두_사라진다() throws Exception {
+    UUID room = connectedRoom();
+
+    detail(room, tenant).andExpect(jsonPath("$.availableActions", hasItem("inspections")));
+    detail(room, landlord).andExpect(jsonPath("$.availableActions", hasItem("inspections")));
+    startMoveIn(room, tenant, "2026-03-01").andExpect(status().isCreated());
+
+    // 상대가 작성 중이어도 점검은 호실에 하나라 시작할 수 없다(03 H "입주 점검 기준 기록")
+    detail(room, tenant).andExpect(jsonPath("$.availableActions", not(hasItem("inspections"))));
+    detail(room, landlord).andExpect(jsonPath("$.availableActions", not(hasItem("inspections"))));
+    startMoveIn(room, landlord, null).andExpect(jsonPath("$.code").value("INSPECTION_EXISTS"));
+  }
+
+  @Test
+  void 거주_종료_정산_완료_합류_전_기록에서는_입주_점검_시작이_없고_실제_요청도_막힌다() throws Exception {
+    UUID ended = connectedRoom();
+    endRoom(ended);
+    UUID settled = connectedRoom();
+    settleRoom(settled);
+    UUID joined = livingRoomOf(tenant);
+    jdbc.update(
+        "UPDATE state.room_record SET joined_into_id = ?, joined_at = CURRENT_TIMESTAMP WHERE id = ?",
+        ended,
+        joined);
+
+    detail(ended, tenant).andExpect(jsonPath("$.availableActions", not(hasItem("inspections"))));
+    startMoveIn(ended, tenant, "2026-03-01").andExpect(status().is4xxClientError());
+    detail(settled, landlord)
+        .andExpect(jsonPath("$.availableActions", not(hasItem("inspections"))));
+    startMoveIn(settled, landlord, "2026-03-01").andExpect(status().is4xxClientError());
+    detail(joined, tenant).andExpect(jsonPath("$.availableActions", not(hasItem("inspections"))));
+    startMoveIn(joined, tenant, "2026-03-01").andExpect(status().is4xxClientError());
+  }
+
+  @Test
+  void 공유를_그만둔_뒤_상대가_시작한_입주_점검이_있으면_시작이_없고_실제_요청도_막힌다() throws Exception {
+    UUID room = connectedRoom();
+    stopSharing(room, "LANDLORD", "2026-11-20T01:02:03Z");
+    startMoveIn(room, tenant, "2026-03-01").andExpect(status().isCreated());
+
+    detail(room, landlord).andExpect(jsonPath("$.availableActions", not(hasItem("inspections"))));
+    startMoveIn(room, landlord, null).andExpect(status().is4xxClientError());
+  }
+
+  @Test
+  void 공유를_그만둔_사람의_입주_점검_시작은_실제_요청과_같다() throws Exception {
+    UUID room = connectedRoom();
+    jdbc.update("UPDATE state.room_record SET move_in_date = '2026-03-01' WHERE id = ?", room);
+    stopSharing(room, "LANDLORD", "2026-11-20T01:02:03Z");
+
+    boolean shown =
+        detail(room, landlord)
+            .andReturn()
+            .getResponse()
+            .getContentAsString()
+            .contains("\"inspections\"");
+    int status = startMoveIn(room, landlord, null).andReturn().getResponse().getStatus();
+
+    assertThat(status == 201).isEqualTo(shown);
+  }
+
   @Test
   void 로그인하지_않으면_볼_수_없다() throws Exception {
     UUID room = connectedRoom();
@@ -386,6 +486,18 @@ class RoomQueryApiTest {
                     + "\"]}"));
   }
 
+  /** 입주 점검 시작(실제 요청). 입주일이 비어 있는 호실이면 {@code moveInDate}를 준다(06 INSP-2b). */
+  private ResultActions startMoveIn(UUID roomId, UUID memberId, String moveInDate)
+      throws Exception {
+    String date = moveInDate == null ? "" : ",\"moveInDate\":\"" + moveInDate + "\"";
+    return mvc.perform(
+        post("/api/rooms/{id}/inspections", roomId)
+            .with(loginAs(memberId))
+            .header("Idempotency-Key", "insp-" + UUID.randomUUID())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"kind\":\"MOVE_IN\"" + date + "}"));
+  }
+
   /** 세입자가 만들고 집주인이 연결된 거주 중인 호실. */
   private UUID connectedRoom() {
     UUID room = room("함께 쓰는 호실", "TENANT");
@@ -428,6 +540,20 @@ class RoomQueryApiTest {
         room,
         side,
         memberId,
+        status);
+  }
+
+  private void seatWithPhone(UUID room, String side, String status, String invitePhone) {
+    jdbc.update(
+        """
+        INSERT INTO state.party
+          (id, room_record_id, side, invite_phone, status, created_at, version)
+        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 0)
+        """,
+        UUID.randomUUID(),
+        room,
+        side,
+        invitePhone,
         status);
   }
 

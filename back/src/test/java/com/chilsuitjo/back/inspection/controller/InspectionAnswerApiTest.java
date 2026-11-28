@@ -11,8 +11,16 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.chilsuitjo.back.TestcontainersConfiguration;
+import com.chilsuitjo.back.action.dto.ActionEntry;
+import com.chilsuitjo.back.action.dto.ActionTarget;
+import com.chilsuitjo.back.action.rule.ActionType;
+import com.chilsuitjo.back.action.rule.Replay;
+import com.chilsuitjo.back.action.service.ActionReader;
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.common.TargetKind;
+import com.chilsuitjo.back.inspection.rule.InspectionState;
+import com.chilsuitjo.back.inspection.rule.InspectionStatus;
+import com.chilsuitjo.back.inspection.rule.InspectionTransitions;
 import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.rule.RequestStatus;
@@ -20,6 +28,7 @@ import com.chilsuitjo.back.notification.service.FakeWaitService;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -34,6 +43,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 06 4-7 점검 항목 응답·남은 항목 모두 확인·보충(#235)을 보안·pipeline·진짜 행동 기록 저장(PostgreSQL)까지 띄워 본다. 세입자가 기준 측으로
@@ -46,6 +56,9 @@ import org.springframework.test.web.servlet.ResultActions;
 class InspectionAnswerApiTest {
 
   @Autowired private MockMvc mvc;
+  @Autowired private ActionReader actions;
+  @Autowired private InspectionTransitions inspectionRules;
+  @Autowired private TransactionTemplate transactions;
   @Autowired private JdbcTemplate jdbc;
   @Autowired private FakeWaitService waits;
   @Autowired private InspectionApiTest.MutableClock clock;
@@ -210,10 +223,11 @@ class InspectionAnswerApiTest {
         .andExpect(jsonPath("$.availableActions", hasItem("confirm-all")))
         .andExpect(jsonPath("$.items[0].availableActions", hasItem("respond")));
 
+    // 모든 항목이 답을 받아 같은 요청에서 잠긴다(INSP-1b)
     confirmAll(landlord, inspection, "all", seen(items))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.id").value(inspection.toString()))
-        .andExpect(jsonPath("$.status").value("REQUESTED"));
+        .andExpect(jsonPath("$.status").value("LOCKED"));
 
     assertThat(itemRow(items[0])).containsEntry("status", "ACK");
     assertThat(itemRow(items[1])).containsEntry("status", "ACK");
@@ -295,14 +309,394 @@ class InspectionAnswerApiTest {
         .andExpect(jsonPath("$.code").value("INVALID_STATE"));
   }
 
+  // ---- 잠금(INSP-1b·1c·1d, #326) ----
+
+  @Test
+  void 실제_응답으로_잠근_행과_저장된_행동의_재계산_상태가_같다() throws Exception {
+    UUID inspection = requestedWith(2);
+    UUID[] items = items(inspection);
+
+    respond(landlord, items[0], "replay-ack", "ACK", null, 1).andExpect(status().isOk());
+    respond(landlord, items[1], "replay-dispute", "DISPUTE", "사실과 달라요", 1)
+        .andExpect(status().isOk());
+
+    assertReplayedLock(inspection);
+  }
+
+  @Test
+  void 실제_모두_확인으로_잠근_행과_저장된_행동의_재계산_상태가_같다() throws Exception {
+    UUID inspection = requestedWith(2);
+
+    confirmAll(landlord, inspection, "replay-all", seen(items(inspection)))
+        .andExpect(status().isOk());
+
+    assertReplayedLock(inspection);
+  }
+
+  @Test
+  void 실제_하자_기록_없음_확인으로_잠근_행과_저장된_행동의_재계산_상태가_같다() throws Exception {
+    UUID inspection = requestedWith(0);
+
+    confirmAll(landlord, inspection, "replay-empty", "[]").andExpect(status().isOk());
+
+    assertReplayedLock(inspection);
+  }
+
+  private void assertReplayedLock(UUID inspection) {
+    // 호실의 실제 행동을 room_seq 순서로 읽고, 이 점검의 상태를 옮기는 행동만 접는다.
+    // ActionReader는 MANDATORY이므로 읽기도 트랜잭션 안에서 한다.
+    List<ActionEntry> history =
+        transactions.execute(ignored ->
+            actions.findByRoom(room).stream()
+                .filter(action -> ActionTarget.inspection(inspection).equals(action.target()))
+                .filter(action -> InspectionTransitions.CHANGES.contains(action.type()))
+                .toList());
+    assertThat(history).isNotNull();
+    assertThat(history)
+        .extracting(ActionEntry::type)
+        .containsExactly(
+            ActionType.START_INSPECTION, ActionType.REQUEST_INSPECTION_CONFIRM, ActionType.LOCK);
+    ActionEntry lock = history.getLast();
+    assertThat(lock.actorKey()).isEqualTo("server");
+    assertThat(lock.actorSide()).isNull();
+    InspectionState replayed = Replay.fold(inspectionRules, history);
+    assertThat(replayed.status()).isEqualTo(InspectionStatus.LOCKED);
+    assertThat(inspectionRow(inspection)).containsEntry("status", replayed.status().name());
+  }
+
+  @Test
+  void INSP_1b_모든_항목이_정리되면_잠긴다() throws Exception {
+    UUID inspection = requestedWith(2);
+    UUID[] items = items(inspection);
+
+    respond(landlord, items[0], "a1", "ACK", null, 1).andExpect(status().isOk());
+    assertThat(inspectionRow(inspection)).containsEntry("status", "REQUESTED");
+    assertThat(lockActions(inspection)).isZero();
+
+    // 이견도 답이라 마지막 답으로 같은 요청에서 잠긴다
+    respond(landlord, items[1], "a2", "DISPUTE", "사실과 달라요", 1).andExpect(status().isOk());
+
+    Map<String, Object> row = inspectionRow(inspection);
+    assertThat(row).containsEntry("status", "LOCKED").containsEntry("lock_reason", "ALL_RESOLVED");
+    assertThat(row.get("locked_at")).isNotNull();
+    Map<String, Object> lock =
+        jdbc.queryForMap(
+            "SELECT actor_key, actor_side, payload::text AS payload, request_id"
+                + " FROM record.action WHERE inspection_id = ? AND type = 'LOCK'",
+            inspection);
+    assertThat(lock).containsEntry("actor_key", "server");
+    assertThat(lock.get("actor_side")).isNull();
+    assertThat(lock.get("payload").toString()).contains("\"lockReason\"", "\"ALL_RESOLVED\"");
+    // 마지막 응답과 한 요청으로 남는다(딸린 행동)
+    assertThat(lock.get("request_id"))
+        .isEqualTo(
+            jdbc.queryForObject(
+                "SELECT request_id FROM record.action WHERE inspection_item_id = ?"
+                    + " AND type = 'RESPOND_ITEM'",
+                UUID.class,
+                items[1]));
+    detail(tenant, inspection)
+        .andExpect(jsonPath("$.status").value("LOCKED"))
+        .andExpect(jsonPath("$.lockReason").value("ALL_RESOLVED"))
+        .andExpect(jsonPath("$.lockedAt").exists());
+  }
+
+  @Test
+  void INSP_1b_상대_미확인_항목도_잠금_조건을_채우고_도장이_찍힌다() throws Exception {
+    // 03 H: 확인·보류·이견·상대 미확인 중 하나면 잠긴다. 미확인 표시는 기다림 타이머 몫이라 행으로 둔다(#326 선행 의존성)
+    UUID inspection = requestedWith(2);
+    UUID[] items = items(inspection);
+    jdbc.update("UPDATE state.inspection_item SET status = 'UNCONFIRMED' WHERE id = ?", items[1]);
+    waits.markUnconfirmed(target(inspection), RequestKind.INSPECTION_CONFIRM, PartySide.TENANT);
+
+    respond(landlord, items[0], "a1", "ACK", null, 1).andExpect(status().isOk());
+
+    assertThat(inspectionRow(inspection))
+        .containsEntry("status", "LOCKED")
+        .containsEntry("lock_reason", "ALL_RESOLVED");
+    // 잠기면 미확인 항목도 도장 뒤(03 G "점검 전체")
+    assertThat(itemRow(items[1]).get("confirmed_version_id"))
+        .isEqualTo(itemRow(items[1]).get("current_version_id"));
+    // 요청은 미확인 항목이 남아 열려 있다(늦은 답을 받음, 요청이 닫히는 조건과 잠금 조건은 다르다)
+    assertThat(confirmRequest(inspection)).contains(RequestStatus.UNCONFIRMED);
+
+    // 잠긴 뒤 늦은 답과 잠긴 뒤 추가에도 잠금은 그대로이고 다시 잠그지 않는다
+    respond(landlord, items[1], "late", "ACK", null, 1).andExpect(status().isOk());
+    created(addItemAs(landlord, inspection, "after-lock", "[]"));
+    assertThat(inspectionRow(inspection)).containsEntry("status", "LOCKED");
+    assertThat(lockActions(inspection)).isEqualTo(1);
+  }
+
+  @Test
+  void 잠금을_일으킨_응답을_같은_키로_다시_보내도_다시_잠그지_않는다() throws Exception {
+    UUID inspection = requestedWith(1);
+    UUID item = items(inspection)[0];
+    respond(landlord, item, "a1", "ACK", null, 1).andExpect(status().isOk());
+
+    respond(landlord, item, "a1", "ACK", null, 1)
+        .andExpect(status().isOk())
+        .andExpect(header().string(InspectionController.REPLAYED, "true"));
+
+    assertThat(inspectionRow(inspection)).containsEntry("status", "LOCKED");
+    assertThat(lockActions(inspection)).isEqualTo(1);
+  }
+
+  @Test
+  void 모두_확인은_중간_단계에서_잠겨도_남은_항목에_답하고_한_번만_잠근다() throws Exception {
+    // 앞 항목에 답하면 남은 항목이 상대 미확인뿐이라 첫 응답 단계에서 잠기고, 다음 단계는 잠긴 뒤의 늦은 답이다
+    UUID inspection = requestedWith(2);
+    UUID[] items = items(inspection);
+    jdbc.update("UPDATE state.inspection_item SET status = 'UNCONFIRMED' WHERE id = ?", items[1]);
+
+    confirmAll(landlord, inspection, "all", seen(items))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("LOCKED"));
+
+    assertThat(itemRow(items[0])).containsEntry("status", "ACK");
+    assertThat(itemRow(items[1])).containsEntry("status", "ACK");
+    assertThat(lockActions(inspection)).isEqualTo(1);
+  }
+
+  @Test
+  void 퇴거_점검은_아직_잠그지_않는다() throws Exception {
+    // #326 범위는 입주 점검. 퇴거 점검은 거주 종료와 따로 잠기는 규칙과 함께 후속에서 다룬다
+    UUID inspection =
+        created(
+            mvc.perform(
+                post("/api/rooms/{id}/inspections", room)
+                    .with(loginAs(tenant))
+                    .header("Idempotency-Key", "start-out")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"kind\":\"MOVE_OUT\"}")));
+    created(addItem(inspection, "out"));
+    requestConfirm(inspection);
+    UUID item = items(inspection)[0];
+
+    respond(landlord, item, "a1", "ACK", null, 1).andExpect(status().isOk());
+
+    assertThat(inspectionRow(inspection)).containsEntry("status", "REQUESTED");
+    assertThat(lockActions(inspection)).isZero();
+  }
+
+  @Test
+  void INSP_1c_항목이_없으면_하자_기록_없음_확인으로_잠긴다() throws Exception {
+    UUID inspection = created(start());
+    requestConfirm(inspection);
+
+    confirmAll(landlord, inspection, "none", "[]")
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("LOCKED"));
+
+    assertThat(inspectionRow(inspection)).containsEntry("lock_reason", "NO_ITEMS");
+    assertThat(lockActions(inspection)).isEqualTo(1);
+    detail(landlord, inspection).andExpect(jsonPath("$.lockReason").value("NO_ITEMS"));
+  }
+
+  @Test
+  void INSP_1d_상대가_더한_항목에_답이_없으면_아직_잠기지_않는다() throws Exception {
+    UUID inspection = created(start());
+    UUID theirs = created(addItemAs(landlord, inspection, "other", "[]"));
+    UUID mine = created(addItem(inspection, "mine"));
+    requestConfirm(inspection);
+
+    respond(landlord, mine, "a-mine", "ACK", null, 1).andExpect(status().isOk());
+    assertThat(inspectionRow(inspection)).containsEntry("status", "REQUESTED");
+
+    respond(tenant, theirs, "a-theirs", "NEED_MORE", "사진이 흐려요", 1).andExpect(status().isOk());
+    assertThat(inspectionRow(inspection))
+        .containsEntry("status", "LOCKED")
+        .containsEntry("lock_reason", "ALL_RESOLVED");
+  }
+
+  @Test
+  void 작성_중에는_모든_항목에_답해도_잠기지_않는다() throws Exception {
+    UUID inspection = created(start());
+    UUID theirs = created(addItemAs(landlord, inspection, "other", "[]"));
+
+    respond(tenant, theirs, "a1", "ACK", null, 1).andExpect(status().isOk());
+
+    assertThat(inspectionRow(inspection)).containsEntry("status", "DRAFT");
+    assertThat(lockActions(inspection)).isZero();
+  }
+
+  @Test
+  void 기준_측_항목_없이_상대_항목만_있으면_하자_기록_없음_확인_뒤_상대_항목에_답할_때_잠긴다() throws Exception {
+    // #392 논의 6: 확인을 먼저 하고 상대 항목에 나중에 답하는 순서. 항목이 있으니 ALL_RESOLVED
+    UUID inspection = created(start());
+    requestConfirm(inspection);
+    UUID theirs = created(addItemAs(landlord, inspection, "other", "[]"));
+    confirmAll(landlord, inspection, "none", "[]")
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("REQUESTED"));
+
+    respond(tenant, theirs, "a1", "DISPUTE", "사실과 달라요", 1).andExpect(status().isOk());
+
+    assertThat(inspectionRow(inspection))
+        .containsEntry("status", "LOCKED")
+        .containsEntry("lock_reason", "ALL_RESOLVED");
+    assertThat(lockActions(inspection)).isEqualTo(1);
+    assertThat(itemRow(theirs).get("confirmed_version_id")).isNotNull();
+    detail(landlord, inspection).andExpect(jsonPath("$.lockReason").value("ALL_RESOLVED"));
+  }
+
+  @Test
+  void 기준_측_항목_없이_상대_항목만_있으면_상대_항목에_먼저_답해도_하자_기록_없음_확인으로_잠긴다() throws Exception {
+    UUID inspection = created(start());
+    UUID theirs = created(addItemAs(landlord, inspection, "other", "[]"));
+    respond(tenant, theirs, "a1", "ACK", null, 1).andExpect(status().isOk());
+    requestConfirm(inspection);
+    assertThat(inspectionRow(inspection)).containsEntry("status", "REQUESTED");
+
+    confirmAll(landlord, inspection, "none", "[]")
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("LOCKED"));
+
+    assertThat(inspectionRow(inspection)).containsEntry("lock_reason", "ALL_RESOLVED");
+    assertThat(lockActions(inspection)).isEqualTo(1);
+    assertReplayedLock(inspection);
+  }
+
+  @Test
+  void 기준_측_항목_없이_상대_항목만_있으면_하자_기록_없음_확인_전에는_잠기지_않는다() throws Exception {
+    UUID inspection = created(start());
+    requestConfirm(inspection);
+    UUID theirs = created(addItemAs(landlord, inspection, "other", "[]"));
+
+    respond(tenant, theirs, "a1", "ACK", null, 1).andExpect(status().isOk());
+
+    assertThat(inspectionRow(inspection)).containsEntry("status", "REQUESTED");
+    assertThat(lockActions(inspection)).isZero();
+  }
+
+  @Test
+  void 불변식_18_보이는_범위를_고정한_뒤의_잠금은_그만둔_사람에게_보이지_않는다() throws Exception {
+    UUID inspection = requestedWith(1);
+    UUID item = items(inspection)[0];
+    stopSharing(PartySide.TENANT, Instant.now());
+
+    respond(landlord, item, "a1", "ACK", null, 1).andExpect(status().isOk());
+    assertThat(inspectionRow(inspection)).containsEntry("status", "LOCKED");
+
+    detail(tenant, inspection)
+        .andExpect(jsonPath("$.status").value("REQUESTED"))
+        .andExpect(jsonPath("$.lockedAt").doesNotExist())
+        .andExpect(jsonPath("$.lockReason").doesNotExist());
+  }
+
+  @Test
+  void 불변식_18_공유를_그만둔_뒤_상대의_응답은_그만둔_사람의_항목에_보이지_않고_답한_사람에게는_보인다() throws Exception {
+    UUID inspection = requestedWith(2);
+    UUID[] items = items(inspection);
+    // 그만두기 전의 응답은 그만둔 뒤에도 보인다
+    respond(landlord, items[0], "a1", "NEED_MORE", "사진이 흐려요", 1).andExpect(status().isOk());
+    detail(tenant, inspection)
+        .andExpect(jsonPath("$.items[0].status").value("NEED_MORE"))
+        .andExpect(jsonPath("$.items[0].availableActions", hasItem("supplement")));
+    stopSharing(PartySide.TENANT, clock.instant());
+    clock.advance(Duration.ofSeconds(1));
+
+    respond(landlord, items[1], "a2", "ACK", null, 1).andExpect(status().isOk());
+    assertThat(itemRow(items[1])).containsEntry("status", "ACK");
+    assertThat(inspectionRow(inspection)).containsEntry("status", "LOCKED");
+
+    // 그만둔 사람: 점검 상태와 같은 시각 기준(#363). 점검 행동은 모두 SHARING_STOPPED라 버튼도 없다
+    detail(tenant, inspection)
+        .andExpect(jsonPath("$.asOf").exists())
+        .andExpect(jsonPath("$.status").value("REQUESTED"))
+        .andExpect(jsonPath("$.items[0].status").value("NEED_MORE"))
+        .andExpect(jsonPath("$.items[1].status").value("PENDING"))
+        .andExpect(jsonPath("$.items[0].availableActions.length()").value(0))
+        .andExpect(jsonPath("$.items[1].availableActions.length()").value(0))
+        .andExpect(jsonPath("$.availableActions", not(hasItem("confirm-all"))));
+    // 답한 사람에게는 자기 응답이 보인다
+    detail(landlord, inspection)
+        .andExpect(jsonPath("$.items[0].status").value("NEED_MORE"))
+        .andExpect(jsonPath("$.items[1].status").value("ACK"));
+  }
+
+  @Test
+  void 불변식_18_공유를_그만둔_뒤_상대의_보충은_그만둔_사람의_항목에_보이지_않는다() throws Exception {
+    UUID inspection = requestedWith(2);
+    UUID item = items(inspection)[0];
+    respond(landlord, item, "a1", "NEED_MORE", "사진이 흐려요", 1).andExpect(status().isOk());
+    stopSharing(PartySide.LANDLORD, clock.instant());
+    clock.advance(Duration.ofSeconds(1));
+
+    supplement(tenant, item, "s1", "{\"description\":\"밝게 다시 찍었어요\"}").andExpect(status().isOk());
+    assertThat(itemRow(item)).containsEntry("status", "PENDING");
+
+    // 그만둔 사람: 보충 전 보류 그대로이고 다음 보충 시각도 없다. 답하기 버튼도 없다(SHARING_STOPPED)
+    detail(landlord, inspection)
+        .andExpect(jsonPath("$.items[0].status").value("NEED_MORE"))
+        .andExpect(jsonPath("$.items[0].nextRerequestAt").doesNotExist())
+        .andExpect(jsonPath("$.items[0].availableActions.length()").value(0))
+        .andExpect(jsonPath("$.availableActions", not(hasItem("confirm-all"))));
+    // 보충한 사람에게는 보인다
+    detail(tenant, inspection)
+        .andExpect(jsonPath("$.items[0].status").value("PENDING"))
+        .andExpect(jsonPath("$.items[0].nextRerequestAt").exists());
+  }
+
+  @Test
+  void 불변식_18_공유_중단_뒤_남은_쪽이_시작하고_확인_요청한_점검은_그_사람에게_그대로_보인다() throws Exception {
+    stopSharing(PartySide.TENANT, clock.instant());
+    clock.advance(Duration.ofSeconds(1));
+    UUID inspection =
+        created(
+            mvc.perform(
+                post("/api/rooms/{id}/inspections", room)
+                    .with(loginAs(landlord))
+                    .header("Idempotency-Key", "start-after-stop")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"kind\":\"MOVE_IN\"}")));
+    UUID item = created(addItemAs(landlord, inspection, "item-after-stop", "[]"));
+    mvc.perform(
+            post("/api/inspections/{id}/request-confirm", inspection)
+                .with(loginAs(landlord))
+                .header("Idempotency-Key", "request-after-stop"))
+        .andExpect(status().isOk());
+
+    // 고정한 시각에 없던 점검이라도 시작한 사람에게는 자기 행동으로 다시 계산한 그대로 보인다
+    detail(landlord, inspection)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.asOf").exists())
+        .andExpect(jsonPath("$.status").value("REQUESTED"))
+        .andExpect(jsonPath("$.authorSide").value("LANDLORD"))
+        .andExpect(jsonPath("$.items.length()").value(1))
+        .andExpect(jsonPath("$.items[0].id").value(item.toString()))
+        .andExpect(jsonPath("$.items[0].status").value("PENDING"))
+        .andExpect(jsonPath("$.items[0].version.no").value(1));
+    // 그만둔 사람에게는 있는지도 알 수 없다
+    detail(tenant, inspection).andExpect(status().isNotFound());
+  }
+
+  @Test
+  void 불변식_18_퇴거_나란히_보기의_입주_항목도_입주_점검_상세와_같은_시각_기준이다() throws Exception {
+    UUID moveIn = requestedWith(2);
+    UUID[] items = items(moveIn);
+    UUID moveOut = created(startMoveOut());
+    stopSharing(PartySide.TENANT, clock.instant());
+    clock.advance(Duration.ofSeconds(1));
+
+    respond(landlord, items[1], "a1", "ACK", null, 1).andExpect(status().isOk());
+
+    detail(tenant, moveOut)
+        .andExpect(jsonPath("$.sideBySide.moveIn.status").value("REQUESTED"))
+        .andExpect(jsonPath("$.sideBySide.parts[0].moveInItems[0].status").value("PENDING"))
+        .andExpect(jsonPath("$.sideBySide.parts[0].moveInItems[1].status").value("PENDING"));
+    detail(landlord, moveOut)
+        .andExpect(jsonPath("$.sideBySide.parts[0].moveInItems[1].status").value("ACK"));
+  }
+
   // ---- 보충 ----
 
   @Test
   void 보류_뒤_보충하면_확인_기다림으로_돌아가고_확인_요청이_다시_열린다() throws Exception {
-    UUID inspection = requestedWith(1);
+    // 보류도 답이라 모든 항목에 답하면 잠겨 보충할 수 없다(03 H). 다른 항목 하나는 확인 기다림으로 둔다
+    UUID inspection = requestedWith(2);
     UUID item = items(inspection)[0];
     respond(landlord, item, "a1", "NEED_MORE", "사진이 흐려요", 1).andExpect(status().isOk());
-    assertThat(confirmRequest(inspection)).contains(RequestStatus.ANSWERED);
+    assertThat(inspectionRow(inspection)).containsEntry("status", "REQUESTED");
     detail(tenant, inspection)
         .andExpect(jsonPath("$.items[0].availableActions", hasItem("supplement")))
         .andExpect(jsonPath("$.items[0].nextRerequestAt").doesNotExist());
@@ -325,7 +719,7 @@ class InspectionAnswerApiTest {
 
   @Test
   void 보충은_근거가_필요하고_7일에_한_번이다() throws Exception {
-    UUID inspection = requestedWith(1);
+    UUID inspection = requestedWith(2);
     UUID item = items(inspection)[0];
     respond(landlord, item, "a1", "NEED_MORE", "사진이 흐려요", 1).andExpect(status().isOk());
 
@@ -344,12 +738,17 @@ class InspectionAnswerApiTest {
 
   @Test
   void 상대가_공유를_그만뒀으면_보충해도_확인_요청을_열지_않는다() throws Exception {
-    UUID inspection = requestedWith(1);
-    UUID item = items(inspection)[0];
-    respond(landlord, item, "a1", "NEED_MORE", "사진이 흐려요", 1).andExpect(status().isOk());
+    // 상대가 더한 항목이 확인 기다림으로 남아 점검은 잠기지 않고, 기준 측 방향 요청만 답함으로 닫힌다
+    UUID inspection = created(start());
+    UUID mine = created(addItem(inspection, "mine"));
+    created(addItemAs(landlord, inspection, "other", "[]"));
+    requestConfirm(inspection);
+    respond(landlord, mine, "a1", "NEED_MORE", "사진이 흐려요", 1).andExpect(status().isOk());
+    assertThat(confirmRequest(inspection)).contains(RequestStatus.ANSWERED);
+    assertThat(inspectionRow(inspection)).containsEntry("status", "REQUESTED");
     stopSharing(PartySide.LANDLORD, Instant.now());
 
-    supplement(tenant, item, "s1", "{\"description\":\"보충\"}").andExpect(status().isOk());
+    supplement(tenant, mine, "s1", "{\"description\":\"보충\"}").andExpect(status().isOk());
 
     // 그만둔 사람에게는 새 확인 요청을 만들지 않는다(03 B, #218과 같은 기준)
     assertThat(confirmRequest(inspection)).contains(RequestStatus.ANSWERED);
@@ -360,7 +759,7 @@ class InspectionAnswerApiTest {
     UUID inspection = requestedWith(2);
     UUID[] items = items(inspection);
     respond(landlord, items[0], "a1", "NEED_MORE", "사진이 흐려요", 1).andExpect(status().isOk());
-    // 잠금 기능(INSP-1b~e)은 아직 없어 행으로 잠근다(03 H "잠긴 뒤", #272 리뷰)
+    // 확인 기다림 항목이 남은 채로 잠긴 점검을 만들려고 행으로 잠근다(늦은 답을 보려고, 03 H "잠긴 뒤", #272 리뷰)
     jdbc.update(
         "UPDATE state.inspection SET status = 'LOCKED', locked_at = now(),"
             + " lock_reason = 'ALL_RESOLVED' WHERE id = ?",
@@ -615,6 +1014,15 @@ class InspectionAnswerApiTest {
             .content("{\"kind\":\"MOVE_IN\"}"));
   }
 
+  private ResultActions startMoveOut() throws Exception {
+    return mvc.perform(
+        post("/api/rooms/{id}/inspections", room)
+            .with(loginAs(tenant))
+            .header("Idempotency-Key", "start-out")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"kind\":\"MOVE_OUT\"}"));
+  }
+
   private ResultActions addItem(UUID inspection, String key) throws Exception {
     return mvc.perform(
         post("/api/inspections/{id}/items", inspection)
@@ -650,11 +1058,18 @@ class InspectionAnswerApiTest {
     return json.append(']').toString();
   }
 
-  /** 잠금 기능(INSP-1b~e)이 아직 없어 행으로 잠근다(#272와 같음). */
+  /** 응답 순서와 상관없이 잠긴 점검을 만든다(행으로 잠금, 서버 행동 {@code LOCK}은 남지 않음). 실제 잠금은 "잠금" 절의 테스트가 본다. */
   private void lock(UUID inspection) {
     jdbc.update(
         "UPDATE state.inspection SET status = 'LOCKED', locked_at = now(),"
             + " lock_reason = 'ALL_RESOLVED' WHERE id = ?",
+        inspection);
+  }
+
+  private long lockActions(UUID inspection) {
+    return jdbc.queryForObject(
+        "SELECT count(*) FROM record.action WHERE inspection_id = ? AND type = 'LOCK'",
+        Long.class,
         inspection);
   }
 

@@ -75,8 +75,10 @@ function apply(
       i.wait = undefined
     }
   }
-  if (c.field === "부위") i.zone = c.to
-  else if (c.field === "제목") i.title = c.to
+  if (c.field === "부위") {
+    i.zone = c.to
+    if (c.toPartId) i.roomPartId = c.toPartId
+  } else if (c.field === "제목") i.title = c.to
   else if (c.field === "설명") i.description = c.to
   // 항목 삭제는 두지 않아요(decisions 늘 지키는 원칙 1). removed는 예전 기록 표시용이에요.
   else if (c.field === "빠진 하자 추가") {
@@ -93,11 +95,17 @@ function newRequest(
   from: string,
   to: string,
   reason: string,
+  toPartId?: string,
 ) {
   const list = i.corrections || []
   if (
     list.some(
-      (c) => c.status === "확인 대기" && c.field === field && c.to === to,
+      (c) =>
+        c.status === "확인 대기" &&
+        c.field === field &&
+        (field === "부위" && toPartId && c.toPartId
+          ? c.toPartId === toPartId
+          : c.to === to),
     )
   )
     throw new Error("같은 내용으로 고친 내용이 이미 확인을 기다리고 있어요.")
@@ -128,7 +136,13 @@ export function requestItemEdits(
   d: DemoState,
   role: Role,
   id: string,
-  next: { title: string; description: string; zone: string },
+  // roomPartId: 고른 부위(06 4-3). 이름이 같은 부위도 있어 ID가 있으면 ID로 바뀌었는지 봐요
+  next: {
+    title: string
+    description: string
+    zone: string
+    roomPartId?: string
+  },
   reason: string,
 ) {
   const i = item(d, id)
@@ -142,15 +156,31 @@ export function requestItemEdits(
   if (!title || !description) throw new Error("제목과 설명을 입력해 주세요.")
   const waiting = (field: string, to: string) =>
     i.corrections?.some(
-      (c) => c.status === "확인 대기" && c.field === field && c.to === to,
+      (c) =>
+        c.status === "확인 대기" &&
+        c.field === field &&
+        (field === "부위" && next.roomPartId && c.toPartId
+          ? c.toPartId === next.roomPartId
+          : c.to === to),
     )
+  const partChanged =
+    next.roomPartId && i.roomPartId
+      ? next.roomPartId !== i.roomPartId
+      : next.zone !== i.zone
   const changes = (
     [
       ["제목", i.title, title],
       ["설명", i.description, description],
       ["부위", i.zone, next.zone],
     ] as const
-  ).filter(([f, a, b]) => a !== b && !waiting(f, b))
+  ).filter(
+    ([f, a, b]) => (f === "부위" ? partChanged : a !== b) && !waiting(f, b),
+  )
+  // 부위 고친 내용에는 새 부위 ID를 같이 남겨요(반영할 때 기록의 roomPartId도 바꿔요)
+  const withPart = (c: FactCorrection<string>) => {
+    if (c.field === "부위") c.toPartId = next.roomPartId
+    return c
+  }
   if (!changes.length) throw new Error("바뀐 내용이 없어요.")
   if (i.publication === "draft") {
     // 작성 중(상대에게 보이기 전, 등록 이전 단계)에는 바로 고쳐지고 이력만 남아요.
@@ -168,20 +198,23 @@ export function requestItemEdits(
     i.title = title
     i.description = description
     i.zone = next.zone
+    if (next.roomPartId) i.roomPartId = next.roomPartId
     bumpVersion(i)
     return []
   }
   if (!isItemStamped(d, i)) {
     // 확인 요청은 보냈지만 상대가 이 항목에 아직 답하지 않았고 점검도 잠기기 전: 바로 고쳐지고 이력에 '확인 전에 고침'으로 남아요.
     return changes.map(([field, from, to]) => {
-      const c = newRequest(i, role, field, from, to, reason)
+      const c = withPart(
+        newRequest(i, role, field, from, to, reason, next.roomPartId),
+      )
       apply(i, c, "확인 전")
       return c
     })
   }
   if (!reason.trim()) throw new Error("왜 바꾸는지 적어 주세요.")
   return changes.map(([field, from, to]) =>
-    newRequest(i, role, field, from, to, reason),
+    withPart(newRequest(i, role, field, from, to, reason, next.roomPartId)),
   )
 }
 // 빠진 하자 추가: 누구든(상대 쪽도) 요청, 상대 쪽 확인이 있어야 항목이 돼요(미응답이어도 혼자 반영하지 않음)
@@ -190,7 +223,13 @@ export function requestAdd(
   room: Room,
   role: Role,
   kind: "in" | "out",
-  data: { zone: string; title: string; description: string; photos: string[] },
+  data: {
+    zone: string
+    roomPartId?: string
+    title: string
+    description: string
+    photos: string[]
+  },
   reason: string,
 ) {
   if (!data.title.trim() || !data.description.trim())
@@ -210,6 +249,7 @@ export function requestAdd(
     id: uid(),
     roomId: room.id,
     kind,
+    roomPartId: data.roomPartId,
     zone: data.zone,
     title: data.title.trim(),
     description: data.description.trim(),
@@ -337,15 +377,19 @@ export function withdraw(d: DemoState, role: Role, id: string, cid: string) {
   c.wait = undefined
 }
 // 남은 항목 모두 확인: 확인 창을 거쳐 항목마다 확인 행동으로 저장
+// 서버에서 받은 항목은 서버의 미응답(확인 기다림·상대 미확인)과 응답 버튼으로 정해요. 화면 목록이 서버 대상과 다르면
+// 서버가 VERSION_CONFLICT로 거절해요(06 4-7 confirm-all, #357 리뷰)
 export function confirmableItems(items: Inspection[], role: Role) {
-  return items.filter(
-    (i) =>
-      i.author !== role &&
-      i.ack === "확인 대기" &&
-      i.publication !== "draft" &&
-      !i.addRequest &&
-      !i.removed &&
-      !i.solo,
+  return items.filter((i) =>
+    i.server
+      ? i.server.availableActions.includes("respond") &&
+        (i.ack === "확인 대기" || i.ack === "상대 미확인")
+      : i.author !== role &&
+        i.ack === "확인 대기" &&
+        i.publication !== "draft" &&
+        !i.addRequest &&
+        !i.removed &&
+        !i.solo,
   )
 }
 // 잠긴 점검은 잠긴 채로 둬요: 항목이 다시 확인 대기가 되어도(고친 내용 반영, 보충하고 다시 요청) 점검 잠금은 풀리지 않게 상태를 고정해요.
@@ -444,7 +488,10 @@ export function confirmAll(
 ) {
   ids.forEach((id) => {
     const i = item(d, id)
-    if (i.author === role || i.ack !== "확인 대기")
+    // 서버 항목은 상대 미확인도 늦게 확인할 수 있어요(confirmableItems와 같은 대상)
+    const unanswered =
+      i.ack === "확인 대기" || (Boolean(i.server) && i.ack === "상대 미확인")
+    if (i.author === role || !unanswered)
       throw new Error("확인할 수 없는 항목이 있어요.")
     assertSeenVersion(i, seen[id])
     i.ack = "확인됨"
@@ -528,7 +575,8 @@ export function inspectionStatus(
 ): MoveInStatus {
   const m = sessionOf(room, kind)
   if (!m) return "없음"
-  if (m.status === "잠김") return "잠김"
+  // 서버에서 받은 점검은 서버 상태 그대로예요. 잠금은 서버가 정해요(#326)
+  if (m.server || m.status === "잠김") return m.status
   if (m.status === "확인 요청" && isInspectionLocked(items)) return "잠김"
   return m.status
 }
@@ -679,4 +727,39 @@ export function finishSoloInspection(
   m.soloLocked = true
   m.noDefects = !items.length
   m.requestedAt = nowText()
+}
+
+// 잠긴 점검에 "하자 기록 없음"을 붙일지(#417 리뷰). 서버 점검이면 lockReason이 NO_ITEMS일 때만이에요:
+// 기준 측 항목 없이 상대가 더한 항목만 있어 잠긴 점검은 ALL_RESOLVED라 하자 카드가 있어요(06 4-7 confirm-all, #409).
+// 목업은 서버 값이 없어 항목 없이 확인 요청한 점검(noDefects)으로 봐요.
+export function lockedWithNoDefects(session?: InspectionSession) {
+  if (session?.server) return session.server.lockReason === "NO_ITEMS"
+  return Boolean(session?.noDefects)
+}
+
+// 기준 측 항목 없이 확인 요청한 점검에서 상대가 더한 항목 중 아직 답이 없는(확인 대기) 것이 있나.
+// 있으면 잠금에 두 가지가 모두 필요해요: 기준 측이 아닌 쪽의 "하자 기록 없음" 확인과 그 항목들에 대한 기준 측의 답(03 H "잠기는 조건", #409)
+export function counterpartItemsAwaitingAnswer(
+  session: InspectionSession | undefined,
+  items: Inspection[],
+) {
+  if (!session?.noDefects || session.status !== "확인 요청") return false
+  return lockItems(items).some(
+    (i) => i.author !== session.author && i.ack === "확인 대기",
+  )
+}
+
+// 모두 확인 자리에 어떤 버튼을 둘지(06 4-7 confirm-all). 서버가 confirm-all을 줄 때만 보여요.
+// - "하자 기록 없음 확인": 기준 측 항목이 없는 점검에서 기준 측이 아닌 쪽만(기준 측은 NOT_COUNTERPART_SIDE)
+// - "남은 항목 모두 확인": 답할 항목이 있는 쪽. 기준 측 항목이 없어도 기준 측은 상대가 더한 항목에 답해요(#409)
+export function confirmAllButtons(
+  session: InspectionSession | undefined,
+  mine: boolean,
+  canConfirmAll: boolean,
+) {
+  const noDefects = Boolean(session?.noDefects)
+  return {
+    noDefects: canConfirmAll && noDefects && !mine,
+    items: canConfirmAll && (!noDefects || mine),
+  }
 }

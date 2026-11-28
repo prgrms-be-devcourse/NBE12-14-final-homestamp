@@ -187,7 +187,7 @@ describe("상세 closeRequest → 종료 요청 확인 없음", () => {
     )
     expect(repair.closeUnconfirmed).toBeUndefined()
     expect(repairSummary(repair, "임차인", room, []).title).toBe(
-      "종료 확인을 기다려요",
+      "끝난 것 확인을 기다려요",
     )
   })
 })

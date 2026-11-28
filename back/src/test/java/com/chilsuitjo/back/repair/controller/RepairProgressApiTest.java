@@ -326,13 +326,13 @@ class RepairProgressApiTest {
     // 요청한 쪽에는 진행 상황 남기기만 있고 상대에게는 종료 확인·아직 안 됐어요가 보인다. 누가 요청했는지는 양쪽 모두 본다.
     // 종료 확인 대기·처리 완료에서는 진행 상황을 물을 수 없다(03 D "시작 전·처리 중")
     detail(caseId, landlord)
-        .andExpect(jsonPath("$.availableActions.length()").value(2))
+        .andExpect(jsonPath("$.availableActions.length()").value(3))
         .andExpect(jsonPath("$.availableActions[0]").value("progress-notes"))
         .andExpect(jsonPath("$.availableActions[1]").value("cause-notes"))
         .andExpect(jsonPath("$.closeRequestedBy").value("LANDLORD"));
     detail(caseId, tenant)
         .andExpect(jsonPath("$.closeRequestedBy").value("LANDLORD"))
-        .andExpect(jsonPath("$.availableActions.length()").value(4))
+        .andExpect(jsonPath("$.availableActions.length()").value(5))
         .andExpect(jsonPath("$.availableActions[0]").value("confirm-close"))
         .andExpect(jsonPath("$.availableActions[1]").value("not-yet"))
         .andExpect(jsonPath("$.availableActions[2]").value("progress-notes"))
@@ -341,7 +341,7 @@ class RepairProgressApiTest {
     detail(caseId, tenant)
         .andExpect(jsonPath("$.status").value("DONE"))
         .andExpect(jsonPath("$.closeRequestedBy").doesNotExist())
-        .andExpect(jsonPath("$.availableActions.length()").value(2))
+        .andExpect(jsonPath("$.availableActions.length()").value(3))
         .andExpect(jsonPath("$.availableActions[0]").value("progress-notes"))
         .andExpect(jsonPath("$.availableActions[1]").value("cause-notes"));
   }

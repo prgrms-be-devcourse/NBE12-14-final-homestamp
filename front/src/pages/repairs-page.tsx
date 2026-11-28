@@ -65,7 +65,7 @@ export function RepairsPage({
               >
                 {plainText(v)}
                 <span
-                  className={`inline-flex h-5 min-w-[22px] items-center justify-center rounded-full px-1.5 text-xs leading-none font-bold tabular-nums in-data-active:bg-white/20 in-data-active:text-white ${tabCount(v) ? "bg-chip text-sub" : "bg-[#f3f5f9] text-faint"}`}
+                  className={`inline-flex h-5 min-w-[22px] items-center justify-center rounded-full px-1.5 text-xs leading-none font-bold tabular-nums in-data-active:bg-white/20 in-data-active:text-white ${tabCount(v) ? "bg-chip text-sub" : "bg-[#f5f6f8] text-faint"}`}
                   aria-hidden
                 >
                   {tabCount(v)}

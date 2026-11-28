@@ -38,6 +38,9 @@ app:
   progress:
     ask:
       interval: 7d
+  # 마지막 당사자 행동에서 이만큼 지나면 홈의 "오래 멈춘 건"(06 0-1 repair.stale-after, REP-6a·6e)
+  repair:
+    stale-after: 14d
   # 점검이 작성 중인 채로 이만큼 지나면 상대도 확인 요청을 보낼 수 있다(06 0-1 inspection.draft.stale-after)
   inspection:
     draft:
@@ -52,6 +55,9 @@ app:
   notice:
     send:
       retry: 1m,5m,15m
+  # 거주 종료 뒤 정산 자동 마감까지(06 0-1 settlement.autoclose-after). 거주 종료 때 room_record.autoclose_due_at으로 저장한다
+  settlement:
+    autoclose-after: 90d
   # 기다림 기한(06 0-1). 기한은 생길 때 시각으로 저장해서 값을 바꿔도 이미 정한 기한은 그대로다
   wait:
     renotify: 48h
@@ -103,6 +109,15 @@ verify:
     ttl: 15m
   resend:
     interval: 60s
+
+# 지금 유효한 문구 판(06 0-1 terms.version.*, CONS-4). 정식 약관 전문이 준비되기 전까지는 v1, 실제 문구가 바뀌면 새 판(YYYY-MM-DD)으로 바꾼다.
+# 판을 바꾸면 그 판으로 확인하지 않은 회원은 다시 확인하기 전까지 보기만 한다(03 6-2). 화면의 정적 페이지와 같은 배포에서 바꾼다
+terms:
+  version:
+    age14: v1
+    terms: v1
+    privacy-notice: v1
+    share-consent: v1
 
 sms:
   daily:

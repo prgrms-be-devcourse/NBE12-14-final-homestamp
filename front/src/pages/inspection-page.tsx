@@ -1,5 +1,5 @@
 import {
-  inspectionIdOf,
+  inspectionIdIn,
   notInSpec,
   post,
   settlementIdOf,
@@ -45,9 +45,12 @@ import {
   respondItem,
   supplementItem,
   confirmNoDefects,
+  confirmAllButtons,
+  counterpartItemsAwaitingAnswer,
   finishSoloInspection,
   inspectionStatus,
   kindLabel,
+  lockedWithNoDefects,
   sessionOf,
   startInspection,
 } from "@/lib/inspection-rules"
@@ -158,6 +161,8 @@ export function InspectionPage({
     readOnly,
   })
   const has = (a: InspectionAction) => hasAction(actions, a)
+  // 입주 점검 시작 때 입주일을 물을지: 호실 입주일이 비어 있을 때만(INSP-2b). 목업은 이때만 시작 버튼을 줘요
+  const askMoveInDate = !room.since
   const itemActions = (i: Inspection) =>
     available.inspectionItem(i, role, { readOnly })
   // 점검 하자 항목: 썸네일 + 지금 기록(제목·부위·설명·상태)만. 이견·사진 추가·고친 이력은 항목의 '경과'에서 펼쳐 봐요.
@@ -244,6 +249,7 @@ export function InspectionPage({
                     post(endpoints.inspectionItemAction(i.id, "respond"), {
                       answer,
                       reason,
+                      seenVersionNo: i.version ?? 1,
                     }),
                     `${i.title} · 점검 ${answer === "NEED_MORE" ? "보충 요청" : "이견"} · ${reason}`,
                     (d) =>
@@ -264,7 +270,13 @@ export function InspectionPage({
             waitDays={reaskWaitDays(i.reaskedAt)}
             onSupplement={(data) =>
               inspectionAct(
-                post(endpoints.inspectionItemAction(i.id, "supplement"), data),
+                // 06 4-7 보충: {description, uploadTickets}. 사진은 업로드 표 연결 전이라 고르면 서버로 보내지 않아요(#295)
+                data.photos.length
+                  ? notInSpec("점검 항목 보충 사진(업로드 표 연결 전)")
+                  : post(endpoints.inspectionItemAction(i.id, "supplement"), {
+                      description: data.text,
+                      uploadTickets: [],
+                    }),
                 `${i.title} · 보충하고 다시 확인 요청${data.text ? ` · ${data.text}` : ""}${data.photos.length ? ` · 사진 ${data.photos.length}장` : ""}`,
                 (d) => supplementItem(d, role, i.id, data),
                 i.id,
@@ -323,7 +335,7 @@ export function InspectionPage({
               "기준 기록 잠김",
             ]
         return (
-          <Card className="mb-5 min-w-0 gap-3 rounded-[18px] border border-line bg-white py-4 shadow-[0_1px_2px_#1720330a] ring-0">
+          <Card className="mb-5 min-w-0 gap-3 rounded-[18px] border border-line bg-white py-4 shadow-[0_1px_2px_#1f2a330a] ring-0">
             <CardContent className="space-y-3 px-5 max-md:px-4">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <strong className="text-[17px] font-bold text-ink">
@@ -337,7 +349,7 @@ export function InspectionPage({
                 </StatusTag>
                 {inspectionLocked && (
                   <StatusTag>
-                    {session?.noDefects
+                    {lockedWithNoDefects(session)
                       ? "점검 완료 · 잠김 · 하자 기록 없음"
                       : "점검 완료 · 잠김"}
                   </StatusTag>
@@ -399,7 +411,8 @@ export function InspectionPage({
           </Card>
         )
       })()}
-      {/* 입주 점검 시작 · 입주일이 비어 있을 때(화면 기본 틀 9-1, INSP-2b): 입주일을 받아 저장과 시작을 한 번에. 받기 전에는 점검을 시작하지 않아요 */}
+      {/* 입주 점검 시작(화면 기본 틀 9-1, INSP-2b): 입주일이 비어 있으면 입주일을 받아 저장과 시작을 한 번에. 받기 전에는 점검을 시작하지 않아요.
+          서버 연결 때는 호실 상세의 inspections(입주 점검 시작만, 06 4-3)가 있을 때 보여요 */}
       {has("start") && (
         <Card className="mb-5 min-w-0 gap-3 rounded-[18px] border border-turn-line bg-turn-soft py-4 shadow-none ring-0">
           <CardContent className="px-5 max-md:px-4">
@@ -410,41 +423,57 @@ export function InspectionPage({
                 const date = String(
                   new FormData(e.currentTarget).get("moveInDate") || "",
                 )
-                if (!date) {
+                if (askMoveInDate && !date) {
                   toast("입주일을 골라 주세요.")
                   return
                 }
+                // 06 4-7: 호실 입주일이 비어 있을 때만 moveInDate를 보내요(이미 있으면 VALIDATION_FAILED)
                 commit(
                   post(endpoints.inspections(roomId), {
-                    kind: "in",
-                    moveInDate: date,
+                    kind: "MOVE_IN",
+                    ...(askMoveInDate ? { moveInDate: date } : {}),
                   }),
-                  `입주일 ${date} · 입주 점검 시작`,
-                  (d) => startInspection(d, roomId, "in", role, date),
+                  askMoveInDate
+                    ? `입주일 ${date} · 입주 점검 시작`
+                    : "입주 점검 시작",
+                  (d) =>
+                    startInspection(
+                      d,
+                      roomId,
+                      "in",
+                      role,
+                      askMoveInDate ? date : undefined,
+                    ),
                 )
               }}
             >
               <strong className="text-[17px] font-bold text-ink">
                 입주 점검 시작
               </strong>
-              <label htmlFor="move-in-date" className="text-[15px] text-ink">
-                이 집에 들어온 날을 알려 주세요
-              </label>
+              {askMoveInDate && (
+                <label htmlFor="move-in-date" className="text-[15px] text-ink">
+                  이 집에 들어온 날을 알려 주세요
+                </label>
+              )}
               <div className="flex gap-2 max-sm:flex-col">
-                <Input
-                  id="move-in-date"
-                  name="moveInDate"
-                  type="date"
-                  required
-                  className="h-11 bg-white text-base sm:max-w-56"
-                />
+                {askMoveInDate && (
+                  <Input
+                    id="move-in-date"
+                    name="moveInDate"
+                    type="date"
+                    required
+                    className="h-11 bg-white text-base sm:max-w-56"
+                  />
+                )}
                 <Button type="submit" size="lg" className="h-11 sm:px-6">
-                  다음
+                  {askMoveInDate ? "다음" : "점검 시작"}
                 </Button>
               </div>
               <small className="text-[13px] text-sub">
-                계약서의 입주일이에요. 입주일을 알려 주셔야 점검을 시작할 수
-                있어요. 입주일보다 늦게 시작하면 ‘입주 후 등록’이 붙어요.
+                {askMoveInDate
+                  ? "계약서의 입주일이에요. 입주일을 알려 주셔야 점검을 시작할 수 있어요. "
+                  : `입주일 ${room.since}. 먼저 시작한 쪽이 기준 기록을 써요. `}
+                입주일보다 늦게 시작하면 ‘입주 후 등록’이 붙어요.
               </small>
             </form>
           </CardContent>
@@ -460,7 +489,7 @@ export function InspectionPage({
           inspectionLocked ? (
             <div className="actions">
               <Status>
-                {session?.noDefects
+                {lockedWithNoDefects(session)
                   ? "점검 완료 · 잠김 · 하자 기록 없음"
                   : "점검 완료 · 잠김"}
               </Status>
@@ -540,16 +569,18 @@ export function InspectionPage({
                 {moveIn === "없음" ? " 먼저 작성한 쪽이 기준 기록을 써요." : ""}
               </small>
             )}
-            {has("confirm-all") && session?.noDefects && (
+            {confirmAllButtons(session, moveInMine, has("confirm-all"))
+              .noDefects && (
               <Button
                 onClick={() =>
                   commit(
                     post(
                       endpoints.inspectionAction(
-                        inspectionIdOf(roomId, sessKind),
+                        inspectionIdIn(room, sessKind),
                         "confirm-all",
                       ),
-                      { noDefects: true },
+                      // 하자 기록 없음은 본 항목이 없는 확인이에요(06 4-7 confirm-all 빈 목록)
+                      { items: [] },
                     ),
                     `${kindLabel(sessKind)} 점검 · 하자 기록 없음 확인`,
                     (d) => confirmNoDefects(d, roomId, sessKind, role),
@@ -561,9 +592,16 @@ export function InspectionPage({
             )}
             {moveIn === "확인 요청" && session?.noDefects && (
               <small className="muted">
-                {moveInMine
-                  ? "하자 기록 없음으로 확인을 요청했어요. 상대가 확인하면 잠겨요."
-                  : "상대가 하자 기록 없음으로 확인을 요청했어요. 확인하면 점검이 잠겨요."}
+                {/* 상대가 더한 항목에 답이 남았으면 "하자 기록 없음" 확인만으로는 잠기지 않아요. 두 조건을 함께 알려요(03 H, #409) */}
+                {counterpartItemsAwaitingAnswer(session, inspectionItems)
+                  ? moveInMine
+                    ? "하자 기록 없음으로 확인을 요청했어요. 상대가 하자 기록 없음을 확인하고, 상대가 더한 항목에 내가 답하면 점검이 잠겨요."
+                    : has("confirm-all")
+                      ? "상대가 하자 기록 없음으로 확인을 요청했어요. 내가 하자 기록 없음을 확인하고, 내가 더한 항목에 상대가 답하면 점검이 잠겨요."
+                      : "하자 기록 없음을 확인했어요. 내가 더한 항목에 상대가 답하면 점검이 잠겨요."
+                  : moveInMine
+                    ? "하자 기록 없음으로 확인을 요청했어요. 상대가 확인하면 잠겨요."
+                    : "상대가 하자 기록 없음으로 확인을 요청했어요. 확인하면 점검이 잠겨요."}
               </small>
             )}
             {moveIn === "확인 요청" && !session?.noDefects && (
@@ -596,7 +634,7 @@ export function InspectionPage({
                 </div>
               ))}
             {/* 적지 않은 부위는 '기록 없음'(문서 9장 [반드시]) — 목록 끝 얇은 한 줄 */}
-            <div className="col-span-full flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-[12px] border border-dashed border-[#dce5f1] px-4 py-3 text-sm text-[#91a6c3]">
+            <div className="col-span-full flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-[12px] border border-dashed border-[#e3e7eb] px-4 py-3 text-sm text-[#91a6c3]">
               <Camera size={16} aria-hidden />
               <strong className="font-semibold">그 밖의 부위</strong>
               <span>입주 점검에 기록 없음</span>
@@ -675,8 +713,10 @@ export function InspectionPage({
 
         {!readOnly && (
           <div className="actions mt-5">
-            {has("confirm-all") && !session?.noDefects && (
+            {confirmAllButtons(session, moveInMine, has("confirm-all"))
+              .items && (
               <ConfirmAllItems
+                room={room}
                 items={inspectionItems}
                 db={db}
                 role={role}

@@ -15,6 +15,7 @@ import com.chilsuitjo.back.notification.dto.RequestView;
 import com.chilsuitjo.back.notification.dto.SoloCheck;
 import com.chilsuitjo.back.notification.dto.SoloQuery;
 import com.chilsuitjo.back.notification.repository.ResponseRequestRepository;
+import com.chilsuitjo.back.notification.rule.CloseAllScope;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.rule.RequestStatus;
 import com.chilsuitjo.back.notification.rule.SoloReason;
@@ -25,7 +26,9 @@ import jakarta.persistence.PersistenceContext;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.EnumSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
@@ -294,13 +297,146 @@ class JpaWaitServiceTest extends SchemaTestSupport {
   }
 
   @Test
-  void 일괄_닫기는_범위가_정해지기_전이라_조용히_넘어가지_않는다() {
+  void 정하지_않은_범위의_호실_전체_닫기는_조용히_넘기지_않고_예외다() {
     UUID room = room();
 
-    assertThatThrownBy(() ->
-            waits.closeAll(
-                room, ClosedReason.ROOM_ENDED, java.util.Set.of(RequestKind.DEFECT_CONFIRM)))
+    assertThatThrownBy(
+            () -> closeAll(room, ClosedReason.SHARING_STOPPED, Set.of(RequestKind.DEFECT_CONFIRM)))
         .isInstanceOf(UnsupportedOperationException.class);
+    assertThatThrownBy(
+            () -> closeAll(room, ClosedReason.ROOM_ENDED, Set.of(RequestKind.CLOSE_CONFIRM)))
+        .isInstanceOf(IllegalArgumentException.class); // 거주 종료는 넷을 함께
+    assertThatThrownBy(() -> closeAll(room, ClosedReason.SETTLED, CloseAllScope.roomEndedKinds()))
+        .isInstanceOf(UnsupportedOperationException.class);
+    assertThatThrownBy(() ->
+            closeAll(room, ClosedReason.COUNTERPART_WITHDRAWN, Set.of(RequestKind.DEFECT_CONFIRM)))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void 거주_종료는_수리_3종의_열린_요청과_기다리던_종료_확인만_닫는다() {
+    UUID room = room();
+    UUID otherRoom = room();
+    RequestHandle defect =
+        open(room, RequestKind.DEFECT_CONFIRM, repairCase(room), PartySide.TENANT);
+    RequestHandle defectUnconfirmed =
+        open(room, RequestKind.DEFECT_CONFIRM, repairCase(room), PartySide.LANDLORD);
+    setStatus(defectUnconfirmed.requestId(), "UNCONFIRMED");
+    RequestHandle progress =
+        open(room, RequestKind.PROGRESS_CHECK, repairCase(room), PartySide.TENANT);
+    setStatus(progress.requestId(), "UNCONFIRMED");
+    RequestHandle situation =
+        open(room, RequestKind.SITUATION_CHECK, progressNote(room), PartySide.LANDLORD);
+    RequestHandle situationUnconfirmed =
+        open(room, RequestKind.SITUATION_CHECK, progressNote(room), PartySide.TENANT);
+    setStatus(situationUnconfirmed.requestId(), "UNCONFIRMED");
+    RequestHandle closeWaiting =
+        open(room, RequestKind.CLOSE_CONFIRM, repairCase(room), PartySide.TENANT);
+    RequestHandle closeUnconfirmed =
+        open(room, RequestKind.CLOSE_CONFIRM, repairCase(room), PartySide.LANDLORD);
+    setStatus(closeUnconfirmed.requestId(), "UNCONFIRMED");
+    RequestHandle answered =
+        open(room, RequestKind.DEFECT_CONFIRM, repairCase(room), PartySide.TENANT);
+    setStatus(answered.requestId(), "ANSWERED");
+    RequestHandle correction =
+        open(room, RequestKind.CORRECTION_CONFIRM, repairCase(room), PartySide.TENANT);
+    RequestHandle elsewhere =
+        open(otherRoom, RequestKind.DEFECT_CONFIRM, repairCase(otherRoom), PartySide.TENANT);
+
+    int closed = closeAll(room, ClosedReason.ROOM_ENDED, CloseAllScope.roomEndedKinds());
+
+    assertThat(closed).isEqualTo(6);
+    for (RequestHandle h :
+        java.util.List.of(
+            defect, defectUnconfirmed, progress, situation, situationUnconfirmed, closeWaiting)) {
+      assertThat(row(h.requestId()))
+          .containsEntry("status", "CLOSED")
+          .containsEntry("closed_reason", "ROOM_ENDED");
+      assertThat(((java.sql.Timestamp) row(h.requestId()).get("closed_at")).toInstant())
+          .isEqualTo(LATER);
+    }
+    assertThat(status(closeUnconfirmed)).isEqualTo("UNCONFIRMED");
+    assertThat(status(answered)).isEqualTo("ANSWERED");
+    assertThat(status(correction)).isEqualTo("WAITING");
+    assertThat(status(elsewhere)).isEqualTo("WAITING");
+
+    // 다시 불러도 이미 닫힌 것은 그대로(닫힌 이유·시각 유지)
+    assertThat(
+            at(
+                LATER.plusSeconds(60),
+                () ->
+                    waits.closeAll(room, ClosedReason.ROOM_ENDED, CloseAllScope.roomEndedKinds())))
+        .isZero();
+    assertThat(((java.sql.Timestamp) row(defect.requestId()).get("closed_at")).toInstant())
+        .isEqualTo(LATER);
+  }
+
+  @Test
+  void 거주_종료로_닫힌_요청은_늦은_답에도_닫힌_그대로다() {
+    UUID room = room();
+    RequestTarget repair = repairCase(room);
+    RequestHandle defect = open(room, RequestKind.DEFECT_CONFIRM, repair, PartySide.TENANT);
+    closeAll(room, ClosedReason.ROOM_ENDED, CloseAllScope.roomEndedKinds());
+
+    at(
+        LATER.plusSeconds(60),
+        () -> {
+          waits.answered(repair, RequestKind.DEFECT_CONFIRM, PartySide.LANDLORD);
+          return null;
+        });
+
+    assertThat(row(defect.requestId()))
+        .containsEntry("status", "CLOSED")
+        .containsEntry("closed_reason", "ROOM_ENDED");
+  }
+
+  @Test
+  void 탈퇴로_닫힌_요청은_늦게_온_전달_증거로_다시_열리지_않는다() {
+    UUID room = room();
+    RequestHandle request =
+        open(room, RequestKind.DEFECT_CONFIRM, repairCase(room), PartySide.TENANT);
+    Instant delivered = LATER.minusSeconds(600);
+    started(request.requestId(), delivered);
+
+    closeAll(room, ClosedReason.COUNTERPART_WITHDRAWN, EnumSet.allOf(RequestKind.class));
+    started(request.requestId(), delivered.minusSeconds(300)); // 더 이른 증거가 닫힌 뒤 도착
+
+    Map<String, Object> row = row(request.requestId());
+    assertThat(row)
+        .containsEntry("status", "CLOSED")
+        .containsEntry("closed_reason", "COUNTERPART_WITHDRAWN");
+    assertThat(((java.sql.Timestamp) row.get("first_notified_at")).toInstant())
+        .isEqualTo(delivered);
+    assertThat(((java.sql.Timestamp) row.get("renotify_due_at")).toInstant())
+        .isEqualTo(delivered.plusSeconds(48 * 3600));
+  }
+
+  @Test
+  void 탈퇴는_그_호실의_열린_요청을_양방향_모두_닫는다() {
+    UUID room = room();
+    UUID otherRoom = room();
+    RequestHandle mine = open(room, RequestKind.DEFECT_CONFIRM, repairCase(room), PartySide.TENANT);
+    RequestHandle theirs =
+        open(room, RequestKind.CLOSE_CONFIRM, repairCase(room), PartySide.LANDLORD);
+    setStatus(theirs.requestId(), "UNCONFIRMED");
+    RequestHandle answered =
+        open(room, RequestKind.DEFECT_CONFIRM, repairCase(room), PartySide.LANDLORD);
+    setStatus(answered.requestId(), "ANSWERED");
+    RequestHandle elsewhere =
+        open(otherRoom, RequestKind.DEFECT_CONFIRM, repairCase(otherRoom), PartySide.TENANT);
+
+    int closed =
+        closeAll(room, ClosedReason.COUNTERPART_WITHDRAWN, EnumSet.allOf(RequestKind.class));
+
+    assertThat(closed).isEqualTo(2);
+    assertThat(row(mine.requestId()))
+        .containsEntry("status", "CLOSED")
+        .containsEntry("closed_reason", "COUNTERPART_WITHDRAWN");
+    assertThat(((java.sql.Timestamp) row(mine.requestId()).get("closed_at")).toInstant())
+        .isEqualTo(LATER);
+    assertThat(status(theirs)).isEqualTo("CLOSED");
+    assertThat(status(answered)).isEqualTo("ANSWERED");
+    assertThat(status(elsewhere)).isEqualTo("WAITING");
   }
 
   @Test
@@ -382,6 +518,10 @@ class JpaWaitServiceTest extends SchemaTestSupport {
         });
   }
 
+  private int closeAll(UUID room, ClosedReason reason, Set<RequestKind> kinds) {
+    return at(LATER, () -> waits.closeAll(room, reason, kinds));
+  }
+
   /** 통지가 닿은 것처럼 기다림을 시작한다(작업자가 같은 엔티티 메서드를 부름). */
   private void started(UUID requestId, Instant at) {
     entityManager.flush();
@@ -402,6 +542,18 @@ class JpaWaitServiceTest extends SchemaTestSupport {
 
   private RequestTarget repairCase(UUID room) {
     return RequestTarget.of(TargetKind.REPAIR_CASE, repair(room));
+  }
+
+  /** 이 호실 수리 건의 진행 상황 하나(상황 변화 확인의 대상). */
+  private RequestTarget progressNote(UUID room) {
+    UUID id = UUID.randomUUID();
+    jdbc.update(
+        "INSERT INTO record.progress_note (id, room_record_id, repair_case_id, side, text,"
+            + " created_at) VALUES (?, ?, ?, 'LANDLORD', '업체 불렀어요', CURRENT_TIMESTAMP)",
+        id,
+        room,
+        repair(room));
+    return RequestTarget.of(TargetKind.PROGRESS_NOTE, id);
   }
 
   private UUID inspection(UUID room) {

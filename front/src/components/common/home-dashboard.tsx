@@ -1,211 +1,61 @@
 import type { ReactNode } from "react"
-import {
-  ArrowRight,
-  Building2,
-  ChevronRight,
-  Clock,
-  Handshake,
-  Plus,
-  Wallet,
-  Wrench,
-} from "lucide-react"
+import { ChevronRight, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
-import { Status } from "@/components/common/blocks"
 import { EmptyState } from "@/components/common/states"
+import { HousePlan, type PlanSpot } from "@/components/common/house-plan"
+import { Stamp } from "@/components/common/stamp"
 import type { Event, Notice, Repair, Role, Room } from "@/data/demo"
 import type { Page } from "@/lib/router"
 import { myTurn, theirWaits } from "@/lib/turn"
 import { cn } from "cn"
-import { plainText } from "@/lib/plain-words"
+import {
+  dropCheck,
+  repairWord,
+  statusText,
+  statusTone,
+  type StatusTone,
+} from "@/lib/plain-words"
+import { planArea } from "@/lib/plan-area"
 import {
   daysSince,
   lastActivity,
   moneyLabel,
   staleReason,
 } from "@/lib/activity"
-import { sideName } from "@/lib/words"
 import { connectionText } from "@/lib/workflows"
 
-// 홈 카드 한 장(제목 · 설명 · 오른쪽 버튼 + 내용). warm: 내가 답할 것처럼 맨 위에서 눈에 띄어야 하는 카드
-function Section({
-  title,
-  description,
-  action,
-  children,
-  icon,
-  warm,
-}: {
-  title: string
-  description?: string
-  action?: ReactNode
-  children: ReactNode
-  icon?: ReactNode
-  warm?: boolean
-}) {
-  return (
-    <Card
-      className={cn(
-        "min-w-0 gap-3 rounded-[18px] border py-5 shadow-[0_1px_2px_#1720330a] ring-0",
-        warm ? "border-[#f6dcb8] bg-[#fffaf3]" : "border-line bg-white",
-      )}
-    >
-      <CardHeader className="flex items-start justify-between gap-3 px-5">
-        <div>
-          <CardTitle className="flex items-center gap-2 text-[17px] leading-[1.45] font-bold text-ink">
-            {icon}
-            {title}
-          </CardTitle>
-          {description && (
-            <CardDescription className="mt-0.5 text-[13px] text-sub">
-              {description}
-            </CardDescription>
-          )}
-        </div>
-        {action}
-      </CardHeader>
-      <CardContent className="px-5">{children}</CardContent>
-    </Card>
-  )
-}
+// ── 상태 표시(index.css 토큰 주석, lib/plain-words statusTone) ──
+// 꼬리표: 내 차례 = 주황 채운 점, 아직 안 끝남 = 노랑 빈 원, 오래 멈춤 = 회색 점선, 진행 중 = 남색 빈 원, 끝남 = 초록 ✓.
+// 색만으로 나누지 않게 점 모양과 글이 늘 함께 가요.
 
-// 누르는 한 줄(수리 건·알림·호실 공통 모양)
-const row =
-  "flex min-h-14 w-full items-center gap-3 rounded-[14px] border p-3 text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
-const rowPlain =
-  "border-line bg-white hover:border-[#cfdaf1] hover:bg-[#fafbfe]"
-// 내가 답할 차례인 줄: 주황 테두리 + 왼쪽 띠(주황은 '내 차례'에만 써요)
-const rowTurn =
-  "border-turn-line bg-turn-bg shadow-[inset_3px_0_0_var(--color-turn)] hover:border-[#eeb46a] hover:bg-[#fff5e8]"
-// 지금 보는 호실: 연한 파랑
-const rowCurrent = "border-[#9db7ef] bg-[#f7f9ff] hover:bg-[#f2f6ff]"
-const rowIcon = "grid size-[38px] flex-none place-items-center rounded-[11px]"
-const rowMain =
-  "flex min-w-0 flex-1 flex-col gap-[3px] [&_small]:text-sm [&_small]:text-sub [&_strong]:text-base [&_strong]:leading-[inherit] [&_strong]:font-bold [&_strong]:text-ink [&_strong]:[overflow-wrap:anywhere]"
-const chevron = "flex-none text-faint"
-
-// 수리 건 한 줄: 내가 답할 일이 있으면 '내 차례'를 맨 앞에, 수리 상태와 비용 상태는 따로(수리와 돈은 따로 끝나요).
-// 사진이 있으면 카드 안 왼쪽에 정사각형 미리보기를 둬요. 사진은 줄 버튼 밖에 있어서 사진만 따로 크게 볼 수 있어요.
-export function RepairListItem({
-  r,
-  onOpen,
-  extra,
-  thumb,
-  role,
-}: {
-  r: Repair
-  onOpen: () => void
-  extra?: ReactNode
-  thumb?: ReactNode
-  role?: Role
-}) {
-  const turn = role ? myTurn(r, role) : undefined
-  // 상대의 답을 기다리는 요청(서버 목록 waiting, 06 4-6). 목업은 없음
-  const waits = role ? theirWaits(r, role) : []
-  const label = `${turn ? `내 차례 ${turn} · ` : ""}${r.photos.length ? "" : "상태 사진 예시 "}${r.title} ${r.zone} ${r.date} ${r.status} 비용 · ${moneyLabel(r)}${waits.map((w) => ` · ${w}`).join("")}`
-  const body = (
-    <>
-      <span className={rowMain}>
-        {turn && <TurnBadge>내 차례 · {turn}</TurnBadge>}
-        <strong>{r.title}</strong>
-        <small>
-          {r.zone} · {r.date} · {sideName(r.author)} 등록
-        </small>
-        <span className="mt-1 flex flex-wrap gap-1">
-          <StatusTag>{`수리 · ${r.status}`}</StatusTag>
-          <StatusTag>{`비용 · ${moneyLabel(r)}`}</StatusTag>
-          {waits.map((w) => (
-            <StatusTag key={w} raw className="whitespace-normal">
-              {w}
-            </StatusTag>
-          ))}
-          {extra}
-        </span>
-      </span>
-      {/* 휴대폰 사진 줄에서는 화살표를 빼서 상태 꼬리표가 한 줄에 들어가게 */}
-      <ChevronRight
-        size={18}
-        className={cn(chevron, thumb && "max-md:hidden")}
-        aria-hidden
-      />
-    </>
-  )
-  if (!thumb)
-    return (
-      <button
-        type="button"
-        className={cn(row, turn ? rowTurn : rowPlain)}
-        onClick={onOpen}
-        aria-label={label}
-      >
-        <span className={cn(rowIcon, "bg-brand-soft text-brand")} aria-hidden>
-          <Wrench size={18} />
-        </span>
-        {body}
-      </button>
-    )
-  return (
-    <div
-      className={cn(
-        "flex items-center gap-3 rounded-[14px] border p-2.5",
-        turn ? rowTurn : rowPlain,
-      )}
-    >
-      {/* !: 사진 갤러리의 옛 CSS(.gallery-compact 크기)보다 앞서게. 갤러리를 Tailwind로 옮기면 ! 를 지워요 */}
-      <div className="size-16 flex-none overflow-hidden rounded-[10px] max-md:size-14 [&>*]:size-full!">
-        {thumb}
-      </div>
-      <button
-        type="button"
-        className="flex min-w-0 flex-1 items-center gap-3 rounded-[10px] py-0.5 text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
-        onClick={onOpen}
-        aria-label={label}
-      >
-        {body}
-      </button>
-    </div>
-  )
-}
-
-// 작은 상태 꼬리표(수리 줄 · 수리 상세 세 줄 요약). 글자와 색 규칙은 Status와 같고(plainText · 이견/대기/완료 색), 크기만 작게.
-const tagTone = (t: string) =>
-  /이견|미확인|확인 없음/.test(t)
-    ? "bg-[#fff0ed] text-[#cc7869]"
-    : /대기|기다림|미정|초대/.test(t)
-      ? "bg-[#fff6e4] text-[#bc9146]"
-      : /완료|합의됨|확인됨|연결됨/.test(t)
-        ? "bg-[#eaf7f0] text-[#3a9271]"
-        : "bg-[#edf3ff] text-[#4779cd]"
-// raw: 받은 문구를 그대로(수리 상세 세 줄처럼 원래 쉬운 말 바꾸기 없이 보이던 곳)
+// 작은 상태 꼬리표(수리 줄 · 수리 상세 세 줄). 색 규칙은 Status와 같고 크기만 작게.
+// raw: 받은 문구를 그대로(쉬운 말 바꾸기 없이). tone: 오래 멈춤처럼 글만으로 알 수 없는 상태를 부르는 쪽이 정해요.
 export function StatusTag({
   children,
   className,
   raw,
+  tone,
 }: {
   children: string
   className?: string
   raw?: boolean
+  tone?: StatusTone
 }) {
+  const toneOf = tone ?? statusTone(children)
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-[5px] px-1.5 py-0.5 text-[13px] leading-[1.5] font-semibold whitespace-nowrap",
-        tagTone(children),
+        "status px-1.5 py-0.5 text-[13px] leading-[1.5] whitespace-nowrap",
+        toneOf,
         className,
       )}
     >
-      {raw ? children : plainText(children)}
+      {dropCheck(raw ? children : statusText(children), toneOf)}
     </span>
   )
 }
 
-// '내 차례 · ○○' 주황 배지(수리 줄 · 수리 상세 제목 옆)
+// '내 차례 · ○○' 주황 꼬리표(수리 줄 · 수리 상세 제목 옆). 주황은 이 뜻에만 써요.
 export function TurnBadge({
   children,
   className,
@@ -216,7 +66,7 @@ export function TurnBadge({
   return (
     <span
       className={cn(
-        "inline-flex h-[22px] items-center gap-1 self-start rounded-full bg-turn-soft px-[9px] text-xs leading-none font-bold whitespace-nowrap text-turn-ink before:size-1.5 before:rounded-full before:bg-turn before:content-['']",
+        "inline-flex h-[22px] items-center gap-1.5 self-start rounded-full bg-turn-soft px-[9px] text-xs leading-none font-bold whitespace-nowrap text-turn-ink before:size-1.5 before:rounded-full before:bg-turn before:content-['']",
         className,
       )}
     >
@@ -224,6 +74,209 @@ export function TurnBadge({
     </span>
   )
 }
+
+// 작은 점(꼬리표가 아닌 한 줄 글 앞에 붙여요)
+function ToneDot({ tone }: { tone: StatusTone }) {
+  if (tone === "done") return null
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "size-2 flex-none rounded-full",
+        tone === "turn" && "bg-turn",
+        tone === "wait" && "border-[1.5px] border-wait bg-wait-soft",
+        tone === "stale" && "border-[1.5px] border-dashed border-stale",
+        tone === "progress" && "border-[1.5px] border-brand",
+      )}
+    />
+  )
+}
+
+// 하자 응답의 짧은 말(회색 줄용)
+const ackWord = (ack: Repair["ack"]) =>
+  (
+    ({
+      "확인 대기": "답 기다림",
+      "보충 요청": "보충 요청됨",
+      이견: "이견",
+      "상대 미확인": "확인 없음",
+    }) as Record<string, string>
+  )[ack] ?? ack
+const moneyDone = (r: Repair) =>
+  moneyLabel(r) === "합의됨" || moneyLabel(r) === "비용 없음"
+
+// 수리 건 한 줄(시안 B2): 왼쪽에 구역과 확인 표시, 가운데에 제목 + 색 꼬리표 하나 + 회색 한 줄, 오른쪽 화살표.
+// 색 꼬리표는 지금 핵심 하나만: 내 차례 > (부르는 쪽이 준) 오래 멈춤 > 수리비 남음(수리 끝) > 수리 상태.
+// 나머지(하자·수리·수리비)는 회색 줄로 낮추고 끝난 단계는 ✓만 붙여요(08 1장 세 줄은 글로 모두 남아요).
+// 홈에서 바로 누르는 버튼은 홈 API가 줄마다 누를 수 있는 행동을 주면 켜요(지금은 화살표만, 08 0장 원칙 6).
+export function RepairListItem({
+  r,
+  onOpen,
+  extra,
+  thumb,
+  role,
+  stale,
+  action,
+}: {
+  r: Repair
+  onOpen: () => void
+  extra?: ReactNode
+  thumb?: ReactNode
+  role?: Role
+  // 오래 멈춘 건이면 그 글(예: "고치는 중 · 18일째 새 기록 없음")
+  stale?: string
+  // 줄 오른쪽 버튼(진행 상황 묻기 등). 있으면 화살표 대신 둬요
+  action?: ReactNode
+}) {
+  const turn = role ? myTurn(r, role) : undefined
+  // 상대의 답을 기다리는 요청(서버 목록 waiting, 06 4-6). 목업은 없음
+  const waits = role ? theirWaits(r, role) : []
+  const done = r.status === "처리 완료"
+  const money = `수리비 ${statusText(moneyLabel(r))}`
+  const repair = repairWord(r.status)
+  const lead: {
+    tone: StatusTone
+    text: string
+    part: "repair" | "money" | ""
+  } = turn
+    ? { tone: "turn", text: `내 차례 · ${statusText(turn)}`, part: "" }
+    : waits.length
+      ? { tone: "wait", text: waits[0], part: "" }
+      : stale
+        ? { tone: "stale", text: stale, part: "" }
+        : done && !moneyDone(r)
+          ? { tone: "wait", text: money, part: "money" }
+          : {
+              tone: done ? "done" : "progress",
+              text: repair,
+              part: "repair",
+            }
+  const area = r.zone.split(" · ")[0] || r.zone
+  // 사진이 있는 줄은 왼쪽 구역 칸 대신 사진이 오니 구역을 회색 줄 앞에 써요
+  const rest = [
+    thumb ? area : undefined,
+    // 꼬리표에 못 담은 나머지 기다림(내 차례가 꼬리표면 전부)
+    ...waits.slice(turn ? 0 : 1),
+    r.ack === "확인됨" ? "✓ 하자 확인" : `하자 ${ackWord(r.ack)}`,
+    lead.part === "repair" ? undefined : done ? "✓ 수리 끝" : repair,
+    lead.part === "money" ? undefined : moneyDone(r) ? "✓ 수리비 정함" : money,
+  ]
+    .filter(Boolean)
+    .join(" · ")
+  const label = `${lead.text}. ${r.title}. ${r.zone}. ${rest}`
+  const body = (
+    <>
+      {thumb ? null : (
+        <span className="flex w-12 flex-none flex-col items-start gap-1.5">
+          <span
+            className={cn(
+              "text-[13px] font-extrabold",
+              turn ? "text-turn-ink" : "text-sub",
+            )}
+          >
+            {area}
+          </span>
+          {r.ack === "확인됨" && <Stamp seed={r.id} size={38} />}
+        </span>
+      )}
+      <span className="flex min-w-0 flex-1 flex-col gap-1.5">
+        <strong className="text-base leading-snug font-bold text-ink [overflow-wrap:anywhere]">
+          {r.title}
+        </strong>
+        <StatusTag raw tone={lead.tone} className="self-start font-bold">
+          {lead.text}
+        </StatusTag>
+        <small className="text-[13px] text-hint">{rest}</small>
+        {extra && <span className="mt-1 flex flex-wrap gap-1">{extra}</span>}
+      </span>
+    </>
+  )
+  // 카드는 모두 흰 바탕, 내 차례만 주황 테두리
+  const shell = cn(
+    "flex w-full items-center gap-3 rounded-[12px] bg-white px-3 py-3.5 text-left",
+    turn
+      ? "shadow-[inset_0_0_0_1.5px_var(--color-turn-line)]"
+      : "shadow-[inset_0_0_0_1px_var(--color-line)]",
+  )
+  const focus =
+    "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+  const chevron = (
+    <ChevronRight
+      size={18}
+      className={cn("flex-none text-faint", thumb && "max-md:hidden")}
+      aria-hidden
+    />
+  )
+  if (!thumb && !action)
+    return (
+      <button
+        type="button"
+        className={cn(shell, focus, "hover:brightness-[0.985]")}
+        onClick={onOpen}
+        aria-label={label}
+      >
+        {body}
+        {chevron}
+      </button>
+    )
+  return (
+    <div className={shell}>
+      {thumb && (
+        // !: 사진 갤러리의 옛 CSS(.gallery-compact 크기)보다 앞서게. 갤러리를 Tailwind로 옮기면 ! 를 지워요
+        <div className="relative size-16 flex-none overflow-visible max-md:size-14 [&>*:first-child]:size-full! [&>*:first-child]:overflow-hidden [&>*:first-child]:rounded-[10px]">
+          {thumb}
+          {r.ack === "확인됨" && (
+            <Stamp
+              seed={r.id}
+              size={30}
+              className="absolute -right-2 -bottom-2 bg-white/85"
+            />
+          )}
+        </div>
+      )}
+      <button
+        type="button"
+        className={cn(
+          "flex min-w-0 flex-1 items-center gap-3 rounded-[10px] py-0.5 text-left",
+          focus,
+        )}
+        onClick={onOpen}
+        aria-label={label}
+      >
+        {body}
+        {!action && chevron}
+      </button>
+      {action && <div className="flex-none">{action}</div>}
+    </div>
+  )
+}
+
+// 홈 묶음 제목(카드 테두리 없이 제목 + 오른쪽 링크)
+function Group({
+  title,
+  action,
+  children,
+  id,
+}: {
+  title: string
+  action?: ReactNode
+  children: ReactNode
+  id: string
+}) {
+  return (
+    <section aria-labelledby={id} className="flex min-w-0 flex-col gap-2">
+      <div className="flex items-baseline justify-between gap-3">
+        <h2 id={id} className="m-0 text-base font-extrabold text-ink">
+          {title}
+        </h2>
+        {action}
+      </div>
+      {children}
+    </section>
+  )
+}
+const linkBtn =
+  "h-auto p-0 text-[13px] font-bold text-brand hover:text-brand-ink"
 
 export interface HomeDashboardProps {
   role: Role
@@ -246,160 +299,152 @@ export interface HomeDashboardProps {
   moneyNotice: (r: Repair) => ReactNode
   thumb?: (r: Repair) => ReactNode
 }
-// 홈(S-03): 내가 답할 것 → 핵심 2칸 요약 → 최근 하자·수리 + 지금 보는 호실(중복 카드·긴 이력 제거)
+
+// 홈(S-03, 시안 B): 내가 답할 일 → 집 평면도 → 오래 멈춘 수리 · 수리비 정리 · 최근 수리 → 지금 보는 호실.
+// 휴대폰에서는 답할 일이 반드시 맨 위(08 12장). PC에서는 평면도와 호실을 오른쪽 칸에 둬요.
 export function HomeDashboard(p: HomeDashboardProps) {
   const { role, room, rooms, repairs, events, notices, moneyLeft } = p
   const toAnswer = notices.filter((n) => !n.read)
   const stale = repairs.filter((r) => staleReason(r, events))
-  const open = repairs.filter((r) => r.status !== "처리 완료")
-  // '내가 답할 것'은 맨 위 강조 카드에 이미 있으므로 요약 칸에는 수리·돈 2개만 둬요
-  const stats = [
-    {
-      label: "진행 중인 수리",
-      value: open.length,
-      icon: Wrench,
-      go: "repairs" as Page,
-    },
-    {
-      label: "돈이 남은 건",
-      value: moneyLeft.length,
-      icon: Wallet,
-      go: "money" as Page,
-    },
-  ]
-  const list = "flex flex-col gap-2"
+  const moneyIds = new Set(moneyLeft.map((r) => r.id))
+  const staleIds = new Set(stale.map((r) => r.id))
+  const recent = repairs
+    .filter((r) => !staleIds.has(r.id) && !moneyIds.has(r.id))
+    .slice(0, 4)
+  const staleText = (r: Repair) =>
+    `${daysSince(lastActivity(r, events))}일째 새 기록 없음`
+  // 평면도 점은 세 가지만: 내가 할 일 · 진행 중(오래 멈춤·수리비 남음 포함) · 끝남(수리 끝 + 수리비 정리 끝)
+  const spots: PlanSpot[] = repairs.map((r) => ({
+    area: planArea(r.zone),
+    tone: myTurn(r, role)
+      ? "turn"
+      : r.status === "처리 완료" && !moneyIds.has(r.id)
+        ? "done"
+        : "progress",
+  }))
+  // 평면도와 호실 카드는 휴대폰(본문 순서 안)과 PC(오른쪽 칸)에 따로 그려요. 한쪽은 늘 숨겨져 있어요
+  const planSection = (key: string, className: string) =>
+    rooms.length > 0 && (
+      <section
+        aria-labelledby={`home-plan-${key}`}
+        className={cn("flex min-w-0 flex-col gap-2.5", className)}
+      >
+        <h2
+          id={`home-plan-${key}`}
+          className="m-0 text-base font-extrabold text-ink"
+        >
+          {room.name}에서 손볼 곳
+        </h2>
+        <HousePlan spots={spots} title={room.name} />
+      </section>
+    )
+  const roomSection = (key: string, className: string) => (
+    <RoomSection p={p} id={`home-room-${key}`} className={className} />
+  )
   return (
-    <div className="flex flex-col gap-4">
-      {/* 확인할 일은 휴대폰에서 반드시 맨 위(화면 기본 틀 12장) */}
-      <Section
-        warm
-        title="내가 답할 것"
-        icon={
-          <span
-            className="inline-block size-2 rounded-full bg-turn"
-            aria-hidden
-          />
-        }
-        action={
-          toAnswer.length > 0 ? (
-            <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-turn px-2 text-sm font-bold text-white tabular-nums">
+    <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[minmax(0,1.4fr)_minmax(320px,1fr)]">
+      <div className="flex min-w-0 flex-col gap-5">
+        {/* 내가 답할 일: 주황 = 내 차례 */}
+        <section
+          aria-labelledby="home-answer"
+          className="flex min-w-0 flex-col gap-3 rounded-[14px] bg-white p-4 shadow-[inset_0_0_0_1.5px_var(--color-turn)]"
+        >
+          <div className="flex items-center gap-2.5">
+            <span
+              className={cn(
+                "inline-grid h-[34px] min-w-[34px] place-items-center rounded-full px-2 text-[17px] font-extrabold tabular-nums",
+                toAnswer.length ? "bg-turn text-white" : "bg-tag text-sub",
+              )}
+            >
               {toAnswer.length}
             </span>
-          ) : undefined
-        }
-      >
-        {toAnswer.length ? (
-          <div className={list}>
-            {toAnswer.slice(0, 5).map((n) => (
-              <button
-                type="button"
-                key={n.id}
-                className={cn(row, rowPlain)}
-                onClick={() => p.onOpenNotice(n)}
-              >
-                <span
-                  className={cn(rowIcon, "bg-warn-soft text-warn-ink")}
-                  aria-hidden
-                >
-                  <Handshake size={18} />
-                </span>
-                <span className={rowMain}>
-                  <strong>{n.title}</strong>
-                  <small>
-                    {rooms.find((r) => r.id === n.roomId)?.name ?? ""} · 답을
-                    기다려요
-                  </small>
-                </span>
-                <ChevronRight size={18} className={chevron} aria-hidden />
-              </button>
-            ))}
-            {toAnswer.length > 5 && (
-              <Button variant="link" onClick={() => p.onGo("notifications")}>
-                전체 {toAnswer.length}건 보기
-              </Button>
-            )}
+            <h2
+              id="home-answer"
+              className="m-0 text-lg font-extrabold text-ink"
+            >
+              내가 답할 일
+            </h2>
           </div>
-        ) : (
-          <p className="rounded-[12px] bg-white/75 px-3.5 py-2.5 text-sm text-sub">
-            지금 답할 일이 없어요. 상대가 확인을 요청하면 여기에 먼저 떠요.
-          </p>
-        )}
-      </Section>
-      {/* 핵심 요약 2칸 */}
-      <div className="grid grid-cols-2 gap-2.5">
-        {stats.map((s) => (
-          <button
-            type="button"
-            key={s.label}
-            className="flex min-w-0 items-center gap-3 rounded-[16px] border border-line bg-white p-3.5 text-left hover:border-line-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand md:p-4"
-            onClick={() => p.onGo(s.go)}
-          >
-            <span
-              className="grid size-9 flex-none place-items-center rounded-[10px] bg-brand-soft text-brand md:size-10"
-              aria-hidden
-            >
-              <s.icon size={18} />
-            </span>
-            <span className="min-w-0 flex-1">
-              <small className="block truncate text-[13px] text-sub">
-                {s.label}
-              </small>
-              <strong className="block text-[22px] leading-tight font-extrabold text-ink tabular-nums md:text-[26px]">
-                {s.value}
-                <span className="ml-0.5 text-sm font-semibold text-sub">
-                  건
-                </span>
-              </strong>
-            </span>
-            <ChevronRight
-              size={16}
-              className="flex-none text-faint max-sm:hidden"
-              aria-hidden
-            />
-          </button>
-        ))}
-      </div>
-      {/* PC: 2단(좌: 하자·수리 / 우: 지금 보는 호실) · 모바일: 1단 */}
-      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(300px,1fr)]">
-        <div className="flex min-w-0 flex-col gap-4">
+          {toAnswer.length ? (
+            <div className="flex flex-col gap-2">
+              {toAnswer.slice(0, 5).map((n) => (
+                <button
+                  type="button"
+                  key={n.id}
+                  className="flex min-h-14 w-full items-center gap-3 rounded-[12px] bg-white p-3 text-left shadow-[inset_0_0_0_1px_var(--color-turn-line)] hover:bg-turn-bg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+                  onClick={() => p.onOpenNotice(n)}
+                >
+                  <ToneDot tone="turn" />
+                  <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <strong className="text-[15px] font-bold text-ink [overflow-wrap:anywhere]">
+                      {n.title}
+                    </strong>
+                    <small className="text-[13px] text-sub">
+                      {rooms.find((r) => r.id === n.roomId)?.name ?? ""} · 내
+                      답을 기다려요
+                    </small>
+                  </span>
+                  <ChevronRight
+                    size={18}
+                    className="flex-none text-faint"
+                    aria-hidden
+                  />
+                </button>
+              ))}
+              {toAnswer.length > 5 && (
+                <Button
+                  variant="link"
+                  className={linkBtn}
+                  onClick={() => p.onGo("notifications")}
+                >
+                  {toAnswer.length}건 모두 보기
+                </Button>
+              )}
+            </div>
+          ) : (
+            <p className="m-0 text-sm text-sub">
+              지금 답할 일이 없어요. 상대가 확인을 요청하면 여기에 먼저 떠요.
+            </p>
+          )}
+        </section>
+
+        {/* 휴대폰: 답할 일 바로 아래에 평면도 */}
+        {planSection("m", "lg:hidden")}
+
+        {/* 수리 묶음 */}
+        <div className="flex min-w-0 flex-col gap-5">
           {stale.length > 0 && (
-            <Section
-              title="오래 멈춘 건"
-              icon={<Clock size={18} aria-hidden />}
-              description="14일 넘게 움직임이 없는 수리 건이에요."
-            >
-              <div className={list}>
+            <Group id="home-stale" title="오래 멈춘 수리">
+              <div className="flex flex-col gap-2">
                 {stale.map((r) => (
                   <RepairListItem
                     key={r.id}
                     r={r}
                     role={role}
+                    stale={staleText(r)}
                     onOpen={() => p.onOpenRepair(r.id)}
-                    extra={
-                      <Status>{`${staleReason(r, events)} · ${daysSince(lastActivity(r, events))}일째`}</Status>
-                    }
                   />
                 ))}
               </div>
-            </Section>
+            </Group>
           )}
           {moneyLeft.length > 0 && (
-            <Section
-              title="고쳤지만 돈이 남은 건"
-              icon={<Wallet size={18} aria-hidden />}
+            <Group
+              id="home-money"
+              title="수리비 정리가 남은 수리"
               action={
-                <Button variant="link" onClick={() => p.onGo("money")}>
-                  비용 보기
-                  <ChevronRight />
+                <Button
+                  variant="link"
+                  className={linkBtn}
+                  onClick={() => p.onGo("money")}
+                >
+                  수리비 보기
                 </Button>
               }
             >
-              <div className={list}>
+              <div className="flex flex-col gap-2">
                 {moneyLeft.slice(0, 3).map((r) => (
-                  <div
-                    key={r.id}
-                    className="flex flex-col gap-2 rounded-[16px] bg-soft p-2"
-                  >
+                  <div key={r.id} className="flex flex-col gap-2">
                     <RepairListItem
                       r={r}
                       role={role}
@@ -409,104 +454,134 @@ export function HomeDashboard(p: HomeDashboardProps) {
                   </div>
                 ))}
               </div>
-            </Section>
+            </Group>
           )}
-          <Section
-            title="최근 하자 · 수리"
+          <Group
+            id="home-recent"
+            title="최근 수리"
             action={
-              <Button variant="link" onClick={() => p.onGo("repairs")}>
-                전체 보기
-                <ChevronRight />
-              </Button>
+              repairs.length > 0 && (
+                <Button
+                  variant="link"
+                  className={linkBtn}
+                  onClick={() => p.onGo("repairs")}
+                >
+                  {repairs.length}건 모두 보기
+                </Button>
+              )
             }
           >
             {repairs.length ? (
-              <div className={list}>
-                {repairs.slice(0, 4).map((r) => (
-                  <RepairListItem
-                    key={r.id}
-                    r={r}
-                    role={role}
-                    thumb={p.thumb?.(r)}
-                    onOpen={() => p.onOpenRepair(r.id)}
-                  />
-                ))}
-              </div>
+              recent.length ? (
+                <div className="flex flex-col gap-2">
+                  {recent.map((r) => (
+                    <RepairListItem
+                      key={r.id}
+                      r={r}
+                      role={role}
+                      thumb={p.thumb?.(r)}
+                      onOpen={() => p.onOpenRepair(r.id)}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <p className="m-0 text-sm text-sub">
+                  남은 수리는 모두 위에 있어요.
+                </p>
+              )
             ) : (
               <EmptyState
                 title="아직 남긴 하자 기록이 없어요"
                 description="고장이나 하자를 사진과 함께 남겨 두면 상대와 같은 기록을 볼 수 있어요."
               />
             )}
-          </Section>
+          </Group>
         </div>
-        <div className="flex min-w-0 flex-col gap-4">
-          {!rooms.length ? (
-            <Section title="내 호실">
-              <EmptyState
-                title="첫 호실 기록을 만들어 보세요"
-                action={
-                  <Button onClick={p.onNewRoom}>
-                    <Plus />
-                    호실 기록 만들기
-                  </Button>
-                }
-              />
-            </Section>
-          ) : (
-            <Section
-              title="지금 보는 호실"
-              action={
-                <Button variant="link" onClick={() => p.onGo("rooms")}>
-                  {rooms.length > 1 ? `전체 ${rooms.length}곳` : "관리"}
-                  <ChevronRight />
-                </Button>
-              }
-            >
-              <button
-                type="button"
-                className={cn(row, rowCurrent)}
+
+        {/* 휴대폰: 맨 아래에 지금 보는 호실 */}
+        {roomSection("m", "lg:hidden")}
+      </div>
+
+      {/* PC: 오른쪽 칸에 평면도와 호실 */}
+      <aside className="hidden min-w-0 flex-col gap-5 lg:flex">
+        {planSection("d", "")}
+        {roomSection("d", "")}
+      </aside>
+    </div>
+  )
+}
+
+function RoomSection({
+  p,
+  id,
+  className,
+}: {
+  p: HomeDashboardProps
+  id: string
+  className: string
+}) {
+  const { room, rooms } = p
+  return (
+    <section
+      aria-labelledby={id}
+      className={cn(
+        "flex min-w-0 flex-col gap-2 rounded-[14px] bg-white p-4",
+        className,
+      )}
+    >
+      {!rooms.length ? (
+        <EmptyState
+          title="첫 호실 기록을 만들어 보세요"
+          action={
+            <Button onClick={p.onNewRoom}>
+              <Plus />
+              호실 기록 만들기
+            </Button>
+          }
+        />
+      ) : (
+        <>
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 id={id} className="m-0 text-[15px] font-extrabold text-ink">
+              {room.name}
+            </h2>
+            {rooms.length > 1 && (
+              <Button
+                variant="link"
+                className={linkBtn}
                 onClick={() => p.onGo("rooms")}
               >
-                <span
-                  className={cn(rowIcon, "bg-brand-soft text-brand")}
-                  aria-hidden
-                >
-                  <Building2 size={20} />
-                </span>
-                <span className={rowMain}>
-                  <strong>{room.name}</strong>
-                  <small>{room.address}</small>
-                  <span className="badges mt-1">
-                    <Status>{room.status}</Status>
-                    <Status>{connectionText(room)}</Status>
-                  </span>
-                  <span className="mt-1 flex items-center gap-1.5 text-sm font-semibold text-brand">
-                    <ArrowRight size={14} aria-hidden />
-                    {p.nextStep(room)}
-                  </span>
-                </span>
-              </button>
-              <div className="mt-3 flex gap-2">
-                <Button
-                  variant="outline"
-                  className="flex-1"
-                  onClick={() => p.onGo("inspection")}
-                >
-                  점검 · 정산
-                </Button>
-                <Button
-                  variant="outline"
-                  className="flex-1"
-                  onClick={() => p.onGo("connection")}
-                >
-                  상대 연결
-                </Button>
-              </div>
-            </Section>
+                다른 호실 {rooms.length - 1}곳
+              </Button>
+            )}
+          </div>
+          {room.address && (
+            <p className="m-0 text-[13px] text-sub">{room.address}</p>
           )}
-        </div>
-      </div>
-    </div>
+          <p className="m-0 text-[13px] text-sub">
+            {statusText(room.status)} · {statusText(connectionText(room))}
+          </p>
+          <p className="m-0 text-sm font-bold text-brand">
+            다음 할 일: {p.nextStep(room)}
+          </p>
+          <div className="mt-1 flex gap-2">
+            <Button
+              variant="outline"
+              className="h-11 flex-1"
+              onClick={() => p.onGo("inspection")}
+            >
+              점검 · 정산
+            </Button>
+            <Button
+              variant="outline"
+              className="h-11 flex-1"
+              onClick={() => p.onGo("connection")}
+            >
+              함께 보는 사람
+            </Button>
+          </div>
+        </>
+      )}
+    </section>
   )
 }

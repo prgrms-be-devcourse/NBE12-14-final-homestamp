@@ -16,19 +16,21 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Fold } from "@/components/common/fold"
 import { type Event, type Repair, type Role, type Room } from "@/data/demo"
 import { StatusTag, TurnBadge } from "@/components/common/home-dashboard"
+import { Stamp } from "@/components/common/stamp"
 import { repairSummary } from "@/features/repair/repair-summary"
 import { cn } from "cn"
 import { myTurn } from "@/lib/turn"
 import { ackText, sideName } from "@/lib/words"
-import { plainText } from "@/lib/plain-words"
+import { repairWord, statusText, type StatusTone } from "@/lib/plain-words"
 
-// 하자 줄의 색(문구는 공통 ackText, 08-화면-기본-틀 1장)
-const ackTone: Record<Repair["ack"], string> = {
-  확인됨: "green",
-  "확인 대기": "amber",
-  "보충 요청": "amber",
-  이견: "rose",
-  "상대 미확인": "rose",
+// 하자 줄의 상태 표시(문구는 공통 ackText, 08-화면-기본-틀 1장). 기다림·보충 요청은 노랑(아직 안 끝남),
+// 이견·확인 없음은 색 없이 글로만 보여요
+const ackTone: Record<Repair["ack"], StatusTone> = {
+  확인됨: "done",
+  "확인 대기": "wait",
+  "보충 요청": "wait",
+  이견: "progress",
+  "상대 미확인": "progress",
 }
 const REPAIR_STEPS: Repair["status"][] = [
   "확인 전",
@@ -36,23 +38,24 @@ const REPAIR_STEPS: Repair["status"][] = [
   "처리 중",
   "처리 완료",
 ]
-const moneyTone = (r: Repair) => {
+// 진행 단계의 화면 말(서버 값은 그대로)
+const STEP_WORD: Record<Repair["status"], string> = {
+  "확인 전": "하자 확인 전",
+  "확인 완료": "하자 확인",
+  "처리 중": "고치는 중",
+  "처리 완료": "수리 끝",
+}
+const moneyTone = (r: Repair): StatusTone => {
   const m = r.proposal?.status || "미정"
+  // 정하기 전·답 기다림은 노랑, 이견은 색 없이
   return m === "합의됨" || m === "비용 없음"
-    ? "green"
+    ? "done"
     : m === "이견"
-      ? "rose"
-      : "amber"
+      ? "progress"
+      : "wait"
 }
-const statusTone = (s: Repair["status"]) =>
-  s === "처리 완료" ? "green" : s === "처리 중" ? "blue" : "amber"
-// 상태 색(기존 Status 색과 같아요)
-const ackTag: Record<string, string> = {
-  green: "bg-[#eaf7f0] text-[#3a9271]",
-  amber: "bg-[#fff6e4] text-[#bc9146]",
-  rose: "bg-[#fff0ed] text-[#cc7869]",
-  blue: "bg-[#edf3ff] text-[#4779cd]",
-}
+const repairTone = (s: Repair["status"]): StatusTone =>
+  s === "처리 완료" ? "done" : "progress"
 
 // 수리 상태 한 줄 요약과 다음 할 일(수리 상태와 돈 상태는 따로 보여 줘요)
 
@@ -72,6 +75,8 @@ export interface RepairDetailProps {
   money?: ReactNode
   payments?: ReactNode
   causes?: ReactNode
+  // 진행 상황(REP-6, 08 5-2). 원인 설명 다음, 경과 앞(06 S-12 상세 영역 순서)
+  progress?: ReactNode
   sameZone?: ReactNode
   notices?: ReactNode
   extra?: ReactNode
@@ -90,7 +95,7 @@ const turnCard = (turn?: string) =>
       ? "payments"
       : undefined
 const card =
-  "min-w-0 gap-3.5 rounded-[18px] border border-line bg-white py-5 shadow-[0_1px_2px_#1720330a] ring-0"
+  "min-w-0 gap-3.5 rounded-[18px] border border-line bg-white py-5 shadow-[0_1px_2px_#1f2a330a] ring-0"
 const menuItem =
   "flex min-h-12 w-full items-center gap-2.5 border-t border-line px-4 text-left text-[15px] text-ink first:border-t-0 hover:bg-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand"
 
@@ -164,7 +169,7 @@ export function RepairDetail(p: RepairDetailProps) {
       </div>
     ) : null
   const row = "flex items-start gap-3 py-2.5 first:pt-0 last:pb-0"
-  const rowLabel = "w-8 flex-none pt-0.5 text-[13px] font-bold text-sub"
+  const rowLabel = "w-11 flex-none pt-0.5 text-[13px] font-bold text-sub"
   return (
     <div className="flex flex-col gap-4">
       {!p.isGuest && (
@@ -206,7 +211,7 @@ export function RepairDetail(p: RepairDetailProps) {
         </div>
         {more && (
           <div
-            className="absolute top-full right-0 z-20 mt-2 flex w-72 max-w-[calc(100vw-36px)] flex-col overflow-hidden rounded-[12px] border border-line bg-white shadow-[0_8px_24px_#17203314]"
+            className="absolute top-full right-0 z-20 mt-2 flex w-72 max-w-[calc(100vw-36px)] flex-col overflow-hidden rounded-[12px] border border-line bg-white shadow-[0_8px_24px_#1f2a3314]"
             role="menu"
           >
             {extra.map((it) => (
@@ -297,34 +302,35 @@ export function RepairDetail(p: RepairDetailProps) {
       {/* 하자 / 수리 / 돈 세 줄(서로 막지 않고 따로 움직여요). 상태 문구는 기존 그대로 */}
       <section
         aria-label="상태 요약"
-        className="divide-y divide-line rounded-[18px] border border-line bg-white px-4 py-3.5 shadow-[0_1px_2px_#1720330a] md:px-5"
+        className="divide-y divide-line rounded-[18px] border border-line bg-white px-4 py-3.5 shadow-[0_1px_2px_#1f2a330a] md:px-5"
       >
         <div className={row}>
           <span className={rowLabel}>하자</span>
           <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
-            <StatusTag raw className={ackTag[ackTone[r.ack]]}>
+            <StatusTag raw tone={ackTone[r.ack]}>
               {r.ack === "상대 미확인"
                 ? `${ackText(r.ack)} · 72시간 동안 답이 오지 않았어요`
                 : ackText(r.ack)}
             </StatusTag>
           </div>
+          {r.ack === "확인됨" && <Stamp seed={r.id} size={36} />}
         </div>
         <div className={row}>
           <span className={rowLabel}>수리</span>
           <div className="flex min-w-0 flex-1 flex-col gap-2">
             <div className="flex flex-wrap items-center gap-1.5">
-              <StatusTag raw className={ackTag[statusTone(r.status)]}>
-                {r.status}
+              <StatusTag raw tone={repairTone(r.status)}>
+                {repairWord(r.status)}
               </StatusTag>
               {r.startFlag && (
-                <StatusTag raw className={ackTag.amber}>
+                <StatusTag raw tone="progress">
                   {r.startFlag}
                 </StatusTag>
               )}
             </div>
             <ol
               className="m-0 flex list-none gap-1 p-0"
-              aria-label={`수리 진행 단계 · ${r.status}`}
+              aria-label={`수리 진행 단계 · ${STEP_WORD[r.status]}`}
             >
               {REPAIR_STEPS.map((x, i) => (
                 <li key={x} className="flex min-w-0 flex-1 flex-col gap-1">
@@ -345,7 +351,7 @@ export function RepairDetail(p: RepairDetailProps) {
                           : "text-faint",
                     )}
                   >
-                    {x}
+                    {STEP_WORD[x]}
                   </span>
                 </li>
               ))}
@@ -354,10 +360,10 @@ export function RepairDetail(p: RepairDetailProps) {
         </div>
         {!p.isGuest && (
           <div className={row}>
-            <span className={rowLabel}>돈</span>
+            <span className={rowLabel}>수리비</span>
             <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
-              <StatusTag raw className={ackTag[moneyTone(r)]}>
-                {plainText(r.proposal?.status || "미정")}
+              <StatusTag raw tone={moneyTone(r)}>
+                {statusText(r.proposal?.status || "미정")}
               </StatusTag>
               <small className="text-[13px] text-sub">
                 수리 진행과 따로 정해져요
@@ -405,7 +411,7 @@ export function RepairDetail(p: RepairDetailProps) {
               title="경과"
               count={events.length}
               icon={<History size={16} />}
-              className="mt-0 rounded-[18px] shadow-[0_1px_2px_#1720330a]"
+              className="mt-0 rounded-[18px] shadow-[0_1px_2px_#1f2a330a]"
             >
               {p.timeline}
             </Fold>
@@ -416,6 +422,7 @@ export function RepairDetail(p: RepairDetailProps) {
           {side("money", p.money, "max-lg:order-3")}
           {side("payments", p.payments, "max-lg:order-4")}
           {side("causes", p.causes, "max-lg:order-5")}
+          {side("progress", p.progress, "max-lg:order-5")}
           {side("extra", p.extra, "max-lg:order-6")}
         </div>
       </div>

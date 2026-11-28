@@ -1,4 +1,5 @@
 import { formatWon } from "@/lib/money"
+import { PART_TEMPLATES, type RoomPart } from "@/lib/room-parts"
 export type Role = "임차인" | "임대인"
 // 하자 인정(GLOSSARY): 확인 기다림 / 맞아요 / 보충 요청됨(보류) / 이견 / 확인 없음
 export type Ack = "상대 미확인" | "확인 대기" | "확인됨" | "보충 요청" | "이견"
@@ -56,6 +57,26 @@ export interface CauseClaim {
   supersededBy?: string
   supersedes?: string
   // 서버가 이 설명에 지금 응답할 수 있다고 했는지(06 4-6 causeNotes[].canRespond). 목업은 비워 둬요
+  canRespond?: boolean
+}
+// 진행 상황(REP-6, 08 5-2). 원래 하자 기록은 그대로 두고 지금 상황을 더해요. 고칠 수 없어요
+export interface ProgressNote {
+  id: string
+  by: Role
+  text: string
+  // [상황이 바뀌었어요]를 켜서 상대에게 확인을 요청했는지(REP-6d)
+  asksCheck: boolean
+  at: string
+  // 진행 상황 사진(단계 PROGRESS). 화면은 썸네일 주소나 정해진 표시예요
+  photos: string[]
+  // 상대의 지금 답. [상황이 바뀌었어요]가 아니거나 답 전이면 없어요
+  response?: {
+    by: Role
+    answer: "맞아요" | "보류" | "이견"
+    reason: string
+    at: string
+  }
+  // 보는 사람이 지금 답할 수 있는지(서버 canRespond)
   canRespond?: boolean
 }
 export interface AfterRecord {
@@ -120,6 +141,8 @@ export interface FactCorrection<T = string | number> {
   // 요청할 때의 기록 모습 번호, 반영될 때 이전 내용에 달려 있던 이견(이력 보존)
   baseVersion?: number
   priorDispute?: string
+  // 부위 고치기면 새 부위의 roomPartId(to는 화면 글자 "구역 · 부위")
+  toPartId?: string
   photosFrom?: string[]
   photosTo?: string[]
   decidedBy?: Role
@@ -231,6 +254,8 @@ export interface Repair {
   roomId: string
   title: string
   zone: string
+  // 호실 부위 ID(06 4-3 roomPartId). zone은 그 부위의 화면 글자("구역 · 부위")예요. 이전 기록은 없을 수 있어요
+  roomPartId?: string
   description: string
   status: RepairStatus
   ack: Ack
@@ -241,6 +266,9 @@ export interface Repair {
   proposal?: Proposal
   proposalHistory?: Proposal[]
   causes?: CauseClaim[]
+  progressNotes?: ProgressNote[]
+  // 마지막으로 진행 상황을 물은 시각(목업만, 7일에 한 번)
+  progressAskedAt?: string
   afterRecords?: AfterRecord[]
   closeBy?: Role
   soloClosed?: Role
@@ -276,6 +304,8 @@ export interface Inspection {
   kind: "in" | "out"
   title: string
   zone: string
+  // 호실 부위 ID(06 4-3 roomPartId). zone은 그 부위의 화면 글자("구역 · 부위")예요. 이전 기록은 없을 수 있어요
+  roomPartId?: string
   description: string
   photos: string[]
   ack: Ack
@@ -300,6 +330,14 @@ export interface Inspection {
   // 마지막 [보충하고 다시 확인 요청] 시각(ISO, 한 항목에 7일에 한 번)과 보충 이력
   reaskedAt?: string
   supplements?: { text: string; photos: number; at: string }[]
+  // HTTP: 서버가 준 항목 값(06 4-7 GET /api/inspections/{id}의 items). 목업에는 없어요.
+  server?: InspectionItemServerState
+}
+export interface InspectionItemServerState {
+  // 이 항목에 지금 누를 수 있는 행동(respond·supplement)
+  availableActions: string[]
+  // "잠긴 뒤 추가"(INSP-1e)
+  addedAfterLock: boolean
 }
 // ERD photo.inspection_id + room_part_id + MOVE_IN/MOVE_OUT에 대응하는 목업.
 // 하자 항목과 달리 확인 상태를 갖지 않습니다. zone은 기존 화면의 부위 키입니다.
@@ -309,6 +347,8 @@ export interface PartPhoto {
   roomId: string
   kind: "in" | "out"
   zone: string
+  // 호실 부위 ID(06 4-3 roomPartId). zone은 그 부위의 화면 글자("구역 · 부위")예요. 이전 기록은 없을 수 있어요
+  roomPartId?: string
   title: string
   description: string
   photos: string[]
@@ -442,6 +482,18 @@ export interface InviteLink {
   invalidatedAt?: string
   invalidatedReason?: "번호 변경" | "연결됨"
 }
+export interface InspectionServerState {
+  // 서버의 점검 ID(요청 주소에 써요)
+  id: string
+  // 점검에 지금 누를 수 있는 행동(items·request-confirm·confirm-all)
+  availableActions: string[]
+  lockedAt: string | null
+  lockReason: "ALL_RESOLVED" | "NO_ITEMS" | null
+  // 상대도 "지금까지 쓴 것으로" 확인 요청을 보낼 수 있게 되는 시각(INSP-1f)
+  counterpartCanRequestAt: string
+  // 공유를 그만둬 보이는 범위를 고정한 시각. 고정되지 않았으면 null
+  asOf: string | null
+}
 export interface InspectionSession {
   author: Role
   status: "작성 중" | "확인 요청" | "잠김"
@@ -453,6 +505,8 @@ export interface InspectionSession {
   soloLocked?: boolean
   // 늦은 입주 점검(INSP-2a): 입주일보다 늦게 시작했으면 시작한 날(YYYY-MM-DD). 화면에 "입주 후 등록(날짜)"
   lateOn?: string
+  // HTTP: 서버가 준 점검 값(06 4-7 GET /api/inspections/{id}). 있으면 상태·잠김은 서버 값 그대로 써요(화면이 잠금을 계산하지 않음, #326). 목업에는 없어요.
+  server?: InspectionServerState
 }
 export interface Notice {
   id: string
@@ -472,6 +526,8 @@ export interface DemoState {
   notices: Notice[]
   // 호실별 수리 건 목록의 기준 시각(06 4-6 목록 asOf, 호실 ID → ISO 또는 null). HTTP만 채워요(목업은 없음)
   repairListAsOf?: Record<string, string | null>
+  // 호실별 부위 목록(호실 ID → 부위). 목업만 채워요. 호실을 만들 때 기본 목록을 복사해요(lib/room-parts)
+  roomParts?: Record<string, RoomPart[]>
   // 호실마다 경과 기준 시각(06 4장 timeline asOf). 공유를 그만둔 뒤면 그 시각, 아니면 null. 목업은 비워 둬요
   timelineAsOf?: Record<string, string | null>
 }
@@ -748,28 +804,7 @@ export function createDemo(): DemoState {
   }
 }
 
-export const partGroups: Record<string, string[]> = {
-  현관: ["현관문·도어락", "신발장", "바닥"],
-  방: [
-    "벽",
-    "천장",
-    "바닥",
-    "창문·창틀",
-    "방충망",
-    "붙박이장",
-    "조명",
-    "콘센트·스위치",
-  ],
-  주방: ["싱크대·배수구", "수전", "가스레인지·인덕션", "후드", "수납장"],
-  욕실: [
-    "천장",
-    "벽·타일",
-    "바닥·배수구",
-    "변기",
-    "세면대·수전",
-    "샤워기·욕조",
-    "환풍기",
-  ],
-  "설비·가전": ["보일러", "에어컨", "냉장고", "세탁기", "인터폰"],
-  기타: ["기타"],
-}
+// 구역별 기본 부위 이름(V7 기본 목록). 호실마다 실제 부위는 부위 목록 API(roomPartId)로 받아요
+export const partGroups: Record<string, string[]> = PART_TEMPLATES.reduce<
+  Record<string, string[]>
+>((g, t) => ({ ...g, [t.zone]: [...(g[t.zone] || []), t.name] }), {})
