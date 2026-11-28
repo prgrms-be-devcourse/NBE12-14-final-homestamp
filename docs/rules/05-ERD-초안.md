@@ -184,7 +184,7 @@ erDiagram
 | 수리 | `REGISTER`, `SUPPLEMENT`, `RESPOND_DEFECT`, `START_REPAIR`, `REQUEST_CLOSE`, `CONFIRM_CLOSE`, `NOT_YET`, `CLOSE_ALONE`, `REOPEN`(CHECK에는 남기고 받지 않음, decisions 2026-11-25), `ADD_PHOTO`, `ASK_PROGRESS`, `NOTE_PROGRESS`, `RESPOND_SITUATION`, `NOTE_CAUSE`, `RESPOND_CAUSE` |
 | 고치기 | `CORRECT`, `RESPOND_CORRECTION`, `ACCEPT_ALL_CORRECTIONS`(쓰지 않음: [모두 확인]은 고친 내용마다 `RESPOND_CORRECTION`을 한 요청에 남기고 payload `acceptAll`로 표시, #278), `RESUBMIT_CORRECTION`, `WITHDRAW_CORRECTION` |
 | 돈·제안 | `RECORD_PAYMENT`, `RESPOND_AMOUNT`, `SUPPLEMENT_PAYMENT`, `PROPOSE`, `AGREE`, `DISPUTE_PROPOSAL`, `COUNTER`, `WITHDRAW` |
-| 점검 | `START_INSPECTION`, `ADD_ITEM`, `ADD_PART_PHOTO`, `REQUEST_INSPECTION_CONFIRM`, `RESPOND_ITEM`, `SUPPLEMENT_ITEM`, `CONFIRM_ALL`, `LOCK`(서버), `FINISH_INSPECTION` |
+| 점검 | `START_INSPECTION`, `ADD_ITEM`, `ADD_PART_PHOTO`, `REQUEST_INSPECTION_CONFIRM`, `RESPOND_ITEM`, `SUPPLEMENT_ITEM`, `CONFIRM_ALL`, `LOCK`(서버. [혼자 잠그기]는 누른 회원의 행동, payload `lockReason` `SOLO` + `solo_reason`(`CLOSE_ALONE`과 같은 키), #392), `FINISH_INSPECTION` |
 | 정산 | `OPEN_SETTLEMENT`, `INCLUDE_CANDIDATE`, `ADD_SETTLEMENT_ITEM`, `PROPOSE_EXCLUDE`, `RECORD_TRANSFER`, `RESPOND_TRANSFER`, `PROPOSE_FINISH`, `CONFIRM_FINISH`, `NOT_YET_FINISH`, `FINISH_ALONE`, `CLOSE_FINISH_REQUEST`(서버, 정산이 바뀌어 닫힘), `AUTOCLOSE`(서버) |
 | 사진 | `HIDE_PHOTO`, `SHOW_PHOTO`, `MARK_PHOTO_WRONG`, `UNMARK_PHOTO_WRONG`(올린 사람), `ERASE_PHOTO`(올린 사람 또는 `ops:<담당>`) |
 | 계정(호실 밖) | 회원 변경은 행동 기록이 아니라 신원 칸 예외라 값 없이 내부 기록만: 이름 변경, 비밀번호 변경·재설정, 번호 변경, 탈퇴. 이름 변경의 내부 기록은 테이블이 아니라 앱 로그 한 줄이고, 변경이 커밋된 뒤에만 회원 ID(앞 8자리, 04 "로그")와 변경 사실만 남긴다(같은 이름이면 남기지 않음, decisions 2026-11-26). 비밀번호 변경(06 ACC-4a)·재설정(ACC-5b)도 같은 방식으로 앱 로그 한 줄(`비밀번호 변경: 회원 <앞 8자리>`·`비밀번호 재설정: 회원 <앞 8자리>`)을 토큰 폐기와 함께 커밋된 뒤에만 남기고, 비밀번호·해시·번호는 남기지 않는다(실패하거나 회원이 없는 번호의 재설정이면 남기지 않음, #262). 번호 변경·탈퇴는 그 기능을 만들 때 정한다 |
@@ -228,7 +228,7 @@ erDiagram
 
 | 테이블 | 종류 | 칸 | 제약·메모 |
 |---|---|---|---|
-| `inspection` 점검 | C | `kind`(MOVE_IN/MOVE_OUT), `author_side`, `status`(DRAFT/REQUESTED/LOCKED), `late`, `locked_at`, `lock_reason`(ALL_RESOLVED/NO_ITEMS), `first_shown_at` | `UNIQUE(room_record_id, kind)`(먼저 저장된 측이 기준). 퇴거 점검의 잠김은 거주 종료와 별개 |
+| `inspection` 점검 | C | `kind`(MOVE_IN/MOVE_OUT), `author_side`, `status`(DRAFT/REQUESTED/LOCKED), `late`, `locked_at`, `lock_reason`(ALL_RESOLVED/NO_ITEMS/SOLO), `first_shown_at` | `UNIQUE(room_record_id, kind)`(먼저 저장된 측이 기준). 퇴거 점검의 잠김은 거주 종료와 별개. `SOLO`는 [혼자 잠그기](03 H, 항목이 없어도 `SOLO`)이고 구체 이유는 `LOCK` payload `solo_reason`(#392, V1 CHECK는 고치지 않고 새 V 파일로 허용) |
 | `inspection_item` 점검 항목 | C | `inspection_id`, `current_version_id`, `confirmed_version_id`, `status`(PENDING/ACK/NEED_MORE/DISPUTE/UNCONFIRMED, 수리 건 `defect_ack`와 같은 값이라 06 API의 응답 값 ACK·NEED_MORE·DISPUTE를 바꾸지 않고 씀), `added_by_side`, `added_after_lock`(잠긴 뒤 추가), `added_after_end` | 항목 = 적은 하자만. 빠뜨린 하자 더하기는 새 기록(누구든, 더하지 않은 쪽이 확인). 확인 요청 `INSPECTION_CONFIRM`은 점검 × 요청 방향마다 하나(부분 유니크 `(inspection_id, requested_by_side) WHERE WAITING`), 두 방향이 모두 끝나야 잠김. 적지 않은 부위는 행이 없음("기록 없음") |
 | `inspection_item_version` 점검 항목 판 | B | `inspection_item_id`, `no`(판 번호), `room_part_id`, `description`, `previous_id` | `UNIQUE(inspection_item_id, no)` |
 
@@ -302,7 +302,7 @@ erDiagram
 | 18 | 상대가 공유를 그만둔 뒤 남긴 기록은 나에게 안 보임(보이는 범위 전체는 03-상태 3-1 표) | `party.sharing_stopped_at` | 권한 검사 함수 한 곳: 두 측 중 **어느 쪽이든** 공유를 그만둔 시각(둘 다면 이른 쪽) 이후의 상대 측 행동은 뺀다. 그만둔 사람에게도, 남은 사람에게도 같은 규칙(양방향). 그만둔 뒤의 상태는 C 행을 그대로 보여 주지 않고 **그 시각까지의 행동으로 다시 계산**해 보여 준다(03 6-6의 9, "○월 ○일 기준"). 예외: 거주 종료 행동(`MOVE_OUT`·`REQUEST_END`·`CONFIRM_END`·`REJECT_END`)과 `room_record.status`(ENDED·SETTLED)는 빼지 않는다. 요청을 만드는 곳(`notification`)은 공유를 그만둔 측에 응답 요청을 만들지 않는다(END_REQUEST만 예외). 이미 유효하게 기다리는 END_REQUEST도 공유 중단만으로 닫지 않고 기존 전달 이력·기한을 보존한다. 공유 중단과 응답·종료의 경합은 잠금 뒤 요청 상태·공개 범위를 다시 검사한다. 둘 다 그만뒀다가 한쪽만 다시 공유하면 남은 그만둔 시각이 기준이 되어, 그 전 기록은 서로 보이고 그 뒤 기록은 안 보인다 |
 | 19 | 정산 끝내기는 상대가 본 정산 모습과 지금이 같을 때만 완료 | | 정산을 바꾸는 행동이 같은 트랜잭션에서 `settlement.snapshot_no`를 올리고 기다리는 끝내기 요청을 닫음. 확인(`CONFIRM_FINISH`)의 `seen_version_no`가 지금 `snapshot_no`와 다르면 `VERSION_CONFLICT` |
 | 20 | 연결 전 상대에게 돈 확인 요청이 생기지 않고 링크에 돈 내용이 없음 | | 요청을 만드는 곳 한 곳(`notification`)에서 "돈 요청이고 `party.status <> CONNECTED`면 만들지 않음", 링크 응답은 `has_money`만 |
-| 21 | 점검은 모든 항목에 쓰지 않은 쪽의 답 또는 미확인이 있을 때만 잠김(예외: 상대가 탈퇴하면 남은 쪽이 혼자 잠글 수 있음, 03-상태 H) | `INSPECTION_CONFIRM` 부분 유니크(점검 × 방향) | 잠금 판단(`InspectionLock.decide`): 확인 요청 중이고 모든 항목이 네 상태(확인·보류·이견·상대 미확인) 중 하나일 때만 LOCKED(방향별 요청이 닫혔는지가 아니라 항목 상태로 봄, decisions 2026-11-27 #326). 상대 자리가 탈퇴면 남은 쪽의 혼자 잠금(혼자 진행 이유 `COUNTERPART_WITHDRAWN`)으로 LOCKED |
+| 21 | 점검은 모든 항목에 쓰지 않은 쪽의 답 또는 미확인이 있을 때만 잠김(예외: 상대 사정으로 혼자 진행할 수 있으면 [혼자 잠그기], 03-상태 H) | `INSPECTION_CONFIRM` 부분 유니크(점검 × 방향) | 잠금 판단(`InspectionLock.decide`): 확인 요청 중이고 모든 항목이 네 상태(확인·보류·이견·상대 미확인) 중 하나일 때만 LOCKED(방향별 요청이 닫혔는지가 아니라 항목 상태로 봄, decisions 2026-11-27 #326). [혼자 잠그기]는 `WaitService.canGoSolo`·`canGoSoloDirectly`가 허용하고 그 점검에 기다리는 확인 요청이 없을 때만 LOCKED(`lock_reason` `SOLO`, 지금 판단하는 이유는 `SoloRule`을 따름: 상대 없음, 상대 공유 중단, KEEP-4 뒤 상대 탈퇴 `COUNTERPART_WITHDRAWN`) |
 
 ---
 
