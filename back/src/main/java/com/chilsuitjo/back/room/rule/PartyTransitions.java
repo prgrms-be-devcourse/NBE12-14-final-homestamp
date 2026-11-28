@@ -13,7 +13,8 @@ import org.springframework.stereotype.Component;
  *
  * <ul>
  *   <li>{@code INVITE}: 호실을 만든 측이, 거주 중에, 비어 있음·번호만 자리에 → 초대됨. 그 밖이면 {@code INVALID_STATE}, 내 인증
- *       번호면 {@code SELF_INVITE}
+ *       번호면 {@code SELF_INVITE}, 수신 거부 목록에 있는 번호면 {@code PHONE_OPTED_OUT}(06 4-3, #163 1-3. 내 번호인지를
+ *       먼저 본다)
  *   <li>{@code CONNECT}: 초대됨 자리에 초대 번호와 같은 번호로 인증한 회원이 → 연결됨. 초대됨이 아니면 {@code INVALID_STATE}, 번호가
  *       다르면 {@code PHONE_MISMATCH}, 이 호실의 다른 자리에 이미 있는 회원이면 {@code INVALID_STATE}(한 호실에 한 회원은 한 자리,
  *       불변식 13. 초대한 사람이 나중에 번호를 바꿔 초대 번호와 같아진 경우 등). 거주 종료는 보지 않는다: 거주 종료 전에 초대받은 상대는 정산 완료 전까지 연결할
@@ -24,8 +25,6 @@ import org.springframework.stereotype.Component;
  *       회원이면 {@code INVALID_STATE}다(06 4-3 {@code reject} 오류 칸, #252·#265 리뷰. 호실을 만든 사람의 번호가 나중에 초대
  *       번호와 같아져도 상대 자리를 거절하지 못하게)
  * </ul>
- *
- * <p>수신 거부 번호({@code PHONE_OPTED_OUT})는 D의 확인 창구가 정해진 뒤 더한다(#163 1-3).
  */
 @Component
 public class PartyTransitions implements Transitions<PartyState> {
@@ -47,6 +46,9 @@ public class PartyTransitions implements Transitions<PartyState> {
         }
         if (Boolean.TRUE.equals(now.selfInvite())) {
           throw new BusinessException(ErrorCode.SELF_INVITE);
+        }
+        if (Boolean.TRUE.equals(now.optedOut())) {
+          throw new BusinessException(ErrorCode.PHONE_OPTED_OUT);
         }
         yield withStatus(now, PartyStatus.INVITED);
       }
@@ -86,7 +88,8 @@ public class PartyTransitions implements Transitions<PartyState> {
         now.living(),
         now.selfInvite(),
         now.phoneMatches(),
-        now.alreadyInRoom());
+        now.alreadyInRoom(),
+        now.optedOut());
   }
 
   private static BusinessException invalidState() {

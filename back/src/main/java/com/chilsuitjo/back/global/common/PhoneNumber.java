@@ -27,4 +27,22 @@ public final class PhoneNumber {
     }
     return digits;
   }
+
+  /**
+   * 가린 번호(03 "당사자끼리 휴대폰 번호는 가린 번호만", 06 동의 화면 "010-****-5678"). 앞 세 자리와 뒤 네 자리만 남기고 가운데는 자릿수만큼
+   * {@code *}로 바꾼다({@code 01012345678} → {@code 010-****-5678}, 10자리 {@code 0111234567} → {@code
+   * 011-***-4567}). 정규화한 번호를 받는다. 형식이 맞지 않으면 원래 번호를 드러내지 않도록 {@code IllegalArgumentException}이다(값은
+   * 문구에 넣지 않음).
+   */
+  public static String mask(String normalized) {
+    if (normalized == null || !normalized.matches(MOBILE)) {
+      throw new IllegalArgumentException("정규화한 휴대폰 번호가 아니에요");
+    }
+    int middle = normalized.length() - 7;
+    return normalized.substring(0, 3)
+        + "-"
+        + "*".repeat(middle)
+        + "-"
+        + normalized.substring(normalized.length() - 4);
+  }
 }
