@@ -161,12 +161,13 @@ describe("호실 만들기", () => {
     submit(/만들기/)
     const [request, by] = send.mock.calls[0] as [ApiRequest, string]
     expect(request.path).toBe(endpoints.rooms)
-    // 서버 모양(06 4-3): 쪽은 TENANT·LANDLORD, 상대 번호는 받지 않아요(초대 ROOM-4에서, #163)
+    // 서버 모양(06 4-3): 쪽은 TENANT·LANDLORD, 상대 번호는 숫자만 counterpartPhone으로 보내요(서버가 NUMBER_ONLY로 저장, #406)
     expect(request.body).toEqual({
       side: "LANDLORD",
       regionCode: "1144012400",
       alias: "302호",
       moveInDate: undefined,
+      counterpartPhone: "01055556666",
     })
     expect(by).toBe("임대인")
     // 목업은 넣은 번호를 호실의 기준 연락처로 저장해요
@@ -182,7 +183,7 @@ describe("호실 만들기", () => {
     await vi.waitFor(() => expect(onCreated).toHaveBeenCalledWith("new-room"))
   })
 
-  test("HTTP에서는 상대 번호 칸을 숨기고 초대할 때 넣는다고 안내한다", () => {
+  test("HTTP에서도 상대 번호 칸을 보여 주고 바로 초대되지 않는다고 안내한다", () => {
     const http = createHttpApi((async () => []) as unknown as HttpRequest)
     inDialog(
       <ApiProvider api={http}>
@@ -195,9 +196,12 @@ describe("호실 만들기", () => {
         />
       </ApiProvider>,
     )
-    expect(screen.queryByLabelText(/휴대폰 번호/)).toBeNull()
+    // 서버가 만들 때 상대 번호를 받아 NUMBER_ONLY로 저장해요(06 4-3, #406). 문자는 초대할 때 나가요
+    expect(screen.getByLabelText(/집주인 휴대폰 번호 · 선택/)).toBeTruthy()
     expect(
-      screen.getByText("집주인 휴대폰 번호는 상대를 초대할 때 넣을 수 있어요."),
+      screen.getByText(
+        "번호를 넣어도 바로 초대되지 않아요. 초대할 때 이 번호를 써요.",
+      ),
     ).toBeTruthy()
   })
 })
