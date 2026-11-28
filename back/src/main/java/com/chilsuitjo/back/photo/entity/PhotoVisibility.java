@@ -19,10 +19,13 @@ import lombok.NoArgsConstructor;
  * 담는다. 사진 카드({@link Photo})는 고칠 수 없어서 바뀌는 칸을 여기에 둔다.
  *
  * <p>행동으로만 바뀐다: {@code HIDE_PHOTO}·{@code SHOW_PHOTO}(06 PHO-3), {@code MARK_PHOTO_WRONG}·{@code
- * UNMARK_PHOTO_WRONG}(PHO-9), {@code ERASE_PHOTO}(PHO-5·7), 그리고 점검 확인 요청({@code
- * REQUEST_INSPECTION_CONFIRM})이 작성 중에 붙인 사진의 {@code released_at}을 채운다(#295, {@code
- * PhotoService.release}). 바꾸는 메서드는 각 기능 PR에서 더한다. 그래서 새 행은 숨기지 않고 표시·지움도 없는 빈 상태로 시작한다. 숨김은 올린 뒤
- * {@code hide-on-link}로만 한다(06 API 표).
+ * UNMARK_PHOTO_WRONG}(PHO-9), {@code ERASE_PHOTO}(PHO-5·7)는 각 기능 PR에서 이 엔티티에 바꾸는 메서드를 더한다. 그래서 새 행은
+ * 숨기지 않고 표시·지움도 없는 빈 상태로 시작한다. 숨김은 올린 뒤 {@code hide-on-link}로만 한다(06 API 표).
+ *
+ * <p>{@code released_at}만 예외다. 점검 확인 요청({@code REQUEST_INSPECTION_CONFIRM})이 그 점검의 사진을 한꺼번에 채우므로
+ * 엔티티 메서드 없이 {@code PhotoTargetRepository.releaseByTargets}(네이티브 일괄 UPDATE)가 바꾼다. "한 번 채우면 바꾸지 않음"은
+ * 그 쿼리의 {@code released_at IS NULL} 조건이 지킨다(#295, 05 2-8). 영속성 컨텍스트를 거치지 않으므로, 부르는 트랜잭션에서 이 사진들을
+ * 엔티티로 먼저 읽지 않는다(읽어 두면 {@code releasedAt}·{@code version}이 옛 값으로 남는다).
  */
 @Entity
 @Getter
