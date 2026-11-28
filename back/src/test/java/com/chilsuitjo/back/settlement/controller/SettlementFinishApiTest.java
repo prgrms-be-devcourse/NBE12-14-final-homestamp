@@ -169,6 +169,30 @@ class SettlementFinishApiTest {
     finish(tenant, "again").andExpect(status().isOk());
   }
 
+  @Test
+  void SET_5b_기다리는_동안_확인_뒤_송금을_고쳐_요청만_해도_끝내기_요청이_닫힌다() throws Exception {
+    UUID transfer = transfer(landlord, "refund", 9_845_000);
+    respond(tenant, transfer, "ack");
+    finish(tenant, "propose");
+    int seen = snapshotNo();
+
+    mvc.perform(
+            post("/api/corrections")
+                .with(loginAs(landlord))
+                .header("Idempotency-Key", "fix")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"targetKind\":\"SETTLEMENT_TRANSFER\",\"targetId\":\""
+                        + transfer
+                        + "\",\"changes\":[{\"field\":\"amount\",\"newValue\":9800000}],"
+                        + "\"reason\":\"잘못 적었어요\"}"))
+        .andExpect(jsonPath("$.result").value("REQUESTED"));
+
+    assertThat(finishRequest().closedReason()).isEqualTo(ClosedReason.SETTLEMENT_CHANGED);
+    assertThat(actions("CLOSE_FINISH_REQUEST")).isEqualTo(1);
+    confirm(landlord, "stale", seen).andExpect(jsonPath("$.code").value("VERSION_CONFLICT"));
+  }
+
   // ---- SET-5c ----
 
   @Test
