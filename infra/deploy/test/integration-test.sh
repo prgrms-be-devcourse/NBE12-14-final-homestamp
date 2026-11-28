@@ -263,18 +263,19 @@ psqla -c "SELECT pg_reload_conf()" >/dev/null
 sleep 1
 expect "PostgreSQL TLS 켜짐" "$(psqla -At -c 'SHOW ssl')" on
 docker cp "$SRC/infra/db/bootstrap_roles.sql" $T-pg:/tmp/bootstrap_roles.sql >/dev/null
-docker exec $T-pg psql -X -q -U postgres -d homestamp -v owner_role=homestamp_owner -v migration_role=homestamp_migration \
-  -v app_role=homestamp_app -v purge_role=homestamp_purge -v human_role=homestamp_human_read -f /tmp/bootstrap_roles.sql >/dev/null 2>&1 &&
+# 역할 이름은 운영 이름(이미지 roles.properties와 같아야 --apply-grants가 대상을 찾는다, decisions 2026-11-28)
+docker exec $T-pg psql -X -q -U postgres -d homestamp -v owner_role=hs_owner -v migration_role=hs_migrator \
+  -v app_role=hs_app -v purge_role=hs_purge -v human_role=hs_human_read -f /tmp/bootstrap_roles.sql >/dev/null 2>&1 &&
   ok "Role Bootstrap(bootstrap_roles.sql)" || bad "Role Bootstrap"
-printf "ALTER ROLE homestamp_migration PASSWORD '%s';\n" "$PW" | psqla >/dev/null
+printf "ALTER ROLE hs_migrator PASSWORD '%s';\n" "$PW" | psqla >/dev/null
 printf '%s' "jdbc:postgresql://$PGIP:5432/homestamp?sslmode=verify-full&sslrootcert=/app/certs/test-ca.crt" >"$W/secrets/spring.datasource.url"
-printf '%s' homestamp_migration >"$W/secrets/spring.datasource.username"
+printf '%s' hs_migrator >"$W/secrets/spring.datasource.username"
 printf '%s' "$PW" >"$W/secrets/spring.datasource.password"
-printf '%s' homestamp_owner >"$W/secrets/app.migration.owner-role"
+printf '%s' hs_owner >"$W/secrets/app.migration.owner-role"
 chmod 0644 "$W"/secrets/*
 
 v_count() { psqla -At -c "SELECT count(*) FROM public.flyway_schema_history WHERE success" 2>/dev/null || echo 0; }
-grant_ok() { psqla -At -c "SELECT has_table_privilege('homestamp_app','record.action','INSERT') AND has_table_privilege('homestamp_app','record.action','SELECT') AND NOT has_table_privilege('homestamp_app','record.action','UPDATE')" 2>/dev/null || echo error; }
+grant_ok() { psqla -At -c "SELECT has_table_privilege('hs_app','record.action','INSERT') AND has_table_privilege('hs_app','record.action','SELECT') AND NOT has_table_privilege('hs_app','record.action','UPDATE')" 2>/dev/null || echo error; }
 expect "B0 처음 Flyway 이력 없음" "$(v_count)" 0
 rc="$(deploy "$IMG_real")"
 echo "     B1 종료 $rc"

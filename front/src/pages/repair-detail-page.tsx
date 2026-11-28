@@ -395,7 +395,7 @@ export function RepairDetailPage({
             title="원인 설명"
             count={r.causes?.length ?? 0}
             icon={<MessageSquareText size={16} />}
-            className="mt-0 rounded-[18px] shadow-[0_1px_2px_#1720330a]"
+            className="mt-0 rounded-[18px] shadow-[0_1px_2px_#1f2a330a]"
           >
             <CauseNotes
               repair={r}
@@ -412,7 +412,7 @@ export function RepairDetailPage({
             title="진행 상황"
             count={r.progressNotes?.length ?? 0}
             icon={<StickyNote size={16} />}
-            className="mt-0 rounded-[18px] shadow-[0_1px_2px_#1720330a]"
+            className="mt-0 rounded-[18px] shadow-[0_1px_2px_#1f2a330a]"
           >
             <ProgressNotes
               repair={r}
@@ -430,7 +430,7 @@ export function RepairDetailPage({
             title="같은 부위의 입주 기록"
             count={sameZoneItems.length + sameZonePhotos.length}
             icon={<ClipboardCheck size={16} />}
-            className="mt-0 rounded-[18px] shadow-[0_1px_2px_#1720330a]"
+            className="mt-0 rounded-[18px] shadow-[0_1px_2px_#1f2a330a]"
           >
             <div className="space-y-3">
               {sameZonePhotos.map((p) => (
