@@ -31,6 +31,11 @@ import com.chilsuitjo.back.link.repository.LinkRepository;
 import com.chilsuitjo.back.link.repository.LinkViewStateStore;
 import com.chilsuitjo.back.link.rule.LinkKind;
 import com.chilsuitjo.back.link.rule.LinkToken;
+import com.chilsuitjo.back.notification.dto.PartyFacts;
+import com.chilsuitjo.back.notification.dto.RoomParties;
+import com.chilsuitjo.back.notification.rule.PartyPresence;
+import com.chilsuitjo.back.notification.rule.RoomPhase;
+import com.chilsuitjo.back.notification.service.CounterpartReader;
 import com.chilsuitjo.back.notification.service.NoticeWaitStart;
 import com.chilsuitjo.back.notification.service.NoticeWaitStart.EvidenceNotRecorded;
 import com.chilsuitjo.back.room.rule.PartyStatus;
@@ -39,6 +44,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -56,9 +62,43 @@ class LinkViewServiceTest {
   private final NoticeWaitStart waitStart = mock(NoticeWaitStart.class);
   private final LinkViewStateStore viewStore =
       new LinkViewStateStore(waitStart, fx.requestContext());
+
+  /** 링크를 보낸 측의 공유 중단 시각(없으면 공유 중). 가짜는 물어본 측이 이 측일 때만 이 값을 준다. */
+  private Instant issuerStoppedAt;
+
+  private PartySide issuerSide = PartySide.TENANT;
+
+  /** 가짜가 받은 {@code mySide}. 보낸 측을 맞게 골랐는지 본다. */
+  private final List<PartySide> readSides = new ArrayList<>();
+
+  private final CounterpartReader counterparts =
+      (room, mySide) -> {
+        readSides.add(mySide);
+        Instant stopped = mySide == issuerSide ? issuerStoppedAt : null;
+        return new RoomParties(
+            RoomPhase.LIVING,
+            new PartyFacts(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                PartyPresence.CONNECTED,
+                stopped,
+                false,
+                false,
+                null),
+            new PartyFacts(
+                UUID.randomUUID(), null, PartyPresence.INVITED, null, false, false, null));
+      };
+
   private final LinkViewService service =
       new LinkViewService(
-          links, content, fx.pipeline(), fx.actions(), viewStore, clock, Duration.ofMinutes(10));
+          links,
+          content,
+          fx.pipeline(),
+          fx.actions(),
+          viewStore,
+          counterparts,
+          clock,
+          Duration.ofMinutes(10));
 
   private final UUID roomRecordId = UUID.randomUUID();
   private final UUID partyId = UUID.randomUUID();
@@ -83,6 +123,65 @@ class LinkViewServiceTest {
     ActionTarget target = ActionTarget.of(TargetKind.LINK, link.getId());
     assertThat(viewActions().getFirst().target()).isEqualTo(target);
     assertThat(fx.actions().findByTarget(target)).hasSize(1);
+  }
+
+  @Test
+  void 링크를_보낸_측이_공유를_그만뒀으면_LINK_INVALID이고_열람이_남지_않는다() {
+    // 06 LINK-4a: 공유 그만두기의 링크 무효화(CONS-3)가 없거나 늦어도 열리지 않는다(#475). 받는 측이 집주인이면 보낸 측은 세입자
+    issuerStoppedAt = NOW.minusSeconds(60);
+    String token = issue(LinkKind.INVITE, repairCaseId);
+    openRoom();
+    content.seedRecord(roomRecordId, repairCaseId, repairRecord(), false);
+
+    assertLinkInvalid(() -> service.view(new LinkViewRequest(token)));
+    assertThat(viewActions()).isEmpty();
+    assertThat(readSides).containsOnly(PartySide.TENANT);
+  }
+
+  @Test
+  void 받는_측이_세입자면_집주인_측의_공유_중단을_본다() {
+    issuerSide = PartySide.LANDLORD;
+    issuerStoppedAt = NOW.minusSeconds(60);
+    String token = issue(LinkKind.INVITE, null);
+    content.seedRoom(
+        roomRecordId,
+        partyId,
+        new LinkRoom(
+            PartySide.TENANT,
+            "서울특별시",
+            "강남구",
+            "역삼동",
+            false,
+            false,
+            PartyStatus.INVITED,
+            RoomStatus.LIVING));
+
+    assertLinkInvalid(() -> service.view(new LinkViewRequest(token)));
+    assertThat(viewActions()).isEmpty();
+    assertThat(readSides).containsOnly(PartySide.LANDLORD);
+  }
+
+  @Test
+  void 정산_초대_링크는_보낸_측의_공유_중단을_보지_않는다() {
+    // 거주 종료 뒤 연결되지 않은 상대에게 보내는 링크라 조건이 다르다(requireOpen과 같음)
+    issuerStoppedAt = NOW.minusSeconds(60);
+    String token = issue(LinkKind.SETTLEMENT_INVITE, null);
+    openRoom();
+
+    assertThat(service.view(new LinkViewRequest(token)).kind())
+        .isEqualTo(LinkViewKind.SETTLEMENT_INVITE);
+    assertThat(readSides).isEmpty();
+  }
+
+  @Test
+  void 보낸_측이_공유_중이면_이_검사로_막히지_않는다() {
+    // 공유 중단 시각이 없으면 열린다. 그만뒀던 링크가 다시 공유 뒤에도 닫혀 있는 것은 링크 행 무효화(LINK-4b)가 맡는다
+    String token = issue(LinkKind.INVITE, repairCaseId);
+    openRoom();
+    content.seedRecord(roomRecordId, repairCaseId, repairRecord(), false);
+
+    assertThat(service.view(new LinkViewRequest(token)).kind()).isEqualTo(LinkViewKind.RECORD);
+    assertThat(viewActions()).hasSize(1);
   }
 
   @Test
@@ -146,7 +245,14 @@ class LinkViewServiceTest {
         .thenReturn(Optional.of(inspectionRecord()));
     LinkViewService inspectionService =
         new LinkViewService(
-            links, source, fx.pipeline(), fx.actions(), viewStore, clock, Duration.ofMinutes(10));
+            links,
+            source,
+            fx.pipeline(),
+            fx.actions(),
+            viewStore,
+            counterparts,
+            clock,
+            Duration.ofMinutes(10));
 
     LinkViewResponse response = inspectionService.view(new LinkViewRequest(token));
 
@@ -391,6 +497,7 @@ class LinkViewServiceTest {
                 fx.pipeline(),
                 fx.actions(),
                 viewStore,
+                counterparts,
                 clock,
                 Duration.ofMillis(999)))
         .isInstanceOf(IllegalArgumentException.class)
@@ -444,7 +551,14 @@ class LinkViewServiceTest {
         .thenReturn(Optional.of(seat(PartyStatus.REJECTED, RoomStatus.LIVING)));
     LinkViewService racing =
         new LinkViewService(
-            links, source, fx.pipeline(), fx.actions(), viewStore, clock, Duration.ofMinutes(10));
+            links,
+            source,
+            fx.pipeline(),
+            fx.actions(),
+            viewStore,
+            counterparts,
+            clock,
+            Duration.ofMinutes(10));
 
     assertLinkInvalid(() -> racing.view(new LinkViewRequest(token)));
     verify(source, times(2)).room(roomRecordId, partyId);
@@ -554,7 +668,14 @@ class LinkViewServiceTest {
     when(failing.room(any(), any())).thenThrow(new BusinessException(ErrorCode.NOT_FOUND));
     LinkViewService withFailingContent =
         new LinkViewService(
-            links, failing, fx.pipeline(), fx.actions(), viewStore, clock, Duration.ofMinutes(10));
+            links,
+            failing,
+            fx.pipeline(),
+            fx.actions(),
+            viewStore,
+            counterparts,
+            clock,
+            Duration.ofMinutes(10));
     String token = issue(LinkKind.INVITE, repairCaseId);
 
     assertLinkInvalid(() -> withFailingContent.view(new LinkViewRequest(token)));
@@ -566,7 +687,14 @@ class LinkViewServiceTest {
     when(rejecting.executeAll(any())).thenThrow(new BusinessException(ErrorCode.NOT_FOUND));
     LinkViewService withRejectingPipeline =
         new LinkViewService(
-            links, content, rejecting, fx.actions(), viewStore, clock, Duration.ofMinutes(10));
+            links,
+            content,
+            rejecting,
+            fx.actions(),
+            viewStore,
+            counterparts,
+            clock,
+            Duration.ofMinutes(10));
     String token = issue(LinkKind.INVITE, repairCaseId);
     openRoom();
     content.seedRecord(roomRecordId, repairCaseId, repairRecord(), false);
@@ -581,7 +709,14 @@ class LinkViewServiceTest {
     when(broken.room(any(), any())).thenThrow(new IllegalStateException("고장"));
     LinkViewService withBrokenContent =
         new LinkViewService(
-            links, broken, fx.pipeline(), fx.actions(), viewStore, clock, Duration.ofMinutes(10));
+            links,
+            broken,
+            fx.pipeline(),
+            fx.actions(),
+            viewStore,
+            counterparts,
+            clock,
+            Duration.ofMinutes(10));
     String token = issue(LinkKind.INVITE, repairCaseId);
 
     assertThatThrownBy(() -> withBrokenContent.view(new LinkViewRequest(token)))

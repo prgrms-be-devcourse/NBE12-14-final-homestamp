@@ -196,6 +196,26 @@ class PublicLinkRepairViewTest {
     assertThat(linkViews()).isZero();
   }
 
+  @Test
+  void 보낸_측이_등록_뒤_공유를_그만두면_그_링크는_LINK_INVALID이고_열람_기록과_전달_증거가_없다() throws Exception {
+    // 06 LINK-4a, #475: 공유 그만두기가 링크를 무효화하는 저장(CONS-3)은 아직 없다. 그 전에도 열람 쪽에서 막히는지 본다.
+    // 공유 그만두기 API가 생기면 그 PR에서 행동 → 열람 흐름 전체를 다시 본다(여기서는 자리 상태만 바꿈)
+    String token = link(register());
+    UUID notice = sentNotice(token);
+    jdbc.update(
+        "UPDATE state.party SET status = 'SHARING_STOPPED',"
+            + " sharing_stopped_at = CURRENT_TIMESTAMP - INTERVAL '1 minute' WHERE id = ?",
+        tenantSeat);
+
+    view(token)
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.code").value("LINK_INVALID"));
+    assertThat(linkViews()).isZero();
+    // 막힌 열람은 전달 증거도 남기지 않는다
+    assertThat(noticeStatus(notice)).isEqualTo("SENT");
+    // 다시 공유해도 그 링크가 계속 닫혀 있는 것(LINK-4b, 불변식 7)은 공유 그만두기의 링크 무효화(SHARING_STOPPED)가 맡는다
+  }
+
   // ---- 도우미 ----
 
   private UUID register() throws Exception {

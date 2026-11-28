@@ -7,6 +7,7 @@ import com.chilsuitjo.back.action.dto.Actor;
 import com.chilsuitjo.back.action.rule.ActionType;
 import com.chilsuitjo.back.action.service.ActionPipeline;
 import com.chilsuitjo.back.action.service.ActionReader;
+import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
@@ -21,6 +22,7 @@ import com.chilsuitjo.back.link.repository.LinkViewStateStore;
 import com.chilsuitjo.back.link.rule.LinkKind;
 import com.chilsuitjo.back.link.rule.LinkToken;
 import com.chilsuitjo.back.link.rule.LinkViewTransitions;
+import com.chilsuitjo.back.notification.service.CounterpartReader;
 import com.chilsuitjo.back.notification.service.NoticeWaitStart.EvidenceNotRecorded;
 import java.time.Clock;
 import java.time.Duration;
@@ -54,6 +56,7 @@ public class LinkViewService {
   private final ActionPipeline pipeline;
   private final ActionReader actions;
   private final LinkViewStateStore viewStore;
+  private final CounterpartReader counterparts;
   private final Clock clock;
   private final Duration viewDedupe;
 
@@ -63,6 +66,7 @@ public class LinkViewService {
       ActionPipeline pipeline,
       ActionReader actions,
       LinkViewStateStore viewStore,
+      CounterpartReader counterparts,
       Clock clock,
       @Value("${app.link.view-dedupe:10m}") Duration viewDedupe) {
     this.links = links;
@@ -70,6 +74,7 @@ public class LinkViewService {
     this.pipeline = pipeline;
     this.actions = actions;
     this.viewStore = viewStore;
+    this.counterparts = counterparts;
     this.clock = clock;
     if (viewDedupe == null
         || viewDedupe.isZero()
@@ -110,6 +115,7 @@ public class LinkViewService {
             .room(link.getRoomRecordId(), link.getPartyId())
             .orElseThrow(LinkViewService::invalid);
     requireOpen(link, room);
+    // 보낸 측의 공유 중단은 잠근 뒤(requireCurrentLink)에만 본다. 그 포트는 호실을 잠근 트랜잭션 안에서 부르는 계약이다
     // 보여 줄 내용을 먼저 읽는다. 못 읽으면(기록이 그 호실에 없음) 열람 기록을 남기지 않고 LINK_INVALID다.
     LinkViewResponse response = response(link, room);
     recordView(link, room);
@@ -188,11 +194,12 @@ public class LinkViewService {
       throw invalid();
     }
     // 미리 본 자리·호실 상태는 잠그기 전 값이다. 거절·연결·거주 종료도 호실을 잠그고 저장하므로, 잠근 지금 다시 읽어 같은 판단을 한다
-    requireOpen(
-        current,
+    LinkRoom lockedRoom =
         content
             .room(current.getRoomRecordId(), current.getPartyId())
-            .orElseThrow(LinkViewService::invalid));
+            .orElseThrow(LinkViewService::invalid);
+    requireOpen(current, lockedRoom);
+    requireIssuerSharing(current, lockedRoom);
     Instant cutoff = observedAt.minus(viewDedupe);
     List<ActionEntry> views =
         actions.findByTarget(ActionTarget.of(TargetKind.LINK, resolved.getId())).stream()
@@ -245,6 +252,26 @@ public class LinkViewService {
       throw invalid();
     }
     if (link.getKind() == LinkKind.INVITE && !room.opensInvite()) {
+      throw invalid();
+    }
+  }
+
+  /**
+   * 초대 링크를 보낸 측(받는 자리의 반대 측, 한 측에 자리는 하나)이 지금 공유를 그만둔 상태면 열지 않는다(03 B, 06 LINK-4a "발급자가 공유를 그만두면 링크
+   * 무효", #475). 다른 이유와 같은 {@code LINK_INVALID}다(LINK-2).
+   *
+   * <p>공유 그만두기가 링크 행을 {@code SHARING_STOPPED}로 무효화하는 것은 그 행동을 만드는 쪽(CONS-3)의 몫이고 아직 없다. 이 검사는 그
+   * 무효화가 빠지거나 늦어도 공유를 그만둔 동안에는 열람이 열리지 않게 하는 안전장치다. 지금 상태만 보고 이력은 두지 않는다. 다시 공유한 뒤에도 그 링크가 닫혀 있는
+   * 것(LINK-4b, 불변식 7)은 그 무효화가 맡는다. 정산 초대 링크는 거주 종료 뒤의 다른 조건이라 보지 않는다. 사진은 photo가 공유 중단 시각으로 거르지
+   * 않으므로(#475 jinni1 답) 이 검사가 링크 쪽 경계다.
+   */
+  private void requireIssuerSharing(Link link, LinkRoom room) {
+    if (link.getKind() != LinkKind.INVITE) {
+      return;
+    }
+    PartySide issuerSide =
+        room.recipientSide() == PartySide.TENANT ? PartySide.LANDLORD : PartySide.TENANT;
+    if (counterparts.read(link.getRoomRecordId(), issuerSide).mine().sharingStoppedAt() != null) {
       throw invalid();
     }
   }
