@@ -41,28 +41,27 @@ public class RoomTransitions implements Transitions<RoomState> {
         yield new RoomState(RoomStatus.LIVING); // 03 A: [*] → 거주 중
       }
       case MOVE_OUT -> {
-        requireLiving(now);
-        if (action.actorSide() == PartySide.LANDLORD
-            && Boolean.FALSE.equals(now.landlordEndsAlone())) {
+        if (!canMoveOut(now, action.actorSide())) {
           throw invalidState(); // 물을 세입자가 있으면 거주 종료 요청이다
         }
         yield now.withStatus(RoomStatus.ENDED, false);
       }
       case REQUEST_END -> {
-        requireLiving(now);
-        requireSide(action, PartySide.LANDLORD);
-        if (Boolean.FALSE.equals(now.tenantAnswers())
-            || Boolean.TRUE.equals(now.endRequestOpen())) {
+        if (!canRequestEnd(now, action.actorSide())) {
           throw invalidState();
         }
         yield now.withStatus(RoomStatus.LIVING, true);
       }
       case CONFIRM_END -> {
-        requireAnswerable(now, action);
+        if (!canAnswerEnd(now, action.actorSide())) {
+          throw invalidState();
+        }
         yield now.withStatus(RoomStatus.ENDED, false);
       }
       case REJECT_END -> {
-        requireAnswerable(now, action);
+        if (!canAnswerEnd(now, action.actorSide())) {
+          throw invalidState();
+        }
         if (action.reason() == null || action.reason().isBlank()) {
           throw new BusinessException(ErrorCode.REASON_REQUIRED);
         }
@@ -72,24 +71,28 @@ public class RoomTransitions implements Transitions<RoomState> {
     };
   }
 
-  private static void requireAnswerable(RoomState now, ActionEntry action) {
-    requireLiving(now);
-    requireSide(action, PartySide.TENANT);
-    if (Boolean.FALSE.equals(now.endRequestOpen())) {
-      throw invalidState();
-    }
+  /**
+   * 이 측이 지금 {@code MOVE_OUT}(바로 거주 종료)을 남길 수 있나. {@link #apply}와 호실 상세 {@code availableActions}(06
+   * 4-0)가 같이 쓴다. 집주인 측은 물을 세입자가 없을 때만이다({@link RoomState#landlordEndsAlone}).
+   */
+  public static boolean canMoveOut(RoomState now, PartySide side) {
+    return now.status() == RoomStatus.LIVING
+        && !(side == PartySide.LANDLORD && Boolean.FALSE.equals(now.landlordEndsAlone()));
   }
 
-  private static void requireLiving(RoomState now) {
-    if (now.status() != RoomStatus.LIVING) {
-      throw invalidState();
-    }
+  /** 이 측이 지금 거주 종료 요청({@code REQUEST_END})을 보낼 수 있나. 집주인 측, 답할 수 있는 세입자, 아직 열린 요청 없음. */
+  public static boolean canRequestEnd(RoomState now, PartySide side) {
+    return now.status() == RoomStatus.LIVING
+        && side == PartySide.LANDLORD
+        && !Boolean.FALSE.equals(now.tenantAnswers())
+        && !Boolean.TRUE.equals(now.endRequestOpen());
   }
 
-  private static void requireSide(ActionEntry action, PartySide side) {
-    if (action.actorSide() != side) {
-      throw invalidState();
-    }
+  /** 이 측이 지금 거주 종료 요청에 답할 수 있나({@code CONFIRM_END}·{@code REJECT_END}). 세입자 측, 열린 요청 있음. */
+  public static boolean canAnswerEnd(RoomState now, PartySide side) {
+    return now.status() == RoomStatus.LIVING
+        && side == PartySide.TENANT
+        && !Boolean.FALSE.equals(now.endRequestOpen());
   }
 
   private static BusinessException invalidState() {
