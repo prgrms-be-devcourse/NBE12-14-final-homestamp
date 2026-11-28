@@ -7,9 +7,9 @@
 # 명령 취소(CancelCommand)는 주지 않는다: 자원 범위를 좁힐 수 없고(계정의 남의 명령도 취소 가능), 배포는 서버에서 끝까지 도는 편이 안전하다.
 
 variable "deploy_script_sha256" {
-  description = "EC2에 설치를 승인한 /opt/homestamp/deploy/deploy.sh의 SHA-256. 비어 있으면 문서가 실행을 거절한다(종료 20)"
+  description = "EC2에 설치를 승인한 /opt/homestamp/deploy/deploy.sh의 SHA-256. 기본값은 이 커밋의 Git 원본 해시이고 CI deploy-hash가 대조한다. 비어 있으면 문서가 실행을 거절한다(종료 20)"
   type        = string
-  default     = ""
+  default     = "2dc055ed8e142f382d74bd894d50f9e5998dd2a3d73369eab1e51341753d8820"
   validation {
     condition     = can(regex("^([0-9a-f]{64})?$", var.deploy_script_sha256))
     error_message = "deploy_script_sha256는 빈 값이거나 64자리 소문자 16진수여야 합니다."
@@ -17,9 +17,9 @@ variable "deploy_script_sha256" {
 }
 
 variable "deploy_front_script_sha256" {
-  description = "EC2에 설치를 승인한 /opt/homestamp/deploy/deploy-front.sh의 SHA-256. 비어 있으면 화면 문서가 실행을 거절한다(종료 20)"
+  description = "EC2에 설치를 승인한 /opt/homestamp/deploy/deploy-front.sh의 SHA-256. 기본값은 이 커밋의 Git 원본 해시이고 CI deploy-hash가 대조한다. 비어 있으면 화면 문서가 실행을 거절한다(종료 20)"
   type        = string
-  default     = ""
+  default     = "16615bf3a4ff888cafbee38b30ff7773955ecb06f19304b3232d5f97fa33df0a"
   validation {
     condition     = can(regex("^([0-9a-f]{64})?$", var.deploy_front_script_sha256))
     error_message = "deploy_front_script_sha256는 빈 값이거나 64자리 소문자 16진수여야 합니다."

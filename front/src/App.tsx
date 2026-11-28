@@ -40,7 +40,7 @@ import { hasAction, type RoomAction } from "@/api/actions"
 import { ApiProvider } from "@/api"
 import { useApi } from "@/api/hooks"
 import { repairStub } from "@/api/http-repair-view"
-import { errorMessage } from "@/api/errors"
+import { errorMessage, shouldReload } from "@/api/errors"
 import { createApi } from "@/api/create-api"
 import {
   inspectionIdIn,
@@ -535,7 +535,7 @@ function HomeStampApp({
           ? r.server?.joinedAway
             ? "합류 전 기록이에요 · 읽기 전용"
             : "정산이 끝난 기록이에요 · 읽기 전용"
-          : "새로 확인할 일이 없어요"
+          : "새로 답할 일이 없어요"
     const openRepairs = db.repairs.filter(
       (x) => x.roomId === r.id && x.status !== "처리 완료",
     ).length
@@ -549,7 +549,7 @@ function HomeStampApp({
             ? "퇴거 정산을 마무리해 주세요"
             : openRepairs
               ? `진행 중인 수리 ${openRepairs}건`
-              : "새로 확인할 일이 없어요"
+              : "새로 답할 일이 없어요"
   }
   // 하자·수리 / 수리비 목록의 탭별 건수
   const tabCount = (v: string) =>
@@ -887,6 +887,19 @@ function HomeStampApp({
           onCancel={closeModal}
           onLogout={onLogout}
           onOpenTerms={() => setTermsOpen(true)}
+          onUpdate={async (patch) => {
+            try {
+              onAccountChange(await auth.updateAccount(patch))
+            } catch (e) {
+              // 그사이 다른 곳에서 바뀌었으면(VERSION_CONFLICT) 내 정보를 다시 불러 보여 줘요
+              if (shouldReload(e))
+                auth.reload().then(onAccountChange, () => undefined)
+              throw e
+            }
+          }}
+          onChangePassword={(current, next) =>
+            auth.changePassword(current, next)
+          }
         />
       )}
       {modal === "room" && account && (

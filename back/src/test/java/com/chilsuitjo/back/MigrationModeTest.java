@@ -145,11 +145,10 @@ class MigrationModeTest {
   @Test
   void 이미지의_역할_설정은_운영_규칙을_통과하고_Owner와_Migration_로그인과_겹치지_않는다() {
     var roles =
-        com.chilsuitjo.back.global.config.migration.GrantRoles.fromImage(
-            "homestamp_owner", "homestamp_migration");
-    assertThat(roles.app()).isEqualTo("homestamp_app");
-    assertThat(roles.purge()).isEqualTo("homestamp_purge");
-    assertThat(roles.human()).isEqualTo("homestamp_human_read");
+        com.chilsuitjo.back.global.config.migration.GrantRoles.fromImage("hs_owner", "hs_migrator");
+    assertThat(roles.app()).isEqualTo("hs_app");
+    assertThat(roles.purge()).isEqualTo("hs_purge");
+    assertThat(roles.human()).isEqualTo("hs_human_read");
   }
 
   /** execute가 남긴 오류 로그 한 줄(실패 원인)을 가로챈다. */
