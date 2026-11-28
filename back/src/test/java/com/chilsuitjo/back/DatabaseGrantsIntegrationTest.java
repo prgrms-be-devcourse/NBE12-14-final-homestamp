@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.chilsuitjo.back.global.config.migration.DatabaseGrants;
 import com.chilsuitjo.back.global.config.migration.GrantRoles;
+import com.chilsuitjo.back.notification.repository.SmsOptOutRepository;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -15,6 +16,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -24,6 +26,7 @@ import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.jpa.repository.Query;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
@@ -483,6 +486,7 @@ class DatabaseGrantsIntegrationTest {
       statement.execute(
           "INSERT INTO state.sms_opt_out (phone_hmac, created_at) VALUES ('test-hmac', now())");
       statement.execute("DELETE FROM state.sms_opt_out WHERE phone_hmac = 'test-hmac'");
+      assertOptOutRepositoryRunsAsApp(statement);
       assertPermissionDenied(statement, "UPDATE record.action SET created_at = created_at");
       assertPermissionDenied(statement, "UPDATE record.supplement SET description = 'changed'");
       assertPermissionDenied(statement, "DELETE FROM record.supplement");
@@ -495,6 +499,43 @@ class DatabaseGrantsIntegrationTest {
       assertPermissionDenied(
           statement, "SELECT state.purge_room_record('00000000-0000-0000-0000-000000000001')");
     }
+  }
+
+  /**
+   * 수신 거부 등록·해제·해제 감사(#370 A-1~A-3)의 실제 저장소 문장을 앱 역할로 돌린다. 앱은 {@code log.deletion_log}에 INSERT만 있어
+   * 감사 문장이 그 표를 읽으면(RETURNING 등) 운영에서만 실패한다.
+   */
+  private static void assertOptOutRepositoryRunsAsApp(Statement statement) throws SQLException {
+    String hmac = "grant-release-" + UUID.randomUUID();
+    assertEquals(1, statement.executeUpdate(repositorySql("insertIfAbsent", hmac)));
+    assertEquals(0, statement.executeUpdate(repositorySql("insertIfAbsent", hmac)));
+    assertEquals(1, statement.executeUpdate(repositorySql("deleteByPhoneHmac", hmac)));
+    assertEquals(1, statement.executeUpdate(repositorySql("insertReleaseAudit", hmac)));
+    assertEquals(
+        "1",
+        scalar(
+            statement.getConnection(),
+            "SELECT count(*)::text FROM state.outbox WHERE kind = 'AUDIT_WRITE'"
+                + " AND created_at = '2026-11-28T03:00:00Z'::timestamptz"
+                + " AND dedupe_key LIKE 'audit:%' AND payload ? 'deletionLogId'"
+                + " AND NOT EXISTS (SELECT 1 FROM state.sms_opt_out WHERE phone_hmac = '"
+                + hmac
+                + "')"));
+    statement.execute(
+        "DELETE FROM state.outbox WHERE kind = 'AUDIT_WRITE'"
+            + " AND created_at = '2026-11-28T03:00:00Z'::timestamptz");
+  }
+
+  private static String repositorySql(String method, String hmac) {
+    String sql =
+        Arrays.stream(SmsOptOutRepository.class.getMethods())
+            .filter(m -> m.getName().equals(method))
+            .findFirst()
+            .orElseThrow()
+            .getAnnotation(Query.class)
+            .value();
+    return sql.replace(":phoneHmac", "'" + hmac + "'")
+        .replace(":at", "'2026-11-28T03:00:00Z'::timestamptz");
   }
 
   private static void assertTablePrivilegeMatrix() throws SQLException {
@@ -846,7 +887,7 @@ class DatabaseGrantsIntegrationTest {
 
   // ======================================================== JDBC 실행 계약(트랜잭션·역할·잠금·롤백)
 
-  /** 테스트마다 새 DB: #185 선행 권한 → #173과 같은 Flyway(V1~V12). 역할은 클러스터 전체라 한 번만 만든다. */
+  /** 테스트마다 새 DB: #185 선행 권한 → #173과 같은 Flyway(V1~V13). 역할은 클러스터 전체라 한 번만 만든다. */
   private static String freshDatabase(String db) throws Exception {
     try (Connection connection = adminConnection();
         Statement statement = connection.createStatement()) {
@@ -855,11 +896,11 @@ class DatabaseGrantsIntegrationTest {
     prepareDatabasePrivileges(db);
     migrate(db);
     assertEquals(
-        "12",
+        "13",
         scalarAsAdmin(
             db,
             "SELECT max(version::int)::text FROM public.flyway_schema_history WHERE success AND version IS NOT NULL"),
-        "이 테스트가 쓰는 DB 버전은 V12");
+        "이 테스트가 쓰는 DB 버전은 V13");
     return db;
   }
 

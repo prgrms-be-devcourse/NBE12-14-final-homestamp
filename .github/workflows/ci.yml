@@ -289,10 +289,23 @@ jobs:
           node-version: '22'
       - run: node --test scripts/hooks/hooks.test.mjs
 
-  # 규칙 세트의 "통과 필수"는 이것 하나. 건너뛴 job(skipped)은 통과로 본다
+  # 승인 해시: deploy.tf의 승인 해시가 Git의 배포 스크립트와 같은지. 몇 초라 경로와 상관없이 언제나 돈다
+  # (스크립트만, 해시만, 검사 자체만 바뀐 PR도 같은 검사를 받는다. 배포-자동화 "코드 배포")
+  deploy-hash:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: 검사 시험(가짜 저장소)
+        run: bash .github/scripts/test/check-deploy-hash-test.sh
+      - name: 승인 해시 = Git 원본
+        run: bash .github/scripts/check-deploy-hash.sh
+
+  # 규칙 세트의 "통과 필수"는 이것 하나. 건너뛴 job(skipped)은 통과로 보되, 언제나 도는 job(ALWAYS)은 success만 통과
   ci-result:
     if: always()
-    needs: [changes, conventions, decision-record, gitleaks, back, back-image, back-migration, front, hooks]
+    needs: [changes, conventions, decision-record, gitleaks, back, back-image, back-migration, front, hooks, deploy-hash]
     runs-on: ubuntu-24.04
     steps:
       - env:
@@ -301,11 +314,13 @@ jobs:
           python3 - <<'PY'
           import json, os, sys
           needs = json.loads(os.environ["RESULTS"])
-          bad = []
+          ALWAYS = {"deploy-hash"}
+          bad = [name for name in ALWAYS if name not in needs]
           for name, need in needs.items():
               result = need["result"]
               print(f"{name}: {result}")
-              if result not in ("success", "skipped"):
+              allowed = ("success",) if name in ALWAYS else ("success", "skipped")
+              if result not in allowed:
                   bad.append(name)
           if bad:
               print("::error::실패한 검사: " + ", ".join(bad))

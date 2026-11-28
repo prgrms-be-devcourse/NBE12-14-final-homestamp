@@ -26,7 +26,8 @@ public class PhotoCountRepository {
 
   /**
    * 올리는 사람이 볼 수 있는 사진 수(decisions 2026-11-12·18). 지운 사진은 세지 않는다(06 0-1 {@code photo.max.repair}).
-   * 공유를 그만둔 뒤 상대가 붙인 사진은 나에게 보이지 않으므로 세지 않는다(03 3-1 보이는 범위).
+   * 상대의 사진은 {@code PhotoSight.visibleTo}와 같은 조건으로 센다: 아직 상대에게 보이지 않은 사진(작성 중 점검, #295)과 공유를 그만둔 뒤
+   * 보이기 시작한 사진은 세지 않는다(03 3-1 보이는 범위).
    *
    * @param sharingStoppedAt 공유를 그만둔 시각. 없으면 null
    */
@@ -44,16 +45,19 @@ public class PhotoCountRepository {
         SELECT count(*) FROM record.photo p
         JOIN state.photo_visibility v ON v.photo_id = p.id
         WHERE p.room_record_id = :room AND v.erased_at IS NULL
+          AND (p.uploaded_by_side = :side OR (v.released_at IS NOT NULL
         """
-            + (sharingStoppedAt == null
-                ? ""
-                : " AND (p.uploaded_by_side = :side OR p.created_at <= :stoppedAt)")
-            + " AND ("
+            + (sharingStoppedAt == null ? "" : " AND v.released_at <= :stoppedAt")
+            + ")) AND ("
             + anyOf(targets, params)
             + ")";
-    Query query = entityManager.createNativeQuery(sql).setParameter("room", roomRecordId);
+    Query query =
+        entityManager
+            .createNativeQuery(sql)
+            .setParameter("room", roomRecordId)
+            .setParameter("side", viewerSide.name());
     if (sharingStoppedAt != null) {
-      query.setParameter("side", viewerSide.name()).setParameter("stoppedAt", sharingStoppedAt);
+      query.setParameter("stoppedAt", sharingStoppedAt);
     }
     params.forEach(query::setParameter);
     return ((Number) query.getSingleResult()).intValue();

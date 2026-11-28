@@ -14,7 +14,7 @@
 #   끝난 뒤 마지막 100줄만 옮긴다(#173·#299: 값을 넣지 않는 문장)
 #
 # 종료 코드: 0 성공·이미 배포됨 | 2 인자·설정 | 3 다른 배포 중 | 4 활성 슬롯을 알 수 없음 | 5 이전 Migration 컨테이너가 아직 실행 중
-#            10 이미지 | 11 --migrate(실패·시간 초과) | 12 --apply-grants(실패·시간 초과) | 13 새 앱 시작 | 14 헬스 체크 | 15 nginx 전환(이전 앱 유지)
+#            10 이미지 | 11 --migrate(비밀 폴더 검사·실패·시간 초과) | 12 --apply-grants(실패·시간 초과) | 13 새 앱 시작 | 14 헬스 체크 | 15 nginx 전환(이전 앱 유지)
 #            16 전환 뒤 확인 실패(되돌림 시도) | 17 되돌리기 실패(두 앱 모두 남김, 손으로 복구) | 129·130·143 신호로 중단
 set -euo pipefail
 set +x
@@ -63,7 +63,7 @@ MIGRATE_TIMEOUT GRANTS_TIMEOUT VERIFY_TIMEOUT"
 BLUE_PORT=8081
 GREEN_PORT=8082
 NAME_PREFIX=homestamp-app
-MIGRATION_SECRETS_DIR=/run/secrets/homestamp-migration
+MIGRATION_SECRETS_DIR=/etc/homestamp/migration
 UPSTREAM_FILE=/opt/homestamp/nginx/run/upstream/upstream.conf
 SWITCH_CMD=/opt/homestamp/nginx/switch-upstream.sh
 POST_SWITCH_RESOLVE=""
@@ -305,10 +305,65 @@ if [[ $prev_running == true && "$(c_field "$(slot_name "$active")" '{{.Config.Im
 fi
 
 # ---- 3·4. Migration → GRANT (같은 이미지, 일회성, 비밀 폴더는 읽기 전용, 0이 아니면 새 앱을 시작하지 않는다)
-[[ -d $MIGRATION_SECRETS_DIR ]] || {
-  step=migrate
-  die $EXIT_MIGRATE "Migration 비밀 폴더가 없습니다"
+# Migration 비밀 폴더는 내용을 읽지 않고 모양만 본다(04 6장 4개 파일 계약). 하나라도 어긋나면 Migration 전에 11로 멈춘다.
+# - 폴더: 링크가 아닌 폴더, 소유자 MIGRATION_UID, 0500. 정해진 4개 이름만(앱 MigrationSettings와 같은 규칙)
+# - 파일: 링크가 아닌 일반 파일, 소유자 MIGRATION_UID, 0400, 비어 있지 않음(크기만 보고 내용은 읽지 않음)
+# - 상위 경로(/까지): 링크가 아니고 root 소유, 그룹·남 쓰기 막힘(SSM 문서의 전환기 검사와 같은 방식). 남이 폴더를 바꿔 끼우지 못하게
+# 오류에는 이름·경로만 쓰고 값은 쓰지 않는다
+check_migration_secrets() {
+  local dir=$MIGRATION_SECRETS_DIR uid=${MIGRATION_UID%%:*} p om f
+  local -a entries
+  if [[ $dir == *..* || $dir == */ || $dir == *//* ]]; then
+    log "Migration 비밀 폴더 경로에 .. 이나 // 가 있거나 /로 끝납니다"
+    return 1
+  fi
+  if [[ -L $dir || ! -d $dir ]]; then
+    log "Migration 비밀 폴더가 없거나 링크입니다: $dir"
+    return 1
+  fi
+  if [[ "$(stat -c '%u %a' "$dir")" != "$uid 500" ]]; then
+    log "Migration 비밀 폴더의 소유자·권한이 다릅니다(소유자 MIGRATION_UID, 0500): $dir"
+    return 1
+  fi
+  p="$(dirname "$dir")"
+  while :; do
+    if [[ -L $p || ! -d $p ]]; then
+      log "Migration 비밀 폴더의 상위 경로가 폴더가 아니거나 링크입니다: $p"
+      return 1
+    fi
+    om="$(stat -c '%u %a' "$p")"
+    if [[ ${om% *} != 0 ]] || ((8#${om#* } & 8#022)); then
+      log "Migration 비밀 폴더의 상위 경로가 root 소유가 아니거나 그룹·남이 쓸 수 있습니다: $p"
+      return 1
+    fi
+    [[ $p == / ]] && break
+    p="$(dirname "$p")"
+  done
+  for f in spring.datasource.url spring.datasource.username spring.datasource.password app.migration.owner-role; do
+    if [[ -L $dir/$f || ! -f $dir/$f ]]; then
+      log "Migration 비밀 파일이 없거나 일반 파일이 아닙니다: $f"
+      return 1
+    fi
+    if [[ "$(stat -c '%u %a' "$dir/$f")" != "$uid 400" ]]; then
+      log "Migration 비밀 파일의 소유자·권한이 다릅니다(소유자 MIGRATION_UID, 0400): $f"
+      return 1
+    fi
+    if [[ ! -s $dir/$f ]]; then
+      log "Migration 비밀 파일이 비어 있습니다: $f"
+      return 1
+    fi
+  done
+  shopt -s nullglob dotglob
+  entries=("$dir"/*)
+  shopt -u nullglob dotglob
+  if ((${#entries[@]} != 4)); then
+    log "Migration 비밀 폴더에 정해진 4개 이름 밖의 항목이 있습니다"
+    return 1
+  fi
 }
+step=migrate
+check_migration_secrets ||
+  die $EXIT_MIGRATE "Migration 비밀 폴더 검사에 실패했습니다. Migration을 하지 않고 새 앱을 시작하지 않습니다"
 # 떼어 놓고 돌려 끝날 때까지(최대 제한 시간) 기다린다. 끝나면 출력(#173·#299: 값을 넣지 않는 문장)을 옮기고 지운다.
 # 제한 시간을 넘기면 멈추고, 멈춘 것을 확인한 뒤에만 실패로 끝낸다. 멈춘 컨테이너는 docker logs로 보도록 남기고
 # 다음 배포가 지운다. 멈추지 못하면 다음 배포는 그것이 끝날 때까지 종료 5로 거절한다(잠금이 풀려도 겹치지 않게)

@@ -25,7 +25,14 @@ ok() { passed=$((passed + 1)); echo "ok   $1"; }
 bad() { failed=$((failed + 1)); echo "FAIL $1"; }
 expect() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (기대 $3, 실제 $2)"; fi; }
 
+# Migration 비밀 폴더는 운영처럼 root 0755 상위 + 10002 0500 폴더로 만든다(secrets-fixture.sh, runner 안 root).
+# 상위 경로가 runner 안에서 root 소유로 보이도록 작업 폴더 밖 새 폴더를 쓴다. 끝나면 runner로 비우고 지운다
+SEC_BASE=""
 cleanup() {
+  if [ -n "$SEC_BASE" ] && [ -d "$SEC_BASE" ] && docker image inspect $T-runner:local >/dev/null 2>&1; then
+    docker run --rm -v "$SEC_BASE:$SEC_BASE" $T-runner:local sh -c 'rm -rf "$1"/* && chown "$2" "$1"' sh "$SEC_BASE" "$(id -u):$(id -g)" >/dev/null 2>&1
+    rmdir "$SEC_BASE" 2>/dev/null
+  fi
   ids="$(docker ps -aq --filter "name=^$T-")"
   [ -z "$ids" ] || docker rm -f $ids >/dev/null 2>&1
   imgs="$(docker image ls -q --filter "reference=$T-*" ; docker image ls -q --filter "reference=$REPO")"
@@ -43,6 +50,8 @@ done
 
 docker run -d --name $T-registry -p 127.0.0.1:15000:5000 "$REGISTRY_IMAGE" >/dev/null
 docker build -q -t $T-runner:local "$DIR/test/runner" >/dev/null || { echo "runner 이미지 빌드 실패" >&2; exit 1; }
+SEC_BASE="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/hs-deploy-sec.XXXXXX")" && pwd -P)"
+SEC=$SEC_BASE/migration
 
 build() { # 이름 [build-arg...] → 변수 IMG_<이름>에 digest 참조
   local name=$1
@@ -120,7 +129,7 @@ POST_SWITCH_URL=http://127.0.0.1:18090/api/
 BLUE_PORT=18081
 GREEN_PORT=18082
 NAME_PREFIX=$T-app
-MIGRATION_SECRETS_DIR=$W/secrets
+MIGRATION_SECRETS_DIR=$SEC
 UPSTREAM_FILE=$W/upstream/upstream.conf
 SWITCH_CMD=$W/bin/switch
 STATE_DIR=$W/state
@@ -132,7 +141,10 @@ EOF
 echo 0 >"$W/n"
 next_out() { local i; i=$(($(cat "$W/n") + 1)); echo "$i" >"$W/n"; echo "$W/out/$i"; }
 lastout() { echo "$W/out/$(cat "$W/n")"; }
-runner() { docker run --rm --network host -v /var/run/docker.sock:/var/run/docker.sock -v "$W:$W" -v "$DIR:$DIR:ro" $T-runner:local "$@"; }
+# /tmp는 이미지에서 1777이라, Linux에서 비밀 폴더가 /tmp 아래면 상위 경로 검사에 걸린다. runner 안에서만 root 0755로 덮는다
+runner() { docker run --rm --network host --tmpfs /tmp:rw,mode=0755 -v /var/run/docker.sock:/var/run/docker.sock -v "$W:$W" -v "$SEC_BASE:$SEC_BASE" -v "$DIR:$DIR:ro" $T-runner:local "$@"; }
+asroot() { runner sh -c "$1"; }
+sec_reset() { asroot "rm -rf '$SEC_BASE/via' '$SEC_BASE/mlink' '$SEC_BASE/pw' && sh '$DIR/test/secrets-fixture.sh' '$SEC' '$W/secrets'"; }
 deploy() { # 출력은 $W/out/N, 종료 코드를 돌려준다
   local out
   out="$(next_out)"
@@ -145,8 +157,11 @@ edge_version() { runner curl -s --max-time 3 -D - -o /dev/null http://127.0.0.1:
 state() { docker container inspect -f '{{.State.Status}}' "$T-app-$1" 2>/dev/null || echo none; }
 cimage() { docker container inspect -f '{{.Config.Image}}' "$T-app-$1" 2>/dev/null || echo none; }
 last() { tail -n 1 "$W/state/history.jsonl"; }
+fmode() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"; } # GNU·busybox, 없으면 BSD(macOS)
 has() { case "$1" in *"$2"*) return 0 ;; esac; return 1; }
 check_last() { if has "$(last)" "$2"; then ok "$1"; else bad "$1 ($(last))"; fi; }
+
+sec_reset || { echo "비밀 폴더 준비 실패" >&2; exit 1; }
 
 echo "== 입력 검사"
 expect "태그만 준 이미지 거절" "$(deploy "$REPO:v1")" 2
@@ -179,7 +194,7 @@ expect "재시작 정책" "$(docker container inspect -f '{{.HostConfig.RestartP
 expect "읽기 전용 루트·권한 없음" "$(docker container inspect -f '{{.HostConfig.ReadonlyRootfs}} {{.HostConfig.CapDrop}} {{.HostConfig.SecurityOpt}}' $T-app-blue)" "true [ALL] [no-new-privileges]"
 expect "앱 환경변수는 프로필·시간대뿐(비밀값 없음)" "$(docker container inspect -f '{{range .Config.Env}}{{println .}}{{end}}' $T-app-blue | grep -E '^(SPRING_|TZ=)' | sort | tr '\n' ' ')" "SPRING_PROFILES_ACTIVE=prod TZ=UTC "
 expect "앱에는 비밀 폴더를 묶지 않음" "$(docker container inspect -f '{{len .Mounts}}' $T-app-blue)" 0
-expect "기록 파일 권한 0640·폴더 0750" "$(stat -f '%Lp' "$W/state/history.jsonl") $(stat -f '%Lp' "$W/state")" "640 750"
+expect "기록 파일 권한 0640·폴더 0750" "$(fmode "$W/state/history.jsonl") $(fmode "$W/state")" "640 750"
 
 echo "== 2. Blue → Green"
 blue_id="$(docker container inspect -f '{{.Id}}' $T-app-blue)"
@@ -246,6 +261,39 @@ expect "종료 11" "$(deploy "$IMG_migfail")" 11
 after_fail migrate
 expect "green 슬롯 손대지 않음" "$(docker container inspect -f '{{.Id}}' $T-app-green)" "$green_id"
 check_last "기록: failed_step migrate, DB 롤백 없음 표시" '"result":"failed","exit_code":11,"failed_step":"migrate","prev_slot":"blue","prev_running":true,"active_slot":"blue","rolled_back":false,"db_changes_rolled_back":false'
+
+echo "== 4b. Migration 비밀 폴더 모양이 다르면 Migration 전에 11(DB·슬롯·nginx 그대로)"
+sec_case() { # 이름 기대-문구 root로-바꿀-명령 [MIGRATION_SECRETS_DIR 값]
+  if [ -n "${4:-}" ]; then
+    cp "$W/deploy.env" "$W/deploy.env.bak"
+    { grep -v '^MIGRATION_SECRETS_DIR=' "$W/deploy.env.bak"; echo "MIGRATION_SECRETS_DIR=$4"; } >"$W/deploy.env"
+  fi
+  [ -z "$3" ] || asroot "$3"
+  expect "$1: 종료 11" "$(deploy "$IMG_v1")" 11
+  if grep -qF "$2" "$(lastout)"; then ok "$1: 이유($2)"; else bad "$1: 이유 $(grep '비밀' "$(lastout)" | head -n 2)"; fi
+  if grep -q -- '--migrate' "$(lastout)"; then bad "$1: Migration을 돌림"; else ok "$1: Migration 안 돌림"; fi
+  expect "$1: upstream·blue·green 그대로" "$(active) $(state blue) $(docker container inspect -f '{{.Id}}' $T-app-green)" "127.0.0.1:18081 running $green_id"
+  check_last "$1: 기록 migrate" '"result":"failed","exit_code":11,"failed_step":"migrate","prev_slot":"blue","prev_running":true,"active_slot":"blue","rolled_back":false'
+  [ -z "${4:-}" ] || mv "$W/deploy.env.bak" "$W/deploy.env"
+  sec_reset
+}
+sec_case "폴더 없음" "없거나 링크입니다" "rm -rf '$SEC'"
+sec_case "폴더가 링크" "없거나 링크입니다" "ln -s migration '$SEC_BASE/mlink'" "$SEC_BASE/mlink"
+sec_case "중간 경로가 링크" "상위 경로가 폴더가 아니거나 링크" "ln -s . '$SEC_BASE/via'" "$SEC_BASE/via/migration"
+sec_case "경로에 .." "경로에 .. 이나" "" "$SEC_BASE/x/../migration"
+sec_case "폴더 권한 0700" "비밀 폴더의 소유자·권한" "chmod 0700 '$SEC'"
+sec_case "폴더 소유자 root" "비밀 폴더의 소유자·권한" "chown 0:0 '$SEC'"
+sec_case "파일 권한 0444(남이 읽음)" "비밀 파일의 소유자·권한" "chmod 0444 '$SEC/spring.datasource.password'"
+sec_case "파일 소유자 root" "비밀 파일의 소유자·권한" "chown 0:0 '$SEC/spring.datasource.password'"
+sec_case "파일 하나 없음" "비밀 파일이 없거나 일반 파일이 아닙니다" "rm '$SEC/app.migration.owner-role'"
+sec_case "파일이 링크" "비밀 파일이 없거나 일반 파일이 아닙니다" "mv '$SEC/spring.datasource.password' '$SEC_BASE/pw' && ln -s ../pw '$SEC/spring.datasource.password'"
+sec_case "다른 이름 항목" "4개 이름 밖" "touch '$SEC/extra' && chown 10002:10002 '$SEC/extra' && chmod 0400 '$SEC/extra'"
+sec_case "숨김 항목" "4개 이름 밖" "touch '$SEC/.x' && chown 10002:10002 '$SEC/.x' && chmod 0400 '$SEC/.x'"
+sec_case "빈 비밀번호 파일" "비어 있습니다" ": >'$SEC/spring.datasource.password'"
+sec_case "상위 폴더를 남이 쓸 수 있음" "상위 경로가 root 소유가 아니거나" "chmod 0777 '$SEC_BASE'"
+sec_case "상위 폴더 소유자 root 아님" "상위 경로가 root 소유가 아니거나" "chown 10002:10002 '$SEC_BASE'"
+expect "되돌린 뒤에는 검사를 지나 Migration까지 감(migfail → 11)" "$(deploy "$IMG_migfail")" 11
+if grep -q 'mock migrate exit=1' "$(lastout)"; then ok "검사 통과 뒤 Migration 실행"; else bad "검사 통과 뒤 Migration 실행"; fi
 
 echo "== 5. GRANT 실패"
 expect "종료 12" "$(deploy "$IMG_grantfail")" 12
@@ -376,6 +424,22 @@ for c in $(docker ps -aq --filter "name=^$T-app-"); do
 done
 expect "canary 값 노출 없음" "$leak" 0
 if grep -q 'mock migrate exit=0' "$W/out/"*; then ok "Migration 컨테이너는 비밀 폴더를 읽을 수 있었음(값은 출력 안 함)"; else bad "Migration 비밀 폴더 연결"; fi
+# 앱(10001)은 폴더를 묶지 않는 것이 1차 방어(1번 시험). 실제 앱 컨테이너 안에도 그 경로가 없는지 본다
+expect "실행 중인 앱 컨테이너 안에 Migration 비밀 파일 없음" "$(docker exec $T-app-green sh -c 'test -e /run/secrets/homestamp-migration/spring.datasource.password && echo found || echo none' 2>/dev/null)" none
+# Migration처럼 읽기 전용으로 묶으면 10002·root 모두 쓰지 못한다(커널의 읽기 전용 mount, 어디서나 강제)
+wr() { docker run --rm --user "$1" --mount "type=bind,src=$SEC,dst=/s,readonly" $T-runner:local sh -c 'echo x >/s/new' >/dev/null 2>&1 && echo wrote || echo denied; }
+expect "읽기 전용 mount: 10002·root 모두 쓰기 실패" "$(wr 10002:10002) $(wr 0:0)" "denied denied"
+# 묶이더라도 파일 권한(0500·0400)으로 10001이 못 읽는지는 권한을 실제로 강제하는 Linux 경로에서만 볼 수 있다.
+# Docker Desktop은 macOS·Windows에서 공유한 경로의 소유자·권한을 보여 주기만 하고 강제하지 않는다.
+# 그래서 Docker Desktop이면서 실제로 강제되지 않을 때만 건너뛴다(Linux에서는 언제나 검사해 실패를 숨기지 않는다)
+# 읽은 내용은 컨테이너 안에서 버린다(가짜 값이어도 컨테이너 로그·출력에 남기지 않는 실서버 런북과 같은 방식)
+rd() { docker run --rm --user "$1" -v "$SEC:/s:ro" $T-runner:local sh -c 'cat /s/spring.datasource.password >/dev/null 2>&1' && echo read || echo denied; }
+reads="$(rd 10002:10002) $(rd 10001:10001)"
+if [ "$reads" = "read read" ] && docker info -f '{{.OperatingSystem}}' 2>/dev/null | grep -q 'Docker Desktop'; then
+  echo "skip 앱 UID 10001의 비밀 파일 읽기 거절(이 Docker Desktop 경로는 권한을 강제하지 않음, Linux에서 확인)"
+else
+  expect "UID 10002는 읽음, 앱 UID 10001은 못 읽음" "$reads" "read denied"
+fi
 expect "끝난 Migration·GRANT 컨테이너는 다음 배포가 지워 남지 않음" "$(docker ps -aq --filter "name=^$T-app-(migrate|grants)$" | wc -l | tr -d ' ')" 0
 
 echo "== 기록 형식"

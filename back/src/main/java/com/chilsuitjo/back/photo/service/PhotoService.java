@@ -6,6 +6,7 @@ import com.chilsuitjo.back.photo.dto.PhotoAttachCommand;
 import com.chilsuitjo.back.photo.dto.PhotoCard;
 import com.chilsuitjo.back.photo.dto.PhotoTarget;
 import com.chilsuitjo.back.room.dto.RoomAccess;
+import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -37,6 +38,19 @@ public interface PhotoService {
    *     SavedState.withPhotos}로 넘긴다(05 2-3 "사진 지문은 행동 payload에")
    */
   List<PhotoDigest> attach(PhotoAttachCommand command);
+
+  /**
+   * 대상들에 붙었고 아직 상대에게 보이지 않은 사진({@link PhotoAttachCommand#released()}가 false였던 사진)을 {@code at}부터
+   * 상대에게 보이게 한다(#295). 점검 확인 요청({@code REQUEST_INSPECTION_CONFIRM})의 {@code StateStore.save} 안에서, 그
+   * 행동과 같은 트랜잭션으로 부른다. 이미 보이는 사진은 그대로 둔다.
+   *
+   * <p>공유를 그만둔 뒤 부르면 보이기 시작한 시각이 그만둔 시각보다 뒤라 상대에게는 계속 보이지 않는다(불변식 18, {@code PhotoSight}).
+   *
+   * @param roomRecordId 대상이 있는 호실 기록
+   * @param targets 보이게 할 대상. 이 호실 기록 안의 대상이어야 한다
+   * @param at 행동 시각({@code ActionRequestContext.at()})
+   */
+  void release(UUID roomRecordId, Collection<PhotoTarget> targets, Instant at);
 
   /**
    * 회원 화면에 보여 줄 대상별 사진 카드. {@code viewer}가 볼 수 있는 사진만 담는다(03 3-1 보이는 범위). 링크에서 숨긴 사진도 회원 화면에는 그대로
