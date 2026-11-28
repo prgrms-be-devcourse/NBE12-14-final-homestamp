@@ -440,6 +440,81 @@ class JpaWaitServiceTest extends SchemaTestSupport {
   }
 
   @Test
+  void 초대_거절은_초대한_측이_요청한_열린_요청만_모든_종류_닫는다() {
+    UUID room = room();
+    UUID otherRoom = room();
+    // 초대한 측(세입자)이 요청한 것: 기다림·미확인은 닫고, 이미 답한 것은 그대로
+    RequestTarget defectTarget = repairCase(room);
+    RequestHandle defect = open(room, RequestKind.DEFECT_CONFIRM, defectTarget, PartySide.TENANT);
+    RequestHandle inspectionConfirm =
+        open(
+            room,
+            RequestKind.INSPECTION_CONFIRM,
+            RequestTarget.of(TargetKind.INSPECTION, inspection(room)),
+            PartySide.TENANT);
+    setStatus(inspectionConfirm.requestId(), "UNCONFIRMED");
+    RequestTarget done = repairCase(room);
+    RequestHandle answered = open(room, RequestKind.DEFECT_CONFIRM, done, PartySide.TENANT);
+    answered(done, RequestKind.DEFECT_CONFIRM, PartySide.LANDLORD);
+    // 반대 방향(거절한 측이 요청한 것)과 다른 호실은 그대로
+    RequestHandle theirs =
+        open(room, RequestKind.CLOSE_CONFIRM, repairCase(room), PartySide.LANDLORD);
+    RequestHandle elsewhere =
+        open(otherRoom, RequestKind.DEFECT_CONFIRM, repairCase(otherRoom), PartySide.TENANT);
+
+    int closed =
+        at(
+            LATER,
+            () -> waits.closeRequestedBy(room, PartySide.TENANT, ClosedReason.INVITE_REJECTED));
+
+    assertThat(closed).isEqualTo(2);
+    for (RequestHandle h : java.util.List.of(defect, inspectionConfirm)) {
+      // V15 CHECK가 새 이유를 받는다
+      assertThat(row(h.requestId()))
+          .containsEntry("status", "CLOSED")
+          .containsEntry("closed_reason", "INVITE_REJECTED");
+      assertThat(((java.sql.Timestamp) row(h.requestId()).get("closed_at")).toInstant())
+          .isEqualTo(LATER);
+    }
+    assertThat(status(answered)).isEqualTo("ANSWERED");
+    assertThat(status(theirs)).isEqualTo("WAITING");
+    assertThat(status(elsewhere)).isEqualTo("WAITING");
+
+    // 같은 거절을 다시 처리해도 이미 닫힌 것은 세지 않고 시각도 그대로
+    assertThat(
+            at(
+                LATER.plusSeconds(60),
+                () -> waits.closeRequestedBy(room, PartySide.TENANT, ClosedReason.INVITE_REJECTED)))
+        .isZero();
+
+    // 닫은 뒤 늦게 온 답·전달 증거도 다시 열지 않는다
+    answered(defectTarget, RequestKind.DEFECT_CONFIRM, PartySide.LANDLORD);
+    started(defect.requestId(), LATER.minusSeconds(30));
+    assertThat(row(defect.requestId()))
+        .containsEntry("status", "CLOSED")
+        .containsEntry("closed_reason", "INVITE_REJECTED");
+    assertThat(((java.sql.Timestamp) row(defect.requestId()).get("closed_at")).toInstant())
+        .isEqualTo(LATER);
+  }
+
+  @Test
+  void 초대_거절은_방향_없는_closeAll로_닫지_않고_한_방향_닫기는_거절_이유만_받는다() {
+    UUID room = room();
+    RequestHandle request =
+        open(room, RequestKind.DEFECT_CONFIRM, repairCase(room), PartySide.LANDLORD);
+
+    assertThatThrownBy(
+            () -> closeAll(room, ClosedReason.INVITE_REJECTED, EnumSet.allOf(RequestKind.class)))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() ->
+            at(
+                LATER,
+                () -> waits.closeRequestedBy(room, PartySide.LANDLORD, ClosedReason.ROOM_ENDED)))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThat(status(request)).isEqualTo("WAITING");
+  }
+
+  @Test
   void 조회는_쓰기와_같은_행을_읽는다() {
     UUID room = room();
     UUID otherRoom = room();

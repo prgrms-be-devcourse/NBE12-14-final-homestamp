@@ -16,7 +16,10 @@ import java.util.Set;
  *   <li>거주 종료({@code ROOM_ENDED}, #370 B-1): 하자 확인·진행 상황 묻기·상황 변화 확인은 열린 것(기다림·미확인) 모두, 종료 확인은
  *       기다림만(미확인 종료 확인과 수리 상태는 그대로, 03 3장 권한 표 "열린 수리 건의 수리 행동"). 종류는 이 넷이어야 한다(그 밖의 요청은 거주 종료로 닫지
  *       않는다)
- *   <li>공유 중단·정산 완료 등 그 밖의 이유: #113에서 정하기 전이라 {@code UnsupportedOperationException}
+ *   <li>초대 거절({@code INVITE_REJECTED}, #392): 초대한 측이 요청한 열린 요청(기다림·미확인), 모든 종류. <b>한 방향</b>이라
+ *       {@code WaitService.closeRequestedBy}로만 닫는다({@link #oneWay}). 거절한 측이 요청한 것·이미 답한 요청은 그대로다
+ *   <li>공유 중단·정산 완료 등 그 밖의 이유: #113에서 정하기 전이라 {@code UnsupportedOperationException}. 초대 거절을 방향 없는
+ *       {@code closeAll}로 넘기면 {@code IllegalArgumentException}이다
  * </ul>
  *
  * <p>닫힌 요청은 다시 열리지 않는다. 거주 종료 뒤에도 정산 완료 전까지 기록 화면에서 늦게 답할 수 있지만(03 1-4 "72시간 뒤"), 그 답은 그 기록의 행동이고
@@ -53,6 +56,14 @@ public final class CloseAllScope {
         kinds.forEach(kind -> all.put(kind, OPEN));
         yield all;
       }
+      case INVITE_REJECTED -> {
+        if (!kinds.containsAll(EnumSet.allOf(RequestKind.class))) {
+          throw new IllegalArgumentException("초대 거절은 초대한 측의 열린 요청을 모든 종류 닫아요");
+        }
+        Map<RequestKind, Set<RequestStatus>> all = new EnumMap<>(RequestKind.class);
+        kinds.forEach(kind -> all.put(kind, OPEN));
+        yield all;
+      }
       case ROOM_ENDED -> {
         if (!kinds.equals(ROOM_ENDED.keySet())) {
           throw new IllegalArgumentException(
@@ -64,6 +75,11 @@ public final class CloseAllScope {
           throw new UnsupportedOperationException(
               "closeAll " + reason + "은 #113에서 닫는 범위를 정한 뒤 구현해요");
     };
+  }
+
+  /** 요청한 측 하나만 닫는 이유인가. 이 이유는 방향 없는 {@code closeAll}로 닫지 않는다(양방향으로 닫히는 것을 막음). */
+  public static boolean oneWay(ClosedReason reason) {
+    return reason == ClosedReason.INVITE_REJECTED;
   }
 
   /** 거주 종료 저장이 넘길 종류(넷 모두). */

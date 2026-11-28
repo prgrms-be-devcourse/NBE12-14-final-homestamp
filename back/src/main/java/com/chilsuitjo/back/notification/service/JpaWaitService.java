@@ -52,6 +52,8 @@ import org.springframework.transaction.annotation.Transactional;
  *       d3에서 정함)
  *   <li>{@link #closeAll}: 상대 탈퇴와 거주 종료(#370 B-1)만 닫고, 공유 중단·정산 완료는 #113에서 정하기 전이라 {@code
  *       UnsupportedOperationException}이다
+ *   <li>{@link #closeRequestedBy}: 초대 거절(#392)만 받아 요청한 측 하나의 열린 요청을 닫는다. 이 이유는 {@code closeAll}로
+ *       넘기면 {@code IllegalArgumentException}이다(양방향으로 닫히지 않게)
  * </ul>
  */
 @Service
@@ -187,14 +189,49 @@ public class JpaWaitService implements WaitService, WaitQuery {
     return closeAll(roomRecordId, reason, kinds, () -> closedAt);
   }
 
+  /**
+   * 초대 거절처럼 한 방향만 닫는다({@link WaitService#closeRequestedBy}). 행동 시각은 pipeline {@code save}의 시각이다.
+   */
+  @Override
+  @Transactional(propagation = Propagation.MANDATORY)
+  public int closeRequestedBy(UUID roomRecordId, PartySide requestedBySide, ClosedReason reason) {
+    Objects.requireNonNull(roomRecordId, "roomRecordId");
+    Objects.requireNonNull(requestedBySide, "requestedBySide");
+    Objects.requireNonNull(reason, "reason");
+    if (!CloseAllScope.oneWay(reason)) {
+      throw new IllegalArgumentException("한 방향으로 닫는 이유가 아니에요: " + reason);
+    }
+    return close(
+        roomRecordId,
+        reason,
+        EnumSet.allOf(RequestKind.class),
+        requestedBySide,
+        requestContext::at);
+  }
+
   private int closeAll(
       UUID roomRecordId, ClosedReason reason, Set<RequestKind> kinds, Supplier<Instant> at) {
+    if (CloseAllScope.oneWay(reason)) {
+      // 방향 없이 닫으면 거절한 측이 요청한 것까지 닫힌다
+      throw new IllegalArgumentException(reason + "는 closeRequestedBy로 한 방향만 닫아요");
+    }
+    return close(roomRecordId, reason, kinds, null, at);
+  }
+
+  /** {@code requestedBySide}가 null이면 양방향. */
+  private int close(
+      UUID roomRecordId,
+      ClosedReason reason,
+      Set<RequestKind> kinds,
+      PartySide requestedBySide,
+      Supplier<Instant> at) {
     Map<RequestKind, Set<RequestStatus>> targets = CloseAllScope.targets(reason, kinds);
     Set<RequestStatus> anyStatus = EnumSet.noneOf(RequestStatus.class);
     targets.values().forEach(anyStatus::addAll);
     List<ResponseRequest> open =
         requests.findInRoom(roomRecordId, targets.keySet(), anyStatus).stream()
             .filter(r -> targets.get(r.getKind()).contains(r.getStatus()))
+            .filter(r -> requestedBySide == null || r.getRequestedBySide() == requestedBySide)
             .toList();
     if (!open.isEmpty()) {
       Instant closedAt = at.get(); // 3인자는 닫을 것이 있을 때만 행동 시각을 읽는다(전과 같음)

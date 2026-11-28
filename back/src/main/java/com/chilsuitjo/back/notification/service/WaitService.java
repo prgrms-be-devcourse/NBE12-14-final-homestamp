@@ -109,6 +109,20 @@ public interface WaitService {
   int closeAll(UUID roomRecordId, ClosedReason reason, Set<RequestKind> kinds, Instant at);
 
   /**
+   * 호실에서 {@code requestedBySide}가 요청한 열린 요청(기다림·미확인)을 모든 종류 닫고 닫은 개수를 돌려준다. 한 방향 닫기라 반대 측이 요청한 것과
+   * 이미 답했거나 닫힌 요청, 통지·전달·열람 사실은 그대로다. 지금 받는 이유는 초대 거절({@code INVITE_REJECTED}, #392)뿐이고 그 밖은 {@code
+   * IllegalArgumentException}이다.
+   *
+   * <ul>
+   *   <li>초대 거절({@code REJECT_INVITE})을 저장하는 room의 {@code save} 안, 호실을 잠근 트랜잭션에서 부른다({@code
+   *       MANDATORY}). 닫힌 시각은 그 행동 시각({@code ActionRequestContext.at()})이다. 거절이 되돌아가면 닫기도 함께 되돌아간다
+   *   <li>{@code requestedBySide}는 초대한 측(거절한 자리의 반대 측)이다
+   *   <li>같은 거절을 같은 키로 다시 보내면 pipeline이 저장을 다시 하지 않는다. 다시 불려도 이미 닫힌 요청은 세지 않아 0이다
+   * </ul>
+   */
+  int closeRequestedBy(UUID roomRecordId, PartySide requestedBySide, ClosedReason reason);
+
+  /**
    * 지금 호실 단계에서 이 종류의 요청을 열 수 있나(03 K "거주 종료 뒤", decisions 2026-11-18 다시 공유 규칙). 도메인 {@code load}가
    * State에 담아 {@code AnswerSupport}의 {@code canOpenRequest}·화면 버튼에 쓴다(#86). 판단은 {@code
    * RequestOpening}이고 호실 단계는 {@code CounterpartReader}가 돌려준다. 재통지·미확인 작업도 같은 판단을 쓴다.

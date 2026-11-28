@@ -420,6 +420,27 @@ class FakeWaitServiceTest {
   }
 
   @Test
+  void 초대_거절은_운영과_같이_초대한_측이_요청한_것만_닫는다() {
+    RequestTarget otherCase = RequestTarget.of(TargetKind.REPAIR_CASE, UUID.randomUUID());
+    waits.open(defectConfirm());
+    waits.open(
+        new OpenRequestCommand(
+            roomRecordId, RequestKind.DEFECT_CONFIRM, otherCase, PartySide.LANDLORD));
+
+    assertThatThrownBy(() ->
+            waits.closeAll(
+                roomRecordId, ClosedReason.INVITE_REJECTED, EnumSet.allOf(RequestKind.class)))
+        .isInstanceOf(IllegalArgumentException.class);
+    int closed =
+        waits.closeRequestedBy(roomRecordId, PartySide.TENANT, ClosedReason.INVITE_REJECTED);
+
+    assertThat(closed).isEqualTo(1);
+    assertThat(waits.closedReasonOf(repairCase, RequestKind.DEFECT_CONFIRM))
+        .contains(ClosedReason.INVITE_REJECTED);
+    assertThat(waits.closedReasonOf(otherCase, RequestKind.DEFECT_CONFIRM)).isEmpty();
+  }
+
+  @Test
   void 거주_종료는_운영과_같이_미확인_수리_요청은_닫고_미확인_종료_확인은_남긴다() {
     RequestTarget otherCase = RequestTarget.of(TargetKind.REPAIR_CASE, UUID.randomUUID());
     waits.open(defectConfirm());
