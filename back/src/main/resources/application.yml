@@ -55,6 +55,9 @@ app:
   notice:
     send:
       retry: 1m,5m,15m
+  # 거주 종료 뒤 정산 자동 마감까지(06 0-1 settlement.autoclose-after). 거주 종료 때 room_record.autoclose_due_at으로 저장한다
+  settlement:
+    autoclose-after: 90d
   # 기다림 기한(06 0-1). 기한은 생길 때 시각으로 저장해서 값을 바꿔도 이미 정한 기한은 그대로다
   wait:
     renotify: 48h
