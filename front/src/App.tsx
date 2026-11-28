@@ -40,7 +40,7 @@ import { hasAction, type RoomAction } from "@/api/actions"
 import { ApiProvider } from "@/api"
 import { useApi } from "@/api/hooks"
 import { repairStub } from "@/api/http-repair-view"
-import { errorMessage } from "@/api/errors"
+import { errorMessage, shouldReload } from "@/api/errors"
 import { createApi } from "@/api/create-api"
 import {
   inspectionIdIn,
@@ -887,6 +887,19 @@ function HomeStampApp({
           onCancel={closeModal}
           onLogout={onLogout}
           onOpenTerms={() => setTermsOpen(true)}
+          onUpdate={async (patch) => {
+            try {
+              onAccountChange(await auth.updateAccount(patch))
+            } catch (e) {
+              // 그사이 다른 곳에서 바뀌었으면(VERSION_CONFLICT) 내 정보를 다시 불러 보여 줘요
+              if (shouldReload(e))
+                auth.reload().then(onAccountChange, () => undefined)
+              throw e
+            }
+          }}
+          onChangePassword={(current, next) =>
+            auth.changePassword(current, next)
+          }
         />
       )}
       {modal === "room" && account && (
