@@ -41,8 +41,9 @@ public class InspectionController {
    * 입주·퇴거 점검 시작(INSP-1a·2·3). 처음 성공과 다시 온 요청 모두 201과 만든 점검 ID를 돌려준다. 다시 온 요청이면 {@code
    * Idempotent-Replayed: true}를 붙인다(06 4-0). 입주일보다 늦게 시작한 입주 점검에는 {@code late}가 붙는다(INSP-2a).
    *
-   * <p><b>현재 구현 범위의 한계</b>(06과 다른 점): 퇴거 점검을 시작해도 정산은 아직 열지 않는다({@code OPEN_SETTLEMENT}, 정산 API가
-   * 들어올 때 잇는다). 퇴거 점검 마침({@code finish})은 거주 종료(ROOM-9)와 함께 따로 만든다.
+   * <p>퇴거 점검을 시작하면 같은 요청에서 정산이 열린다({@code OPEN_SETTLEMENT}, 이미 있으면 그대로, #320).
+   *
+   * <p><b>현재 구현 범위의 한계</b>(06과 다른 점): 퇴거 점검 마침({@code finish})은 거주 종료(ROOM-9)와 함께 따로 만든다.
    */
   @PostMapping("/api/rooms/{roomId}/inspections")
   public ResponseEntity<CreatedResponse> start(

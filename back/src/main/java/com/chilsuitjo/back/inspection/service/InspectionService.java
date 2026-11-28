@@ -5,6 +5,7 @@ import com.chilsuitjo.back.action.dto.ActionCommand;
 import com.chilsuitjo.back.action.dto.ActionStep;
 import com.chilsuitjo.back.action.dto.ActionTarget;
 import com.chilsuitjo.back.action.dto.Actor;
+import com.chilsuitjo.back.action.dto.BatchResult;
 import com.chilsuitjo.back.action.dto.PipelineResult;
 import com.chilsuitjo.back.action.rule.ActionType;
 import com.chilsuitjo.back.action.rule.AnswerSupport;
@@ -30,9 +31,11 @@ import com.chilsuitjo.back.inspection.repository.InspectionStateStore;
 import com.chilsuitjo.back.inspection.rule.ConfirmAllTransitions;
 import com.chilsuitjo.back.inspection.rule.InspectionItemState;
 import com.chilsuitjo.back.inspection.rule.InspectionItemTransitions;
+import com.chilsuitjo.back.inspection.rule.InspectionKind;
 import com.chilsuitjo.back.inspection.rule.InspectionState;
 import com.chilsuitjo.back.inspection.rule.InspectionTransitions;
 import com.chilsuitjo.back.room.service.RoomMoveInDates;
+import com.chilsuitjo.back.settlement.service.SettlementService;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -57,6 +60,7 @@ public class InspectionService {
   private final ConfirmAllTransitions confirmAllRules;
   private final InspectionRepository inspections;
   private final InspectionItemRepository items;
+  private final SettlementService settlements;
 
   /** 보충 설명 길이(06 4-0, 수리 건 보충과 같은 값). */
   static final int MAX_DESCRIPTION = 2000;
@@ -67,7 +71,8 @@ public class InspectionService {
   /**
    * 점검 시작(06 4-7, INSP-1a·2b). 당사자가 아니면 {@code NOT_FOUND}, 이미 같은 종류 점검이 있으면 {@code
    * INSPECTION_EXISTS}, 호실 입주일이 비었는데 {@code moveInDate}가 없으면 {@code MOVE_IN_DATE_REQUIRED}다. 입주일은
-   * 행동 payload에 남고 같은 트랜잭션에서 호실에 저장된다.
+   * 행동 payload에 남고 같은 트랜잭션에서 호실에 저장된다. 퇴거 점검이면 같은 요청에서 정산을 연다({@code OPEN_SETTLEMENT}, 03 H·I,
+   * #320). 이미 정산이 있으면 열지 않고, 점검 시작이 거절되면 정산도 열리지 않는다.
    */
   public InspectionCreated start(
       UUID roomRecordId, UUID memberId, String idempotencyKey, StartInspectionRequest request) {
@@ -75,6 +80,20 @@ public class InspectionService {
     payload.put(InspectionStateStore.KIND, request.kind().name());
     if (request.moveInDate() != null) {
       payload.put(RoomMoveInDates.FILLED_PAYLOAD_KEY, request.moveInDate().toString());
+    }
+    if (request.kind() == InspectionKind.MOVE_OUT) {
+      // 퇴거 점검을 시작하면 같은 요청에서 정산이 열린다(03 H·I, #320). 이미 있으면 건너뛴다
+      BatchResult opened =
+          pipeline.executeAll(
+              ActionBatch.of(roomRecordId, Actor.member(memberId), idempotencyKey)
+                  .step(
+                      ActionStep.creating(
+                              ActionType.START_INSPECTION,
+                              inspectionStore.starting(),
+                              inspectionRules)
+                          .withPayload(payload))
+                  .step(settlements.openStep()));
+      return new InspectionCreated(opened.first().target().id(), opened.first().replayed());
     }
     PipelineResult<?> result =
         pipeline.create(
