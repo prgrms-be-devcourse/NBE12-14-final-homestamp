@@ -206,6 +206,67 @@ class SolapiSmsGatewayTest {
   }
 
   @Test
+  void 헤더를_받은_뒤_본문이_멈춰도_제한_안에_UNKNOWN이고_다시_보내지_않는다() {
+    // HttpRequest.timeout은 헤더까지만 걸린다(#467 리뷰). 본문까지 연결 1s + 응답 300ms 안에 끝내야 한다
+    solapi.reply(
+        SEND,
+        new MockSolapi.Reply(
+            200, accepted("M-stall", "G-stall"), Duration.ZERO, Duration.ofSeconds(5)));
+    long started = System.nanoTime();
+
+    SmsSendResult result =
+        gateway(solapi.baseUrl(), Duration.ofMillis(300)).send(message(UUID.randomUUID()));
+
+    assertThat(result.outcome()).isEqualTo(Outcome.UNKNOWN);
+    assertThat(Duration.ofNanos(System.nanoTime() - started)).isLessThan(Duration.ofSeconds(4));
+    assertThat(solapi.received()).hasSize(1);
+  }
+
+  @Test
+  void 결과_조회의_본문이_멈추면_제한_안에_예외다() {
+    solapi.reply(
+        LIST,
+        new MockSolapi.Reply(
+            200,
+            "{\"messageList\":{\"M1\":{\"messageId\":\"M1\",\"statusCode\":\"4000\"}}}",
+            Duration.ZERO,
+            Duration.ofSeconds(5)));
+    long started = System.nanoTime();
+
+    assertThatThrownBy(() ->
+            gateway(solapi.baseUrl(), Duration.ofMillis(300))
+                .queryResults(List.of(new DeliveryQuery(UUID.randomUUID(), "M1"))))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(Duration.ofNanos(System.nanoTime() - started)).isLessThan(Duration.ofSeconds(4));
+  }
+
+  @Test
+  void 접수_중_처리_중_오류_코드는_합의대로_결과_없음이다() {
+    // 공식 표는 1xxx·2xxx를 "접수 중·플랫폼 내부 처리 중 오류"라고만 한다. 바로 실패로 볼지는 A 결정, 지금은 error 로그 + 결과 없음
+    UUID unregistered = UUID.randomUUID();
+    UUID acceptFailed = UUID.randomUUID();
+    solapi.reply(
+        LIST,
+        200,
+        """
+        {"messageList":{
+          "M1":{"messageId":"M1","statusCode":"2062","customFields":{"batchLeadId":"%s"}},
+          "M2":{"messageId":"M2","statusCode":"1062","customFields":{"batchLeadId":"%s"}}}}
+        """
+            .formatted(unregistered, acceptFailed));
+
+    assertThat(
+            gateway()
+                .queryResults(
+                    List.of(
+                        new DeliveryQuery(unregistered, "M1"),
+                        new DeliveryQuery(acceptFailed, "M2"))))
+        .containsExactly(
+            Map.entry(unregistered, DeliveryOutcome.NONE),
+            Map.entry(acceptFailed, DeliveryOutcome.NONE));
+  }
+
+  @Test
   void 연결하지_못하면_나가지_않은_것이_확실해_RETRY다() throws IOException {
     int closedPort;
     try (ServerSocket socket = new ServerSocket(0)) {

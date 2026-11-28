@@ -113,6 +113,15 @@ public class SolapiSmsGateway implements SmsGateway {
       }
       return DeliveryOutcome.FAILED;
     }
+    if (code != null
+        && code.length() == 4
+        && (code.startsWith("1") || code.startsWith("2"))
+        && !"2000".equals(code)) {
+      // 1xxx·2xxx(2000 제외)는 공식 표가 "접수 중·플랫폼 내부 처리 중 오류"라고만 하고 끝난 실패인지는 적지 않는다(잔액 부족 등은 보관 뒤 나갈
+      // 수 있음). 합의한 계약(04 6장·03 "3xxx 또는 3일 결과 없음")대로 결과 없음으로 두어 전달 확인 기한에 실패가 되지만, 발신번호 미등록처럼
+      // 운영자가 바로 고쳐야 하는 경우가 많아 조회할 때마다 알린다. 바로 실패로 볼지는 A 결정
+      log.error("솔라피 결과가 접수·처리 중 오류(최종 여부 모름, 계정·발신번호 확인): code={}", code);
+    }
     return DeliveryOutcome.NONE;
   }
 }

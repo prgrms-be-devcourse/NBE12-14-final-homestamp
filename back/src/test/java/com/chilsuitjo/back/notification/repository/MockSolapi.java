@@ -24,7 +24,15 @@ public final class MockSolapi implements AutoCloseable {
   public record Received(
       String method, String path, String query, String authorization, String body) {}
 
-  public record Reply(int status, String body, Duration delay) {
+  /**
+   * @param delay 헤더를 보내기 전 기다림
+   * @param bodyStall 헤더와 본문 앞 절반을 보낸 뒤 나머지를 보내기 전 기다림(본문이 멈춘 업체)
+   */
+  public record Reply(int status, String body, Duration delay, Duration bodyStall) {
+    public Reply(int status, String body, Duration delay) {
+      this(status, body, delay, Duration.ZERO);
+    }
+
     public static Reply of(int status, String body) {
       return new Reply(status, body, Duration.ZERO);
     }
@@ -72,11 +80,19 @@ public final class MockSolapi implements AutoCloseable {
           exchange.getResponseHeaders().add("Content-Type", "application/json");
           try {
             exchange.sendResponseHeaders(reply.status(), bytes.length == 0 ? -1 : bytes.length);
-            if (bytes.length > 0) {
+            if (bytes.length > 0 && !reply.bodyStall().isZero()) {
+              int half = bytes.length / 2;
+              exchange.getResponseBody().write(bytes, 0, half);
+              exchange.getResponseBody().flush();
+              Thread.sleep(reply.bodyStall().toMillis());
+              exchange.getResponseBody().write(bytes, half, bytes.length - half);
+            } else if (bytes.length > 0) {
               exchange.getResponseBody().write(bytes);
             }
           } catch (IOException e) {
             // 받는 쪽이 시간 제한으로 먼저 끊은 경우
+          } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
           } finally {
             exchange.close();
           }

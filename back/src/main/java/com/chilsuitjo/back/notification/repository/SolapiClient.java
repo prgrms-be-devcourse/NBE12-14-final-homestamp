@@ -16,6 +16,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.regex.Pattern;
 import javax.net.ssl.SSLHandshakeException;
 import org.slf4j.Logger;
@@ -158,7 +163,7 @@ public class SolapiClient {
     }
     HttpResponse<String> response;
     try {
-      response = http.send(request, utf8());
+      response = exchange(request);
     } catch (SSLHandshakeException e) {
       // TLS 연결 전이라 요청이 나가지 않았다. 인증서·주소 설정 문제일 수 있어 운영자가 봐야 한다
       log.error("솔라피 TLS 연결 실패, 보내지 않음");
@@ -223,7 +228,7 @@ public class SolapiClient {
     }
     HttpResponse<String> response;
     try {
-      response = http.send(request(query.toString()).GET().build(), utf8());
+      response = exchange(request(query.toString()).GET().build());
     } catch (IOException e) {
       throw new IllegalStateException("솔라피 결과 조회 실패: " + e.getClass().getSimpleName());
     } catch (InterruptedException e) {
@@ -294,6 +299,38 @@ public class SolapiClient {
     }
     log.warn("솔라피 응답에 메시지 ID가 없어 접수 여부 모름: group={}", groupId);
     return new Unknown();
+  }
+
+  /**
+   * 한 번 부르고 본문까지 다 받을 때까지 기다린다. {@link HttpRequest#timeout}은 이 Java 버전에서 응답 헤더까지만 걸려서, 헤더를 받은 뒤 본문이
+   * 멈추면 끝없이 기다릴 수 있다. 그래서 연결 제한 + 응답 제한을 넘으면 호출을 취소하고 {@link HttpTimeoutException}으로 바꾼다(보내기는 기존대로
+   * 접수 여부 모름, 조회는 실패). 연결 제한이 먼저 끝나므로 연결 실패는 그대로 연결 실패로 남는다. 스스로 다시 보내지 않는다.
+   */
+  private HttpResponse<String> exchange(HttpRequest request)
+      throws IOException, InterruptedException {
+    CompletableFuture<HttpResponse<String>> call = http.sendAsync(request, utf8());
+    long deadline = settings.connectTimeout().plus(settings.responseTimeout()).toMillis();
+    try {
+      return call.get(deadline, TimeUnit.MILLISECONDS);
+    } catch (TimeoutException e) {
+      call.cancel(true);
+      throw new HttpTimeoutException("본문까지 받는 시간 초과");
+    } catch (InterruptedException e) {
+      call.cancel(true);
+      throw e;
+    } catch (ExecutionException e) {
+      Throwable cause = e.getCause();
+      while (cause instanceof CompletionException && cause.getCause() != null) {
+        cause = cause.getCause();
+      }
+      if (cause instanceof IOException io) {
+        throw io;
+      }
+      if (cause instanceof RuntimeException runtime) {
+        throw runtime;
+      }
+      throw new IOException(cause);
+    }
   }
 
   private HttpRequest.Builder request(String pathAndQuery) {
