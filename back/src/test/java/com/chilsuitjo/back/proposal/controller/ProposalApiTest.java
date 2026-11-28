@@ -15,8 +15,7 @@ import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.rule.RequestStatus;
 import com.chilsuitjo.back.notification.service.FakeWaitService;
-import com.chilsuitjo.back.payment.service.FakePaymentConfig;
-import com.chilsuitjo.back.payment.service.FakePaymentService;
+import com.chilsuitjo.back.payment.service.PaymentFixtures;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -35,14 +34,14 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 06 MONEY-3 동의({@code POST /api/proposals/{id}/agree})를 보안·pipeline·진짜 행동 기록 저장(PostgreSQL)까지 띄워
- * 본다. 응답 요청은 가짜({@code FakeWaitService})라 상태만 확인하고, 기준 금액은 가짜 지불 창구({@code FakePaymentService})에 적어
- * 둔다.
+ * 본다. 응답 요청은 가짜({@code FakeWaitService})라 상태만 확인하고, 기준 금액은 세입자가 지불을 남기고 집주인이 맞아요를 눌러 만든다({@code
+ * PaymentFixtures}).
  *
  * <p>답할 상태(지난 안·합의 뒤 바꾸자는 안 등)를 바로 만들려고 제안·줄·head는 SQL로 넣는다. API로 제안하고 동의까지 잇는 흐름은 {@code
  * RepairProposalApiTest}가 본다. pipeline이 바깥 트랜잭션을 거절해서 {@code @Transactional}로 되돌리지 않는다. 테스트마다 새 호실을
  * 만들어 섞이지 않게 한다.
  */
-@Import({TestcontainersConfiguration.class, FakePaymentConfig.class})
+@Import({TestcontainersConfiguration.class, PaymentFixtures.class})
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
@@ -51,7 +50,7 @@ class ProposalApiTest {
   @Autowired private MockMvc mvc;
   @Autowired private JdbcTemplate jdbc;
   @Autowired private FakeWaitService waits;
-  @Autowired private FakePaymentService payments;
+  @Autowired private PaymentFixtures payments;
   @Autowired private PlatformTransactionManager transactionManager;
 
   private UUID room;
@@ -75,7 +74,7 @@ class ProposalApiTest {
   @Test
   void 상대가_동의하면_합의되고_행동과_응답_요청이_남는다() throws Exception {
     UUID proposal = landlordProposes(82_000);
-    payments.seedConfirmedTotal(room, repair, 82_000);
+    payments.confirmed(room, repair, tenant, landlord, 82_000);
     waits.open(
         new OpenRequestCommand(room, RequestKind.PROPOSAL, agendaRequest(), PartySide.LANDLORD));
 
@@ -100,7 +99,7 @@ class ProposalApiTest {
   @Test
   void 같은_키로_다시_보내면_행동을_더_남기지_않고_재요청으로_돌려준다() throws Exception {
     UUID proposal = landlordProposes(82_000);
-    payments.seedConfirmedTotal(room, repair, 82_000);
+    payments.confirmed(room, repair, tenant, landlord, 82_000);
     agree(proposal, tenant, "same").andExpect(status().isOk());
 
     agree(proposal, tenant, "same")
@@ -115,7 +114,7 @@ class ProposalApiTest {
   @Test
   void MONEY_3c_내_제안에는_내가_동의할_수_없다() throws Exception {
     UUID proposal = landlordProposes(82_000);
-    payments.seedConfirmedTotal(room, repair, 82_000);
+    payments.confirmed(room, repair, tenant, landlord, 82_000);
 
     agree(proposal, landlord, "a1")
         .andExpect(status().isForbidden())
@@ -128,7 +127,7 @@ class ProposalApiTest {
   @Test
   void MONEY_3a_나눈_금액의_합이_전체_금액과_다르면_동의할_수_없다() throws Exception {
     UUID proposal = landlordProposes(82_000);
-    payments.seedConfirmedTotal(room, repair, 92_000);
+    payments.confirmed(room, repair, tenant, landlord, 92_000);
 
     agree(proposal, tenant, "a1")
         .andExpect(status().is(422))
@@ -142,7 +141,7 @@ class ProposalApiTest {
   void 지난_제안에_동의하면_NOT_CURRENT_PROPOSAL() throws Exception {
     UUID older = proposal(PartySide.LANDLORD, 82_000);
     UUID current = landlordProposes(82_000);
-    payments.seedConfirmedTotal(room, repair, 82_000);
+    payments.confirmed(room, repair, tenant, landlord, 82_000);
 
     agree(older, tenant, "a1")
         .andExpect(status().isConflict())
@@ -154,7 +153,7 @@ class ProposalApiTest {
   @Test
   void 없는_제안이나_그_호실_당사자가_아니면_NOT_FOUND() throws Exception {
     UUID proposal = landlordProposes(82_000);
-    payments.seedConfirmedTotal(room, repair, 82_000);
+    payments.confirmed(room, repair, tenant, landlord, 82_000);
 
     agree(UUID.randomUUID(), tenant, "a1")
         .andExpect(status().isNotFound())

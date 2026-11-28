@@ -14,8 +14,7 @@ import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.rule.RequestStatus;
 import com.chilsuitjo.back.notification.service.FakeWaitService;
-import com.chilsuitjo.back.payment.service.FakePaymentConfig;
-import com.chilsuitjo.back.payment.service.FakePaymentService;
+import com.chilsuitjo.back.payment.service.PaymentFixtures;
 import com.jayway.jsonpath.JsonPath;
 import java.util.List;
 import java.util.Map;
@@ -49,10 +48,10 @@ import org.springframework.transaction.support.TransactionTemplate;
  * {@code proposals} 줄, 03 E 표 "부담 제안"·"바꾸자는 새 제안", 03 1-3, decisions 2026-11-26(기다리는 안이 있으면 {@code
  * INVALID_STATE}).
  *
- * <p>응답 요청은 가짜({@code FakeWaitService})라 상태만 확인하고, 기준 금액은 가짜 지불 창구({@code FakePaymentService})에 적어
- * 둔다. pipeline이 바깥 트랜잭션을 거절해서 {@code @Transactional}로 되돌리지 않는다. 테스트마다 새 호실을 만든다.
+ * <p>응답 요청은 가짜({@code FakeWaitService})라 상태만 확인하고, 기준 금액은 세입자가 지불을 남기고 집주인이 맞아요를 눌러 만든다({@code
+ * PaymentFixtures}). pipeline이 바깥 트랜잭션을 거절해서 {@code @Transactional}로 되돌리지 않는다. 테스트마다 새 호실을 만든다.
  */
-@Import({TestcontainersConfiguration.class, FakePaymentConfig.class})
+@Import({TestcontainersConfiguration.class, PaymentFixtures.class})
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
@@ -61,7 +60,7 @@ class RepairProposalApiTest {
   @Autowired private MockMvc mvc;
   @Autowired private JdbcTemplate jdbc;
   @Autowired private FakeWaitService waits;
-  @Autowired private FakePaymentService payments;
+  @Autowired private PaymentFixtures payments;
   @Autowired private PlatformTransactionManager transactionManager;
 
   private final ExecutorService pool = Executors.newFixedThreadPool(3);
@@ -91,7 +90,7 @@ class RepairProposalApiTest {
 
   @Test
   void 첫_제안을_내면_201과_제안_ID를_받고_합의_대기가_된다() throws Exception {
-    payments.seedConfirmedTotal(room, repair, 82_000);
+    payments.confirmed(room, repair, tenant, landlord, 82_000);
 
     MvcResult result =
         propose(landlord, "p1", split(60_000, 22_000))
@@ -128,7 +127,7 @@ class RepairProposalApiTest {
 
   @Test
   void 실제_API로_첫_제안_뒤_상대가_동의하면_합의된다() throws Exception {
-    payments.seedConfirmedTotal(room, repair, 82_000);
+    payments.confirmed(room, repair, tenant, landlord, 82_000);
     UUID proposal = idOf(propose(landlord, "p1", split(60_000, 22_000)).andReturn());
 
     agree(proposal, tenant, "a1").andExpect(status().isOk());
@@ -160,7 +159,7 @@ class RepairProposalApiTest {
 
   @Test
   void 같은_키로_다시_보내면_제안과_응답_요청을_더_만들지_않고_처음_ID를_돌려준다() throws Exception {
-    payments.seedConfirmedTotal(room, repair, 82_000);
+    payments.confirmed(room, repair, tenant, landlord, 82_000);
     UUID first =
         idOf(
             propose(landlord, "same", split(60_000, 22_000))
@@ -182,7 +181,7 @@ class RepairProposalApiTest {
 
   @Test
   void MONEY_3a_제안한_금액의_합이_전체_금액과_다르면_SUM_MISMATCH() throws Exception {
-    payments.seedConfirmedTotal(room, repair, 82_000);
+    payments.confirmed(room, repair, tenant, landlord, 82_000);
 
     propose(landlord, "p1", split(60_000, 20_000))
         .andExpect(status().is(422))
@@ -196,7 +195,7 @@ class RepairProposalApiTest {
 
   @Test
   void MONEY_3d_합의_뒤_새_제안은_합의를_그대로_두고_바꾸자는_안이_된다() throws Exception {
-    payments.seedConfirmedTotal(room, repair, 82_000);
+    payments.confirmed(room, repair, tenant, landlord, 82_000);
     UUID agreed = idOf(propose(landlord, "p1", split(60_000, 22_000)).andReturn());
     agree(agreed, tenant, "a1").andExpect(status().isOk());
 
@@ -217,7 +216,7 @@ class RepairProposalApiTest {
 
   @Test
   void 이견_뒤_새_제안은_합의_대기가_되고_회차가_는다() throws Exception {
-    payments.seedConfirmedTotal(room, repair, 82_000);
+    payments.confirmed(room, repair, tenant, landlord, 82_000);
     UUID first = idOf(propose(landlord, "p1", split(60_000, 22_000)).andReturn());
     dispute(first, tenant, "d1", "영수증이 달라요").andExpect(status().isOk());
 
@@ -234,7 +233,7 @@ class RepairProposalApiTest {
 
   @Test
   void 기다리는_안이_있으면_내_안이든_상대_안이든_INVALID_STATE() throws Exception {
-    payments.seedConfirmedTotal(room, repair, 82_000);
+    payments.confirmed(room, repair, tenant, landlord, 82_000);
     UUID waiting = idOf(propose(landlord, "p1", split(60_000, 22_000)).andReturn());
 
     propose(tenant, "p2", split(82_000, 0))
@@ -250,7 +249,7 @@ class RepairProposalApiTest {
 
   @Test
   void 두_측이_동시에_첫_제안을_보내면_먼저_저장된_것만_남고_뒤_것은_INVALID_STATE() throws Exception {
-    payments.seedConfirmedTotal(room, repair, 82_000);
+    payments.confirmed(room, repair, tenant, landlord, 82_000);
     CountDownLatch release = holdRoomLock();
 
     Future<MvcResult> byLandlord =
@@ -323,7 +322,7 @@ class RepairProposalApiTest {
 
   @Test
   void 한쪽이_0원인_나눈_안은_받는다() throws Exception {
-    payments.seedConfirmedTotal(room, repair, 82_000);
+    payments.confirmed(room, repair, tenant, landlord, 82_000);
 
     // 프론트 [나눠서]는 세입자 0원 줄도 함께 보낸다(repair-discussions.tsx lines)
     UUID proposal =
@@ -344,7 +343,7 @@ class RepairProposalApiTest {
 
   @Test
   void 빈_사유는_없는_것으로_보고_제3자_줄을_받는다() throws Exception {
-    payments.seedConfirmedTotal(room, repair, 82_000);
+    payments.confirmed(room, repair, tenant, landlord, 82_000);
 
     UUID proposal =
         idOf(
