@@ -38,3 +38,14 @@ test("거주가 끝났거나 읽기 전용이면 하자 등록·거주 종료가
   ).not.toContain("repair-cases")
   expect(roomAvailableActions(room(), "임차인", { readOnly: true })).toEqual([])
 })
+
+test("부위 바꾸기(parts)는 거주 종료 뒤에도 되고, 정산 완료·합류 전 기록(읽기 전용)에서는 없다(#456)", () => {
+  expect(roomAvailableActions(room(), "임차인")).toContain("parts")
+  expect(roomAvailableActions(room(), "임대인")).toContain("parts")
+  expect(
+    roomAvailableActions(room({ status: "거주 종료" }), "임차인"),
+  ).toContain("parts")
+  expect(
+    roomAvailableActions(room(), "임차인", { readOnly: true }),
+  ).not.toContain("parts")
+})

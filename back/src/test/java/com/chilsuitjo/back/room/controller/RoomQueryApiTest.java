@@ -224,9 +224,10 @@ class RoomQueryApiTest {
         .andExpect(jsonPath("$.joinedAway").value(false))
         .andExpect(jsonPath("$.asOf").doesNotExist())
         .andExpect(jsonPath("$.createdAt").isNotEmpty())
-        .andExpect(jsonPath("$.availableActions.length()").value(2))
+        .andExpect(jsonPath("$.availableActions.length()").value(3))
         .andExpect(jsonPath("$.availableActions[0]").value("repair-cases"))
         .andExpect(jsonPath("$.availableActions[1]").value("inspections"))
+        .andExpect(jsonPath("$.availableActions[2]").value("parts"))
         // 이름은 가리지 않은 값이든 가린 값이든 주지 않는다(이번 범위 밖, #190)
         .andExpect(jsonPath("$.counterpartName").doesNotExist())
         // 상대 번호가 없으면(비어 있음) 가린 번호도 없다
@@ -343,9 +344,11 @@ class RoomQueryApiTest {
         ended,
         joined);
 
+    // 부위 바꾸기(parts)는 거주 종료 뒤에도 된다(ActionType.blockedAfterEnded에 없음, 06 4-3 부위 줄)
     detail(ended, tenant)
         .andExpect(jsonPath("$.status").value("ENDED"))
-        .andExpect(jsonPath("$.availableActions").isEmpty());
+        .andExpect(jsonPath("$.availableActions.length()").value(1))
+        .andExpect(jsonPath("$.availableActions[0]").value("parts"));
     register(ended, tenant).andExpect(jsonPath("$.code").value("ROOM_ENDED"));
 
     detail(settled, landlord)
@@ -366,6 +369,51 @@ class RoomQueryApiTest {
 
     detail(room, landlord).andExpect(jsonPath("$.availableActions[0]").value("repair-cases"));
     register(room, landlord).andExpect(status().isCreated());
+  }
+
+  // ---- 부위 바꾸기(parts, #456) ----
+
+  @Test
+  void 부위_바꾸기가_보이면_실제_부위_더하기도_된다() throws Exception {
+    UUID room = connectedRoom();
+
+    detail(room, tenant).andExpect(jsonPath("$.availableActions", hasItem("parts")));
+    detail(room, landlord).andExpect(jsonPath("$.availableActions", hasItem("parts")));
+    addPart(room, landlord).andExpect(status().isCreated());
+  }
+
+  @Test
+  void 거주_종료_뒤에도_부위_바꾸기가_보이고_실제_요청도_된다() throws Exception {
+    UUID ended = connectedRoom();
+    endRoom(ended);
+
+    detail(ended, tenant).andExpect(jsonPath("$.availableActions", hasItem("parts")));
+    addPart(ended, tenant).andExpect(status().isCreated());
+  }
+
+  @Test
+  void 정산_완료_합류_전_기록_공유를_그만둔_사람에게는_부위_바꾸기가_없고_실제_요청도_같은_이유로_막힌다() throws Exception {
+    UUID settled = connectedRoom();
+    settleRoom(settled);
+    UUID ended = connectedRoom();
+    endRoom(ended);
+    UUID joined = livingRoomOf(tenant);
+    jdbc.update(
+        "UPDATE state.room_record SET joined_into_id = ?, joined_at = CURRENT_TIMESTAMP WHERE id = ?",
+        ended,
+        joined);
+    UUID stopped = connectedRoom();
+    stopSharing(stopped, "LANDLORD", "2026-11-20T01:02:03Z");
+
+    detail(settled, landlord).andExpect(jsonPath("$.availableActions", not(hasItem("parts"))));
+    addPart(settled, landlord).andExpect(jsonPath("$.code").value("SETTLED"));
+    detail(joined, tenant).andExpect(jsonPath("$.availableActions", not(hasItem("parts"))));
+    addPart(joined, tenant).andExpect(jsonPath("$.code").value("JOINED_RECORD"));
+    // 공유를 그만둔 사람만 막히고 상대는 그대로 바꿀 수 있다(decisions 2026-11-25)
+    detail(stopped, landlord).andExpect(jsonPath("$.availableActions", not(hasItem("parts"))));
+    addPart(stopped, landlord).andExpect(jsonPath("$.code").value("SHARING_STOPPED"));
+    detail(stopped, tenant).andExpect(jsonPath("$.availableActions", hasItem("parts")));
+    addPart(stopped, tenant).andExpect(status().isCreated());
   }
 
   // ---- 입주 점검 시작(inspections, #357) ----
@@ -484,6 +532,16 @@ class RoomQueryApiTest {
                     + "\"uploadTickets\":[\""
                     + UUID.randomUUID()
                     + "\"]}"));
+  }
+
+  /** 부위 더하기(실제 요청). 숨김·다시 보이기·켜고 끔도 같은 호실 단위 판단이다(ActionType 허용 값이 같음). */
+  private ResultActions addPart(UUID roomId, UUID memberId) throws Exception {
+    return mvc.perform(
+        post("/api/rooms/{id}/parts", roomId)
+            .with(loginAs(memberId))
+            .header("Idempotency-Key", "part-" + UUID.randomUUID())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"zone\":\"방\",\"name\":\"다락\"}"));
   }
 
   /** 입주 점검 시작(실제 요청). 입주일이 비어 있는 호실이면 {@code moveInDate}를 준다(06 INSP-2b). */

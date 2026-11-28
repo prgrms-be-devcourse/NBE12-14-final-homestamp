@@ -87,6 +87,7 @@ import {
 import {
   canAccessRoom,
   isPreJoin,
+  partsLockedReason,
   canSeeInspection,
   declineInvitation,
   canReceiveInvitation,
@@ -103,6 +104,7 @@ import "./service.css"
 import { sideText } from "@/lib/words"
 import { Notice } from "@/components/common/notice"
 import { Welcome } from "@/features/room/welcome"
+import { RoomPartsCard } from "@/features/room/room-parts-card"
 import { SideMenu } from "@/components/common/side-menu"
 import { AppTopbar } from "@/components/common/app-topbar"
 import { PageHeading } from "@/components/common/page-heading"
@@ -1314,6 +1316,15 @@ function HomeStampApp({
                           }}
                         />
                       )}
+                    />
+                  )}
+                  {page === "home" && hasRoomAccess && (
+                    // 부위 관리(ROOM-3, #456). 바꾸는 버튼은 서버가 준 availableActions의 parts로만 그려요
+                    <RoomPartsCard
+                      key={room.id}
+                      roomId={room.id}
+                      canEdit={roomHas("parts")}
+                      lockedReason={partsLockedReason(room)}
                     />
                   )}
                   {page === "rooms" && (
