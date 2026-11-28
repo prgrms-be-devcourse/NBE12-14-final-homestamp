@@ -2,14 +2,28 @@ package com.chilsuitjo.back.settlement.service;
 
 import com.chilsuitjo.back.action.dto.ActionCommand;
 import com.chilsuitjo.back.action.dto.ActionStep;
+import com.chilsuitjo.back.action.dto.ActionTarget;
 import com.chilsuitjo.back.action.dto.Actor;
 import com.chilsuitjo.back.action.dto.PipelineResult;
 import com.chilsuitjo.back.action.rule.ActionType;
 import com.chilsuitjo.back.action.service.ActionPipeline;
+import com.chilsuitjo.back.global.common.ResidentIdGuard;
+import com.chilsuitjo.back.global.common.TargetKind;
+import com.chilsuitjo.back.global.common.dto.AnswerResult;
+import com.chilsuitjo.back.global.common.dto.RespondRequest;
+import com.chilsuitjo.back.global.error.BusinessException;
+import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.settlement.dto.SettlementCreated;
+import com.chilsuitjo.back.settlement.dto.TransferRequest;
+import com.chilsuitjo.back.settlement.repository.SettlementRepository;
 import com.chilsuitjo.back.settlement.repository.SettlementStateStore;
+import com.chilsuitjo.back.settlement.repository.SettlementTransferRepository;
+import com.chilsuitjo.back.settlement.repository.TransferStateStore;
 import com.chilsuitjo.back.settlement.rule.SettlementState;
 import com.chilsuitjo.back.settlement.rule.SettlementTransitions;
+import com.chilsuitjo.back.settlement.rule.TransferState;
+import com.chilsuitjo.back.settlement.rule.TransferTransitions;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -26,6 +40,10 @@ public class SettlementService {
   private final ActionPipeline pipeline;
   private final SettlementStateStore store;
   private final SettlementTransitions rules;
+  private final SettlementRepository settlements;
+  private final SettlementTransferRepository transfers;
+  private final TransferStateStore transferStore;
+  private final TransferTransitions transferRules;
 
   /**
    * 정산 열기(06 4-8, SET-1). 당사자 누구든 거주 중·거주 종료에 연다(03 I). 당사자가 아니면 {@code NOT_FOUND}, 정산 완료면 {@code
@@ -47,6 +65,85 @@ public class SettlementService {
             store.opening(),
             rules);
     return new SettlementCreated(result.action().target().id(), result.action().replayed());
+  }
+
+  /**
+   * 송금 기록(06 4-8 {@code transfers}, SET-4a·4b). 금액·날짜·방향이 없거나 금액이 1보다 작으면 {@code
+   * VALIDATION_FAILED}(pipeline 전). 없는 정산·당사자가 아니면 {@code NOT_FOUND}, 정산 완료면 {@code SETTLED}, 공유를
+   * 그만둔 사람이면 {@code SHARING_STOPPED}(pipeline)다. 보내는 측이 남기면 보낸 기록, 받는 측이 남기면 [받았어요(혼자)]다.
+   */
+  public SettlementCreated recordTransfer(
+      UUID settlementId, UUID memberId, String idempotencyKey, TransferRequest request) {
+    if (request == null
+        || request.direction() == null
+        || request.amount() == null
+        || request.amount() < 1
+        || request.paidOn() == null) {
+      throw new BusinessException(ErrorCode.VALIDATION_FAILED);
+    }
+    UUID roomRecordId = roomOf(settlementId);
+    Map<String, Object> payload = new LinkedHashMap<>();
+    payload.put(TransferStateStore.SETTLEMENT_ID, settlementId.toString());
+    payload.put(TransferStateStore.DIRECTION, request.direction().name());
+    if (request.sameAsTransferId() != null) {
+      payload.put(TransferStateStore.SAME_AS, request.sameAsTransferId().toString());
+    }
+    PipelineResult<?> result =
+        pipeline.create(
+            new ActionCommand(
+                roomRecordId,
+                Actor.member(memberId),
+                ActionType.RECORD_TRANSFER,
+                idempotencyKey,
+                null,
+                null,
+                null,
+                null,
+                payload),
+            transferStore.recording(request.amount(), request.paidOn()),
+            transferRules);
+    return new SettlementCreated(result.action().target().id(), result.action().replayed());
+  }
+
+  /**
+   * 송금 응답(06 4-8 {@code respond}, SET-4). 답이 없으면 {@code VALIDATION_FAILED}, 사유에 주민등록번호 형태가 있으면
+   * {@code RESIDENT_ID_BLOCKED}(pipeline 전, 03 6-1). 없는 송금·당사자가 아니면 {@code NOT_FOUND}, 그 뒤는 {@code
+   * AnswerSupport.answer} 순서다. 내용 지문은 본 판이다.
+   */
+  public AnswerResult respondTransfer(
+      UUID transferId, UUID memberId, String idempotencyKey, RespondRequest request) {
+    if (request == null || request.answer() == null) {
+      throw new BusinessException(ErrorCode.VALIDATION_FAILED);
+    }
+    ResidentIdGuard.check(request.reason());
+    UUID roomRecordId =
+        transfers
+            .findRoomRecordIdById(transferId)
+            .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
+    String reason =
+        request.reason() == null || request.reason().isBlank() ? null : request.reason();
+    PipelineResult<TransferState> result =
+        pipeline.execute(
+            new ActionCommand(
+                roomRecordId,
+                Actor.member(memberId),
+                ActionType.RESPOND_TRANSFER,
+                idempotencyKey,
+                ActionTarget.of(TargetKind.SETTLEMENT_TRANSFER, transferId),
+                request.seenVersionNo(),
+                transferStore.seenContent(transferId, request.seenVersionNo()).orElse(null),
+                reason,
+                Map.of("answer", request.answer().name())),
+            transferStore.responding(),
+            transferRules);
+    return new AnswerResult(
+        transferId, request.seenVersionNo(), result.state().response(), result.action().replayed());
+  }
+
+  private UUID roomOf(UUID settlementId) {
+    return settlements
+        .findRoomRecordIdById(settlementId)
+        .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
   }
 
   /**

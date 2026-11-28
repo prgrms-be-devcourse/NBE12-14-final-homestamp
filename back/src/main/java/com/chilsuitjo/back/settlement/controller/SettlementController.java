@@ -1,9 +1,12 @@
 package com.chilsuitjo.back.settlement.controller;
 
+import com.chilsuitjo.back.global.common.dto.AnswerResult;
+import com.chilsuitjo.back.global.common.dto.RespondRequest;
 import com.chilsuitjo.back.global.response.CreatedResponse;
 import com.chilsuitjo.back.global.security.LoginMember;
 import com.chilsuitjo.back.settlement.dto.SettlementCreated;
 import com.chilsuitjo.back.settlement.dto.SettlementDetail;
+import com.chilsuitjo.back.settlement.dto.TransferRequest;
 import com.chilsuitjo.back.settlement.service.SettlementQueryService;
 import com.chilsuitjo.back.settlement.service.SettlementService;
 import java.util.UUID;
@@ -13,6 +16,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -36,7 +40,35 @@ public class SettlementController {
       @PathVariable UUID roomId,
       @LoginMember UUID memberId,
       @RequestHeader("Idempotency-Key") String idempotencyKey) {
-    SettlementCreated created = settlements.open(roomId, memberId, idempotencyKey);
+    return created(settlements.open(roomId, memberId, idempotencyKey));
+  }
+
+  /** 송금 기록(SET-4). 보내는 측이 보내면 보낸 기록, 받는 측이 보내면 [받았어요(혼자)]다. 처음 성공과 다시 온 요청 모두 201과 만든 송금 ID다. */
+  @PostMapping("/api/settlements/{id}/transfers")
+  public ResponseEntity<CreatedResponse> recordTransfer(
+      @PathVariable UUID id,
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey,
+      @RequestBody TransferRequest request) {
+    return created(settlements.recordTransfer(id, memberId, idempotencyKey, request));
+  }
+
+  /** 송금 응답(SET-4). 그 기록을 남기지 않은 측만 답한다. 처음 성공과 다시 온 요청 모두 200과 {@code AnswerResult}다. */
+  @PostMapping("/api/settlement-transfers/{id}/respond")
+  public ResponseEntity<AnswerResult> respondTransfer(
+      @PathVariable UUID id,
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey,
+      @RequestBody RespondRequest request) {
+    AnswerResult result = settlements.respondTransfer(id, memberId, idempotencyKey, request);
+    ResponseEntity.BodyBuilder response = ResponseEntity.ok();
+    if (result.replayed()) {
+      response.header(REPLAYED, "true");
+    }
+    return response.body(result);
+  }
+
+  private static ResponseEntity<CreatedResponse> created(SettlementCreated created) {
     ResponseEntity.BodyBuilder response = ResponseEntity.status(HttpStatus.CREATED);
     if (created.replayed()) {
       response.header(REPLAYED, "true");

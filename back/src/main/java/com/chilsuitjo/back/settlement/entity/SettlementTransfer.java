@@ -87,4 +87,27 @@ public class SettlementTransfer {
     this.sameAsTransferId = sameAsTransferId;
     this.createdAt = Objects.requireNonNull(createdAt, "생성 시각이 있어야 해요");
   }
+
+  /** 도장 전 고치기: 새 판을 지금 판으로 한다(03 J "수령 확인 전이면 그냥 고쳐짐", 06 SET-4c). */
+  public void moveCurrent(UUID versionId) {
+    this.currentVersionId = Objects.requireNonNull(versionId, "판 ID가 있어야 해요");
+  }
+
+  /** 도장 뒤 상대가 고친 내용을 확인: 새 판을 지금 판·도장 판으로 한다(06 SET-4d). */
+  public void moveCurrentAndConfirmed(UUID versionId) {
+    this.currentVersionId = Objects.requireNonNull(versionId, "판 ID가 있어야 해요");
+    this.confirmedVersionId = versionId;
+  }
+
+  /**
+   * 기록을 남기지 않은 측의 응답(06 4-8 {@code respond}). 맞아요면 지금 판에 도장을 찍고 수령 확인 시각을 남긴다(송금 합계는 도장 찍힌 판만, 05
+   * 2-7). 맞아요는 되돌리지 않는다(규칙은 {@code TransferTransitions}).
+   */
+  public void answer(TransferResponse next, Instant at) {
+    this.response = Objects.requireNonNull(next, "응답이 있어야 해요");
+    if (next == TransferResponse.ACK) {
+      this.confirmedVersionId = currentVersionId;
+      this.receiptConfirmedAt = Objects.requireNonNull(at, "확인 시각이 있어야 해요");
+    }
+  }
 }

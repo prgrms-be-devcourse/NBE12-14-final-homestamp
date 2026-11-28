@@ -65,4 +65,9 @@ public class Settlement {
     this.depositStatus = DepositStatus.NOT_ENTERED;
     this.snapshotNo = 1;
   }
+
+  /** 정산이 바뀌었다(항목·송금·보증금, 누가 했든). 그 행동의 트랜잭션에서 정산 모습 번호를 올린다(05 2-7, 불변식 19). */
+  public void changed() {
+    this.snapshotNo++;
+  }
 }
