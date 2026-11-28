@@ -330,6 +330,8 @@ class SettlementTransferApiTest {
     UUID correction =
         UUID.fromString(body.replaceAll(".*\"correctionIds\":\\[\"([^\"]+)\".*", "$1"));
 
+    // 판은 그대로지만 정산 내용이 바뀐 것이라 정산 모습 번호가 오른다(열기 1 → 기록 2 → 맞아요 3 → 고친 내용 요청 4, SET-5b)
+    assertThat(snapshotNo()).isEqualTo(4);
     detail(tenant)
         .andExpect(jsonPath("$.transfers[0].amount").value(9_845_000))
         .andExpect(jsonPath("$.transfers[0].corrections[0].newValue").value(9_800_000))
@@ -342,6 +344,7 @@ class SettlementTransferApiTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"answer\":\"DISPUTE\",\"reason\":\"받은 건 맞아요\",\"seenVersionNo\":1}"))
         .andExpect(status().isOk());
+    assertThat(snapshotNo()).isEqualTo(5);
     detail(tenant)
         .andExpect(jsonPath("$.transfers[0].amount").value(9_845_000))
         .andExpect(jsonPath("$.confirmedRefund").value(9_845_000));
@@ -409,6 +412,32 @@ class SettlementTransferApiTest {
         .andExpect(jsonPath("$.transfers[0].id").value(before.toString()))
         .andExpect(jsonPath("$.availableActions").isEmpty());
     detail(landlord).andExpect(jsonPath("$.transfers.length()").value(2));
+  }
+
+  @Test
+  void 공유를_그만둔_뒤_상대가_단_보류_이견과_맞아요는_그만둔_사람에게_보이지_않는다() throws Exception {
+    UUID disputed = created(transfer(landlord, "d", "REFUND", 100, null));
+    UUID acked = created(transfer(landlord, "a", "REFUND", 200, null));
+    UUID early = created(transfer(landlord, "e", "REFUND", 300, null));
+    respond(tenant, early, "early-ack", "ACK", null, 1).andExpect(status().isOk());
+    jdbc.update(
+        "UPDATE state.party SET status = 'SHARING_STOPPED', sharing_stopped_at = ?"
+            + " WHERE room_record_id = ? AND side = 'LANDLORD'",
+        Timestamp.from(Instant.now()),
+        room);
+
+    respond(tenant, disputed, "late-dispute", "DISPUTE", "금액이 달라요", 1).andExpect(status().isOk());
+    respond(tenant, acked, "late-ack", "ACK", null, 1).andExpect(status().isOk());
+
+    detail(landlord)
+        .andExpect(jsonPath("$.transfers[0].response").value("PENDING"))
+        .andExpect(jsonPath("$.transfers[1].response").value("PENDING"))
+        .andExpect(jsonPath("$.transfers[1].confirmedAmount").doesNotExist())
+        .andExpect(jsonPath("$.transfers[2].response").value("ACK"))
+        .andExpect(jsonPath("$.confirmedRefund").value(300));
+    detail(tenant)
+        .andExpect(jsonPath("$.transfers[0].response").value("DISPUTE"))
+        .andExpect(jsonPath("$.confirmedRefund").value(500));
   }
 
   // ---- 도우미 ----

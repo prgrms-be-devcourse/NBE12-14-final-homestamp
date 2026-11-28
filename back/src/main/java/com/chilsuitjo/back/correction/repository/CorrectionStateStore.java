@@ -342,6 +342,7 @@ public class CorrectionStateStore {
               RequestKind.CORRECTION_CONFIRM,
               recordRequest(kind, targetId),
               command.actor().side()));
+      target.pendingChanged(targetId);
       return new SavedState(ActionTarget.correctionRequest(row.getId()), digest(row));
     }
   }
@@ -493,6 +494,7 @@ public class CorrectionStateStore {
         merged++;
       } else {
         row.reject();
+        target.pendingChanged(row.targetId());
       }
       corrections.saveAndFlush(row);
       if (!corrections.existsByTargetKeyAndStatus(row.getTargetKey(), CorrectionStatus.WAITING)) {
@@ -586,6 +588,7 @@ public class CorrectionStateStore {
               command.actor().side()));
       List<PhotoDigest> photos =
           target.attachEvidence(command, row.targetId(), retry.getId(), uploadTickets);
+      target.pendingChanged(row.targetId());
       return new SavedState(ActionTarget.correctionRequest(retry.getId()), digest(retry))
           .withPhotos(photos);
     }

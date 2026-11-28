@@ -1,9 +1,12 @@
 package com.chilsuitjo.back.settlement.service;
 
+import com.chilsuitjo.back.action.dto.ActionEntry;
 import com.chilsuitjo.back.action.dto.Actor;
 import com.chilsuitjo.back.action.dto.RoomGate;
 import com.chilsuitjo.back.action.rule.ActionType;
+import com.chilsuitjo.back.action.rule.AnswerPayload;
 import com.chilsuitjo.back.action.rule.RoomGateReader;
+import com.chilsuitjo.back.action.service.ActionReader;
 import com.chilsuitjo.back.correction.dto.CorrectionView;
 import com.chilsuitjo.back.correction.rule.CorrectionTargetKind;
 import com.chilsuitjo.back.correction.service.CorrectionReader;
@@ -26,7 +29,6 @@ import com.chilsuitjo.back.settlement.repository.TransferStateStore;
 import com.chilsuitjo.back.settlement.rule.SettlementState;
 import com.chilsuitjo.back.settlement.rule.SettlementTransitions;
 import com.chilsuitjo.back.settlement.rule.TransferDirection;
-import com.chilsuitjo.back.settlement.rule.TransferResponse;
 import com.chilsuitjo.back.settlement.rule.TransferTransitions;
 import java.time.Clock;
 import java.time.Instant;
@@ -61,6 +63,7 @@ public class SettlementQueryService {
   private final SettlementStateStore settlementStore;
   private final SettlementTransitions rules;
   private final Clock clock;
+  private final ActionReader actions;
 
   /**
    * 정산 화면(06 4-8 {@code GET /api/settlements/{id}}). 없는 정산·당사자가 아니면 {@code NOT_FOUND}다(ROOM-2a).
@@ -102,11 +105,13 @@ public class SettlementQueryService {
             .filter(t -> visible(t, viewer, cutoff))
             .toList();
     Map<UUID, SettlementTransferVersion> byId = versionsOf(shown);
+    Map<UUID, List<ActionEntry>> responses =
+        cutoff == null ? Map.of() : responsesIn(row.getRoomRecordId());
     boolean canAnswer = gate.rejection(ActionType.RESPOND_TRANSFER).isEmpty();
     boolean canCorrect = gate.rejection(ActionType.CORRECT).isEmpty();
     List<SettlementDetail.Transfer> views = new ArrayList<>();
     for (SettlementTransfer t : shown) {
-      views.add(view(t, byId, viewer, cutoff, canAnswer, canCorrect));
+      views.add(view(t, byId, viewer, cutoff, responses, canAnswer, canCorrect));
     }
     List<String> actions = new ArrayList<>();
     if (gate.rejection(ActionType.RECORD_TRANSFER).isEmpty()) {
@@ -148,20 +153,17 @@ public class SettlementQueryService {
       Map<UUID, SettlementTransferVersion> byId,
       PartySide viewer,
       Instant cutoff,
+      Map<UUID, List<ActionEntry>> responses,
       boolean canAnswer,
       boolean canCorrect) {
     SettlementTransferVersion current = byId.get(t.getCurrentVersionId());
-    // 공유를 그만둔 시각 뒤 상대가 남긴 맞아요는 보이지 않는다(불변식 18)
-    boolean confirmShown =
-        t.getConfirmedVersionId() != null
-            && !(t.getRecordedBySide() == viewer
-                && cutoff != null
-                && t.getReceiptConfirmedAt().isAfter(cutoff));
-    SettlementTransferVersion confirmed = confirmShown ? byId.get(t.getConfirmedVersionId()) : null;
+    // 내 기록에 상대가 단 응답은 공유를 그만둔 시각까지의 마지막 응답만 보인다(맞아요·보류·이견 모두, 불변식 18)
     AckState response =
-        confirmShown || t.getResponse() != TransferResponse.ACK
-            ? AckState.valueOf(t.getResponse().name())
-            : AckState.PENDING;
+        t.getRecordedBySide() == viewer && cutoff != null
+            ? answerAsOf(responses.getOrDefault(t.getId(), List.of()), cutoff)
+            : AckState.valueOf(t.getResponse().name());
+    boolean confirmShown = t.getConfirmedVersionId() != null && response == AckState.ACK;
+    SettlementTransferVersion confirmed = confirmShown ? byId.get(t.getConfirmedVersionId()) : null;
     List<String> actions = new ArrayList<>();
     if (canAnswer && TransferTransitions.canRespond(transferStore.current(t), viewer)) {
       actions.add("respond");
@@ -225,6 +227,29 @@ public class SettlementQueryService {
     }
     return versions.findAllById(ids).stream()
         .collect(Collectors.toMap(SettlementTransferVersion::getId, Function.identity()));
+  }
+
+  /** 호실의 송금 응답 행동을 송금마다 시각 순으로(행동 기록이 원본). 공유 중단 제한이 살아 있을 때만 읽는다. */
+  private Map<UUID, List<ActionEntry>> responsesIn(UUID roomRecordId) {
+    Map<UUID, List<ActionEntry>> byTransfer = new LinkedHashMap<>();
+    for (ActionEntry entry : actions.findByRoom(roomRecordId)) {
+      if (entry.type() == ActionType.RESPOND_TRANSFER && entry.target() != null) {
+        byTransfer.computeIfAbsent(entry.target().id(), key -> new ArrayList<>()).add(entry);
+      }
+    }
+    byTransfer.values().forEach(list -> list.sort(Comparator.comparing(ActionEntry::roomSeq)));
+    return byTransfer;
+  }
+
+  /** 그 시각까지의 마지막 응답. 없으면 확인 기다림이다. */
+  static AckState answerAsOf(List<ActionEntry> responses, Instant cutoff) {
+    AckState shown = AckState.PENDING;
+    for (ActionEntry entry : responses) {
+      if (!entry.createdAt().isAfter(cutoff)) {
+        shown = AckState.valueOf(entry.payloadAs(AnswerPayload.class).answer().name());
+      }
+    }
+    return shown;
   }
 
   /** 공유를 그만둔 시각 뒤 상대가 남긴 송금은 보이지 않는다(불변식 18). 내 기록은 늘 보인다. */
