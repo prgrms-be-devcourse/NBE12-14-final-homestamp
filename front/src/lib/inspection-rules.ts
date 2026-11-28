@@ -728,3 +728,38 @@ export function finishSoloInspection(
   m.noDefects = !items.length
   m.requestedAt = nowText()
 }
+
+// 잠긴 점검에 "하자 기록 없음"을 붙일지(#417 리뷰). 서버 점검이면 lockReason이 NO_ITEMS일 때만이에요:
+// 기준 측 항목 없이 상대가 더한 항목만 있어 잠긴 점검은 ALL_RESOLVED라 하자 카드가 있어요(06 4-7 confirm-all, #409).
+// 목업은 서버 값이 없어 항목 없이 확인 요청한 점검(noDefects)으로 봐요.
+export function lockedWithNoDefects(session?: InspectionSession) {
+  if (session?.server) return session.server.lockReason === "NO_ITEMS"
+  return Boolean(session?.noDefects)
+}
+
+// 기준 측 항목 없이 확인 요청한 점검에서 상대가 더한 항목 중 아직 답이 없는(확인 대기) 것이 있나.
+// 있으면 잠금에 두 가지가 모두 필요해요: 기준 측이 아닌 쪽의 "하자 기록 없음" 확인과 그 항목들에 대한 기준 측의 답(03 H "잠기는 조건", #409)
+export function counterpartItemsAwaitingAnswer(
+  session: InspectionSession | undefined,
+  items: Inspection[],
+) {
+  if (!session?.noDefects || session.status !== "확인 요청") return false
+  return lockItems(items).some(
+    (i) => i.author !== session.author && i.ack === "확인 대기",
+  )
+}
+
+// 모두 확인 자리에 어떤 버튼을 둘지(06 4-7 confirm-all). 서버가 confirm-all을 줄 때만 보여요.
+// - "하자 기록 없음 확인": 기준 측 항목이 없는 점검에서 기준 측이 아닌 쪽만(기준 측은 NOT_COUNTERPART_SIDE)
+// - "남은 항목 모두 확인": 답할 항목이 있는 쪽. 기준 측 항목이 없어도 기준 측은 상대가 더한 항목에 답해요(#409)
+export function confirmAllButtons(
+  session: InspectionSession | undefined,
+  mine: boolean,
+  canConfirmAll: boolean,
+) {
+  const noDefects = Boolean(session?.noDefects)
+  return {
+    noDefects: canConfirmAll && noDefects && !mine,
+    items: canConfirmAll && (!noDefects || mine),
+  }
+}

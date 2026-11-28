@@ -12,7 +12,8 @@ import org.hibernate.annotations.Immutable;
 
 /**
  * 수신 거부 행({@code state.sms_opt_out}, 05, C 테이블). 추가·삭제만 하고 UPDATE는 없다(decisions 2026-11-16, V1
- * {@code trg_sms_opt_out_no_update}). 지금은 조회만 해서 만드는 생성자를 두지 않는다. 등록·해제는 #163 답 뒤에 더한다.
+ * {@code trg_sms_opt_out_no_update}). 등록·해제는 네이티브 쿼리({@code SmsOptOutRepository})로 해서 만드는 생성자를 두지
+ * 않는다.
  */
 @Entity
 @Immutable
