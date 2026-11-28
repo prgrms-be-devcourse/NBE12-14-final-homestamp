@@ -24,14 +24,16 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * 초대에 점검 확인 요청 잇기(#370 A-7)를 실제 DB로 본다. 점검 읽기 포트는 inspection(A)이 구현할 것이라 이 테스트에서만 호실별 목록을 돌려주는 대역을
- * 쓴다(운영 빈 없음).
+ * 초대에 점검 확인 요청 잇기(#370 A-7)를 실제 DB로 본다. 점검 읽기 포트는 이 테스트에서만 호실별 목록을 돌려주는 대역을 쓴다({@code @Primary}로
+ * inspection의 실제 구현 {@code JpaInspectionsAwaitingConfirm}보다 앞선다, #317). 실제 구현과 잇는 것은 {@code
+ * RoomInviteApiTest}가 본다.
  */
 @Import({TestcontainersConfiguration.class, InviteRequestLinkerTest.Inspections.class})
 @SpringBootTest(properties = "test.notification.wait-service=jpa")
@@ -44,6 +46,7 @@ class InviteRequestLinkerTest {
     static final Map<UUID, List<AwaitingConfirm>> BY_ROOM = new ConcurrentHashMap<>();
 
     @Bean
+    @Primary
     InspectionsAwaitingConfirm inspectionsAwaitingConfirm() {
       return room -> BY_ROOM.getOrDefault(room, List.of());
     }

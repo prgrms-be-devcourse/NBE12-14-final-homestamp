@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -54,5 +55,25 @@ class PhoneNumberTest {
         .isInstanceOf(BusinessException.class)
         .extracting(e -> ((BusinessException) e).errorCode())
         .isEqualTo(ErrorCode.VALIDATION_FAILED);
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "01012345678, 010-****-5678",
+    "01112345678, 011-****-5678",
+    "0111234567, 011-***-4567",
+    "0199876543, 019-***-6543"
+  })
+  void 가린_번호는_앞_세_자리와_뒤_네_자리만_남긴다(String normalized, String masked) {
+    assertThat(PhoneNumber.mask(normalized)).isEqualTo(masked);
+  }
+
+  @ParameterizedTest
+  @NullSource
+  @ValueSource(strings = {"010-1234-5678", "0101234567", "02123456"})
+  void 정규화한_번호가_아니면_가리지_않고_거절하며_번호를_문구에_넣지_않는다(String input) {
+    assertThatThrownBy(() -> PhoneNumber.mask(input))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageNotContaining(String.valueOf(input));
   }
 }
