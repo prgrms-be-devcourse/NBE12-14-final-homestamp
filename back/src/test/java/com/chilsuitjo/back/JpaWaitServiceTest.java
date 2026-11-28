@@ -243,6 +243,58 @@ class JpaWaitServiceTest extends SchemaTestSupport {
   }
 
   @Test
+  void 재통지가_닿은_고친_내용_확인에_더하면_미확인_기한을_더한_시각부터_72시간으로_다시_정한다() {
+    // 03 1-4 "기한": 재통지 뒤면 미확인 72시간을 다시 정함. 재통지는 요청당 한 번이라 다시 가지 않는다
+    UUID room = room();
+    RequestTarget repair = repairCase(room);
+    RequestHandle request = open(room, RequestKind.CORRECTION_CONFIRM, repair, PartySide.TENANT);
+    started(request.requestId(), AT);
+    renotified(request.requestId(), AT.plusSeconds(600)); // 더하기(LATER)보다 앞
+
+    restart(room, RequestKind.CORRECTION_CONFIRM, repair, PartySide.TENANT);
+
+    assertThat(row(request.requestId()))
+        .containsEntry("unconfirmed_due_at", Timestamp.from(LATER.plus(Duration.ofHours(72))))
+        .containsEntry("status", "WAITING");
+  }
+
+  @Test
+  void 재통지_뒤_미확인이_된_고친_내용_확인을_또_고치면_다시_기다림이고_미확인_기한은_그_시각부터_72시간이다() {
+    // 03 1-4 "미확인 뒤 다시 고침"(#313): 같은 요청이 다시 기다림이 되어 그 시각부터 기한을 다시 센다
+    UUID room = room();
+    RequestTarget repair = repairCase(room);
+    RequestHandle request = open(room, RequestKind.CORRECTION_CONFIRM, repair, PartySide.TENANT);
+    started(request.requestId(), AT);
+    renotified(request.requestId(), AT.plusSeconds(600)); // 더하기(LATER)보다 앞
+    setStatus(request.requestId(), "UNCONFIRMED");
+
+    restart(room, RequestKind.CORRECTION_CONFIRM, repair, PartySide.TENANT);
+
+    assertThat(row(request.requestId()))
+        .containsEntry("status", "WAITING")
+        .containsEntry("unconfirmed_due_at", Timestamp.from(LATER.plus(Duration.ofHours(72))));
+  }
+
+  @Test
+  void 재통지가_닿은_진행_상황_묻기는_다시_물어도_저장한_기한이_그대로다() {
+    // 72시간을 다시 정하는 근거는 고친 내용(03 1-4)과 제안(03 E)뿐이라 다른 종류로 넓히지 않는다
+    UUID room = room();
+    RequestTarget repair = repairCase(room);
+    RequestHandle ask = open(room, RequestKind.PROGRESS_CHECK, repair, PartySide.TENANT);
+    started(ask.requestId(), AT);
+    Instant renotifiedAt = AT.plusSeconds(600);
+    renotified(ask.requestId(), renotifiedAt);
+    Map<String, Object> before = row(ask.requestId());
+
+    restart(room, RequestKind.PROGRESS_CHECK, repair, PartySide.TENANT);
+
+    assertThat(row(ask.requestId()))
+        .containsEntry(
+            "unconfirmed_due_at", Timestamp.from(renotifiedAt.plus(Duration.ofHours(24))))
+        .containsEntry("renotify_due_at", before.get("renotify_due_at"));
+  }
+
+  @Test
   void 기다림이_시작된_열리는_요청은_보충해도_기한이_그대로다() {
     UUID room = room();
     RequestTarget repair = repairCase(room);
@@ -254,31 +306,6 @@ class JpaWaitServiceTest extends SchemaTestSupport {
     // 03 1-4 "열리는 요청의 기한은 보낸 뒤 고정"
     assertThat(row(defect.requestId()))
         .containsEntry("renotify_due_at", Timestamp.from(AT.plus(Duration.ofHours(48))));
-  }
-
-  @Test
-  void 재통지_뒤_미확인이_된_고친_내용에_더하면_기한_다시_세기를_타이머_전이라_거절한다() {
-    UUID room = room();
-    RequestTarget repair = repairCase(room);
-    RequestHandle request = open(room, RequestKind.CORRECTION_CONFIRM, repair, PartySide.TENANT);
-    entityManager.flush();
-    jdbc.update(
-        "UPDATE state.response_request SET status = 'UNCONFIRMED', first_notified_at = ?,"
-            + " unconfirmed_due_at = ? WHERE id = ?",
-        Timestamp.from(AT),
-        Timestamp.from(AT.plus(Duration.ofHours(72))),
-        request.requestId());
-    entityManager.clear();
-
-    // 같은 요청을 다시 기다림으로 돌리는 것은 정했지만(#104), 재통지 뒤 "미확인 72시간을 다시 정함"(03 1-4 "기한")을 어떻게 저장할지는
-    // 기다림 타이머(d3)에서 정한다. 조용히 옛 기한을 남기지 않고 거절한다. 타이머 전이라 운영에서는 미확인이 생기지 않는다
-    assertThatThrownBy(
-            () -> restart(room, RequestKind.CORRECTION_CONFIRM, repair, PartySide.TENANT))
-        .isInstanceOf(IllegalStateException.class);
-    entityManager.clear();
-    assertThat(row(request.requestId()))
-        .containsEntry("status", "UNCONFIRMED")
-        .containsEntry("unconfirmed_due_at", Timestamp.from(AT.plus(Duration.ofHours(72))));
   }
 
   @Test
@@ -601,6 +628,13 @@ class JpaWaitServiceTest extends SchemaTestSupport {
   private void started(UUID requestId, Instant at) {
     entityManager.flush();
     requests.findById(requestId).orElseThrow().startWaiting(at, Duration.ofHours(48));
+    entityManager.flush();
+  }
+
+  /** 재통지가 닿은 것처럼 미확인 기한을 적는다(작업자가 같은 엔티티 메서드를 부름). */
+  private void renotified(UUID requestId, Instant at) {
+    entityManager.flush();
+    requests.findById(requestId).orElseThrow().renotifyReached(at, Duration.ofHours(24));
     entityManager.flush();
   }
 

@@ -39,23 +39,27 @@ export function ReceivedInvitations({
           <div className="received-invitation" key={room.id}>
             <div>
               <h3>{room.name}</h3>
+              {/* 서버 초대(06 4-3 invitations)는 호실 별칭 대신 주소(시·구·동)와 가린 이름만 줘요. 초대 날짜는 주지 않아요 */}
+              {room.invitation && <p>{room.address}</p>}
               <p>
                 보낸 사람: {sideText(room.creator)} · 내 자리:{" "}
                 {sideText(inviteeSide(room))}
               </p>
               <Status>{room.connection}</Status>
-              <p className="muted">
-                초대 날짜:{" "}
-                {room.invitedAt ? (
-                  <time dateTime={room.invitedAt}>
-                    {new Date(room.invitedAt).toLocaleString("ko-KR", {
-                      timeZone: "Asia/Seoul",
-                    })}
-                  </time>
-                ) : (
-                  "날짜 정보 없음"
-                )}
-              </p>
+              {!room.invitation && (
+                <p className="muted">
+                  초대 날짜:{" "}
+                  {room.invitedAt ? (
+                    <time dateTime={room.invitedAt}>
+                      {new Date(room.invitedAt).toLocaleString("ko-KR", {
+                        timeZone: "Asia/Seoul",
+                      })}
+                    </time>
+                  ) : (
+                    "날짜 정보 없음"
+                  )}
+                </p>
+              )}
             </div>
             <Button variant="outline" onClick={() => onOpen(room)}>
               받은 초대 확인

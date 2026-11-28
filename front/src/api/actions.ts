@@ -76,6 +76,7 @@ export type TransferAction = "respond"
 export type RoomAction =
   | "invite" // 상대 초대(호실을 만든 측)
   | "counterpart-phone" // 초대 전 상대 번호 고치기
+  | "parts" // 부위 더하기·숨김·다시 보이기·켜고 끔(POST /api/rooms/{id}/parts…, 06 4-3, #456)
   | "repair-cases" // 하자 등록(거주 중)
   | "inspections" // 입주 점검 시작만(POST /api/rooms/{id}/inspections, kind MOVE_IN). 퇴거 점검 시작은 들지 않아요(06 4-3, #357)
   | "move-out" // 세입자: 거주 종료 / 집주인: 거주 종료 요청
