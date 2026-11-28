@@ -109,9 +109,7 @@ public class LinkViewService {
         content
             .room(link.getRoomRecordId(), link.getPartyId())
             .orElseThrow(LinkViewService::invalid);
-    if (room.hiddenFromLink()) {
-      throw invalid();
-    }
+    requireOpen(link, room);
     // 보여 줄 내용을 먼저 읽는다. 못 읽으면(기록이 그 호실에 없음) 열람 기록을 남기지 않고 LINK_INVALID다.
     LinkViewResponse response = response(link, room);
     recordView(link, room);
@@ -189,6 +187,12 @@ public class LinkViewService {
     if (current.isInvalidated() || !current.getRoomRecordId().equals(resolved.getRoomRecordId())) {
       throw invalid();
     }
+    // 미리 본 자리·호실 상태는 잠그기 전 값이다. 거절·연결·거주 종료도 호실을 잠그고 저장하므로, 잠근 지금 다시 읽어 같은 판단을 한다
+    requireOpen(
+        current,
+        content
+            .room(current.getRoomRecordId(), current.getPartyId())
+            .orElseThrow(LinkViewService::invalid));
     Instant cutoff = observedAt.minus(viewDedupe);
     List<ActionEntry> views =
         actions.findByTarget(ActionTarget.of(TargetKind.LINK, resolved.getId())).stream()
@@ -224,6 +228,27 @@ public class LinkViewService {
     return at.truncatedTo(ChronoUnit.MICROS);
   }
 
+  /**
+   * 링크 종류에 따라 지금 자리·호실 상태로 열 수 있는지(03 3장 상태별 표 "링크", 03 C, 거절됨은 #392 7222021503). 못 열면 다른 이유와 같은
+   * {@code LINK_INVALID}다(LINK-2).
+   *
+   * <ul>
+   *   <li>모든 링크: 정산 완료·합류 전 기록인 호실은 막는다({@link LinkRoom#hiddenFromLink})
+   *   <li>초대 링크(호실 초대·기록 링크): 받는 자리가 초대됨이고 호실이 거주 중일 때만({@link LinkRoom#opensInvite})
+   *   <li>정산 초대 링크: 위 첫 줄만 본다. 거주 종료 뒤 연결되지 않은 상대에게 보내는 링크라 초대 링크 조건을 쓰지 않는다
+   * </ul>
+   *
+   * 링크 행의 무효화(재초대·연결·거주 종료 등)는 따로 본다({@link #requireCurrentLink}).
+   */
+  private static void requireOpen(Link link, LinkRoom room) {
+    if (room.hiddenFromLink()) {
+      throw invalid();
+    }
+    if (link.getKind() == LinkKind.INVITE && !room.opensInvite()) {
+      throw invalid();
+    }
+  }
+
   private LinkViewResponse response(Link link, LinkRoom room) {
     if (link.getKind() == LinkKind.SETTLEMENT_INVITE) {
       // "퇴거 정산 확인 요청이 있어요"와 가입 버튼만(LINK-3a). 위치·측·금액·항목은 주지 않는다.
@@ -245,7 +270,7 @@ public class LinkViewService {
         kind == TargetKind.REPAIR_CASE ? link.getRepairCaseId() : link.getInspectionId();
     LinkRecordResponse record =
         content
-            .record(link.getRoomRecordId(), kind, recordId)
+            .record(link.getRoomRecordId(), kind, recordId, room.recipientSide())
             .orElseThrow(LinkViewService::invalid);
     return new LinkViewResponse(
         LinkViewKind.RECORD,

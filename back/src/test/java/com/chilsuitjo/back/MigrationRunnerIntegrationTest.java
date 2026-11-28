@@ -69,9 +69,10 @@ class MigrationRunnerIntegrationTest {
 
   static final String OWNER = "hs_owner";
   static final String MIGRATION = "hs_migration";
-  static final String APP = "hs_app";
-  static final String PURGE = "hs_purge";
-  static final String HUMAN = "hs_human";
+  // 이 시험의 접속용 로그인 역할. 이미지 roles.properties의 운영 이름(G_*)과 겹치지 않게 둔다
+  static final String APP = "hs_login_app";
+  static final String PURGE = "hs_login_purge";
+  static final String HUMAN = "hs_login_human";
   static final String PASSWORD = "MIGRATION-RUNNER-FAKE-PASSWORD";
   static final String SCHEMAS = "('public','record','state','log')";
   static final Path JAR =
@@ -83,10 +84,11 @@ class MigrationRunnerIntegrationTest {
   static final String SECRET_DIR = "/run/secrets/homestamp-migration/";
   // 기대 이력은 운영 Migration 폴더(db/migration)의 V 파일에서 구한다. 새 V 파일이 생겨도 이 테스트를 고치지 않는다
   static final List<String> MIGRATION_VERSIONS = migrationVersions();
-  static final String G_APP = "homestamp_app";
-  static final String G_PURGE = "homestamp_purge";
+  // 이미지 db/grants/roles.properties의 운영 이름과 같다(decisions 2026-11-28)
+  static final String G_APP = "hs_app";
+  static final String G_PURGE = "hs_purge";
   // Human은 NOLOGIN 읽기 그룹(#185). 사람 계정은 그 그룹의 멤버로 만든다
-  static final String G_HUMAN = "homestamp_human_read";
+  static final String G_HUMAN = "hs_human_read";
   static final String G_PERSON = "homestamp_person_a";
   static final List<String> GRANT_LOGINS = List.of(G_APP, G_PURGE);
 
@@ -728,9 +730,15 @@ class MigrationRunnerIntegrationTest {
     assertThat(
             one(
                 db,
-                "SELECT has_table_privilege('homestamp_app','record.action','INSERT')||'|'"
-                    + "||has_table_privilege('homestamp_app','record.action','UPDATE')||'|'"
-                    + "||has_function_privilege('homestamp_purge','state.purge_room_record(uuid)','EXECUTE')||'|'"
+                "SELECT has_table_privilege('"
+                    + G_APP
+                    + "','record.action','INSERT')||'|'"
+                    + "||has_table_privilege('"
+                    + G_APP
+                    + "','record.action','UPDATE')||'|'"
+                    + "||has_function_privilege('"
+                    + G_PURGE
+                    + "','state.purge_room_record(uuid)','EXECUTE')||'|'"
                     + "||has_column_privilege('"
                     + G_HUMAN
                     + "','state.member','status','SELECT')||'|'"
@@ -1072,15 +1080,16 @@ class MigrationRunnerIntegrationTest {
     List<String> acl = acl(db);
 
     Map<String, String> attack = new LinkedHashMap<>();
-    attack.put("HOMESTAMP_GRANTS_APP_ROLE", "hs_app");
-    attack.put("APP_ROLE", "hs_app");
-    attack.put("SPRING_APPLICATION_JSON", "{\"app-role\":\"hs_app\",\"human-role\":\"hs_app\"}");
+    attack.put("HOMESTAMP_GRANTS_APP_ROLE", APP);
+    attack.put("APP_ROLE", APP);
+    attack.put(
+        "SPRING_APPLICATION_JSON", "{\"app-role\":\"" + APP + "\",\"human-role\":\"" + APP + "\"}");
     attack.put("SPRING_DATASOURCE_URL", "jdbc:postgresql://hs-attacker:5432/x");
     attack.put("FLYWAY_LOCATIONS", "filesystem:/tmp");
     Cli rerun = cli(db, MIGRATION, PASSWORD, attack, OWNER, "--apply-grants");
     assertThat(rerun.exit()).isZero();
     assertThat(acl(db)).as("재실행·공격 환경변수에도 같은 결과").isEqualTo(acl);
-    assertThat(one(db, "SELECT has_table_privilege('hs_app','record.action','SELECT')"))
+    assertThat(one(db, "SELECT has_table_privilege('" + APP + "','record.action','SELECT')"))
         .isEqualTo("f");
 
     Map<String, Cli> failures = new LinkedHashMap<>();
@@ -1359,9 +1368,9 @@ class MigrationRunnerIntegrationTest {
                 """))
         .contains("hs_migration->hs_owner set=true inherit=false admin=false")
         .noneMatch(row ->
-            row.startsWith("hs_app->")
-                || row.startsWith("hs_purge->")
-                || row.startsWith("hs_human->"));
+            row.startsWith(APP + "->")
+                || row.startsWith(PURGE + "->")
+                || row.startsWith(HUMAN + "->"));
     assertThat(
             one(
                 db,
@@ -1372,11 +1381,13 @@ class MigrationRunnerIntegrationTest {
             list(
                 db,
                 "SELECT rolname||'|'||rolcanlogin||'|'||rolinherit||'|'||pg_has_role(rolname,'hs_owner','SET')||'|'||pg_has_role(rolname,'hs_owner','USAGE')"
-                    + " FROM pg_roles WHERE rolname IN ('hs_app','hs_purge','hs_human') ORDER BY 1"))
+                    + " FROM pg_roles WHERE rolname IN ('"
+                    + String.join("','", APP, PURGE, HUMAN)
+                    + "') ORDER BY 1"))
         .containsExactly(
-            "hs_app|true|false|false|false",
-            "hs_human|true|false|false|false",
-            "hs_purge|true|false|false|false");
+            APP + "|true|false|false|false",
+            HUMAN + "|true|false|false|false",
+            PURGE + "|true|false|false|false");
   }
 
   /** SET ROLE 없이 Migration 로그인으로 접속: 보호 객체 생성·변경·조회가 모두 막히고, SET ROLE은 된다. */

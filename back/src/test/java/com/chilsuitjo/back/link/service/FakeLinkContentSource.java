@@ -1,5 +1,6 @@
 package com.chilsuitjo.back.link.service;
 
+import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.link.dto.LinkRecordResponse;
 import com.chilsuitjo.back.link.dto.LinkRoom;
@@ -8,14 +9,15 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import org.springframework.stereotype.Service;
+import org.springframework.context.annotation.Primary;
 
 /**
- * 링크 화면 값 가짜. 테스트가 정해 둔 호실·기록을 돌려준다.
+ * 테스트용 링크 화면 값. 테스트가 정해 둔 호실·기록을 돌려주고 보는 측은 보지 않는다. 운영 구현은 {@link LinkContents}다.
  *
- * <p>room·repair·inspection·photo·payment의 공개 조회가 들어오면 그것을 부르는 실제 구현으로 바꾸고 이 클래스를 지운다.
+ * <p>쓰는 법: 스프링 테스트는 {@code @Import(FakeLinkContentSource.class)}로 넣는다({@code @Primary}라 실제 구현 대신
+ * 쓰인다). 단위 테스트는 직접 만든다.
  */
-@Service
+@Primary
 public class FakeLinkContentSource implements LinkContentSource {
 
   private final Map<Key, LinkRoom> rooms = new ConcurrentHashMap<>();
@@ -28,7 +30,8 @@ public class FakeLinkContentSource implements LinkContentSource {
   }
 
   @Override
-  public Optional<LinkRecordResponse> record(UUID roomRecordId, TargetKind kind, UUID recordId) {
+  public Optional<LinkRecordResponse> record(
+      UUID roomRecordId, TargetKind kind, UUID recordId, PartySide viewerSide) {
     return Optional.ofNullable(records.get(new Key(roomRecordId, recordId)))
         .filter(record -> record.targetKind() == kind);
   }

@@ -62,6 +62,7 @@ describe("createHttpAuth", () => {
       email: ME.email,
       name: "정서윤",
       phone: "01012345678",
+      smsEnabled: true,
       pendingAcknowledgements: [],
     })
     expect(calls.map((c) => c.key)).toEqual([

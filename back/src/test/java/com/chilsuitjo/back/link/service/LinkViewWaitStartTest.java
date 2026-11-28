@@ -12,6 +12,8 @@ import com.chilsuitjo.back.link.dto.LinkViewRequest;
 import com.chilsuitjo.back.link.rule.LinkToken;
 import com.chilsuitjo.back.notification.service.NoticeWaitStart;
 import com.chilsuitjo.back.notification.service.NoticeWaitStart.EvidenceNotRecorded;
+import com.chilsuitjo.back.room.rule.PartyStatus;
+import com.chilsuitjo.back.room.rule.RoomStatus;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
@@ -40,7 +42,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 링크 열람이 전달 증거가 되는지(06 NOTI-3b, 03 1-1 "타이머 시작점", 05 4장 "집주인 링크 열람 → notice(VIEWED)"). 실제
  * pipeline·잠금·DB로 본다. 링크 내용은 테스트 가짜(열린 호실의 호실 초대)로 두고, 통지·요청 행은 직접 넣는다. 행은 임의 ID라 다른 테스트와 겹치지 않는다.
  */
-@Import(TestcontainersConfiguration.class)
+@Import({TestcontainersConfiguration.class, FakeLinkContentSource.class})
 @SpringBootTest
 @ActiveProfiles("test")
 class LinkViewWaitStartTest {
@@ -494,7 +496,17 @@ class LinkViewWaitStartTest {
         party,
         room);
     content.seedRoom(
-        room, party, new LinkRoom(PartySide.LANDLORD, "서울특별시", "강남구", "역삼동", false, false));
+        room,
+        party,
+        new LinkRoom(
+            PartySide.LANDLORD,
+            "서울특별시",
+            "강남구",
+            "역삼동",
+            false,
+            false,
+            PartyStatus.INVITED,
+            RoomStatus.LIVING));
     Fixture partial = new Fixture(room, party, null, null);
     String token = LinkToken.newToken();
     UUID link = link(partial, token);

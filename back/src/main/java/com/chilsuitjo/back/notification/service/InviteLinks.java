@@ -2,6 +2,7 @@ package com.chilsuitjo.back.notification.service;
 
 import com.chilsuitjo.back.global.common.LinkInvalidReason;
 import com.chilsuitjo.back.notification.dto.RequestTarget;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -62,7 +63,7 @@ public interface InviteLinks {
    *     IllegalArgumentException}이라 부르는 쪽이 입력 검증으로 먼저 막는다), {@code null}이면 호실 초대 화면 링크다. 없거나 그 호실의
    *     기록이 아니면 {@code NOT_FOUND}
    * @param issuedByMemberId 초대한 회원(pipeline {@code Actor}의 회원). 새로 만들 때만 저장하고 "발급한 사람 탈퇴"({@code
-   *     ISSUER_WITHDRAWN}) 무효에 쓴다. 탈퇴 때 링크를 무효로 하는 일은 탈퇴(KEEP-4)에서 한다(아직 없음)
+   *     ISSUER_WITHDRAWN}) 무효에 쓴다. 탈퇴 때는 탈퇴(KEEP-4)가 {@link #invalidateIssuedBy}를 부른다
    */
   UUID issueInvite(
       UUID roomRecordId, UUID recipientPartyId, RequestTarget record, UUID issuedByMemberId);
@@ -93,4 +94,24 @@ public interface InviteLinks {
    * #issueInvite} 설명의 순서 ②).
    */
   List<UUID> invalidateInvites(UUID roomRecordId, UUID partyId, LinkInvalidReason reason);
+
+  /**
+   * 그 호실에서 한 회원이 발급한 링크(초대 {@code INVITE}·정산 초대 {@code SETTLEMENT_INVITE} 모두, 기록 링크 포함)를 무효로 하고, 그
+   * 회원이 발급한 그 호실의 링크 ID를 <b>전부</b> 돌려준다. 발급한 사람 탈퇴(03 L "보낸 초대 링크 무효", 6-4, KEEP-4·KEEP-4a, #424)에서
+   * 쓴다.
+   *
+   * <ul>
+   *   <li>이유는 {@code ISSUER_WITHDRAWN}만 받는다(그 밖은 {@code IllegalArgumentException}). 시각은 탈퇴 업무 시각이고
+   *       마이크로초로 맞춘다
+   *   <li>이미 무효인 링크는 다시 저장하지 않아 처음 이유·시각이 그대로다(05 불변식 7). 돌려주는 목록에는 함께 들어가, 그 링크가 담긴 보내지 않은 문자도 취소할
+   *       수 있다({@link #invalidateInvites(UUID, UUID, LinkInvalidReason)}와 같은 방식)
+   *   <li>다른 회원이 발급한 링크, 다른 호실의 링크는 넣지도 바꾸지도 않는다. 링크가 없으면 빈 목록이다. 순서는 계약이 아니다
+   *   <li>부르는 쪽 트랜잭션 안에서만 돈다({@code MANDATORY}). 호실을 잠근 뒤 부르고, 여기서도 호실을 다시 잠가 확인한다(호실 → 링크, 09 3-1)
+   * </ul>
+   *
+   * <p>탈퇴자가 <b>받는</b> 초대 링크는 연결할 때 이미 무효다({@code CONNECTED}, ROOM-5a). 정산 초대 링크를 닫은 뒤 정산을 어떻게 이을지는
+   * 정산(C)이 정한다.
+   */
+  List<UUID> invalidateIssuedBy(
+      UUID roomRecordId, UUID issuerMemberId, LinkInvalidReason reason, Instant at);
 }
