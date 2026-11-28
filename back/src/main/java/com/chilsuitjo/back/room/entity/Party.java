@@ -59,6 +59,14 @@ public class Party {
   @Column(nullable = false, length = 20)
   private PartyStatus status;
 
+  /**
+   * 초대 회차 ID. 초대하거나 번호를 고쳐 다시 초대할 때마다 새로 정한다(#437). 받은 초대의 연결·거절이 이 값을 함께 보내 예전 초대 화면의 늦은 요청을
+   * 가려낸다(X → Y → X, #370 ①). 초대 전 자리는 null이고, 연결·거절 뒤에도 마지막 회차를 남긴다.
+   */
+  @Getter(AccessLevel.NONE)
+  @Column(name = "invite_id")
+  private UUID inviteId;
+
   @Column(name = "connected_at")
   private Instant connectedAt;
 
@@ -138,7 +146,41 @@ public class Party {
       throw new IllegalStateException("초대할 수 없는 자리예요: " + id);
     }
     this.invitePhone = Objects.requireNonNull(phone, "phone");
+    this.inviteId = UUID.randomUUID();
     this.status = PartyStatus.INVITED;
+  }
+
+  /**
+   * 번호를 고쳐 다시 초대한다(03 B "번호 고치기", 06 4-3 {@code counterpart-phone}): 초대됨·거절됨 → 새 번호로 초대됨. 초대 회차도 새로
+   * 정해 예전 초대의 늦은 연결·거절을 받지 않는다. 규칙은 {@code PartyTransitions}가 먼저 본다. 그 밖의 상태에서 부르면 부르는 쪽 버그라 {@code
+   * IllegalStateException}이다.
+   */
+  public void reinvite(String phone) {
+    if (status != PartyStatus.INVITED && status != PartyStatus.REJECTED) {
+      throw new IllegalStateException("번호를 고쳐 다시 초대할 수 없는 자리예요: " + id);
+    }
+    this.invitePhone = Objects.requireNonNull(phone, "phone");
+    this.inviteId = UUID.randomUUID();
+    this.status = PartyStatus.INVITED;
+  }
+
+  /**
+   * 받은 초대 목록에 줄 지금 초대 회차. 회차 칸이 비어 있으면 자리 ID다: V14 배포 중 이전 버전 앱이 회차 없이 초대한 자리도 연결·거절할 수 있게(04 8장
+   * "스키마 변경: 이전 버전 앱과도 맞게"). 그런 자리를 번호를 고쳐 다시 초대하면 새 회차가 생겨 예전 요청과 구분된다. 초대 전 자리는 빈 값이다.
+   */
+  public Optional<UUID> currentInviteId() {
+    if (inviteId != null) {
+      return Optional.of(inviteId);
+    }
+    return status == PartyStatus.INVITED || status == PartyStatus.REJECTED
+        ? Optional.of(id)
+        : Optional.empty();
+  }
+
+  /** 받은 초대에 답한 요청이 지금 초대 회차({@link #currentInviteId})의 것인지. 보낸 값이 없으면 거짓이다. */
+  public boolean isCurrentInvite(UUID requestedInviteId) {
+    return requestedInviteId != null
+        && currentInviteId().map(requestedInviteId::equals).orElse(false);
   }
 
   /**
