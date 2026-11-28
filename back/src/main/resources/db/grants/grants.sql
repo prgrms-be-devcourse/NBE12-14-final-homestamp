@@ -62,6 +62,7 @@ DECLARE
     expected_functions text[] := ARRAY[
         'record.forbid_change()',
         'record.purge_member_acknowledgements(uuid, timestamp with time zone)',
+        'state.clear_stale_member_phone_hmac()',
         'state.forbid_link_revalidate()',
         'state.guard_room_delete()',
         'state.purge_room_record(uuid)'

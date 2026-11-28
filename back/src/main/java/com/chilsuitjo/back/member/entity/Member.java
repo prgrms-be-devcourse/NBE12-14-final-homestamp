@@ -54,6 +54,13 @@ public class Member {
   @Column(length = 20)
   private String phone;
 
+  /**
+   * 인증 번호의 번호 HMAC({@code PhoneHmacs} 값, #462). 번호와 늘 함께 바꾸고 함께 비운다. V14 전에 가입한 회원과 이 칸을 모르는 이전 앱이
+   * 쓴 행은 비어 있을 수 있고, auth가 채운다({@code MemberPhoneHmacFill}).
+   */
+  @Column(name = "phone_hmac", length = 128)
+  private String phoneHmac;
+
   @Column(name = "phone_verified_at")
   private Instant phoneVerifiedAt;
 
@@ -75,18 +82,22 @@ public class Member {
   /**
    * 가입한 회원. 비밀번호는 해시만 받는다(해시 방식은 부르는 쪽이 정한다). 번호는 인증 표에서 읽은 정규화된 번호다. 문자 설정은 켬이 기본이다(03 K "회원의 문자
    * 설정").
+   *
+   * @param phoneHmac {@code phone}의 번호 HMAC({@code PhoneHmacs}). 계산은 부르는 쪽이 한다
    */
   public Member(
       String email,
       String passwordHash,
       String displayName,
       String phone,
+      String phoneHmac,
       Instant phoneVerifiedAt,
       Instant createdAt) {
     this.email = Objects.requireNonNull(email);
     this.passwordHash = Objects.requireNonNull(passwordHash);
     this.displayName = Objects.requireNonNull(displayName);
     this.phone = Objects.requireNonNull(phone);
+    this.phoneHmac = Objects.requireNonNull(phoneHmac);
     this.phoneVerifiedAt = Objects.requireNonNull(phoneVerifiedAt);
     this.createdAt = Objects.requireNonNull(createdAt);
     this.smsEnabled = true;
@@ -130,10 +141,11 @@ public class Member {
 
   /**
    * 다른 계정이 이 번호를 인증해 이 계정의 인증 번호와 인증 시각을 비운다(06 ACC-3a, 05 {@code member}: 이전 계정의 {@code phone}을
-   * NULL로). 이미 연결된 호실(당사자 자리)은 건드리지 않는다.
+   * NULL로). 번호 HMAC도 함께 비운다(#462). 이미 연결된 호실(당사자 자리)은 건드리지 않는다. 번호를 지우는 다른 곳(탈퇴)도 이 메서드를 부른다.
    */
   public void releasePhone() {
     this.phone = null;
+    this.phoneHmac = null;
     this.phoneVerifiedAt = null;
   }
 

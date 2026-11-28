@@ -14,6 +14,7 @@ import com.chilsuitjo.back.member.repository.MemberRepository;
 import com.chilsuitjo.back.member.rule.AcknowledgementKind;
 import com.chilsuitjo.back.member.rule.MemberStatus;
 import com.chilsuitjo.back.member.service.MemberService;
+import com.chilsuitjo.back.notification.service.PhoneHmacs;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.time.Instant;
@@ -33,6 +34,7 @@ class MemberSignupPersistenceTest extends SchemaTestSupport {
   @Autowired private MemberRepository members;
   @Autowired private MemberAcknowledgementRepository acknowledgements;
   @Autowired private MemberService memberService;
+  @Autowired private PhoneHmacs phoneHmacs;
   @PersistenceContext private EntityManager entityManager;
 
   @Test
@@ -96,12 +98,14 @@ class MemberSignupPersistenceTest extends SchemaTestSupport {
             true,
             "2026-11-14");
 
-    UUID memberId = memberService.register(request, "hash", "01012345678", NOW);
+    UUID memberId =
+        memberService.register(request, "hash", "01012345678", hmac("01012345678"), NOW);
     entityManager.flush();
     entityManager.clear();
 
     Member member = members.findById(memberId).orElseThrow();
     assertThat(member.getPhone()).isEqualTo("01012345678");
+    assertThat(member.getPhoneHmac()).isEqualTo(hmac("01012345678")).hasSize(64);
     assertThat(member.getPhoneVerifiedAt()).isEqualTo(member.getCreatedAt());
     List<MemberAcknowledgement> rows = acknowledgements.findByMemberId(memberId);
     assertThat(rows).hasSize(3);
@@ -135,17 +139,24 @@ class MemberSignupPersistenceTest extends SchemaTestSupport {
         previous.getId());
 
     UUID newMember =
-        memberService.register(allConfirmed("new@example.com", "김정호"), "hash", "01012345678", NOW);
+        memberService.register(
+            allConfirmed("new@example.com", "김정호"),
+            "hash",
+            "01012345678",
+            hmac("01012345678"),
+            NOW);
     entityManager.flush();
     entityManager.clear();
 
     Member released = members.findById(previous.getId()).orElseThrow();
     assertThat(released.getPhone()).isNull();
     assertThat(released.getPhoneVerifiedAt()).isNull();
+    assertThat(released.getPhoneHmac()).isNull();
     assertThat(released.getStatus()).isEqualTo(MemberStatus.ACTIVE);
     assertThat(released.getEmail()).isEqualTo("previous@example.com");
     Member registered = members.findById(newMember).orElseThrow();
     assertThat(registered.getPhone()).isEqualTo("01012345678");
+    assertThat(registered.getPhoneHmac()).isEqualTo(hmac("01012345678"));
     assertThat(registered.getPhoneVerifiedAt()).isNotNull();
     assertThat(jdbc.queryForObject("SELECT member_id FROM party WHERE id = ?", UUID.class, party))
         .isEqualTo(previous.getId());
@@ -160,7 +171,11 @@ class MemberSignupPersistenceTest extends SchemaTestSupport {
 
     assertThatThrownBy(() ->
             memberService.register(
-                allConfirmed("seoyun@example.com", "정서윤"), "hash", "01012345678", NOW))
+                allConfirmed("seoyun@example.com", "정서윤"),
+                "hash",
+                "01012345678",
+                hmac("01012345678"),
+                NOW))
         .isInstanceOfSatisfying(
             BusinessException.class,
             e -> assertThat(e.errorCode()).isEqualTo(ErrorCode.EMAIL_TAKEN));
@@ -173,6 +188,10 @@ class MemberSignupPersistenceTest extends SchemaTestSupport {
   }
 
   private Member save(String email, String phone) {
-    return members.save(new Member(email, "hash", "정서윤", phone, NOW, NOW));
+    return members.save(new Member(email, "hash", "정서윤", phone, hmac(phone), NOW, NOW));
+  }
+
+  private String hmac(String phone) {
+    return phoneHmacs.phoneHmac(phone);
   }
 }
