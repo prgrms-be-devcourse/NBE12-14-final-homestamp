@@ -3,6 +3,7 @@ package com.chilsuitjo.back.room.controller;
 import static com.chilsuitjo.back.global.security.SecurityTestSupport.loginAs;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doThrow;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -19,6 +20,7 @@ import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.room.dto.RoomAccess;
+import com.chilsuitjo.back.room.repository.PartTemplateRepository;
 import com.chilsuitjo.back.room.rule.PartyStatus;
 import com.chilsuitjo.back.room.rule.RoomStatus;
 import com.chilsuitjo.back.room.service.RoomAccessService;
@@ -36,6 +38,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.transaction.IllegalTransactionStateException;
@@ -67,6 +70,7 @@ class RoomCreateApiTest {
   @Autowired private RoomGateReader gates;
   @Autowired private ActionPipeline pipeline;
   @Autowired private PlatformTransactionManager transactionManager;
+  @MockitoSpyBean private PartTemplateRepository templates;
 
   private String region;
 
@@ -348,9 +352,11 @@ class RoomCreateApiTest {
 
   @Test
   void 만드는_도중_실패하면_호실도_자리도_부위도_남지_않는다() throws Exception {
-    // 회원 행이 없는 ID: 호실 행을 넣은 뒤 당사자 자리의 회원 FK에서 실패한다(같은 트랜잭션이라 함께 되돌려짐)
-    UUID ghost = UUID.randomUUID();
+    // 호실 행·자리를 넣은 뒤 부위 템플릿을 읽다 실패한다(같은 트랜잭션이라 함께 되돌려짐). 없는 회원 ID로 FK 실패를 내던 방법은
+    // 호실 만들기가 회원이 활동 중인지 먼저 보게 되어(#424) 저장 전에 LOGIN_REQUIRED가 된다
+    UUID ghost = member();
     String alias = alias();
+    doThrow(new IllegalStateException("부위 템플릿을 읽다 실패")).when(templates).findAllByOrderBySortOrder();
 
     create(ghost, key(), body("TENANT", region, alias, null))
         .andExpect(status().isInternalServerError());

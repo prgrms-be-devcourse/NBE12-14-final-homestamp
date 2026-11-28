@@ -207,4 +207,23 @@ public class Party {
     }
     this.status = PartyStatus.REJECTED;
   }
+
+  /** 이 자리의 회원이 탈퇴할 수 있는 상태인가: 연결됨·공유 중단(03 B "탈퇴"). */
+  public boolean isOccupied() {
+    return status == PartyStatus.CONNECTED || status == PartyStatus.SHARING_STOPPED;
+  }
+
+  /**
+   * 이 자리의 회원이 탈퇴했다(03 B "탈퇴", 06 KEEP-4): 연결됨·공유 중단 → 탈퇴함. 회원 ID는 남긴다(가린 이름 "탈퇴한 임차인"을 읽고, 같은 번호로
+   * 새로 가입한 계정이 이 자리에 붙지 않게, KEEP-4d). 공유를 그만둔 시각({@code sharing_stopped_at})도 지우지 않는다: 중단 동안 탈퇴자가
+   * 남긴 기록을 계속 가리는 기준이다(decisions 2026-11-26). 초대 번호는 지운다(05 {@code party} "탈퇴 때 NULL"). 그 밖의 상태면
+   * 부르는 쪽 버그라 {@code IllegalStateException}이다.
+   */
+  public void withdraw() {
+    if (!isOccupied()) {
+      throw new IllegalStateException("탈퇴할 수 없는 자리예요: " + id);
+    }
+    this.invitePhone = null;
+    this.status = PartyStatus.WITHDRAWN;
+  }
 }

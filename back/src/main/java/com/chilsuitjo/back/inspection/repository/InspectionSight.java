@@ -65,12 +65,15 @@ public class InspectionSight {
    *       고정됐으면 <b>그 시각까지의 행동만</b>으로 보아, 그때 작성 중이었으면 그 뒤 누가 확인 요청을 보냈든 가린다(#218 리뷰)
    *   <li>작성 중으로 보나({@code draft}): 위 판단에서 보는 측을 빼고 본 값이다. 링크 열람은 보는 측과 상관없이 작성 중 점검을 보이지 않으므로(03
    *       3-1 링크 열람자 "작성 중 점검 ✕") 이 값을 쓴다
+   *   <li>상대가 탈퇴했으면({@code departed}, #288): 남아 있는 공유 중단 시각(누가 그만뒀든) 중 이른 것. 상태는 다시 계산하지 않고 지금 값이다
+   *       ({@code asOf} null, 수리 {@code RepairSight}와 같은 방향, decisions 2026-11-27). 그 시각 뒤 탈퇴자가 시작한
+   *       점검·더한 항목·만든 판은 계속 보이지 않는다(03 6-4). 그 시각에 작성 중이던 탈퇴자의 점검은 그 뒤 확인 요청을 보냈어도 작성 중으로 본다(상대가 본
+   *       적이 없음)
    * </ul>
    */
   public Sight of(Inspection row, PartySide viewer) {
     RoomParties room = parties.read(row.getRoomRecordId(), viewer);
-    Instant asOf = sharingCutoff(room);
-    return asOf == null
+    return sharingCutoff(room) == null && departedCutoff(room) == null
         ? of(row, viewer, room, List.of())
         : of(row, viewer, room, actions.findByTarget(ActionTarget.inspection(row.getId())));
   }
@@ -89,19 +92,19 @@ public class InspectionSight {
   public Sight of(Inspection row, PartySide viewer, RoomParties room, List<ActionEntry> recorded) {
     Instant asOf = sharingCutoff(room);
     if (asOf == null) {
-      boolean draft = row.getStatus() == InspectionStatus.DRAFT;
+      Instant departed = departedCutoff(room);
+      boolean draft =
+          row.getStatus() == InspectionStatus.DRAFT
+              || (departed != null
+                  && viewer != row.getAuthorSide()
+                  && draftAt(row, history(row, recorded), departed));
       return new Sight(
-          viewer, null, row.getStatus(), viewer != row.getAuthorSide() && draft, draft);
+          viewer, null, departed, row.getStatus(), viewer != row.getAuthorSide() && draft, draft);
     }
     if (startedAfter(row, viewer, asOf)) {
       return new Sight(viewer, asOf, InspectionStatus.DRAFT, true, true);
     }
-    ActionTarget target = ActionTarget.inspection(row.getId());
-    List<ActionEntry> history =
-        recorded.stream()
-            .filter(entry -> target.equals(entry.target()))
-            .filter(entry -> InspectionTransitions.CHANGES.contains(entry.type()))
-            .toList();
+    List<ActionEntry> history = history(row, recorded);
     Predicate<ActionEntry> beforeCutoff = e -> !e.createdAt().isAfter(asOf);
     InspectionState atCutoff;
     try {
@@ -128,6 +131,29 @@ public class InspectionSight {
     return new Sight(viewer, asOf, shown.status(), viewer != row.getAuthorSide() && draft, draft);
   }
 
+  /** 이 점검의 상태를 바꾸는 행동만({@code room_seq} 순). */
+  private static List<ActionEntry> history(Inspection row, List<ActionEntry> recorded) {
+    ActionTarget target = ActionTarget.inspection(row.getId());
+    return recorded.stream()
+        .filter(entry -> target.equals(entry.target()))
+        .filter(entry -> InspectionTransitions.CHANGES.contains(entry.type()))
+        .toList();
+  }
+
+  /**
+   * 그 시각에 작성 중이었나(아직 없었어도 작성 중으로 본다). 기록된 행동의 앞부분이라 다시 계산이 실패하면 기록이 어긋난 것이라 {@link
+   * IllegalStateException}이다.
+   */
+  private boolean draftAt(Inspection row, List<ActionEntry> history, Instant at) {
+    InspectionState then;
+    try {
+      then = Replay.fold(rules, history.stream().filter(e -> !e.createdAt().isAfter(at)).toList());
+    } catch (BusinessException broken) {
+      throw new IllegalStateException("고정한 시각까지의 점검 기록을 다시 계산할 수 없어요: " + row.getId(), broken);
+    }
+    return !then.exists() || then.status() == InspectionStatus.DRAFT;
+  }
+
   /** 공유를 그만둔 뒤 상대가 시작한 점검인가(불변식 18). {@link Sight#hides}와 같은 판단이다. */
   private static boolean startedAfter(Inspection row, PartySide viewer, Instant asOf) {
     return viewer != row.getAuthorSide() && asOf != null && row.getCreatedAt().isAfter(asOf);
@@ -148,8 +174,8 @@ public class InspectionSight {
    * 값으로 돌아가지 않고 {@link IllegalStateException}을 던진다(보여서는 안 되는 항목을 넘겼거나 기록이 어긋남).
    *
    * <p>지금 항목 응답을 바꾸는 행동은 더하기·응답·보충뿐이고, 판은 더할 때 만든 #1뿐이라 다시 계산의 판 번호가 응답의 본 판과 맞는다. 미확인 표시({@code
-   * MARK_UNCONFIRMED}, #370 A-9)나 판을 바꾸는 항목 고치기가 들어오면 여기도 같이 맞춘다. 상대가 탈퇴하면 기준 시각이 없어지는 것은 {@link
-   * #of}와 같다(#288).
+   * MARK_UNCONFIRMED}, #370 A-9)나 판을 바꾸는 항목 고치기가 들어오면 여기도 같이 맞춘다. 상대가 탈퇴하면 응답은 지금 값이고, 탈퇴자가 남은 중단
+   * 시각 뒤 만든 판·보충 시각만 뺀다({@link #of}와 같음, #288).
    *
    * @param shown 이 사람에게 보이는 항목({@link Sight#sees}로 거른 것)
    * @param seen 이 사람의 {@link #of} 결과
@@ -179,9 +205,14 @@ public class InspectionSight {
       List<InspectionItemVersion> all = byItem.getOrDefault(item.getId(), List.of());
       List<ActionEntry> own = changes.getOrDefault(item.getId(), List.of());
       if (seen.asOf() == null) {
+        // 상대가 탈퇴했으면 응답은 지금 값이고(#314 한계), 탈퇴자가 그 시각 뒤 만든 판·보충 시각만 뺀다(#288)
+        List<ActionEntry> kept =
+            own.stream()
+                .filter(entry -> seen.seesAction(entry.actorSide(), entry.createdAt()))
+                .toList();
         out.put(
             item.getId(),
-            new ItemSight(item.getStatus(), itemVersion(item, seen, all), lastSupplementAt(own)));
+            new ItemSight(item.getStatus(), itemVersion(item, seen, all), lastSupplementAt(kept)));
         continue;
       }
       InspectionItemState state = itemState(item, seen, own);
@@ -225,6 +256,14 @@ public class InspectionSight {
 
   private static InspectionItemVersion itemVersion(
       InspectionItem item, Sight seen, List<InspectionItemVersion> all) {
+    if (seen.asOf() == null
+        && seen.departed() != null
+        && !Objects.equals(item.getAddedBySide(), seen.viewer())) {
+      return all.stream()
+          .filter(version -> !version.getCreatedAt().isAfter(seen.departed()))
+          .reduce((earlier, later) -> later)
+          .orElseThrow(() -> new IllegalStateException("탈퇴 기준 시각까지의 판이 없어요: " + item.getId()));
+    }
     if (seen.asOf() == null || Objects.equals(item.getAddedBySide(), seen.viewer())) {
       return all.stream()
           .filter(version -> version.getId().equals(item.getCurrentVersionId()))
@@ -293,10 +332,29 @@ public class InspectionSight {
   }
 
   /**
+   * 상대가 탈퇴했을 때 그 측 기록을 계속 빼는 시각(#288): 남아 있는 공유 중단 시각(누가 그만뒀든) 중 이른 것. 상대가 탈퇴하지 않았거나 아무도 그만둔 적이 없으면
+   * null이다. 수리 {@code RepairSight.departed}·호실 {@code RoomSeats.departedCutoffFor}와 같은 기준이고, 탈퇴 처리가
+   * {@code sharing_stopped_at}을 지우지 않는다는 전제다(decisions 2026-11-26).
+   */
+  static Instant departedCutoff(RoomParties room) {
+    if (!room.counterpart().withdrawn()) {
+      return null;
+    }
+    Instant mine = room.mine().sharingStoppedAt();
+    Instant theirs = room.counterpart().sharingStoppedAt();
+    if (mine == null) {
+      return theirs;
+    }
+    return theirs == null || mine.isBefore(theirs) ? mine : theirs;
+  }
+
+  /**
    * 한 사람에게 보이는 점검.
    *
    * @param viewer 보는 사람의 측
    * @param asOf 보이는 범위를 고정하는 시각. 없으면 null
+   * @param departed 상대가 탈퇴했을 때 그 측 기록을 계속 빼는 시각({@link #departedCutoff}). {@code asOf}와 함께 있지 않다.
+   *     없으면 null
    * @param shownStatus 이 사람에게 보이는 점검 상태
    * @param draftHidden 기준 측이 쓴 항목을 가리나(작성 중 점검을 기준 측이 아닌 사람이 볼 때). 자기가 더한 항목은 보인다
    * @param draft 보는 측과 상관없이 작성 중으로 보나: 보이는 상태가 작성 중이거나, 고정한 시각까지의 행동만으로 작성 중이다(#352와 같은 경계)
@@ -304,24 +362,45 @@ public class InspectionSight {
   public record Sight(
       PartySide viewer,
       Instant asOf,
+      Instant departed,
       InspectionStatus shownStatus,
       boolean draftHidden,
       boolean draft) {
 
-    /** 공유를 그만둔 뒤 상대가 시작해 이 사람이 볼 수 없는 점검인가(불변식 18). 그 점검은 있는지도 알 수 없다. */
-    public boolean hides(Inspection row) {
-      return startedAfter(row, viewer, asOf);
+    /** 상대가 탈퇴하지 않은 경우({@code departed} 없음). */
+    public Sight(
+        PartySide viewer,
+        Instant asOf,
+        InspectionStatus shownStatus,
+        boolean draftHidden,
+        boolean draft) {
+      this(viewer, asOf, null, shownStatus, draftHidden, draft);
     }
 
     /**
-     * 이 항목이 보이나: 자신이 더한 것은 늘 보이고, 상대가 더한 것은 가리지 않을 때 범위를 고정한 시각까지 더한 것만. 기준 측 작성 중 항목을 가리면 상대 항목은
-     * 모두 가린다.
+     * 공유를 그만둔 뒤 상대가 시작해 이 사람이 볼 수 없는 점검인가(불변식 18). 상대가 탈퇴했으면 남은 중단 시각 뒤 탈퇴자가 시작한 점검이다(#288). 그 점검은
+     * 있는지도 알 수 없다.
+     */
+    public boolean hides(Inspection row) {
+      return startedAfter(row, viewer, asOf) || startedAfter(row, viewer, departed);
+    }
+
+    /**
+     * 이 항목이 보이나: 자신이 더한 것은 늘 보이고, 상대가 더한 것은 가리지 않을 때 범위를 고정한 시각(상대가 탈퇴했으면 남은 중단 시각)까지 더한 것만. 기준 측
+     * 작성 중 항목을 가리면 상대 항목은 모두 가린다.
      */
     public boolean sees(InspectionItem item) {
       if (Objects.equals(item.getAddedBySide(), viewer)) {
         return true;
       }
-      return !draftHidden && (asOf == null || !item.getCreatedAt().isAfter(asOf));
+      return !draftHidden
+          && (asOf == null || !item.getCreatedAt().isAfter(asOf))
+          && (departed == null || !item.getCreatedAt().isAfter(departed));
+    }
+
+    /** 이 측이 이 시각에 남긴 행동이 탈퇴 기준({@code departed})으로 보이나. 내 것·서버 것은 늘 보인다. */
+    boolean seesAction(PartySide side, Instant at) {
+      return side == null || side == viewer || departed == null || !at.isAfter(departed);
     }
   }
 }

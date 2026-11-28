@@ -20,17 +20,22 @@ public interface RoomRecordRepository extends JpaRepository<RoomRecord, UUID> {
 
   /**
    * 이 회원이 당사자인 호실 기록, 새것부터(ID가 UUID v7이라 만든 순서). 내 호실 목록의 첫 쪽, 또는 {@code Limit.unlimited()}로 전부(홈
-   * 범위 {@code RoomQueryService.roomsOf}).
+   * 범위 {@code RoomQueryService.roomsOf}). 탈퇴한 자리는 당사자가 아니라 빠진다({@code RoomSeats.seatOf}와 같음, 06
+   * KEEP-4).
    */
   @Query(
       "select r from RoomRecord r where exists (select 1 from Party p"
-          + " where p.roomRecordId = r.id and p.memberId = :member) order by r.id desc")
+          + " where p.roomRecordId = r.id and p.memberId = :member"
+          + " and p.status <> com.chilsuitjo.back.room.rule.PartyStatus.WITHDRAWN)"
+          + " order by r.id desc")
   List<RoomRecord> findMine(@Param("member") UUID memberId, Limit limit);
 
   /** {@link #findMine}의 다음 쪽. {@code cursor}(앞 쪽의 마지막 호실 ID)보다 먼저 만든 것. */
   @Query(
       "select r from RoomRecord r where r.id < :cursor and exists (select 1 from Party p"
-          + " where p.roomRecordId = r.id and p.memberId = :member) order by r.id desc")
+          + " where p.roomRecordId = r.id and p.memberId = :member"
+          + " and p.status <> com.chilsuitjo.back.room.rule.PartyStatus.WITHDRAWN)"
+          + " order by r.id desc")
   List<RoomRecord> findMineBefore(
       @Param("member") UUID memberId, @Param("cursor") UUID cursor, Limit limit);
 }

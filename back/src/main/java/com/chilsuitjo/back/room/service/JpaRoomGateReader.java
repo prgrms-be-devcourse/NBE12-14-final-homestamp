@@ -10,7 +10,9 @@ import com.chilsuitjo.back.room.entity.Party;
 import com.chilsuitjo.back.room.entity.RoomRecord;
 import com.chilsuitjo.back.room.repository.PartyRepository;
 import com.chilsuitjo.back.room.repository.RoomRecordRepository;
+import com.chilsuitjo.back.room.rule.PartyStatus;
 import com.chilsuitjo.back.room.rule.RoomStatus;
+import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -45,7 +47,8 @@ public class JpaRoomGateReader implements RoomGateReader {
   /**
    * 초대 자리로 들어온 연결·거절 요청(#163, #249). 호실을 잠근 뒤 {@code partyId}가 이 호실의 자리이면 그 자리의 측으로 읽고, 아니면 {@code
    * NOT_FOUND}다. 자리 상태와 번호는 보지 않는다(Party 규칙이 잠금 뒤에 {@code PHONE_MISMATCH}·{@code INVALID_STATE}를
-   * 정함).
+   * 정함). 반대쪽(초대한 사람) 자리가 탈퇴했으면 상대가 연결된 적 없는 호실이라 바로 숨기므로(03 6-4, 06 KEEP-4a) {@code NOT_FOUND}다(받은
+   * 초대 목록 {@code InvitationQueryService}와 같음).
    */
   @Override
   @Transactional(propagation = Propagation.MANDATORY)
@@ -57,11 +60,15 @@ public class JpaRoomGateReader implements RoomGateReader {
         rooms
             .findByIdForUpdate(roomRecordId)
             .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
+    List<Party> seats = parties.findByRoomRecordId(room.getId());
     Party seat =
-        parties.findByRoomRecordId(room.getId()).stream()
+        seats.stream()
             .filter(party -> party.getId().equals(partyId))
             .findFirst()
             .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
+    if (seats.stream().anyMatch(party -> party.getStatus() == PartyStatus.WITHDRAWN)) {
+      throw new BusinessException(ErrorCode.NOT_FOUND);
+    }
     return gateOf(room, seat.getSide(), false).asInvitee(seat.getSide());
   }
 

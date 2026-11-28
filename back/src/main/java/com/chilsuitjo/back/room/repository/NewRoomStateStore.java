@@ -8,6 +8,7 @@ import com.chilsuitjo.back.action.service.StateStore;
 import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
+import com.chilsuitjo.back.member.service.MemberQueryService;
 import com.chilsuitjo.back.room.entity.Party;
 import com.chilsuitjo.back.room.entity.RoomPart;
 import com.chilsuitjo.back.room.entity.RoomRecord;
@@ -35,6 +36,7 @@ public class NewRoomStateStore implements StateStore<RoomState> {
   private final RoomPartRepository parts;
   private final PartTemplateRepository templates;
   private final ActionRequestContext requestContext;
+  private final MemberQueryService members;
   private final String regionCode;
   private final String alias;
   private final LocalDate moveInDate;
@@ -49,6 +51,7 @@ public class NewRoomStateStore implements StateStore<RoomState> {
       RoomPartRepository parts,
       PartTemplateRepository templates,
       ActionRequestContext requestContext,
+      MemberQueryService members,
       String regionCode,
       String alias,
       LocalDate moveInDate,
@@ -58,6 +61,7 @@ public class NewRoomStateStore implements StateStore<RoomState> {
     this.parts = parts;
     this.templates = templates;
     this.requestContext = requestContext;
+    this.members = members;
     this.regionCode = Objects.requireNonNull(regionCode);
     this.alias = Objects.requireNonNull(alias);
     this.moveInDate = moveInDate;
@@ -77,12 +81,20 @@ public class NewRoomStateStore implements StateStore<RoomState> {
     return new RoomState(room.getStatus());
   }
 
+  /**
+   * 만드는 회원 행을 먼저 공유 잠금하고 활동 중인지 본다({@link MemberQueryService#holdActive}, #424). 탈퇴한 회원의 남은 액세스
+   * 토큰으로 만든 호실에 연결된 자리가 생기지 않게, 진행 중인 탈퇴가 있으면 그 탈퇴가 끝날 때까지 기다렸다가 {@code LOGIN_REQUIRED}로 거절한다. 이
+   * 잠금을 먼저 잡았으면 탈퇴가 기다렸다가 새 자리를 보고 다시 시도한다(연결과 같음). 새 호실은 아직 아무도 잠그지 않아 순서가 부딪히지 않는다.
+   */
   @Override
   public SavedState save(ActionCommand command, RoomState next) {
     if (next.status() != RoomStatus.LIVING || command.roomRecordId() != null) {
       throw new IllegalStateException("호실 기록 만들기만 저장해요");
     }
     UUID memberId = Objects.requireNonNull(command.actor().memberId(), "호실은 회원만 만들어요");
+    if (!members.holdActive(memberId)) {
+      throw new BusinessException(ErrorCode.LOGIN_REQUIRED);
+    }
     PartySide side = Objects.requireNonNull(command.actor().side(), "만든 사람의 측이 없어요");
     // 행동 기록의 created_at과 같은 시각(09 3-1 ActionRequestContext)
     Instant at = requestContext.at();

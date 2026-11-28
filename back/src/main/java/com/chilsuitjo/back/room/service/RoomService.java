@@ -64,6 +64,7 @@ public class RoomService {
             parts,
             templates,
             requestContext,
+            members,
             request.regionCode(),
             request.alias(),
             request.moveInDate(),

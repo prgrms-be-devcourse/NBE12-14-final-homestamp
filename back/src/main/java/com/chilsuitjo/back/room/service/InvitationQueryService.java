@@ -114,6 +114,10 @@ public class InvitationQueryService {
     if (seats.stream().anyMatch(s -> memberId.equals(s.getMemberId()))) {
       return null;
     }
+    // 초대한 사람이 탈퇴했으면 상대가 연결된 적 없는 호실이라 바로 숨기고 지운다(03 6-4 "혼자만 쓴 기록", 06 KEEP-4a)
+    if (seats.stream().anyMatch(s -> s.getStatus() == PartyStatus.WITHDRAWN)) {
+      return null;
+    }
     UUID inviterId =
         seats.stream()
             .filter(s -> s.getSide() == room.getCreatedBySide())

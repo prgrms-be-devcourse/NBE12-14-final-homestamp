@@ -25,4 +25,7 @@ public interface PartyRepository extends JpaRepository<Party, UUID> {
    * ix_party_invite_phone}을 쓴다.
    */
   List<Party> findByStatusAndInvitePhone(PartyStatus status, String invitePhone);
+
+  /** 이 회원이 이 상태들로 앉아 있는 자리(탈퇴, 06 KEEP-4). */
+  List<Party> findByMemberIdAndStatusIn(UUID memberId, Collection<PartyStatus> statuses);
 }

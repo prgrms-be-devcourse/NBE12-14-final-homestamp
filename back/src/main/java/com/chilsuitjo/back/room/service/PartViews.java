@@ -40,6 +40,10 @@ import org.springframework.transaction.annotation.Transactional;
  * 부위는 빠지고, 상대가 바꾼 숨김·켜고 끔은 드러나지 않는다. 같은 키로 다시 온 요청은 pipeline이 호실 단위 거절보다 먼저 처음 결과를 찾아 주므로 ({@code
  * SHARING_STOPPED} 전에 재응답), 그 응답도 여기서 만들어야 지금 행이 새지 않는다.
  *
+ * <p><b>상대가 탈퇴한 뒤</b>에는 고정하지 않고 지금 상태를 보이되, 남아 있는 공유 중단 시각 뒤 탈퇴자가 더한 부위는 계속 빠진다({@link
+ * RoomSeats#departedCutoffFor}, 03 6-4, #288). 탈퇴자가 그 뒤 바꾼 숨김·켜고 끔은 지금 값에 섞여 보인다(수리 건과 같은 한계,
+ * #314).
+ *
  * <p>행동 기록 읽기({@code ActionReader})는 트랜잭션 안에서만 되므로 읽기 트랜잭션을 연다. pipeline 트랜잭션이 끝난 뒤 부른다.
  */
 @Component
@@ -69,7 +73,14 @@ public class PartViews {
                     .thenComparing(RoomPart::getId))
             .toList();
     if (viewer.asOf() == null) {
-      return new RoomPartList(null, rows.stream().map(this::view).toList());
+      Map<UUID, List<ActionEntry>> byPart =
+          viewer.departed() == null ? Map.of() : partActions(roomRecordId);
+      return new RoomPartList(
+          null,
+          rows.stream()
+              .filter(row -> !addedByDeparted(byPart.getOrDefault(row.getId(), List.of()), viewer))
+              .map(this::view)
+              .toList());
     }
     Map<UUID, List<ActionEntry>> byPart = partActions(roomRecordId);
     List<RoomPartView> shown = new ArrayList<>();
@@ -94,6 +105,11 @@ public class PartViews {
             .findByIdAndRoomRecordId(partId, roomRecordId)
             .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
     if (viewer.asOf() == null) {
+      if (viewer.departed() != null
+          && addedByDeparted(
+              partActions(roomRecordId).getOrDefault(row.getId(), List.of()), viewer)) {
+        throw new BusinessException(ErrorCode.NOT_FOUND);
+      }
       return view(row);
     }
     PartState seen =
@@ -109,7 +125,23 @@ public class PartViews {
         rooms.findById(roomRecordId).orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
     RoomSeats seats = new RoomSeats(room, parties.findByRoomRecordId(roomRecordId));
     Party mine = seats.seatOf(memberId);
-    return new Viewer(mine, seats.visibleCutoffFor(mine));
+    return new Viewer(mine, seats.visibleCutoffFor(mine), seats.departedCutoffFor(mine));
+  }
+
+  /**
+   * 탈퇴한 상대가 남은 공유 중단 시각 뒤 더한 부위인가(#288). 직접 더한 부위만 더하기 행동({@code ADD_PART})이 있고, 기본 부위는 행동 없이 복사되어
+   * 늘 보인다.
+   */
+  private static boolean addedByDeparted(List<ActionEntry> actions, Viewer viewer) {
+    if (viewer.departed() == null) {
+      return false;
+    }
+    return actions.stream()
+        .anyMatch(entry ->
+            entry.type() == ActionType.ADD_PART
+                && entry.actorSide() != null
+                && entry.actorSide() != viewer.mine().getSide()
+                && entry.createdAt().isAfter(viewer.departed()));
   }
 
   /** 기본 부위는 행동 없이 복사되므로 "있음·켬·보임"에서, 직접 더한 부위는 "없음"에서 다시 계산한다. */
@@ -155,6 +187,7 @@ public class PartViews {
 
   /**
    * @param asOf 보이는 범위를 고정하는 시각. 없으면 null
+   * @param departed 상대가 탈퇴했을 때 그 측이 더한 부위를 계속 빼는 시각. {@code asOf}와 함께 있지 않다. 없으면 null
    */
-  private record Viewer(Party mine, Instant asOf) {}
+  private record Viewer(Party mine, Instant asOf, Instant departed) {}
 }
