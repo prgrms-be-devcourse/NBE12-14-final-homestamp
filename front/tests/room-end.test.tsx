@@ -2,7 +2,10 @@ import { describe, expect, test, vi } from "vitest"
 import { fireEvent, render, screen } from "@testing-library/react"
 import { roomFromDetail, type RoomDetailBody } from "../src/api/http-rooms"
 import type { Role, RoomEndRequest } from "../src/data/demo"
-import { RoomEndCard } from "../src/features/room/room-end-card"
+import {
+  REJECT_END_FAILED,
+  RoomEndCard,
+} from "../src/features/room/room-end-card"
 import {
   dayCount,
   moveOutEndsNow,
@@ -56,7 +59,7 @@ function card(
   handlers: Partial<{
     onMoveOut: () => void
     onConfirm: () => void
-    onReject: (r: string) => void
+    onReject: (r: string) => void | Promise<boolean>
   }> = {},
 ) {
   const room = roomFromDetail(b, "me")
@@ -170,6 +173,51 @@ describe("거주 종료 카드", () => {
     await vi.waitFor(() =>
       expect(onReject).toHaveBeenCalledWith("다음 달 15일에 이사해요"),
     )
+  })
+
+  // 사유를 넘긴 뒤 저장을 기다려 성공일 때만 닫고, 실패면 쓴 사유를 남겨요(#463 jinni1 리뷰, #405와 같은 흐름)
+  const openReject = (onReject: (r: string) => Promise<boolean>) => {
+    card(
+      body({ availableActions: ["reject"], endRequest: request() }),
+      "임차인",
+      { onReject },
+    )
+    fireEvent.click(screen.getByRole("button", { name: "아직 살고 있어요" }))
+    fireEvent.change(screen.getByLabelText("사유 · 필수"), {
+      target: { value: "다음 달 15일에 이사해요" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "보내기" }))
+  }
+  const reasonBox = () =>
+    screen.queryByLabelText("사유 · 필수") as HTMLTextAreaElement | null
+
+  test("아직 살고 있어요: 저장하는 동안 다시 보내지 않고, 성공하면 창이 닫힌다", async () => {
+    let finish: (ok: boolean) => void = () => {}
+    const onReject = vi.fn(() => new Promise<boolean>((r) => (finish = r)))
+    openReject(onReject)
+    await vi.waitFor(() => expect(onReject).toHaveBeenCalledTimes(1))
+    // 기다리는 동안 창은 열려 있고 두 번 보내지 않아요
+    expect(reasonBox()?.value).toBe("다음 달 15일에 이사해요")
+    fireEvent.click(screen.getByRole("button", { name: "보내기" }))
+    expect(onReject).toHaveBeenCalledTimes(1)
+    finish(true)
+    await vi.waitFor(() => expect(reasonBox()).toBeNull())
+  })
+
+  test("아직 살고 있어요: 실패하면 창과 쓴 사유가 남고 다시 보낼 수 있다", async () => {
+    const onReject = vi
+      .fn<(r: string) => Promise<boolean>>()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true)
+    openReject(onReject)
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      REJECT_END_FAILED,
+    )
+    expect(reasonBox()?.value).toBe("다음 달 15일에 이사해요")
+    fireEvent.click(screen.getByRole("button", { name: "보내기" }))
+    await vi.waitFor(() => expect(onReject).toHaveBeenCalledTimes(2))
+    expect(onReject).toHaveBeenLastCalledWith("다음 달 15일에 이사해요")
+    await vi.waitFor(() => expect(reasonBox()).toBeNull())
   })
 
   test("집주인: 요청을 보냈으면 N일째 기다림만 보이고 버튼은 없다", () => {

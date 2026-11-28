@@ -12,6 +12,9 @@ import {
   type RoomEndView,
 } from "@/lib/room-end"
 
+export const REJECT_END_FAILED =
+  "답을 보내지 못했어요. 쓴 사유는 그대로 있으니 다시 시도해 주세요."
+
 // S-06 거주 종료 카드(06 S-06 표, ROOM-9, #445). 버튼은 서버 availableActions에 있을 때만 보여요(06 4-0).
 // 서버는 거주 종료 요청 문자·기다림 시작·미확인 뒤 적용·양쪽 안내가 연결되기 전에는 버튼을 주지 않아요(#421 D 리뷰).
 // 그래서 안내 문구에도 "알림·문자를 보냈어요", "답이 없으면 자동으로 끝나요"를 쓰지 않아요.
@@ -34,7 +37,8 @@ export function RoomEndCard({
   now?: Date
   onMoveOut: () => void
   onConfirm: () => void
-  onReject: (reason: string) => void
+  // 저장 결과(성공 true, 실패 false)를 돌려주면 성공일 때만 창을 닫아요
+  onReject: (reason: string) => void | Promise<boolean>
 }) {
   const [rejecting, setRejecting] = useState(false)
   const hasButton = canMoveOut || canConfirm || canReject
@@ -93,10 +97,13 @@ export function RoomEndCard({
         description="집주인의 거주 종료 요청에 답해요. 사유가 함께 남아요."
         submitLabel="보내기"
         onClose={() => setRejecting(false)}
-        onSubmit={(f) => {
+        onSubmit={async (f) => {
           const reason = String(f.get("reason") || "").trim()
           if (!reason) return "사유를 입력해 주세요."
-          onReject(reason)
+          // 저장을 기다려요(ActionDialog가 그동안 버튼을 막아요). 성공이면 창이 닫히고, 실패면 문구를 돌려줘
+          // 창과 쓴 사유를 그대로 둬요(#463 리뷰, #405 빠뜨린 하자 창과 같은 흐름)
+          const saved = await onReject(reason)
+          if (saved === false) return REJECT_END_FAILED
         }}
       >
         <div className="field">
