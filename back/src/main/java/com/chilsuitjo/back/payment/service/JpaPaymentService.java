@@ -53,8 +53,8 @@ public class JpaPaymentService implements PaymentService {
    *
    * <p>pipeline 전에 입력을 본다({@link #validate}). 그 뒤 같은 수리 건·방향·금액의 지불이 있으면 {@code
    * DUPLICATE_PAYMENT}다: 상대의 확인 전 기록이면 {@code similar = false}(MONEY-1a), 30일 안 비슷한 기록이고 {@code
-   * similarConfirmed}가 아니면 {@code similar = true}(MONEY-1c). 받을 상대가 있으면 금액 확인 요청을 연다(03 F, 06
-   * LINK-1e).
+   * similarConfirmed}가 아니면 {@code similar = true}(MONEY-1c). 상대가 연결된 회원이면 금액 확인 요청을 연다(03 F, 06
+   * LINK-1e. 연결 전이면 요청 없이 혼자 기록, 불변식 20).
    */
   @Override
   public PaymentRecordResult record(

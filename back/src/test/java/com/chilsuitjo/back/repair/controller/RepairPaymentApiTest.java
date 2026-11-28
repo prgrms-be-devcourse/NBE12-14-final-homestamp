@@ -47,8 +47,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 띄워 본다.
  *
  * <p>기대값: 06 4-0(만드는 행동은 201 + 만든 ID만, 같은 키면 처음과 같은 응답 + {@code Idempotent-Replayed}), 06 4-6 지불 기록
- * 줄, MONEY-1b(제3자는 관계로만), 03 F·06 LINK-1e(받을 상대가 있으면 금액 확인 요청), ROOM-2a(남의 것·보이지 않는 것은 404). 중복
- * 안내(MONEY-1a·1c)는 응답이 들어온 뒤 시나리오 테스트에서 본다.
+ * 줄, MONEY-1b(제3자는 관계로만), 03 F·06 LINK-1e·불변식 20(상대가 연결된 회원일 때만 금액 확인 요청), ROOM-2a(남의 것·보이지 않는 것은
+ * 404). 중복 안내(MONEY-1a·1c)는 응답이 들어온 뒤 시나리오 테스트에서 본다.
  *
  * <p>응답 요청·사진은 가짜({@code FakeWaitService}·{@code FakePhotoService})라 상태만 확인한다. pipeline이 바깥 트랜잭션을
  * 거절해서 {@code @Transactional}로 되돌리지 않는다. 테스트마다 새 호실을 만든다.
@@ -130,11 +130,14 @@ class RepairPaymentApiTest {
         .contains(RequestStatus.WAITING);
   }
 
-  @Test
-  void 받을_상대가_없으면_금액_확인_요청을_열지_않는다() throws Exception {
+  /** 자리가 비었거나 초대만 한(연결 전) 상대에게는 돈의 확인 요청을 만들지 않는다(03 1-4 "연결 전 상대" ②, 불변식 20). */
+  @ParameterizedTest
+  @ValueSource(strings = {"EMPTY", "INVITED"})
+  void 상대가_연결된_회원이_아니면_금액_확인_요청을_열지_않는다(String status) throws Exception {
     jdbc.update(
-        "UPDATE state.party SET status = 'EMPTY', member_id = NULL, connected_at = NULL"
+        "UPDATE state.party SET status = ?, member_id = NULL, connected_at = NULL"
             + " WHERE room_record_id = ? AND side = 'LANDLORD'",
+        status,
         room);
 
     UUID payment = idOf(record(repair, tenant, "m1", VALID).andReturn());
