@@ -11,7 +11,7 @@ import {
   soloReasonText,
 } from "@/lib/repair-rules"
 import { daysSince } from "@/lib/activity"
-import { sideName, withSubject } from "@/lib/words"
+import { monthDay, sideName, withSubject } from "@/lib/words"
 
 // 수리 상태 한 줄 요약과 다음 할 일
 export function repairSummary(
@@ -42,6 +42,13 @@ export function repairSummary(
           title: "수리 끝(둘 다 확인)",
           body: "같은 곳에 다시 문제가 생기면 이 건을 이어서 새 수리 건으로 남겨요.",
         }
+  // 종료를 요청했는데 상대가 기한 안에 답하지 않았어요(06 4-6 상세 closeRequest, 03 4장 "'확인 없음' 화면 표시")
+  const unconfirmed = r.closeUnconfirmed
+  if (r.closeBy === role && unconfirmed)
+    return {
+      title: `종료 요청됨 · ${them} 확인 없음${unconfirmed.since ? `(${monthDay(unconfirmed.since)}부터)` : ""}`,
+      body: `${unconfirmed.reason ? `${unconfirmed.reason}. ` : ""}${themSubject} 늦게라도 확인하면 끝나요.`,
+    }
   if (r.closeBy)
     return r.closeBy === role
       ? {
