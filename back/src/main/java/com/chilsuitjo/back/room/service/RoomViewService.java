@@ -170,6 +170,7 @@ public class RoomViewService {
     return filledByCounterpartAfterCutoff ? null : room.getMoveInDate();
   }
 
+  /** 처음 부를 때 한 번만 읽는다. 한 요청 안의 지역 값으로만 쓰므로 스레드 안전하지 않아도 된다. */
   private static <T> Supplier<T> once(Supplier<T> source) {
     return new Supplier<>() {
       private T value;

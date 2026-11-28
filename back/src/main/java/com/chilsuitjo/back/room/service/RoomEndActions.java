@@ -88,16 +88,16 @@ public class RoomEndActions {
                 view.status(),
                 view.openedAt(),
                 view.dueAt(),
-                view.soloReason(),
-                view.closedReason(),
-                view.closedAt(),
                 view.status() == RequestStatus.ANSWERED
                     ? rejectReason(roomActions.get(), view.openedAt())
                     : null))
         .orElse(null);
   }
 
-  /** 이 요청을 연 뒤 남은 마지막 "아직 살고 있어요"의 사유. "맞아요"로 답했으면 없다. */
+  /**
+   * 이 요청을 연 뒤 남은 마지막 "아직 살고 있어요"의 사유. "맞아요"로 답했으면 없다. 앞 요청의 거절은 이 요청을 열기 전이라 들어오지 않는다(요청은 한 번에 하나만
+   * 열리고, 거절이 그 요청을 닫는다).
+   */
   private static String rejectReason(List<ActionEntry> roomActions, Instant openedAt) {
     return roomActions.stream()
         .filter(entry -> entry.type() == ActionType.REJECT_END)
@@ -109,7 +109,7 @@ public class RoomEndActions {
 
   /**
    * 집주인 측이 혼자 남긴 거주 종료의 이유({@code MOVE_OUT} payload {@code solo_reason}). 세입자 측 [이사했어요]·"맞아요"로 끝났거나
-   * 아직 거주 중이면 null.
+   * 아직 거주 중이면 null. 거주 종료를 되돌리는 전이가 없어 호실의 {@code MOVE_OUT}은 많아야 하나다({@code RoomTransitions}).
    */
   public static String endSoloReason(List<ActionEntry> roomActions) {
     return roomActions.stream()

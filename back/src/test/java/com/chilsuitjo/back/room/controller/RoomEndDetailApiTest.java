@@ -197,8 +197,90 @@ class RoomEndDetailApiTest {
       seat(jdbc, room, "TENANT", tenant, "CONNECTED");
       seat(jdbc, room, "LANDLORD", landlord, "CONNECTED");
       detail(mvc, room, tenant).andExpect(jsonPath("$.availableActions", empty()));
-      detail(mvc, room, landlord).andExpect(jsonPath("$.availableActions", empty()));
+      detail(mvc, room, landlord)
+          .andExpect(jsonPath("$.availableActions", empty()))
+          // 거주 종료 날짜는 정산 완료 뒤에도 보인다(03 B, 불변식 18의 예외)
+          .andExpect(jsonPath("$.endedAt").isNotEmpty());
     }
+  }
+
+  @Test
+  void 공유를_그만둔_집주인도_이사함을_보내고_요청을_본다() throws Exception {
+    UUID room = room(jdbc, "LIVING");
+    seat(jdbc, room, "TENANT", tenant, "CONNECTED");
+    seat(jdbc, room, "LANDLORD", landlord, "SHARING_STOPPED");
+    detail(mvc, room, landlord).andExpect(jsonPath("$.availableActions", hasItem("move-out")));
+
+    moveOut(mvc, room, landlord).andExpect(status().isOk());
+
+    detail(mvc, room, landlord).andExpect(jsonPath("$.endRequest.status").value("WAITING"));
+    detail(mvc, room, tenant)
+        .andExpect(jsonPath("$.availableActions", hasItem("confirm")))
+        .andExpect(jsonPath("$.endRequest.status").value("WAITING"));
+  }
+
+  @Test
+  void 다시_보낸_요청에는_앞_요청의_거절_사유가_따라오지_않는다() throws Exception {
+    UUID room = room(jdbc, "LIVING");
+    seat(jdbc, room, "TENANT", tenant, "CONNECTED");
+    seat(jdbc, room, "LANDLORD", landlord, "CONNECTED");
+    moveOut(mvc, room, landlord).andExpect(status().isOk());
+    reject(room, "다음 달에 이사해요");
+    moveOut(mvc, room, landlord).andExpect(status().isOk());
+
+    // 새 요청은 기다리는 중이고 앞 사유가 없다
+    detail(mvc, room, landlord)
+        .andExpect(jsonPath("$.endRequest.status").value("WAITING"))
+        .andExpect(jsonPath("$.endRequest.rejectReason").isEmpty());
+
+    // 또 거절하면 마지막 사유가 보인다
+    reject(room, "계약을 연장했어요");
+    detail(mvc, room, landlord).andExpect(jsonPath("$.endRequest.rejectReason").value("계약을 연장했어요"));
+
+    // 다시 보내서 맞아요로 끝나면 사유가 없다
+    moveOut(mvc, room, landlord).andExpect(status().isOk());
+    mvc.perform(
+            post("/api/rooms/{id}/move-out/confirm", room)
+                .with(loginAs(tenant))
+                .header("Idempotency-Key", key()))
+        .andExpect(status().isOk());
+    detail(mvc, room, landlord)
+        .andExpect(jsonPath("$.status").value("ENDED"))
+        .andExpect(jsonPath("$.endRequest.status").value("ANSWERED"))
+        .andExpect(jsonPath("$.endRequest.rejectReason").isEmpty());
+  }
+
+  @Test
+  void 미확인이_된_요청은_기한과_함께_보이고_세입자는_계속_답할_수_있다() throws Exception {
+    UUID room = room(jdbc, "LIVING");
+    seat(jdbc, room, "TENANT", tenant, "CONNECTED");
+    seat(jdbc, room, "LANDLORD", landlord, "CONNECTED");
+    moveOut(mvc, room, landlord).andExpect(status().isOk());
+    // 미확인 작업자(d3)는 아직 없어 행으로 상태를 만든다
+    jdbc.update(
+        "UPDATE state.response_request SET status = 'UNCONFIRMED',"
+            + " first_notified_at = CURRENT_TIMESTAMP - INTERVAL '3 days',"
+            + " unconfirmed_due_at = CURRENT_TIMESTAMP - INTERVAL '1 hour'"
+            + " WHERE room_record_id = ? AND kind = 'END_REQUEST'",
+        room);
+
+    detail(mvc, room, landlord)
+        .andExpect(jsonPath("$.endRequest.status").value("UNCONFIRMED"))
+        .andExpect(jsonPath("$.endRequest.dueAt").isNotEmpty())
+        .andExpect(jsonPath("$.availableActions", not(hasItem("move-out"))));
+    detail(mvc, room, tenant)
+        .andExpect(jsonPath("$.availableActions", hasItem("confirm")))
+        .andExpect(jsonPath("$.availableActions", hasItem("reject")));
+  }
+
+  private void reject(UUID room, String reason) throws Exception {
+    mvc.perform(
+            post("/api/rooms/{id}/move-out/reject", room)
+                .with(loginAs(tenant))
+                .header("Idempotency-Key", key())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"reason\":\"" + reason + "\"}"))
+        .andExpect(status().isOk());
   }
 
   // ---- 도우미(RoomEndDetailDisabledApiTest와 같이 씀) ----
