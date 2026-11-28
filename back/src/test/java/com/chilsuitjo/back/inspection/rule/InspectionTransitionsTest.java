@@ -286,7 +286,8 @@ class InspectionTransitionsTest {
             null,
             true,
             null,
-            false);
+            false,
+            null);
 
     assertThatThrownBy(() -> rules.apply(existing, start(PartySide.LANDLORD, "MOVE_OUT", null)))
         .hasMessage(ErrorCode.INSPECTION_EXISTS.name());
@@ -341,6 +342,78 @@ class InspectionTransitionsTest {
         .hasMessage(ErrorCode.INVALID_STATE.name());
     assertThatThrownBy(() -> rules.apply(locked, entry(ActionType.LOCK, null, Map.of())))
         .hasMessage(ErrorCode.INVALID_STATE.name());
+  }
+
+  // ---- 혼자 잠그기(INSP-1g, #392) ----
+
+  @Test
+  void 혼자_잠그기는_판단이_허용이면_확인_요청을_잠김으로_옮긴다() {
+    InspectionState requested =
+        draft(PartySide.TENANT, NOW, true)
+            .withStatus(InspectionStatus.REQUESTED)
+            .withCanLockAlone(true);
+
+    assertThat(rules.canLockAlone(requested, PartySide.TENANT)).isTrue();
+    assertThat(rules.apply(requested, entry(ActionType.LOCK, PartySide.TENANT, Map.of())).status())
+        .isEqualTo(InspectionStatus.LOCKED);
+  }
+
+  @Test
+  void 혼자_진행할_수_없으면_SOLO_NOT_ALLOWED이고_버튼도_없다() {
+    InspectionState requested =
+        draft(PartySide.TENANT, NOW, true)
+            .withStatus(InspectionStatus.REQUESTED)
+            .withCanLockAlone(false);
+
+    assertThat(rules.canLockAlone(requested, PartySide.TENANT)).isFalse();
+    assertThatThrownBy(
+            () -> rules.apply(requested, entry(ActionType.LOCK, PartySide.TENANT, Map.of())))
+        .hasMessage(ErrorCode.SOLO_NOT_ALLOWED.name());
+  }
+
+  @Test
+  void 확인_요청_중인_입주_점검이_아니면_혼자_잠그기는_INVALID_STATE다() {
+    InspectionState draft = draft(PartySide.TENANT, NOW, true).withCanLockAlone(true);
+    InspectionState locked = draft.withStatus(InspectionStatus.LOCKED);
+    InspectionState moveOut =
+        new InspectionState(
+                InspectionKind.MOVE_OUT,
+                InspectionStatus.REQUESTED,
+                PartySide.TENANT,
+                NOW,
+                null,
+                null,
+                true,
+                null,
+                false,
+                null)
+            .withCanLockAlone(true);
+
+    for (InspectionState state : List.of(draft, locked, moveOut)) {
+      assertThat(rules.canLockAlone(state, PartySide.TENANT)).isFalse();
+      assertThatThrownBy(
+              () -> rules.apply(state, entry(ActionType.LOCK, PartySide.TENANT, Map.of())))
+          .hasMessage(ErrorCode.INVALID_STATE.name());
+    }
+  }
+
+  @Test
+  void 판단을_담지_않은_상태로는_버튼을_보이지_않고_재계산은_혼자_잠그기를_그대로_옮긴다() {
+    InspectionState requested =
+        draft(PartySide.TENANT, NOW, true).withStatus(InspectionStatus.REQUESTED);
+    assertThat(rules.canLockAlone(requested, PartySide.TENANT)).isFalse();
+
+    InspectionState folded =
+        Replay.fold(
+            rules,
+            List.of(
+                start(PartySide.TENANT, "MOVE_IN", null),
+                request(PartySide.TENANT, NOW),
+                entry(
+                    ActionType.LOCK,
+                    PartySide.TENANT,
+                    Map.of(InspectionLock.LOCK_REASON, "SOLO", "solo_reason", "NO_COUNTERPART"))));
+    assertThat(folded.status()).isEqualTo(InspectionStatus.LOCKED);
   }
 
   // ---- 항목 더하기 ----
@@ -433,7 +506,8 @@ class InspectionTransitionsTest {
         null,
         canOpen,
         null,
-        false);
+        false,
+        null);
   }
 
   private static ActionEntry request(PartySide side, Instant at) {

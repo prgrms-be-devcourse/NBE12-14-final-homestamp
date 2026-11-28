@@ -21,8 +21,9 @@ import org.springframework.stereotype.Component;
  *
  * <p>정산 완료·합류 전 기록·내 공유 중단은 pipeline이 먼저 막는다(09 3-1 순서 3).
  *
- * <p>지금은 입주·퇴거 점검 시작(INSP-1a·2·3), 확인 요청(INSP-1f), 서버 잠금({@code LOCK}, INSP-1b·1c·1d)만 있다. 퇴거 점검
- * 마침({@code FINISH_INSPECTION})은 그 기능을 만들 때 더하고, 그 전까지 다른 행동은 {@code INVALID_STATE}다.
+ * <p>지금은 입주·퇴거 점검 시작(INSP-1a·2·3), 확인 요청(INSP-1f), 서버 잠금({@code LOCK}, INSP-1b·1c·1d), 회원의 혼자
+ * 잠그기({@code LOCK}, INSP-1g)만 있다. 퇴거 점검 마침({@code FINISH_INSPECTION})은 그 기능을 만들 때 더하고, 그 전까지 다른 행동은
+ * {@code INVALID_STATE}다.
  */
 @Component
 public class InspectionTransitions implements Transitions<InspectionState> {
@@ -54,7 +55,7 @@ public class InspectionTransitions implements Transitions<InspectionState> {
     return switch (action.type()) {
       case START_INSPECTION -> start(now, action);
       case REQUEST_INSPECTION_CONFIRM -> requestConfirm(now, action);
-      case LOCK -> lock(now);
+      case LOCK -> action.actorSide() == null ? lock(now) : lockAlone(now);
       default -> throw new BusinessException(ErrorCode.INVALID_STATE);
     };
   }
@@ -182,7 +183,8 @@ public class InspectionTransitions implements Transitions<InspectionState> {
         now.roomEnded(),
         now.canOpenConfirm(),
         null,
-        late);
+        late,
+        null);
   }
 
   /**
@@ -214,6 +216,37 @@ public class InspectionTransitions implements Transitions<InspectionState> {
       throw new BusinessException(ErrorCode.INVALID_STATE);
     }
     return now.withStatus(InspectionStatus.LOCKED);
+  }
+
+  /**
+   * 이 측이 지금 [혼자 잠그기]를 누를 수 있나(상세 조회의 {@code availableActions}, 06 4-0). {@link #apply}의 혼자 잠그기와 같은
+   * 판단이다. {@code state}는 혼자 진행 판단을 담은 지금 상태({@code InspectionStateStore.currentForLockAlone})여야 하고,
+   * 판단을 담지 않았으면 거짓이다. 호실 단위 거절(정산 완료·공유 중단 등)은 여기서 보지 않는다({@code RoomGate.rejection}).
+   */
+  public boolean canLockAlone(InspectionState state, PartySide side) {
+    return side != null && lockAloneState(state) && Boolean.TRUE.equals(state.canLockAlone());
+  }
+
+  /**
+   * 혼자 잠그기(회원 {@code LOCK}, 06 4-7 {@code lock-alone}, 03 H "잠기는 조건", #392): 확인 요청 → 잠김. 확인 요청 중인
+   * 입주 점검만 되고(퇴거 점검은 INSP-3에서 연결), 아니면 {@code INVALID_STATE}다. 상대 사정으로 혼자 진행할 수 없거나 그 점검에 기다리는 확인
+   * 요청이 남았으면 {@code SOLO_NOT_ALLOWED}다. 그 판단은 {@code WaitService.canGoSolo}·{@code
+   * canGoSoloDirectly}의 결과({@code canLockAlone})를 그대로 쓰고 여기서 이유를 다시 거르지 않는다(03 1-1 "함수 하나"). 재계산이라
+   * 모르면 그때 서버가 확인했다고 본다.
+   */
+  private static InspectionState lockAlone(InspectionState now) {
+    if (!lockAloneState(now)) {
+      throw new BusinessException(ErrorCode.INVALID_STATE);
+    }
+    if (now.lockAloneBlocked()) {
+      throw new BusinessException(ErrorCode.SOLO_NOT_ALLOWED);
+    }
+    return now.withStatus(InspectionStatus.LOCKED);
+  }
+
+  /** 혼자 잠글 수 있는 점검 상태인가: 확인 요청 중인 입주 점검. */
+  private static boolean lockAloneState(InspectionState state) {
+    return state.status() == InspectionStatus.REQUESTED && state.kind() == InspectionKind.MOVE_IN;
   }
 
   /**

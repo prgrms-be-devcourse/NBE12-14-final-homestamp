@@ -127,6 +127,20 @@ public class InspectionController {
   }
 
   /**
+   * 혼자 잠그기(06 4-7, INSP-1g). 본문 없음. 상대 사정으로 혼자 진행할 수 있을 때만(지금은 상대 없음) 확인 요청 중인 입주 점검을 "단독
+   * 기록"({@code SOLO})으로 잠근다. 처음 성공과 다시 온 요청 모두 200과 점검의 상태다.
+   */
+  @PostMapping("/api/inspections/{id}/lock-alone")
+  public ResponseEntity<InspectionStatusResponse> lockAlone(
+      @PathVariable UUID id,
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey) {
+    InspectionStatusChanged changed = inspections.lockAlone(id, memberId, idempotencyKey);
+    return withReplayed(changed.replayed())
+        .body(new InspectionStatusResponse(changed.id(), changed.status()));
+  }
+
+  /**
    * 보충하고 다시 확인 요청(06 4-7). 그 항목을 더한 측만, 보류·이견 뒤에, 7일에 한 번. 사진·설명 중 하나 이상이 필요하고 사진은 한 번에 10장까지 항목에
    * 붙는다. 처음 성공과 다시 온 요청 모두 200이다.
    */

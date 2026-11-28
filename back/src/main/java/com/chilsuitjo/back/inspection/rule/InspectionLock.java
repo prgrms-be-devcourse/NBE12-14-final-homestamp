@@ -17,8 +17,8 @@ import java.util.Optional;
  * 없어도 … 상대가 확인해야 잠긴다", #392 논의 6). 항목이 하나도 없으면 {@link LockReason#NO_ITEMS}, 상대가 더한 항목이 있으면 {@link
  * LockReason#ALL_RESOLVED}다.
  *
- * <p>혼자 잠금(상대 없음·탈퇴 등)과 기준 측 방향의 72시간 미확인으로 잠기는 경로는 #392에서 정하는 중이라 여기서 보지 않는다. 이 함수는 응답 사실만 보고 혼자
- * 진행 이유는 보지 않는다.
+ * <p>이 함수는 응답 사실만 보고 혼자 진행 이유는 보지 않는다. 혼자 잠그기(회원이 누름, {@link LockReason#SOLO})는 {@code
+ * InspectionStateStore}가 정한다. 72시간 미확인은 항목이 상대 미확인으로 바뀐 뒤 이 함수로 자동 잠긴다(#392, 미확인 표시는 #460).
  */
 public final class InspectionLock {
 

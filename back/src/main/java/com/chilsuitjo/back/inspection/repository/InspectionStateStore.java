@@ -3,6 +3,7 @@ package com.chilsuitjo.back.inspection.repository;
 import com.chilsuitjo.back.action.dto.ActionCommand;
 import com.chilsuitjo.back.action.dto.ActionTarget;
 import com.chilsuitjo.back.action.dto.SavedState;
+import com.chilsuitjo.back.action.service.ActionReader;
 import com.chilsuitjo.back.action.service.ActionRequestContext;
 import com.chilsuitjo.back.action.service.StateStore;
 import com.chilsuitjo.back.global.common.PartySide;
@@ -10,20 +11,33 @@ import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.inspection.entity.Inspection;
+import com.chilsuitjo.back.inspection.entity.InspectionItem;
 import com.chilsuitjo.back.inspection.rule.InspectionKind;
+import com.chilsuitjo.back.inspection.rule.InspectionLock;
 import com.chilsuitjo.back.inspection.rule.InspectionState;
+import com.chilsuitjo.back.inspection.rule.InspectionStatus;
+import com.chilsuitjo.back.inspection.rule.LockReason;
 import com.chilsuitjo.back.notification.dto.OpenRequestCommand;
 import com.chilsuitjo.back.notification.dto.RequestTarget;
+import com.chilsuitjo.back.notification.dto.RequestView;
 import com.chilsuitjo.back.notification.dto.RoomParties;
+import com.chilsuitjo.back.notification.dto.SoloCheck;
+import com.chilsuitjo.back.notification.dto.SoloQuery;
 import com.chilsuitjo.back.notification.rule.PartyPresence;
 import com.chilsuitjo.back.notification.rule.RequestKind;
+import com.chilsuitjo.back.notification.rule.RequestStatus;
 import com.chilsuitjo.back.notification.rule.RoomPhase;
+import com.chilsuitjo.back.notification.rule.SoloReason;
 import com.chilsuitjo.back.notification.service.CounterpartReader;
+import com.chilsuitjo.back.notification.service.WaitQuery;
 import com.chilsuitjo.back.notification.service.WaitService;
 import com.chilsuitjo.back.room.service.RoomMoveInDates;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -39,11 +53,19 @@ public class InspectionStateStore {
   /** 점검 시작 payload의 종류 키({@code StartInspectionPayload.kind}). */
   public static final String KIND = "kind";
 
+  /**
+   * 혼자 잠그기 {@code LOCK} payload의 혼자 진행 이유 키. 값은 {@code SoloReason} 이름이다({@code CLOSE_ALONE}과 같은 키).
+   */
+  public static final String SOLO_REASON = "solo_reason";
+
   private final InspectionRepository inspections;
+  private final InspectionItemRepository items;
   private final RoomMoveInDates moveInDates;
   private final CounterpartReader parties;
   private final ActionRequestContext requestContext;
+  private final ActionReader actions;
   private final WaitService waits;
+  private final WaitQuery waitQuery;
   private final InspectionPhotos photos;
 
   /** 점검 시작(06 INSP-1a·2b)의 저장 방법. 종류와 채울 입주일은 payload에 있다. */
@@ -54,6 +76,81 @@ public class InspectionStateStore {
   /** 확인 요청(06 4-7 {@code request-confirm}, INSP-1f)의 저장 방법. */
   public StateStore<InspectionState> requesting() {
     return new Requesting();
+  }
+
+  /**
+   * 혼자 잠그기(06 4-7 {@code lock-alone}, INSP-1g)의 저장 방법. 요청마다 새로 만든다({@code load}에서 받은 혼자 진행 이유를
+   * {@code save}가 행동 기록에 남김).
+   */
+  public StateStore<InspectionState> lockingAlone() {
+    return new LockingAlone();
+  }
+
+  /**
+   * 혼자 잠그기 판단({@code canLockAlone})을 담은 이 점검 행의 지금 상태. 상세 조회의 버튼과 실제 혼자 잠그기가 같은 값을 쓴다(06 4-0 "서버의
+   * 같은 함수").
+   */
+  public InspectionState currentForLockAlone(Inspection row, PartySide side) {
+    return current(row).withCanLockAlone(lockAloneReason(row, side).isPresent());
+  }
+
+  /**
+   * 이 측이 지금 이 점검을 혼자 잠글 수 있으면 그 이유(03 H "잠기는 조건", #392). 판단은 이렇다.
+   *
+   * <ol>
+   *   <li>확인 요청 중인 입주 점검이 아니면 없음(상태 규칙은 {@code InspectionTransitions}가 다시 막는다)
+   *   <li>그 점검에 기다리는({@code WAITING}) 확인 요청이 어느 방향이든 남아 있으면 없음. 그 사유의 닫기 규칙이 빠졌다는 뜻이라 되돌릴 수 없는 잠금보다
+   *       기다리는 쪽이 안전하다(decisions 2026-11-28)
+   *   <li>이 측이 요청한 열린(미확인) 요청이 있으면 {@code canGoSolo}, 없으면 {@code canGoSoloDirectly}(대신하는 요청은 {@code
+   *       INSPECTION_CONFIRM}). 어떤 이유가 열리는지는 {@code SoloRule}이 정하고 여기서 다시 거르지 않는다(03 1-1 "함수 하나")
+   *   <li>이유가 성립한 시각({@code SoloCheck.since})이 있으면 그 뒤 이 측에게 보이는 상대의 이 점검(항목 포함) 행동이 없어야 한다(03 1-4
+   *       "그 뒤로 이 건에 상대 행동이 없으면"). 보이는 범위는 상세와 같이 공유 중단 시각으로 고정한다. 서버 행동은 상대 행동이 아니다
+   * </ol>
+   */
+  private Optional<SoloReason> lockAloneReason(Inspection row, PartySide side) {
+    if (side == null
+        || row.getKind() != InspectionKind.MOVE_IN
+        || row.getStatus() != InspectionStatus.REQUESTED) {
+      return Optional.empty();
+    }
+    UUID room = row.getRoomRecordId();
+    RequestTarget target = RequestTarget.of(TargetKind.INSPECTION, row.getId());
+    List<RequestView> open = new ArrayList<>();
+    for (PartySide answering : PartySide.values()) {
+      waitQuery.awaiting(room, answering).stream()
+          .filter(view -> view.kind() == RequestKind.INSPECTION_CONFIRM)
+          .filter(view -> target.equals(view.target()))
+          .forEach(open::add);
+    }
+    if (open.stream().anyMatch(view -> view.status() == RequestStatus.WAITING)) {
+      return Optional.empty();
+    }
+    SoloQuery query = new SoloQuery(room, RequestKind.INSPECTION_CONFIRM, target, side);
+    boolean requestedByMe = open.stream().anyMatch(view -> view.requestedBySide() == side);
+    SoloCheck check = requestedByMe ? waits.canGoSolo(query) : waits.canGoSoloDirectly(query);
+    if (!check.allowed() || counterpartActedSince(row, side, check.since())) {
+      return Optional.empty();
+    }
+    return Optional.of(check.reason());
+  }
+
+  /** {@code since} 뒤에 이 측에게 보이는 상대의 이 점검(항목 포함) 행동이 있나. {@code since}가 없으면 거짓이다. */
+  private boolean counterpartActedSince(Inspection row, PartySide side, Instant since) {
+    if (since == null) {
+      return false;
+    }
+    Instant asOf = InspectionSight.sharingCutoff(parties.read(row.getRoomRecordId(), side));
+    List<ActionTarget> targets = new ArrayList<>();
+    targets.add(ActionTarget.inspection(row.getId()));
+    items
+        .findByInspectionIdOrderByIdAsc(row.getId())
+        .forEach(item -> targets.add(ActionTarget.of(TargetKind.INSPECTION_ITEM, item.getId())));
+    return actions.findByTargets(row.getRoomRecordId(), targets).stream()
+        .anyMatch(entry ->
+            entry.actorSide() != null
+                && entry.actorSide() != side
+                && entry.createdAt().isAfter(since)
+                && (asOf == null || !entry.createdAt().isAfter(asOf)));
   }
 
   /**
@@ -104,7 +201,8 @@ public class InspectionStateStore {
         null,
         canOpen,
         null,
-        row.isLate());
+        row.isLate(),
+        null);
   }
 
   private InspectionState notStarted(UUID roomRecordId, PartySide side) {
@@ -208,6 +306,44 @@ public class InspectionStateStore {
                 command.roomRecordId(), RequestKind.INSPECTION_CONFIRM, target, author));
       }
       return SavedState.unchanged();
+    }
+  }
+
+  /**
+   * 혼자 잠그기(06 4-7 {@code lock-alone}, 03 H "잠기는 조건", #392). {@code load}는 pipeline이 호실을 잠근 뒤 같은
+   * 트랜잭션에서 불러서 {@code canGoSolo}·{@code canGoSoloDirectly}의 "호실을 잠근 뒤" 전제를 지킨다. 판단 결과는 {@code
+   * canLockAlone}에 담고 규칙이 막는다.
+   */
+  private final class LockingAlone implements StateStore<InspectionState> {
+
+    private SoloReason reason;
+
+    @Override
+    public InspectionState load(ActionCommand command) {
+      Inspection row = row(command);
+      PartySide side = command.actor().side();
+      reason = lockAloneReason(row, side).orElse(null);
+      return current(row).withCanLockAlone(reason != null);
+    }
+
+    /**
+     * 점검을 잠그고({@code lock_reason} {@code SOLO}) 혼자 진행 이유를 payload {@code solo_reason}에 남긴다(05 2-3,
+     * {@code SoloReason}, {@code CLOSE_ALONE}과 같은 키). 되풀이가 행동만으로 잠긴 이유를 다시 만들 수 있게 {@code
+     * lockReason}도 함께 남긴다. 응답 요청은 새로 열거나 닫지 않는다. 도장이 없던 항목은 상태를 그대로 두고 지금 판에 도장을 찍는다(03 G "점검 전체",
+     * 서버 잠금과 같음).
+     */
+    @Override
+    public SavedState save(ActionCommand command, InspectionState next) {
+      Inspection row = row(command);
+      for (InspectionItem item : items.findByInspectionIdOrderByIdAsc(row.getId())) {
+        if (item.getConfirmedVersionId() == null) {
+          item.stampCurrent();
+        }
+      }
+      row.lock(requestContext.at(), LockReason.SOLO);
+      return SavedState.unchanged()
+          .withPayload(InspectionLock.LOCK_REASON, LockReason.SOLO.name())
+          .withPayload(SOLO_REASON, reason.name());
     }
   }
 }

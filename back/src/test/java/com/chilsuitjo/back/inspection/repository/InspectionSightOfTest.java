@@ -88,6 +88,7 @@ class InspectionSightOfTest {
               null,
               null,
               null,
+              null,
               null);
         });
   }
