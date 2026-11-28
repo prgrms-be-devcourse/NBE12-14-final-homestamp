@@ -348,6 +348,14 @@ export function createHttpRecords(request: HttpRequest): RecordsApi {
         // 상대가 먼저 점검을 시작했으면 그 점검을 다시 받아 열어요(06 4-7 INSPECTION_EXISTS "그쪽으로 열게요")
         if (e instanceof ApiError && e.code === "INSPECTION_EXISTS" && before)
           await loadRoom(s, before.id).catch(() => {})
+        // 받은 초대 연결·거절이 더는 받을 수 없는 초대로 거절되면(이미 답함·번호가 바뀜·없는 자리) 받은 초대를 다시 받아
+        // 목록에서 빼요(06 5장 INVALID_STATE "다시 불러올게요"). 번호가 다르면(PHONE_MISMATCH) 서버 문구로 안내만 해요
+        if (
+          e instanceof ApiError &&
+          (e.code === "INVALID_STATE" || e.code === "NOT_FOUND") &&
+          list.some((r) => r.path.startsWith(endpoints.invitations + "/"))
+        )
+          await load(s).catch(() => {})
         throw e
       }
       // 보내기는 이미 성공했어요. 다시 받기(목록·상세)가 실패해도 실패로 돌려주지 않아요

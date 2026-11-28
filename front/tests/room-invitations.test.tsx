@@ -180,6 +180,32 @@ describe("HTTP 기록 API의 받은 초대", () => {
     )
     expect(made).toEqual({ id: "room-9" })
   })
+
+  test("더는 받을 수 없는 초대로 거절되면 받은 초대를 다시 받아 목록에서 뺀다", async () => {
+    let listed = [invitation()]
+    const base = server(() => listed)
+    const request = (async (method: string, path: string, opts?: unknown) => {
+      if (method === "POST" && path === endpoints.rejectInvitation("party-1"))
+        throw new ApiError({ status: 409, code: "INVALID_STATE" })
+      return base(method as "GET", path, opts as never)
+    }) as HttpRequest
+    const records = createHttpRecords(request)
+    await records.load({ accountId: "me" })
+    listed = []
+    await expect(
+      records.send(
+        { accountId: "me" },
+        {
+          request: post(endpoints.rejectInvitation("party-1")),
+          role: "임차인",
+          text: "거절",
+          update: () => {},
+          options: { roomId: "party-1", connecting: true },
+        },
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_STATE" })
+    expect(records.getSnapshot().invitations).toEqual([])
+  })
 })
 
 describe("서버 호실의 상대 초대", () => {
