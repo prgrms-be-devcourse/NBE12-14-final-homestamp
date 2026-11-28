@@ -339,6 +339,10 @@ public class InspectionQueryService {
             itemStore.confirmAll(row, gate.side(), seen), gate.side())) {
       result.add("confirm-all");
     }
+    if (gate.rejection(ActionType.LOCK).isEmpty()
+        && rules.canLockAlone(store.currentForLockAlone(row, gate.side()), gate.side())) {
+      result.add("lock-alone");
+    }
     return List.copyOf(result);
   }
 }

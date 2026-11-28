@@ -20,6 +20,9 @@ import java.time.LocalDate;
  * @param moveInDate 호실에 이미 있는 입주일(시작하기 전 호실 사실). 비었거나 재계산이면 null. 시작이 채우는 입주일은 행동 payload에 있다
  * @param late 입주일보다 늦게 시작한 입주 점검인가(06 INSP-2a, {@code inspection.late}). 시작이 정하고 그 뒤로 바뀌지 않는다. 퇴거
  *     점검은 늘 거짓이다. 재계산에서 입주일을 모르면 null
+ * @param canLockAlone 행동하는 측이 지금 [혼자 잠그기]를 할 수 있는지(03 H "잠기는 조건", 06 4-7 {@code lock-alone}, #392).
+ *     그 점검에 기다리는 확인 요청이 없고 {@code WaitService.canGoSolo}·{@code canGoSoloDirectly}가 허용했는지를 혼자 잠그기
+ *     저장 방법이 채운다. 그 밖의 요청과 재계산이면 null이고, 그때는 검사하지 않는다(기록된 행동은 그때 서버가 이미 확인했다)
  */
 public record InspectionState(
     InspectionKind kind,
@@ -30,16 +33,17 @@ public record InspectionState(
     Boolean roomEnded,
     Boolean canOpenConfirm,
     LocalDate moveInDate,
-    Boolean late) {
+    Boolean late,
+    Boolean canLockAlone) {
 
   /** 아직 없는 점검. 재계산의 시작점이다(요청할 때만 아는 값은 모름). */
   public static final InspectionState NONE =
-      new InspectionState(null, null, null, null, null, null, null, null, null);
+      new InspectionState(null, null, null, null, null, null, null, null, null, null);
 
   /** 아직 없는 점검의 지금 상태. 시작하기 전에 호실 사실만 담는다. 입주일 값은 모른다(늦었는지는 정하지 않음). */
   public static InspectionState notStarted(boolean moveInDateMissing, boolean roomEnded) {
     return new InspectionState(
-        null, null, null, null, moveInDateMissing, roomEnded, null, null, null);
+        null, null, null, null, moveInDateMissing, roomEnded, null, null, null, null);
   }
 
   /**
@@ -49,7 +53,7 @@ public record InspectionState(
    */
   public static InspectionState notStarted(LocalDate moveInDate, boolean roomEnded) {
     return new InspectionState(
-        null, null, null, null, moveInDate == null, roomEnded, null, moveInDate, null);
+        null, null, null, null, moveInDate == null, roomEnded, null, moveInDate, null, null);
   }
 
   public boolean exists() {
@@ -81,6 +85,27 @@ public record InspectionState(
         roomEnded,
         canOpenConfirm,
         moveInDate,
-        late);
+        late,
+        canLockAlone);
+  }
+
+  /** [혼자 잠그기]를 지금 할 수 없다고 확인됐나. 모르면(재계산·다른 요청) 거짓이다. */
+  public boolean lockAloneBlocked() {
+    return Boolean.FALSE.equals(canLockAlone);
+  }
+
+  /** 혼자 잠그기 저장 방법이 읽은 판단을 담는다({@link #canLockAlone}). */
+  public InspectionState withCanLockAlone(boolean allowed) {
+    return new InspectionState(
+        kind,
+        status,
+        authorSide,
+        startedAt,
+        moveInDateMissing,
+        roomEnded,
+        canOpenConfirm,
+        moveInDate,
+        late,
+        allowed);
   }
 }

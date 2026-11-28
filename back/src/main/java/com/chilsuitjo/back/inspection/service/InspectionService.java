@@ -153,6 +153,33 @@ public class InspectionService {
   }
 
   /**
+   * 혼자 잠그기(06 4-7 {@code lock-alone}, INSP-1g, #392). 없는 점검·당사자가 아니면 {@code NOT_FOUND}, 확인 요청 중인 입주
+   * 점검이 아니면 {@code INVALID_STATE}, 상대 사정으로 혼자 진행할 수 없거나 기다리는 확인 요청이 남았으면 {@code SOLO_NOT_ALLOWED},
+   * 공유를 그만둔 사람이면 {@code SHARING_STOPPED}(pipeline)다. 누른 회원의 {@code LOCK}으로 남는다. 같은 키로 다시 오면 점검의 지금
+   * 상태를 돌려준다(06 4-0).
+   */
+  public InspectionStatusChanged lockAlone(
+      UUID inspectionId, UUID memberId, String idempotencyKey) {
+    UUID roomRecordId = roomOf(inspectionId);
+    PipelineResult<InspectionState> result =
+        pipeline.execute(
+            new ActionCommand(
+                roomRecordId,
+                Actor.member(memberId),
+                ActionType.LOCK,
+                idempotencyKey,
+                ActionTarget.inspection(inspectionId),
+                null,
+                null,
+                null,
+                Map.of()),
+            inspectionStore.lockingAlone(),
+            inspectionRules);
+    return new InspectionStatusChanged(
+        inspectionId, result.state().status(), result.action().replayed());
+  }
+
+  /**
    * 항목 응답(06 4-7 {@code respond}). 답이 없으면 {@code VALIDATION_FAILED}, 사유에 주민등록번호 형태가 있으면 {@code
    * RESIDENT_ID_BLOCKED}(pipeline 전, 03 6-1). 없는 항목·당사자가 아니면 {@code NOT_FOUND}, 작성 중인 기준 측
    * 항목이거나(상대가 더한 항목은 작성 중에도 답함, #286) 답하는 사람에게 보이지 않는 항목이면 {@code INVALID_STATE}, 그 뒤는 {@code
