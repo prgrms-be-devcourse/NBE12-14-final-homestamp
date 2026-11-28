@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.chilsuitjo.back.TestcontainersConfiguration;
+import com.chilsuitjo.back.member.entity.Member;
+import com.chilsuitjo.back.member.repository.MemberRepository;
 import com.chilsuitjo.back.member.service.MemberPhoneHmacService;
 import com.chilsuitjo.back.notification.service.PhoneHmacs;
 import java.util.ArrayList;
@@ -27,15 +29,16 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 회원 번호 HMAC 채우기와 번호 잠금 회원 확인(#462, #83 Q2). 잠금과 커밋 순서를 보려고 테스트 트랜잭션 없이 실제 PostgreSQL에서 돌리고, 만든 회원은
- * 끝나면 지운다. 예약 채우기는 끄고 직접 부른다.
+ * 끝나면 지운다. 예약 채우기는 테스트 설정(config/application.yml)이 끄고 직접 부른다.
  */
 @Import(TestcontainersConfiguration.class)
-@SpringBootTest(properties = "app.member.phone-hmac-fill.enabled=false")
+@SpringBootTest
 @ActiveProfiles("test")
 class MemberPhoneHmacTest {
 
   @Autowired private MemberPhoneHmacFill fill;
   @Autowired private MemberPhoneHmacService memberPhoneHmacs;
+  @Autowired private MemberRepository members;
   @Autowired private VerifiedMemberPhoneLock phoneLock;
   @Autowired private VerificationKeys keys;
   @Autowired private PhoneHmacs phoneHmacs;
@@ -58,6 +61,32 @@ class MemberPhoneHmacTest {
   }
 
   // 채우기
+
+  @Test
+  void 채우기_전에_읽은_엔티티가_다른_칸을_고쳐도_채운_값은_남는다() throws Exception {
+    UUID id = insert("01033330013", null);
+    CountDownLatch loaded = new CountDownLatch(1);
+    CountDownLatch filled = new CountDownLatch(1);
+    // 채우기 전에 회원을 읽어 둔 요청(예: 문자 설정 바꾸기)이 채우기가 커밋된 뒤 저장한다
+    Future<?> request =
+        pool.submit(() ->
+            transaction.executeWithoutResult(status -> {
+              Member member = members.findById(id).orElseThrow();
+              loaded.countDown();
+              await(filled);
+              member.changeSmsEnabled(false);
+            }));
+    await(loaded);
+    fill.fillAll();
+    filled.countDown();
+    request.get(10, TimeUnit.SECONDS);
+
+    assertThat(phoneHmac(id)).isEqualTo(phoneHmacs.phoneHmac("01033330013"));
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT sms_enabled FROM state.member WHERE id = ?", Boolean.class, id))
+        .isFalse();
+  }
 
   @Test
   void 빈_행은_번호의_HMAC으로_채우고_다시_돌려도_그대로다() {

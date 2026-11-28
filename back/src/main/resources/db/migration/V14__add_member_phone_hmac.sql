@@ -16,6 +16,10 @@ CREATE UNIQUE INDEX ux_member_phone_hmac ON state.member (phone_hmac) WHERE phon
 ALTER TABLE state.member
     ADD CONSTRAINT ck_member_phone_hmac_needs_phone CHECK (phone_hmac IS NULL OR phone IS NOT NULL);
 
+-- 아직 채우지 않은 행. 회원 확인(빈 행이 있으면 예외)이 번호 잠금을 잡은 채 매번 보고 채우기도 이 조건으로 읽으므로 전체를 훑지 않게 둔다.
+-- 채우면 빠져서 작게 남는다. 2단계에서 뺀다
+CREATE INDEX ix_member_phone_hmac_pending ON state.member (id) WHERE phone IS NOT NULL AND phone_hmac IS NULL;
+
 -- 번호가 바뀌었는데 HMAC은 그대로인 UPDATE(이 칸을 모르는 이전 앱)면 HMAC을 비운다. 새 앱은 두 칸을 함께 바꾸므로 건드리지 않는다
 CREATE FUNCTION state.clear_stale_member_phone_hmac() RETURNS trigger
     LANGUAGE plpgsql AS $$

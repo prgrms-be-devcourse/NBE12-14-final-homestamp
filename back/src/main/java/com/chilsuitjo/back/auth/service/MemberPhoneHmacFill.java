@@ -1,6 +1,6 @@
 package com.chilsuitjo.back.auth.service;
 
-import com.chilsuitjo.back.member.repository.MemberRepository.PhoneToFill;
+import com.chilsuitjo.back.member.dto.PhoneToFill;
 import com.chilsuitjo.back.member.service.MemberPhoneHmacService;
 import com.chilsuitjo.back.notification.service.PhoneHmacs;
 import java.util.List;
@@ -41,22 +41,25 @@ public class MemberPhoneHmacFill {
     do {
       batch = members.phonesWithoutHmac(after, BATCH_SIZE);
       for (PhoneToFill row : batch) {
-        after = row.getId();
+        after = row.memberId();
         String phoneHmac;
         try {
-          phoneHmac = phoneHmacs.phoneHmac(row.getPhone());
+          phoneHmac = phoneHmacs.phoneHmac(row.phone());
         } catch (RuntimeException e) {
           skipped++;
-          log.warn("번호 HMAC 채우기: 계산할 수 없는 번호, 회원 {}", row.getId());
+          log.warn("번호 HMAC 채우기: 계산할 수 없는 번호, 회원 {}", row.memberId());
           continue;
         }
-        if (members.fill(row.getId(), row.getPhone(), phoneHmac)) {
+        if (members.fill(row.memberId(), row.phone(), phoneHmac)) {
           filled++;
         }
       }
     } while (batch.size() == BATCH_SIZE);
-    if (filled > 0 || skipped > 0) {
-      log.info("번호 HMAC 채우기: 채움 {}, 건너뜀 {}", filled, skipped);
+    if (skipped > 0) {
+      // 건너뛴 행이 남아 있는 동안 회원 확인이 늘 예외를 낸다. 그 행의 번호를 사람이 정리해야 풀린다
+      log.error("번호 HMAC 채우기: 채움 {}, 계산할 수 없어 남은 행 {}(회원 확인이 막힌 상태)", filled, skipped);
+    } else if (filled > 0) {
+      log.info("번호 HMAC 채우기: 채움 {}", filled);
     }
     return filled;
   }

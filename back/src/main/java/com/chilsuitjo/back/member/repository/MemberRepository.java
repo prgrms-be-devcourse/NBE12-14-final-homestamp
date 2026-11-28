@@ -62,11 +62,10 @@ public interface MemberRepository extends JpaRepository<Member, UUID> {
           ORDER BY id LIMIT :limit
           """,
       nativeQuery = true)
-  List<PhoneToFill> findPhonesWithoutHmac(
-      @Param("afterId") UUID afterId, @Param("limit") int limit);
+  List<PhoneRow> findPhonesWithoutHmac(@Param("afterId") UUID afterId, @Param("limit") int limit);
 
-  /** 채울 행의 ID와 그때 읽은 번호. */
-  interface PhoneToFill {
+  /** 채울 행의 ID와 그때 읽은 번호(네이티브 쿼리 결과 모양. 밖으로는 {@code member/dto}의 {@code PhoneToFill}로 낸다). */
+  interface PhoneRow {
     UUID getId();
 
     String getPhone();

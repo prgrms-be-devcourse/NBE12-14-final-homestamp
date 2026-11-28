@@ -17,6 +17,7 @@ import java.util.UUID;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.DynamicUpdate;
 import org.hibernate.annotations.UuidGenerator;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
@@ -25,8 +26,12 @@ import org.springframework.security.crypto.password.PasswordEncoder;
  *
  * <p>이메일은 받은 그대로 두고 중복은 {@code lower(email)}로 본다({@code ux_member_email_lower}, decisions
  * 2026-11-13). 번호는 인증을 마친 번호이고 한 계정에만 있다({@code ux_member_phone}, 불변식 8). 탈퇴하면 신원 칸을 지우고 행은 남긴다.
+ *
+ * <p>UPDATE는 바뀐 칸만 쓴다({@link DynamicUpdate}). 채우기가 {@code version}을 올리지 않고 {@code phone_hmac}만
+ * 채우므로(#462), 그 전에 읽은 엔티티가 다른 칸을 고쳐도 채운 값을 NULL로 되돌리지 않게.
  */
 @Entity
+@DynamicUpdate
 @Table(schema = "state", name = "member")
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
@@ -141,7 +146,8 @@ public class Member {
 
   /**
    * 다른 계정이 이 번호를 인증해 이 계정의 인증 번호와 인증 시각을 비운다(06 ACC-3a, 05 {@code member}: 이전 계정의 {@code phone}을
-   * NULL로). 번호 HMAC도 함께 비운다(#462). 이미 연결된 호실(당사자 자리)은 건드리지 않는다. 번호를 지우는 다른 곳(탈퇴)도 이 메서드를 부른다.
+   * NULL로). 번호 HMAC도 함께 비운다(#462). 이미 연결된 호실(당사자 자리)은 건드리지 않는다. 번호를 지우는 다른 경로(탈퇴)도 이 메서드를 부르고, 번호를
+   * 바꾸는 경로(번호 변경)는 번호와 HMAC을 함께 바꾼다.
    */
   public void releasePhone() {
     this.phone = null;

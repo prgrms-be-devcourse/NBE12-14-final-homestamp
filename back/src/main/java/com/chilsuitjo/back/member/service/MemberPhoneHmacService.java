@@ -1,7 +1,7 @@
 package com.chilsuitjo.back.member.service;
 
+import com.chilsuitjo.back.member.dto.PhoneToFill;
 import com.chilsuitjo.back.member.repository.MemberRepository;
-import com.chilsuitjo.back.member.repository.MemberRepository.PhoneToFill;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
@@ -25,7 +25,9 @@ public class MemberPhoneHmacService {
   /** 번호는 있는데 HMAC이 빈 행을 {@code afterId}보다 큰 ID부터 ID 순으로 {@code limit}개 읽는다. */
   @Transactional(readOnly = true)
   public List<PhoneToFill> phonesWithoutHmac(UUID afterId, int limit) {
-    return members.findPhonesWithoutHmac(afterId, limit);
+    return members.findPhonesWithoutHmac(afterId, limit).stream()
+        .map(row -> new PhoneToFill(row.getId(), row.getPhone()))
+        .toList();
   }
 
   /**
