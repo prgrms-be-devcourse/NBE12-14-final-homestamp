@@ -168,6 +168,16 @@ public class FakeWaitService implements WaitService, WaitQuery {
 
   @Override
   public int closeAll(UUID roomRecordId, ClosedReason reason, Set<RequestKind> kinds) {
+    return closeAll(roomRecordId, reason, kinds, clock.instant());
+  }
+
+  @Override
+  public int closeAll(
+      UUID roomRecordId, ClosedReason reason, Set<RequestKind> kinds, java.time.Instant at) {
+    // 운영과 같이 마이크로초로 맞춘다(DB 정밀도)
+    java.time.Instant closedAt =
+        java.util.Objects.requireNonNull(at, "at")
+            .truncatedTo(java.time.temporal.ChronoUnit.MICROS);
     // 운영(JpaWaitService)과 같은 범위만 닫는다. 정해지지 않은 이유는 같은 예외다(#113)
     Map<RequestKind, Set<RequestStatus>> targets = CloseAllScope.targets(reason, kinds);
     int closed = 0;
@@ -176,7 +186,7 @@ public class FakeWaitService implements WaitService, WaitQuery {
       if (request.roomRecordId().equals(roomRecordId)
           && targets.containsKey(entry.getKey().kind())
           && targets.get(entry.getKey().kind()).contains(request.status())) {
-        write(entry.getKey(), request.closed(reason, clock.instant()));
+        write(entry.getKey(), request.closed(reason, closedAt));
         closed++;
       }
     }
