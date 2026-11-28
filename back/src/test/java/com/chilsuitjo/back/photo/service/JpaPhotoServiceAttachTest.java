@@ -263,6 +263,26 @@ class JpaPhotoServiceAttachTest extends PhotoAttachTestSupport {
     }
 
     @Test
+    void 상대의_아직_보이지_않은_사진은_세지_않는다() {
+      // 작성 중 점검에 상대가 붙인 사진(#295). 세면 화면에 없는 사진이 한도 오류로 드러난다(03 3-1, decisions 2026-11-18)
+      existingPhotos(29);
+      for (int i = 0; i < 5; i++) {
+        unreleased(existingPhoto(caseTarget(), PartySide.LANDLORD, NOW.minusSeconds(60), false));
+      }
+
+      assertThat(attach(upload())).hasSize(1);
+    }
+
+    @Test
+    void 내가_붙인_아직_보이지_않은_사진은_센다() {
+      // 기준 측은 작성 중에 붙인 자기 사진을 보므로 한도에도 센다
+      existingPhotos(29);
+      unreleased(existingPhoto(caseTarget(), PartySide.TENANT, NOW.minusSeconds(60), false));
+
+      assertRejected(() -> attach(upload()), ErrorCode.PHOTO_LIMIT, null);
+    }
+
+    @Test
     void 지운_사진은_세지_않는다() {
       existingPhotos(29);
       existingPhoto(caseTarget(), PartySide.TENANT, NOW.minusSeconds(60), true);

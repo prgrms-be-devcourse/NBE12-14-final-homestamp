@@ -96,7 +96,7 @@ class MemberSignupPersistenceTest extends SchemaTestSupport {
             true,
             "2026-11-14");
 
-    UUID memberId = memberService.register(request, "hash", "01012345678");
+    UUID memberId = memberService.register(request, "hash", "01012345678", NOW);
     entityManager.flush();
     entityManager.clear();
 
@@ -135,7 +135,7 @@ class MemberSignupPersistenceTest extends SchemaTestSupport {
         previous.getId());
 
     UUID newMember =
-        memberService.register(allConfirmed("new@example.com", "김정호"), "hash", "01012345678");
+        memberService.register(allConfirmed("new@example.com", "김정호"), "hash", "01012345678", NOW);
     entityManager.flush();
     entityManager.clear();
 
@@ -160,7 +160,7 @@ class MemberSignupPersistenceTest extends SchemaTestSupport {
 
     assertThatThrownBy(() ->
             memberService.register(
-                allConfirmed("seoyun@example.com", "정서윤"), "hash", "01012345678"))
+                allConfirmed("seoyun@example.com", "정서윤"), "hash", "01012345678", NOW))
         .isInstanceOfSatisfying(
             BusinessException.class,
             e -> assertThat(e.errorCode()).isEqualTo(ErrorCode.EMAIL_TAKEN));

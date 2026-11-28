@@ -179,6 +179,19 @@ export interface Payment {
 }
 // inspectionRefs는 과거 시연 연결 메타데이터의 이력 호환성용입니다. 현 MVP에서는 읽거나 새로 기록하지 않습니다.
 export type WaitStage = "재통지" | "미확인"
+// 수리 건에 열린 응답 요청 하나(06 4-6 목록 waiting). by가 보는 사람이면 '내 차례', 아니면 '○○ 확인 기다림'
+export interface RepairWait {
+  // 요청 종류의 화면 이름(하자 확인·종료 확인 등, '내 차례 · ○○'와 같은 글자)
+  kind: string
+  // 답할 측
+  by: Role
+  // 기한이 지나 확인 없음(UNCONFIRMED). 정산 완료 전까지 늦게 답할 수 있어요
+  unconfirmed: boolean
+  // 기다림이고 기한이 정해졌을 때만(ISO). 없으면 남은 시간을 보이지 않아요(NOTI-4b)
+  dueAt?: string
+  // 확인 없음의 이유 문구
+  reason?: string
+}
 export type SoloReason =
   "상대 미확인" | "상대 수신 거부" | "상대 탈퇴" | "상대 없음"
 // 표현 정정(화면: '글 수정'): 제목·설명을 바로 고치고 수정 전·후를 이력으로 남깁니다. photosAdded는 이전 방식(사진 보충) 기록 호환용
@@ -232,6 +245,11 @@ export interface Repair {
   lastActionAt?: string
   // 서버가 준 등록 시각(ISO). 여러 번 받은 수리 건을 서버와 같은 순서(새것부터)로 두는 데 써요. 목업은 없음
   createdAt?: string
+  // 서버가 준 열린 응답 요청(06 4-6 목록 waiting). 있으면 '내 차례'의 하자·종료·비용 제안 확인을 이 값으로 정해요.
+  // 목업과 목록을 받기 전 상세는 없음(상태로 셉니다)
+  waiting?: RepairWait[]
+  // 서버가 준 종료 확인 요청이 확인 없음이 됐을 때(06 4-6 상세 closeRequest UNCONFIRMED). 목업은 없음
+  closeUnconfirmed?: { since?: string; reason?: string }
   id: string
   roomId: string
   title: string

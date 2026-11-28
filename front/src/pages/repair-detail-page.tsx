@@ -137,7 +137,12 @@ export function RepairDetailPage({
     refreshTick,
     initial.roomId,
   )
-  const r = view?.repair ?? initial
+  // 열린 응답 요청(waiting)은 목록에만 있어서(06 4-6) 목록에서 받은 값을 이어 붙여요. '내 차례'가 목록과 같게 보여요
+  const r = view
+    ? initial.waiting
+      ? { ...view.repair, waiting: initial.waiting }
+      : view.repair
+    : initial
   const actions: RepairAction[] = isGuest ? [] : (view?.availableActions ?? [])
   const has = (a: RepairAction) => hasAction(actions, a)
   // 지불·고친 내용마다의 버튼도 api.actions가 줘요(수리 건 상세 응답 안의 값)
