@@ -1216,7 +1216,9 @@ export function RoomFinancials({
             <DialogDescription>
               {mode === "deposit" || mode === "deposit-dispute"
                 ? "보증금은 계약서 금액을 맞추는 거예요. 둘이 같은 금액이면 둘 다 확인으로 남아요."
-                : "한쪽의 제안은 상대가 같은 안에 동의해야 합의됩니다."}
+                : mode === "transfer"
+                  ? "돈이 오간 사실을 남겨요. 상대가 확인한 기록만 송금 합계에 들어가요."
+                  : "한쪽의 제안은 상대가 같은 안에 동의해야 합의됩니다."}
             </DialogDescription>
           </DialogHeader>
           <form className="modal-form" onSubmit={submit}>
