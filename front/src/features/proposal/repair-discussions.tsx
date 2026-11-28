@@ -174,7 +174,7 @@ export function CostAgreement({
     )
   }
   return (
-    <Panel title="수리비 · 부담 합의">
+    <Panel title="수리비 나누기">
       <p className="muted">
         하자 사실·원인 설명·수리 진행과 독립적인 비용 합의입니다. 금액만 적고
         비율은 쓰지 않아요.
@@ -386,10 +386,10 @@ export function CostAgreement({
                 }}
               >
                 {!p
-                  ? "부담 제안하기"
+                  ? "수리비 나누기 제안"
                   : p.status === "합의됨" || p.status === "비용 없음"
                     ? "바꾸자는 새 제안"
-                    : "새 부담 제안"}
+                    : "수리비 다시 제안"}
               </Button>
             )}
         </div>
@@ -414,7 +414,7 @@ export function CostAgreement({
           </div>
         )}
         <div className="field">
-          <label>부담 방식</label>
+          <label>나누는 방식</label>
           <Choice
             label="부담 방식"
             value={plan}
@@ -445,7 +445,7 @@ export function CostAgreement({
               />
             </div>
             <div className="field">
-              <label htmlFor="third-amount">제3자 부담 (원)</label>
+              <label htmlFor="third-amount">다른 사람이 낼 금액 (원)</label>
               <MoneyInput id="third-amount" name="thirdAmount" required />
             </div>
           </div>
@@ -555,7 +555,7 @@ export function CostAgreement({
         {withCounter && (
           <div className="svc-summary space-y-3">
             <div className="field">
-              <label>부담 방식</label>
+              <label>나누는 방식</label>
               <Choice
                 label="부담 방식"
                 value={plan}
@@ -586,7 +586,9 @@ export function CostAgreement({
                   />
                 </div>
                 <div className="field">
-                  <label htmlFor="d-third-amount">제3자 부담 (원)</label>
+                  <label htmlFor="d-third-amount">
+                    다른 사람이 낼 금액 (원)
+                  </label>
                   <MoneyInput id="d-third-amount" name="thirdAmount" required />
                 </div>
               </div>
@@ -614,7 +616,7 @@ export function CostAgreement({
       </ActionDialog>
       <ActionDialog
         open={mode === "dispute"}
-        title="부담 제안에 이견"
+        title="수리비 제안에 이견"
         description="사유는 필수예요. 다른 안 없이 이견만 남기면 돈 상태는 ‘이견’이 되고, 누구든 새 제안을 낼 수 있어요."
         submitLabel="이견 남기기"
         onClose={() => setMode(null)}

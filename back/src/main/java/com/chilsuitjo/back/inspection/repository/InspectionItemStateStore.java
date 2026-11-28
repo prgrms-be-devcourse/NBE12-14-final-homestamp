@@ -302,23 +302,28 @@ public class InspectionItemStateStore {
    *
    * <p>입주 점검만 잠근다(#326 범위). 퇴거 점검은 거주 종료와 따로 잠기는 규칙(03 H "퇴거 점검")과 함께 후속에서 연결한다.
    *
-   * @param noItemsConfirmed 이 단계가 기준 측이 아닌 쪽의 "하자 기록 없음" 확인인가. 항목이 하나도 없을 때만 판단에 쓰이고, 항목 없는 점검에 오는
-   *     저장은 그 확인({@code ConfirmingAll})뿐이라 이전 기록을 다시 읽지 않는다(그 행동은 이 단계 뒤에 기록되어 아직 읽히지도 않는다)
+   * <p>기준 측 항목이 없는 점검은 기준 측이 아닌 쪽의 "하자 기록 없음" 확인이 있어야 잠긴다(#392 논의 6). 이 단계가 그 확인이 아니면 앞서 남은 {@code
+   * CONFIRM_ALL}을 읽는다: 확인을 먼저 하고 상대가 더한 항목에 나중에 답하는 순서도 있다.
+   *
+   * @param confirmingNoItems 이 단계가 기준 측이 아닌 쪽의 "하자 기록 없음" 확인인가({@code ConfirmingAll}). 그 행동은 이 단계
+   *     뒤에 기록되어 아직 읽히지 않으므로 따로 받는다
    */
-  private void lockIfSettled(UUID roomRecordId, UUID inspectionId, boolean noItemsConfirmed) {
+  private void lockIfSettled(UUID roomRecordId, UUID inspectionId, boolean confirmingNoItems) {
     Inspection parent = inspection(roomRecordId, inspectionId);
     if (parent.getKind() != InspectionKind.MOVE_IN) {
       return;
     }
     List<InspectionItem> all = items.findByInspectionIdOrderByIdAsc(inspectionId);
+    PartySide author = parent.getAuthorSide();
+    boolean noAuthorItems = all.stream().noneMatch(item -> item.getAddedBySide() == author);
     Optional<LockReason> reason =
         InspectionLock.decide(
             parent.getStatus(),
-            parent.getAuthorSide(),
+            author,
             all.stream()
                 .map(item -> new InspectionLock.Item(item.getAddedBySide(), item.getStatus()))
                 .toList(),
-            noItemsConfirmed);
+            confirmingNoItems || (noAuthorItems && noItemsConfirmedBefore(inspectionId, author)));
     if (reason.isEmpty()) {
       return;
     }
@@ -334,6 +339,17 @@ public class InspectionItemStateStore {
         ActionType.LOCK,
         ActionTarget.inspection(inspectionId),
         Map.of(InspectionLock.LOCK_REASON, reason.get().name()));
+  }
+
+  /**
+   * 기준 측이 아닌 쪽이 앞서 "하자 기록 없음"을 확인했나. 기준 측 항목이 없을 때 그쪽의 {@code CONFIRM_ALL}은 그 확인뿐이다(답할 기준 측 항목이
+   * 없으므로, {@link #confirmAll(Inspection, PartySide, InspectionSight.Sight)}의 {@code
+   * confirmedNoItems}와 같은 기준).
+   */
+  private boolean noItemsConfirmedBefore(UUID inspectionId, PartySide author) {
+    return actions.findByTarget(ActionTarget.inspection(inspectionId)).stream()
+        .anyMatch(e ->
+            e.type() == ActionType.CONFIRM_ALL && e.actorSide() != null && e.actorSide() != author);
   }
 
   private static RequestTarget confirmRequest(UUID inspectionId) {
@@ -521,7 +537,8 @@ public class InspectionItemStateStore {
 
     /**
      * 행동만 남긴다. 각 항목의 맞아요는 뒤따르는 {@code RESPOND_ITEM} 단계가 남기고 요청 닫기·잠금도 거기서 한다. 항목이 없는 점검이면 여기서 "하자
-     * 기록 없음" 확인으로 점검 확인 요청을 닫고, 항목이 하나도 없으면 잠근다(03 H, INSP-1c).
+     * 기록 없음" 확인으로 점검 확인 요청을 닫고, 잠기는지 본다(03 H). 항목이 하나도 없으면 {@code NO_ITEMS}(INSP-1c), 상대가 더한 항목만 있고
+     * 모두 답했으면 {@code ALL_RESOLVED}로 잠긴다(#392 논의 6).
      */
     @Override
     public SavedState save(ActionCommand command, ConfirmAllState next) {
@@ -530,7 +547,7 @@ public class InspectionItemStateStore {
             confirmRequest(command.target().id()),
             RequestKind.INSPECTION_CONFIRM,
             command.actor().side());
-        // 항목이 하나도 없는 점검이면 이 확인으로 잠긴다(INSP-1c). 항목이 있으면 뒤따르는 응답 단계가 잠근다
+        // 기준 측 항목이 없으면 이 확인이 기준 측 방향의 답이다. 상대 항목에 아직 답이 없으면 그 답이 잠근다
         lockIfSettled(
             command.roomRecordId(), command.target().id(), command.actor().side() != next.author());
       }

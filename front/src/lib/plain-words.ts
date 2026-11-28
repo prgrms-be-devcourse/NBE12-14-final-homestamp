@@ -21,6 +21,11 @@ const WORDS: [RegExp, string][] = [
   [/합의 대기/g, "답을 기다려요"],
   [/합의됨/g, "합의했어요"],
   [/부담 역제안/g, "다른 안 제안"],
+  // "부담"은 누구 탓을 정하는 말처럼 들려서 화면에서는 수리비로 말해요
+  [/부담 제안/g, "수리비 제안"],
+  [/부담 이견/g, "수리비 이견"],
+  [/비용 제안 응답/g, "수리비 제안에 답하기"],
+  [/바꾸자는 안 응답/g, "바꾸자는 안에 답하기"],
   [/역제안/g, "다른 안 제안"],
   [/응답 요청/g, "확인 요청"],
   [/하자 인정/g, "하자가 있었다고 확인"],
@@ -42,3 +47,45 @@ const WORDS: [RegExp, string][] = [
 export function plainText(text: string) {
   return WORDS.reduce((t, [from, to]) => t.replace(from, to), text)
 }
+
+// 상태 꼬리표에만 쓰는 사용자 말(경과 문장은 plainText만 거쳐요).
+// 서버·화면 로직의 값("처리 중", "미정" 등)은 그대로 두고, 보일 때만 집 고치는 말로 바꿔요.
+// "처리"는 관공서 말이라 수리 줄은 수리 시작 전 / 고치는 중 / 수리 끝, "미정"은 정하기 전, "연결됨"은 함께 보는 중.
+const STATUS_WORDS: [RegExp, string][] = [
+  [/처리 완료\((양측|둘 다) 확인\)/g, "수리 끝(둘 다 확인)"],
+  [/처리 완료로 닫힘/g, "수리 끝으로 닫힘"],
+  [/처리 완료/g, "수리 끝"],
+  [/처리 중/g, "고치는 중"],
+  [/수리 · 확인 (완료|전)/g, "수리 시작 전"],
+  [/(비용|돈) · /g, "수리비 · "],
+  [/미정/g, "정하기 전"],
+  [/^연결됨$/g, "함께 보는 중"],
+]
+export function statusText(text: string) {
+  // 상태 말을 먼저 바꿔요(plainText가 "처리 완료(양측 확인)"을 경과 문장으로 바꾸기 전에)
+  return plainText(
+    STATUS_WORDS.reduce((t, [from, to]) => t.replace(from, to), text),
+  )
+}
+
+// 수리 줄의 수리 상태 글. 하자만 확인되고 시작하지 않은 상태("확인 전"·"확인 완료")는 수리 시작 전이에요
+export const repairWord = (s: string) =>
+  s === "확인 전" || s === "확인 완료" ? "수리 시작 전" : statusText(s)
+
+// 상태 표시 다섯 가지(index.css 토큰 주석). 색 + 모양 + 글이 늘 함께 가요.
+// 내 차례 = 주황 채운 점, 아직 안 끝남 = 노랑 빈 원(정하기 전·답 기다림), 오래 멈춤 = 회색 점선(부르는 쪽이 정해요),
+// 진행 중 = 남색 빈 원, 끝남 = 초록 ✓. 주황은 '내가 할 일'에만 써서 노랑은 훨씬 밝게 두고 모양도 달라요.
+// 이견·확인 없음은 따로 색을 두지 않아요(누구 탓처럼 읽히지 않게, 06 부록 A 원칙 1).
+export type StatusTone = "turn" | "wait" | "stale" | "progress" | "done"
+export function statusTone(text: string): StatusTone {
+  if (/내 차례/.test(text)) return "turn"
+  // 수리 상태 '확인 완료'는 하자만 확인되고 수리는 시작 전이라 진행 중이에요
+  if (/수리 · 확인 (완료|전)/.test(text)) return "progress"
+  if (/완료|합의됨|합의했어요|확인됨|✓|연결됨|둘 다 확인|비용 없음/.test(text))
+    return "done"
+  if (/대기|기다|미정|정하기 전|보충 요청|초대/.test(text)) return "wait"
+  return "progress"
+}
+// 끝남 꼬리표는 CSS가 앞에 ✓를 그려서 글 안의 ✓를 빼요
+export const dropCheck = (text: string, tone: StatusTone) =>
+  tone === "done" ? text.replace(/\s*✓/g, "") : text
