@@ -103,20 +103,30 @@ test("종료 확인은 하자 맞아요만 함께 남겨요(06 REP-3a, alsoAckDe
 
 const room302 = "302"
 const photo = "data:image/png;base64,AA"
+// 목업 저장소가 호실마다 복사해 둔 부위(06 4-3)에서 구역·이름으로 ID를 찾아요
+const partId = (
+  store: ReturnType<typeof createMockStore>,
+  zone: string,
+  name: string,
+  roomId = room302,
+) =>
+  store
+    .getState()
+    .roomParts![roomId].find((p) => p.zone === zone && p.name === name)!.id
 
 test("하자 등록: 사진이 있어야 하고, 거주가 끝난 호실에는 남길 수 없다(REP-1, 불변식 9)", async () => {
   const { store, api } = setup()
   await expect(
     api.create(tenant, room302, {
       title: "창문 틈",
-      zone: "방 · 창",
+      roomPartId: partId(store, "방", "창문·창틀"),
       description: "",
       photos: [],
     }),
   ).rejects.toMatchObject({ code: "PHOTO_REQUIRED" })
   const v = await api.create(tenant, room302, {
     title: "창문 틈",
-    zone: "방 · 창",
+    roomPartId: partId(store, "방", "창문·창틀"),
     description: "바람이 들어와요",
     photos: [photo],
   })
@@ -125,6 +135,9 @@ test("하자 등록: 사진이 있어야 하고, 거주가 끝난 호실에는 �
     "임차인",
     "확인 대기",
   ])
+  // 부위는 ID로 남고, 화면 글자는 그 부위에서 만들어요
+  expect(v.repair.roomPartId).toBe(partId(store, "방", "창문·창틀"))
+  expect(v.repair.zone).toBe("방 · 창문·창틀")
   expect(store.getState().events[0].text).toMatch("창문 틈 · 하자 등록")
   // 상대 쪽에는 하자 응답이 열려요
   expect((await api.get(landlord, v.repair.id)).availableActions).toContain(
@@ -139,7 +152,7 @@ test("하자 등록: 사진이 있어야 하고, 거주가 끝난 호실에는 �
   await expect(
     api.create(tenant, room302, {
       title: "또",
-      zone: "방 · 창",
+      roomPartId: partId(store, "방", "창문·창틀"),
       description: "",
       photos: [photo],
     }),
@@ -151,13 +164,42 @@ test("재발 등록은 이전 수리 건을 잇고 경과에 재발로 남는다
   const done = store.getState().repairs.find((r) => r.status === "처리 완료")!
   const v = await api.create(tenant, room302, {
     title: "다시 샘",
-    zone: done.zone,
+    roomPartId: partId(store, "욕실", "천장"),
     description: "",
     photos: [photo],
     recurrenceOf: done.id,
   })
   expect(v.repair.recurrenceOf).toBe(done.id)
   expect(store.getState().events[0].text).toMatch("이전 수리 건 이후 재발")
+})
+
+test("하자 등록 부위: 남의 호실 부위는 NOT_FOUND, 숨긴 부위·꺼 둔 설비·가전은 VALIDATION_FAILED(ROOM-3a·3d)", async () => {
+  const { store, api } = setup()
+  const base = { title: "틈", description: "", photos: [photo] }
+  await expect(
+    api.create(tenant, room302, { ...base, roomPartId: "" }),
+  ).rejects.toMatchObject({ code: "VALIDATION_FAILED" })
+  // 다른 호실(201)의 같은 이름 부위는 이 호실의 부위가 아니에요
+  await expect(
+    api.create(tenant, room302, {
+      ...base,
+      roomPartId: partId(store, "욕실", "천장", "201"),
+    }),
+  ).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" })
+  const hidden = partId(store, "방", "붙박이장")
+  const off = partId(store, "설비·가전", "냉장고")
+  store.setState((d) => {
+    const next = structuredClone(d)
+    next.roomParts![room302].forEach((p) => {
+      if (p.id === hidden) p.hidden = true
+      if (p.id === off) p.enabled = false
+    })
+    return next
+  })
+  for (const id of [hidden, off])
+    await expect(
+      api.create(tenant, room302, { ...base, roomPartId: id }),
+    ).rejects.toMatchObject({ code: "VALIDATION_FAILED" })
 })
 
 test("사진 추가: 수리 후 기록은 처리 중에 남고, 처음 기록한 쪽은 사진을 더할 수 있다", async () => {

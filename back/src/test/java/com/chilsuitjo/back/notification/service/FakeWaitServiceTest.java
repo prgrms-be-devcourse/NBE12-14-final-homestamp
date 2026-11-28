@@ -15,11 +15,14 @@ import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.dto.RoomParties;
 import com.chilsuitjo.back.notification.dto.SoloCheck;
 import com.chilsuitjo.back.notification.dto.SoloQuery;
+import com.chilsuitjo.back.notification.rule.CloseAllScope;
 import com.chilsuitjo.back.notification.rule.PartyPresence;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.rule.RequestStatus;
 import com.chilsuitjo.back.notification.rule.RoomPhase;
 import com.chilsuitjo.back.notification.rule.SoloReason;
+import java.time.Clock;
+import java.util.EnumSet;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -31,7 +34,8 @@ class FakeWaitServiceTest {
   /** 바로 혼자 진행이 읽는 자리 사실. 테스트마다 바꾼다(기본: 상대가 연결됨, 공유 중). */
   private RoomParties parties = parties(connected());
 
-  private final FakeWaitService waits = new FakeWaitService((room, side) -> parties);
+  private final FakeWaitService waits =
+      new FakeWaitService((room, side) -> parties, Clock.systemUTC());
   private final UUID roomRecordId = UUID.randomUUID();
   private final RequestTarget repairCase =
       RequestTarget.of(TargetKind.REPAIR_CASE, UUID.randomUUID());
@@ -395,25 +399,44 @@ class FakeWaitServiceTest {
   }
 
   @Test
-  void 호실의_열린_요청_중_고른_종류만_한꺼번에_닫는다() {
+  void 탈퇴는_호실의_열린_요청을_모두_닫고_정하지_않은_이유는_운영과_같이_예외다() {
     RequestTarget progressNote = RequestTarget.of(TargetKind.PROGRESS_NOTE, UUID.randomUUID());
     waits.open(defectConfirm());
     waits.open(
         new OpenRequestCommand(
             roomRecordId, RequestKind.SITUATION_CHECK, progressNote, PartySide.TENANT));
-    waits.open(
-        new OpenRequestCommand(
-            roomRecordId, RequestKind.CORRECTION_CONFIRM, repairCase, PartySide.TENANT));
 
+    assertThatThrownBy(() ->
+            waits.closeAll(
+                roomRecordId, ClosedReason.SHARING_STOPPED, Set.of(RequestKind.DEFECT_CONFIRM)))
+        .isInstanceOf(UnsupportedOperationException.class);
     int closed =
         waits.closeAll(
-            roomRecordId,
-            ClosedReason.ROOM_ENDED,
-            Set.of(RequestKind.DEFECT_CONFIRM, RequestKind.SITUATION_CHECK));
+            roomRecordId, ClosedReason.COUNTERPART_WITHDRAWN, EnumSet.allOf(RequestKind.class));
 
     assertThat(closed).isEqualTo(2);
-    assertThat(waits.statusOf(repairCase, RequestKind.CORRECTION_CONFIRM))
-        .contains(RequestStatus.WAITING);
+    assertThat(waits.closedReasonOf(repairCase, RequestKind.DEFECT_CONFIRM))
+        .contains(ClosedReason.COUNTERPART_WITHDRAWN);
+  }
+
+  @Test
+  void 거주_종료는_운영과_같이_미확인_수리_요청은_닫고_미확인_종료_확인은_남긴다() {
+    RequestTarget otherCase = RequestTarget.of(TargetKind.REPAIR_CASE, UUID.randomUUID());
+    waits.open(defectConfirm());
+    waits.markUnconfirmed(repairCase, RequestKind.DEFECT_CONFIRM);
+    waits.open(
+        new OpenRequestCommand(
+            roomRecordId, RequestKind.CLOSE_CONFIRM, otherCase, PartySide.TENANT));
+    waits.markUnconfirmed(otherCase, RequestKind.CLOSE_CONFIRM);
+
+    int closed =
+        waits.closeAll(roomRecordId, ClosedReason.ROOM_ENDED, CloseAllScope.roomEndedKinds());
+
+    assertThat(closed).isEqualTo(1);
+    assertThat(waits.closedReasonOf(repairCase, RequestKind.DEFECT_CONFIRM))
+        .contains(ClosedReason.ROOM_ENDED);
+    assertThat(waits.statusOf(otherCase, RequestKind.CLOSE_CONFIRM))
+        .contains(RequestStatus.UNCONFIRMED);
   }
 
   @Test
@@ -503,10 +526,12 @@ class FakeWaitServiceTest {
   void 바로_혼자_진행은_행동하는_측으로_자리를_읽는다() {
     PartySide[] asked = new PartySide[1];
     FakeWaitService reading =
-        new FakeWaitService((room, side) -> {
-          asked[0] = side;
-          return parties;
-        });
+        new FakeWaitService(
+            (room, side) -> {
+              asked[0] = side;
+              return parties;
+            },
+            Clock.systemUTC());
 
     reading.canGoSoloDirectly(
         new SoloQuery(roomRecordId, RequestKind.CLOSE_CONFIRM, repairCase, PartySide.LANDLORD));
@@ -517,9 +542,11 @@ class FakeWaitServiceTest {
   @Test
   void 자리를_읽지_못하면_불가로_바꾸지_않고_예외를_그대로_던진다() {
     FakeWaitService missing =
-        new FakeWaitService((room, side) -> {
-          throw new BusinessException(ErrorCode.NOT_FOUND);
-        });
+        new FakeWaitService(
+            (room, side) -> {
+              throw new BusinessException(ErrorCode.NOT_FOUND);
+            },
+            Clock.systemUTC());
 
     assertThatThrownBy(() -> missing.canGoSoloDirectly(closeDirectly()))
         .isInstanceOf(BusinessException.class);

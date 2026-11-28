@@ -24,6 +24,7 @@ import com.chilsuitjo.back.room.service.RoomMoveInDates;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Objects;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -68,11 +69,21 @@ public class InspectionStateStore {
       }
       return current(row(command));
     }
-    InspectionKind kind = kindOf(command);
+    return beforeStart(
+        command.roomRecordId(),
+        kindOf(command),
+        Objects.requireNonNull(command.actor().side(), "side"));
+  }
+
+  /**
+   * 시작하기 전에 보는 그 호실·종류의 지금 상태. 이미 점검이 있으면 그 점검, 없으면 호실 사실(입주일이 비었나, 거주 종료 뒤인가)만 담는다. 시작 요청({@link
+   * #load})과 호실 상세의 시작 버튼({@code InspectionStartCheck})이 같은 값을 읽는다(06 4-0 "서버의 같은 함수").
+   */
+  public InspectionState beforeStart(UUID roomRecordId, InspectionKind kind, PartySide side) {
     return inspections
-        .findByRoomRecordIdAndKind(command.roomRecordId(), kind)
+        .findByRoomRecordIdAndKind(roomRecordId, kind)
         .map(this::current)
-        .orElseGet(() -> notStarted(command));
+        .orElseGet(() -> notStarted(roomRecordId, side));
   }
 
   /**
@@ -96,12 +107,9 @@ public class InspectionStateStore {
         row.isLate());
   }
 
-  private InspectionState notStarted(ActionCommand command) {
-    LocalDate moveInDate = moveInDates.find(command.roomRecordId()).orElse(null);
-    RoomPhase phase =
-        parties
-            .read(command.roomRecordId(), Objects.requireNonNull(command.actor().side(), "side"))
-            .phase();
+  private InspectionState notStarted(UUID roomRecordId, PartySide side) {
+    LocalDate moveInDate = moveInDates.find(roomRecordId).orElse(null);
+    RoomPhase phase = parties.read(roomRecordId, side).phase();
     return InspectionState.notStarted(moveInDate, phase != RoomPhase.LIVING);
   }
 

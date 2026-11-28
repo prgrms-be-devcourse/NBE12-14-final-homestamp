@@ -115,8 +115,77 @@ class ResponseRequestLookupImpl implements ResponseRequestLookup {
     return byTarget(kind, target, statuses).getResultList();
   }
 
+  @Override
+  public List<ResponseRequest> findOpenRequestedBy(UUID roomRecordId, PartySide requestedBySide) {
+    return entityManager
+        .createQuery(
+            """
+            select r from ResponseRequest r
+            where r.roomRecordId = :roomRecordId and r.requestedBySide = :side
+              and r.status in :statuses
+            order by r.createdAt, r.id
+            """,
+            ResponseRequest.class)
+        .setParameter("roomRecordId", Objects.requireNonNull(roomRecordId))
+        .setParameter("side", Objects.requireNonNull(requestedBySide))
+        .setParameter("statuses", EnumSet.of(RequestStatus.WAITING, RequestStatus.UNCONFIRMED))
+        .getResultList();
+  }
+
+  @Override
+  public List<ResponseRequest> findRequestedBy(UUID roomRecordId, PartySide requestedBySide) {
+    return entityManager
+        .createQuery(
+            """
+            select r from ResponseRequest r
+            where r.roomRecordId = :roomRecordId and r.requestedBySide = :side
+            order by r.createdAt, r.id
+            """,
+            ResponseRequest.class)
+        .setParameter("roomRecordId", Objects.requireNonNull(roomRecordId))
+        .setParameter("side", Objects.requireNonNull(requestedBySide))
+        .getResultList();
+  }
+
+  @Override
+  public List<ResponseRequest> findInRoom(
+      UUID roomRecordId, Set<RequestKind> kinds, Set<RequestStatus> statuses) {
+    if (kinds.isEmpty() || statuses.isEmpty()) {
+      throw new IllegalArgumentException("종류와 상태는 비울 수 없어요");
+    }
+    return entityManager
+        .createQuery(
+            """
+            select r from ResponseRequest r
+            where r.roomRecordId = :roomRecordId and r.kind in :kinds and r.status in :statuses
+            order by r.createdAt, r.id
+            """,
+            ResponseRequest.class)
+        .setParameter("roomRecordId", Objects.requireNonNull(roomRecordId))
+        .setParameter("kinds", kinds)
+        .setParameter("statuses", statuses)
+        .getResultList();
+  }
+
+  @Override
+  public Optional<ResponseRequest> findLatest(RequestKind kind, RequestTarget target) {
+    if (kind == RequestKind.INSPECTION_CONFIRM) {
+      throw new IllegalArgumentException("점검 확인은 방향이 둘이라 가장 최근 하나가 정해지지 않아요");
+    }
+    return byTarget(kind, target, EnumSet.allOf(RequestStatus.class), "desc")
+        .setMaxResults(1)
+        .getResultStream()
+        .findFirst();
+  }
+
   private TypedQuery<ResponseRequest> byTarget(
       RequestKind kind, RequestTarget target, Set<RequestStatus> statuses) {
+    return byTarget(kind, target, statuses, "asc");
+  }
+
+  /** {@code direction}은 만든 순서({@code createdAt}, 같으면 ID)의 방향: {@code asc} 또는 {@code desc}. */
+  private TypedQuery<ResponseRequest> byTarget(
+      RequestKind kind, RequestTarget target, Set<RequestStatus> statuses, String direction) {
     RequestTargetColumns columns = RequestTargetColumns.of(target);
     String where = columns.roomRecordTarget() ? ROOM_TARGET : CHILD_TARGET;
     TypedQuery<ResponseRequest> query =
@@ -124,7 +193,10 @@ class ResponseRequestLookupImpl implements ResponseRequestLookup {
             .createQuery(
                 "select r from ResponseRequest r where r.kind = :kind and r.status in :statuses and "
                     + where
-                    + " order by r.createdAt, r.id",
+                    + " order by r.createdAt "
+                    + direction
+                    + ", r.id "
+                    + direction,
                 ResponseRequest.class)
             .setParameter("kind", kind)
             .setParameter("statuses", statuses);

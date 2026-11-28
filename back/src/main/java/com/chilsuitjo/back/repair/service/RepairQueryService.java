@@ -3,7 +3,9 @@ package com.chilsuitjo.back.repair.service;
 import com.chilsuitjo.back.action.dto.ActionEntry;
 import com.chilsuitjo.back.action.dto.ActionTarget;
 import com.chilsuitjo.back.action.dto.Actor;
+import com.chilsuitjo.back.action.dto.PhotoDigest;
 import com.chilsuitjo.back.action.dto.RoomGate;
+import com.chilsuitjo.back.action.rule.ActionPhotos;
 import com.chilsuitjo.back.action.rule.ActionType;
 import com.chilsuitjo.back.action.rule.AnswerPayload;
 import com.chilsuitjo.back.action.rule.Replay;
@@ -15,9 +17,16 @@ import com.chilsuitjo.back.correction.rule.CorrectionTargetKind;
 import com.chilsuitjo.back.correction.rule.CorrectionTransitions;
 import com.chilsuitjo.back.correction.service.CorrectionReader;
 import com.chilsuitjo.back.global.common.AckState;
+import com.chilsuitjo.back.global.common.Answer;
 import com.chilsuitjo.back.global.common.PartySide;
+import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
+import com.chilsuitjo.back.notification.dto.RequestTarget;
+import com.chilsuitjo.back.notification.dto.RequestView;
+import com.chilsuitjo.back.notification.rule.RequestKind;
+import com.chilsuitjo.back.notification.rule.RequestStatus;
+import com.chilsuitjo.back.notification.service.WaitQuery;
 import com.chilsuitjo.back.photo.dto.PhotoCard;
 import com.chilsuitjo.back.photo.dto.PhotoTarget;
 import com.chilsuitjo.back.photo.rule.PhotoTargetType;
@@ -27,14 +36,17 @@ import com.chilsuitjo.back.proposal.rule.AgendaKind;
 import com.chilsuitjo.back.proposal.service.ProposalService;
 import com.chilsuitjo.back.repair.dto.RepairCaseDetail;
 import com.chilsuitjo.back.repair.entity.CauseNote;
+import com.chilsuitjo.back.repair.entity.ProgressNote;
 import com.chilsuitjo.back.repair.entity.RepairCase;
 import com.chilsuitjo.back.repair.entity.RepairContent;
 import com.chilsuitjo.back.repair.repository.CauseNoteRepository;
 import com.chilsuitjo.back.repair.repository.CauseNoteStateStore;
+import com.chilsuitjo.back.repair.repository.ProgressNoteRepository;
 import com.chilsuitjo.back.repair.repository.RepairAgendaHeadStore;
 import com.chilsuitjo.back.repair.repository.RepairCaseRepository;
 import com.chilsuitjo.back.repair.repository.RepairContentRepository;
 import com.chilsuitjo.back.repair.repository.RepairStateStore;
+import com.chilsuitjo.back.repair.repository.SituationStateStore;
 import com.chilsuitjo.back.repair.rule.CauseNoteTransitions;
 import com.chilsuitjo.back.repair.rule.ClosedBy;
 import com.chilsuitjo.back.repair.rule.MoneyStatus;
@@ -42,6 +54,7 @@ import com.chilsuitjo.back.repair.rule.RepairSight;
 import com.chilsuitjo.back.repair.rule.RepairState;
 import com.chilsuitjo.back.repair.rule.RepairStatus;
 import com.chilsuitjo.back.repair.rule.RepairTransitions;
+import com.chilsuitjo.back.repair.rule.SituationTransitions;
 import com.chilsuitjo.back.room.dto.RoomAccess;
 import com.chilsuitjo.back.room.service.RoomAccessService;
 import com.chilsuitjo.back.room.service.RoomQueryService;
@@ -86,6 +99,11 @@ public class RepairQueryService {
   /** 원인 설명 남기기·고치기의 {@code availableActions} 이름(06 4-6 {@code cause-notes}). */
   static final String CAUSE_NOTES = "cause-notes";
 
+  /**
+   * 사진 추가의 {@code availableActions} 이름(06 4-6 {@code POST /api/repair-cases/{id}/photos}, REP-7g).
+   */
+  static final String PHOTOS = "photos";
+
   /** 고친 내용의 버튼 이름(06 4-6 {@code corrections/{id}/respond}·{@code withdraw}·{@code accept-all}). */
   static final String RESPOND = "respond";
 
@@ -105,9 +123,29 @@ public class RepairQueryService {
   private final CauseNoteRepository causeNoteRows;
   private final CauseNoteStateStore causeStore;
   private final CauseNoteTransitions causeRules;
+  private final ProgressNoteRepository progressNoteRows;
+  private final SituationStateStore situationStore;
+  private final SituationTransitions situationRules;
   private final CorrectionReader correctionReader;
   private final ProposalService proposalService;
+  private final WaitQuery waits;
   private final Clock clock;
+
+  /**
+   * 사진 추가 행동이 붙인 사진(06 REP-7g 응답 {@code photoIds}, 업로드 표 순서). 처음 요청과 같은 키로 다시 온 요청 모두 행동 기록에서
+   * 읽는다(사진 지문은 행동 payload {@code photos}).
+   */
+  @Transactional(readOnly = true)
+  public List<UUID> addedPhotoIds(UUID repairCaseId, UUID actionId) {
+    return actionReader.findByTarget(ActionTarget.repairCase(repairCaseId)).stream()
+        .filter(entry -> entry.id().equals(actionId))
+        .findFirst()
+        .map(ActionPhotos::attached)
+        .orElseThrow(() -> new IllegalStateException("사진 추가 행동이 없어요: " + actionId))
+        .stream()
+        .map(PhotoDigest::photoId)
+        .toList();
+  }
 
   /**
    * 수리 건 상세(06 4-6, S-12). 없는 ID, 그 호실 당사자가 아님, 상대가 볼 수 없는 기록(공유를 그만둔 뒤 등록, 03 불변식 18)은 모두 {@code
@@ -173,6 +211,12 @@ public class RepairQueryService {
     if (gate.side() != null && gate.rejection(ActionType.NOTE_CAUSE).isEmpty()) {
       actions.add(CAUSE_NOTES);
     }
+    // 사진 추가는 덧붙이기라 수리 진행과 따로다. 호실 단위 거절(거주 종료·정산 완료)과 공유를 그만둔 사람의 수리 건 제한(03 B)을 실제 요청과 같게 본다
+    if (gate.side() != null
+        && gate.rejection(ActionType.ADD_PHOTO).isEmpty()
+        && store.canAddPhotos(row, gate.side())) {
+      actions.add(PHOTOS);
+    }
     RoomAccess viewer = access.require(roomRecordId, memberId);
     List<RepairCaseDetail.Correction> corrections =
         correctionsOf(row, gate, memberId, sight, viewer);
@@ -201,12 +245,65 @@ public class RepairQueryService {
             partName,
             content.getTitle(),
             content.getDescription()),
-        new RepairCaseDetail.Defect(shown.defectAck(), rules.nextRerequestAt(shown)),
+        new RepairCaseDetail.Defect(
+            shown.defectAck(), rules.nextRerequestAt(shown), ackAt(shown, visible)),
         new RepairCaseDetail.Money(moneyAsSeen(row, sight, shown)),
         photoCards,
         causeNotesOf(row, gate, viewer),
+        progressNotesOf(row, gate, viewer),
+        closeRequestOf(row, sight, shown),
         corrections,
         List.copyOf(actions));
+  }
+
+  /**
+   * 종료 확인 요청 중 가장 최근 것({@code WaitQuery.latest(CLOSE_CONFIRM, 수리 건)}, 06 4-6, #339). {@code
+   * WaitQuery}는 보이는 범위를 보지 않아서 여기서 거른다: 연 측·연 시각이 보는 사람에게 보이지 않으면(공유를 그만둔 뒤 상대가 연 요청) 없는 것으로
+   * 본다({@link RepairSight#sees}). 그만둔 사람에게는 새 요청을 만들지 않으므로(03 1-4) 보통은 그대로 보인다.
+   *
+   * <p>공유를 그만둔 뒤({@code asOf})에는 상세 {@code status}와 같은 시점으로 맞춘다(불변식 18, #344 리뷰): 다시 계산한 상태가 종료 확인
+   * 대기인데 요청이 이미 닫혔으면(그 뒤 상대가 확인함 등) 그 시각에는 열려 있던 것이라 열린 모습으로 준다. 기한이 {@code asOf} 전이면 미확인, 아니면
+   * 기다림이고 닫힌 이유·시각은 비운다.
+   *
+   * <p>단, {@code asOf}나 그 전에 닫힌 요청({@code CLOSED}이고 {@code closedAt <= asOf})은 그 시각에도 닫혀 있었으므로 닫힌
+   * 이유·시각 그대로 준다. 공유 중단 때 {@code SHARING_STOPPED}로 닫힌 요청은 {@code closedAt == asOf}라 "공유 중단으로 닫힘"으로
+   * 보인다(03 B, #382). 답함·거둠은 닫힌 시각이 저장되지 않지만(05 {@code response_request}), 다시 계산한 상태가 종료 확인 대기면 그 답은
+   * 보는 사람에게 보이지 않는 행동, 곧 {@code asOf} 뒤의 상대 행동이라 열린 모습으로 되돌린다.
+   */
+  private RepairCaseDetail.CloseRequest closeRequestOf(
+      RepairCase row, RepairSight sight, RepairState shown) {
+    Instant asOf = sight.asOf();
+    return waits
+        .latest(RequestKind.CLOSE_CONFIRM, RequestTarget.of(TargetKind.REPAIR_CASE, row.getId()))
+        .filter(view -> sight.sees(view.requestedBySide(), view.openedAt()))
+        .map(view -> {
+          if (asOf != null
+              && shown.status() == RepairStatus.CLOSE_WAIT
+              && !view.status().isOpen()
+              && !closedBy(view, asOf)) {
+            boolean overdue = view.dueAt() != null && !view.dueAt().isAfter(asOf);
+            return new RepairCaseDetail.CloseRequest(
+                overdue ? RequestStatus.UNCONFIRMED : RequestStatus.WAITING,
+                view.openedAt(),
+                view.dueAt(),
+                overdue ? view.soloReason() : null,
+                null,
+                null);
+          }
+          return new RepairCaseDetail.CloseRequest(
+              view.status(),
+              view.openedAt(),
+              view.dueAt(),
+              view.soloReason(),
+              view.closedReason(),
+              view.closedAt());
+        })
+        .orElse(null);
+  }
+
+  /** 이 시각이나 그 전에 닫힌 요청인가({@code CLOSED}만 닫힌 시각이 있다, V1 CHECK). */
+  private static boolean closedBy(RequestView view, Instant at) {
+    return view.status() == RequestStatus.CLOSED && !view.closedAt().isAfter(at);
   }
 
   /**
@@ -386,6 +483,56 @@ public class RepairQueryService {
     return List.copyOf(result);
   }
 
+  /**
+   * 진행 상황(06 REP-6). 남긴 순서로 주고, 공유를 그만둔 뒤에는 그 시각까지의 진행 상황·응답과 보는 사람 자신의 것만 보인다(03 6-6 9번, 불변식 18,
+   * 원인 설명과 같은 기준). 응답 버튼({@code canRespond})은 실제 요청과 같은 판단이다: 호실 단위 거절은 {@code RoomGate.rejection},
+   * 응답 규칙은 {@code SituationTransitions.canRespond}(지금 답은 보이는 범위가 아니라 실제 기록으로 본다).
+   */
+  private List<RepairCaseDetail.ProgressNote> progressNotesOf(
+      RepairCase row, RoomGate gate, RoomAccess viewer) {
+    RepairSight visibility = store.sightFor(row, gate.side());
+    List<ProgressNote> visible =
+        progressNoteRows.findByRepairCaseIdOrderByCreatedAtAscIdAsc(row.getId()).stream()
+            .filter(note -> visibility.sees(note.getSide(), note.getCreatedAt()))
+            .toList();
+    if (visible.isEmpty()) {
+      return List.of();
+    }
+    List<PhotoTarget> targets =
+        visible.stream()
+            .<PhotoTarget>map(n -> new PhotoTarget.Ref(PhotoTargetType.PROGRESS_NOTE, n.getId()))
+            .toList();
+    Map<PhotoTarget, List<PhotoCard>> cards = photos.cards(viewer, targets);
+    boolean canAnswer =
+        gate.side() != null && gate.rejection(ActionType.RESPOND_SITUATION).isEmpty();
+    List<RepairCaseDetail.ProgressNote> result = new ArrayList<>();
+    for (ProgressNote note : visible) {
+      RepairCaseDetail.ProgressResponse response =
+          situationStore
+              .lastResponse(note.getId(), visibility)
+              .map(entry ->
+                  new RepairCaseDetail.ProgressResponse(
+                      AckState.valueOf(entry.payloadAs(AnswerPayload.class).answer().name()),
+                      entry.reason(),
+                      entry.createdAt()))
+              .orElse(null);
+      boolean canRespond =
+          canAnswer && situationRules.canRespond(situationStore.state(note), gate.side());
+      result.add(
+          new RepairCaseDetail.ProgressNote(
+              note.getId(),
+              note.getSide(),
+              note.getText(),
+              note.isAsksCheck(),
+              note.getCreatedAt(),
+              cards.getOrDefault(
+                  new PhotoTarget.Ref(PhotoTargetType.PROGRESS_NOTE, note.getId()), List.of()),
+              response,
+              canRespond));
+    }
+    return List.copyOf(result);
+  }
+
   private RepairCaseDetail.CauseNote causeNoteView(
       CauseNote note,
       RepairSight visibility,
@@ -437,6 +584,22 @@ public class RepairQueryService {
         .filter(entry -> sight.sees(entry.actorSide(), entry.createdAt()))
         .sorted(Comparator.comparingLong(ActionEntry::roomSeq))
         .toList();
+  }
+
+  /**
+   * 같이 확인한 시각(06 REP-7g "확인 뒤 추가"의 기준): 보이는 하자 응답 중 맞아요가 처음 남은 시각. 맞아요는 뒤집지 않으므로(03 A) 처음 것이 그때다.
+   * 보이는 하자 인정이 맞아요가 아니면 null이다.
+   */
+  private static Instant ackAt(RepairState shown, List<ActionEntry> visible) {
+    if (shown.defectAck() != AckState.ACK) {
+      return null;
+    }
+    return visible.stream()
+        .filter(entry -> entry.type() == ActionType.RESPOND_DEFECT)
+        .filter(entry -> entry.payloadAs(AnswerPayload.class).answer() == Answer.ACK)
+        .map(ActionEntry::createdAt)
+        .min(Comparator.naturalOrder())
+        .orElse(null);
   }
 
   /**

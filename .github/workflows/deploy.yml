@@ -1,0 +1,116 @@
+# 운영 배포(04 9-2, 런북 docs/runbooks/배포-자동화.md). PR에서는 돌지 않는다(PR 검증은 deploy-check.yml).
+#
+# 이미지 digest와 대상(component: back 백엔드 블루/그린 | front 화면 정적 파일)을 손으로 넣어 시작하고,
+# Environment production의 승인을 받은 뒤에만 AWS에 닿는다. 둘은 저장소·SSM 문서·서버 스크립트가 따로다(런북 배포-화면.md).
+#   1 preflight: main인지, digest 형식, Environment가 있고 승인자·배포 브랜치 규칙이 걸려 있는지(없으면 여기서 멈춤.
+#                없는 Environment를 job이 가리키면 GitHub가 보호 규칙 없이 만들어 버리기 때문)
+#   2 deploy   : 승인 → OIDC(장기 키 없음) → 이미지 확인(digest·linux/amd64) → homestamp-deploy(back)·homestamp-deploy-front(front) 문서 → 결과 코드
+# 동시에 하나만(concurrency, 진행 중인 배포는 취소하지 않음). 서버도 flock으로 한 번 더 막는다.
+# 워크플로를 취소해도 서버의 deploy.sh는 끝까지 돌아 정해진 상태로 끝난다(취소 권한을 주지 않음).
+name: deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      component:
+        description: "배포할 것 (back: 백엔드 앱, front: 화면 정적 파일)"
+        required: true
+        type: choice
+        options:
+          - back
+          - front
+        default: back
+      digest:
+        description: "배포할 이미지 digest (sha256:<64자>, 고른 component의 저장소)"
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    # Environment·배포 브랜치 규칙 읽기만 한다. 두 API는 "Actions" 읽기 권한이 필요하다(GitHub 권한 표).
+    # checkout은 main의 preflight.sh를 읽으려고만 한다(contents: read, 자격 증명을 남기지 않음)
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: 입력과 Environment 보호 규칙 확인(승인자·자기 승인 금지·Admin 우회 금지·배포 브랜치 main)
+        env:
+          DIGEST: ${{ inputs.digest }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: bash .github/scripts/preflight.sh
+
+  deploy:
+    needs: preflight
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    # 결과 기다림 back 2700초(문서 실행 2400 + 전달 60 + 여유)·front 900초(문서 600 + 전달 60 + 여유) + 앞 단계. OIDC 세션(3600초) 안에서 끝난다
+    timeout-minutes: 50
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # component마다 저장소·문서·기다림을 고른다. 두 저장소가 같으면 멈춘다(서로의 이미지를 섞지 않게)
+      - name: 배포 설정 확인
+        id: cfg
+        env:
+          COMPONENT: ${{ inputs.component }}
+          BACK_REPOSITORY: ${{ vars.IMAGE_REPOSITORY }}
+          FRONT_REPOSITORY: ${{ vars.FRONT_IMAGE_REPOSITORY }}
+          INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
+        run: |
+          case "$COMPONENT" in
+            back) repo="$BACK_REPOSITORY"; var=IMAGE_REPOSITORY; doc=homestamp-deploy; limit=2700 ;;
+            front) repo="$FRONT_REPOSITORY"; var=FRONT_IMAGE_REPOSITORY; doc=homestamp-deploy-front; limit=900 ;;
+            *) echo "::error::component는 back 또는 front입니다"; exit 1 ;;
+          esac
+          [[ "$repo" =~ ^ghcr\.io/[a-z0-9._/-]+$ ]] || { echo "::error::변수 ${var}가 없거나 형식이 아닙니다"; exit 1; }
+          [[ -z "$BACK_REPOSITORY" || -z "$FRONT_REPOSITORY" || "$BACK_REPOSITORY" != "$FRONT_REPOSITORY" ]] || { echo "::error::IMAGE_REPOSITORY와 FRONT_IMAGE_REPOSITORY가 같습니다"; exit 1; }
+          [[ "$INSTANCE_ID" =~ ^i-[0-9a-f]{8,17}$ ]] || { echo "::error::Environment 변수 EC2_INSTANCE_ID가 없거나 형식이 아닙니다"; exit 1; }
+          { echo "repository=$repo"; echo "document=$doc"; echo "poll_limit=$limit"; } >>"$GITHUB_OUTPUT"
+
+      # 공개 GHCR 패키지라 자격 증명 없이 읽는다(04 9-3). digest 형식만이 아니라 발행 절차의 이미지인지:
+      # linux/amd64, 커밋 라벨, 발행 태그 sha-<커밋>이 이 digest, 그 커밋이 main에 있음(서명 검증은 아님)
+      - name: 이미지 확인(출처)
+        env:
+          IMAGE_REPOSITORY: ${{ steps.cfg.outputs.repository }}
+          DIGEST: ${{ inputs.digest }}
+          OWNER: ${{ github.repository_owner }}
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/check-image.sh
+
+      - name: AWS 임시 자격 증명(OIDC)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/homestamp-deploy
+          role-session-name: homestamp-deploy-${{ github.run_id }}
+          aws-region: ap-northeast-2
+          mask-aws-account-id: true
+          role-duration-seconds: 3600
+
+      - name: 배포(SSM → deploy.sh 또는 deploy-front.sh)
+        env:
+          COMPONENT: ${{ inputs.component }}
+          DIGEST: ${{ inputs.digest }}
+          INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
+          DOCUMENT_NAME: ${{ steps.cfg.outputs.document }}
+          POLL_LIMIT: ${{ steps.cfg.outputs.poll_limit }}
+          AWS_REGION: ap-northeast-2
+        run: .github/scripts/ssm-deploy.sh

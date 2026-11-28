@@ -2,6 +2,7 @@ package com.chilsuitjo.back.repair.controller;
 
 import static com.chilsuitjo.back.global.security.SecurityTestSupport.loginAs;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -287,6 +288,79 @@ class RepairSituationApiTest {
   // ---- 준비물 ----
 
   /** 세입자가 등록하고 집주인이 [맞아요]로 답한 수리 건. */
+  // ---- 수리 건 상세의 진행 상황(06 4-6 progressNotes, #367) ----
+
+  @Test
+  void 상세에_진행_상황이_남긴_순서로_보이고_상대만_상황_변화에_답할_수_있다() throws Exception {
+    UUID caseId = acked();
+    note(caseId, landlord, "{\"text\":\"내일 업체가 와요\"}").andExpect(status().isCreated());
+    UUID asked = createdId(asksCheck(caseId, tenant).andExpect(status().isCreated()));
+
+    detail(caseId, landlord)
+        .andExpect(jsonPath("$.progressNotes.length()").value(2))
+        .andExpect(jsonPath("$.progressNotes[0].side").value("LANDLORD"))
+        .andExpect(jsonPath("$.progressNotes[0].text").value("내일 업체가 와요"))
+        .andExpect(jsonPath("$.progressNotes[0].asksCheck").value(false))
+        .andExpect(jsonPath("$.progressNotes[0].canRespond").value(false))
+        .andExpect(jsonPath("$.progressNotes[0].photos").isArray())
+        .andExpect(jsonPath("$.progressNotes[1].id").value(asked.toString()))
+        .andExpect(jsonPath("$.progressNotes[1].asksCheck").value(true))
+        .andExpect(jsonPath("$.progressNotes[1].response").doesNotExist())
+        .andExpect(jsonPath("$.progressNotes[1].canRespond").value(true));
+    // 남긴 측은 답할 수 없다
+    detail(caseId, tenant).andExpect(jsonPath("$.progressNotes[1].canRespond").value(false));
+  }
+
+  @Test
+  void 보류로_답하면_답과_사유가_보이고_맞아요로_바꾸면_더_답할_수_없다() throws Exception {
+    UUID noteId = askedNote();
+    UUID caseId = caseOf(noteId);
+    respond(noteId, landlord, "{\"answer\":\"NEED_MORE\",\"reason\":\"사진이 더 필요해요\"}")
+        .andExpect(status().isOk());
+
+    detail(caseId, landlord)
+        .andExpect(jsonPath("$.progressNotes[0].response.answer").value("NEED_MORE"))
+        .andExpect(jsonPath("$.progressNotes[0].response.reason").value("사진이 더 필요해요"))
+        .andExpect(jsonPath("$.progressNotes[0].response.at").exists())
+        .andExpect(jsonPath("$.progressNotes[0].canRespond").value(true));
+
+    respond(noteId, landlord, "{\"answer\":\"ACK\"}").andExpect(status().isOk());
+    detail(caseId, tenant)
+        .andExpect(jsonPath("$.progressNotes[0].response.answer").value("ACK"))
+        .andExpect(jsonPath("$.progressNotes[0].response.reason").doesNotExist());
+    detail(caseId, landlord).andExpect(jsonPath("$.progressNotes[0].canRespond").value(false));
+  }
+
+  @Test
+  void 공유를_그만둔_뒤에는_그_시각까지와_내_진행_상황만_보인다() throws Exception {
+    // 공유를 그만둔 사람에게는 그 시각까지 있던 부위만 보인다. 행동 없이 복사되는 기본 부위로 둔다(PartVisibility)
+    jdbc.update(
+        "UPDATE state.room_part SET template_id ="
+            + " (SELECT id FROM state.part_template WHERE zone = '방' AND name = '천장') WHERE id = ?",
+        part);
+    UUID caseId = acked();
+    UUID before = createdId(note(caseId, landlord, "{\"text\":\"그만두기 전\"}"));
+    jdbc.update(
+        "UPDATE state.party SET status = 'SHARING_STOPPED', sharing_stopped_at ="
+            + " (SELECT created_at FROM record.progress_note WHERE id = ?) + interval '1 millisecond'"
+            + " WHERE room_record_id = ? AND side = 'TENANT'",
+        before,
+        room);
+    note(caseId, landlord, "{\"text\":\"그만둔 뒤\"}").andExpect(status().isCreated());
+    note(caseId, tenant, "{\"text\":\"내가 남긴 것\"}").andExpect(status().isCreated());
+
+    detail(caseId, tenant)
+        .andExpect(jsonPath("$.progressNotes.length()").value(2))
+        .andExpect(jsonPath("$.progressNotes[0].text").value("그만두기 전"))
+        .andExpect(jsonPath("$.progressNotes[1].text").value("내가 남긴 것"));
+    // 집주인은 공유를 그만둔 상대가 등록한 수리 건을 볼 수 없어(불변식 18) 상세가 없다
+  }
+
+  private ResultActions detail(UUID caseId, UUID memberId) throws Exception {
+    return mvc.perform(get("/api/repair-cases/{id}", caseId).with(loginAs(memberId)))
+        .andExpect(status().isOk());
+  }
+
   private UUID acked() throws Exception {
     UUID caseId = register();
     act(caseId, landlord, "respond", "{\"answer\":\"ACK\",\"seenVersionNo\":1}")

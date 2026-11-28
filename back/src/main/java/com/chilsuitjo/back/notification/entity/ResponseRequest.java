@@ -15,6 +15,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
@@ -30,7 +31,10 @@ import org.hibernate.annotations.UuidGenerator;
  * <p>대상은 V1의 대상 칸 여덟 개 중 하나이거나, 모두 비어 있으면 호실 기록 자체다(예: 거주 종료 요청). 요청 종류와 대상 종류의 짝은 여기서 검사하지
  * 않는다(정해지지 않은 규칙이 있음. 예: 정산 끝내기의 대상이 호실 기록인지 정산인지, #117).
  *
- * <p>상태를 바꾸는 메서드는 아직 없다. 답함·닫힘·미확인 전이는 실제 {@code WaitService}에서 더한다.
+ * <p>상태는 열린 요청(기다림·미확인)에서만 바뀐다: 답함({@link #answer(PartySide)})·거둠({@link
+ * #withdraw(PartySide)})·닫힘({@link #close})·제안 바꾸기로 다시 기다림({@link #rewait}). 끝난 요청(답함·거둠·닫힘)은 다시 열지
+ * 않는다(03 1-4 "닫힌 요청을 자동으로 되살리지 않는다"). 미확인으로 바꾸기·기한 정하기는 기다림 타이머(d3)와 전달 확인 연동에서 더한다. 어떤 요청을
+ * 바꿀지(대상·종류·방향)는 {@code WaitService}가 고른다.
  */
 @Entity
 @Table(schema = "state", name = "response_request")
@@ -125,6 +129,127 @@ public class ResponseRequest {
     this.createdAt = Objects.requireNonNull(createdAt, "createdAt");
     this.status = RequestStatus.WAITING;
     setTarget(Objects.requireNonNull(target, "target"));
+  }
+
+  /** 열린 요청인가(기다림·미확인). */
+  public boolean isOpen() {
+    return status.isOpen();
+  }
+
+  /**
+   * 상대가 답했다. 요청한 측이 부르면 답이 아니라 거절한다. 기한 칸은 그대로 둔다(작업자는 {@code WAITING}만 보므로 재통지·미확인이 다시 걸리지 않음).
+   * 미확인 뒤 늦은 답이어도 {@code solo_reason}은 지우지 않는다(혼자 진행이 열렸던 사실. 혼자 진행 판단은 상태를 먼저 본다).
+   *
+   * <p>답이 없는 요청·끝난 요청에 "아무것도 하지 않음"({@code WaitService#answered})은 고르는 쪽({@code WaitService})이 지킨다.
+   * 여기 온 요청은 열려 있어야 한다.
+   */
+  public void answer(PartySide answeredBySide) {
+    requireOpen();
+    if (answeredBySide == requestedBySide) {
+      throw new IllegalStateException("요청한 측은 자기 요청에 답하지 않아요");
+    }
+    status = RequestStatus.ANSWERED;
+  }
+
+  /** 요청한 측이 거뒀다({@code WITHDRAWN}, decisions 2026-11-26). 요청한 측만 거둘 수 있다. */
+  public void withdraw(PartySide withdrawnBySide) {
+    requireOpen();
+    if (withdrawnBySide != requestedBySide) {
+      throw new IllegalStateException("요청한 측만 거둘 수 있어요");
+    }
+    status = RequestStatus.WITHDRAWN;
+  }
+
+  /** 답 없이 닫는다. 닫힌 이유와 시각은 함께 채운다(V1 CHECK). 시각은 원인 행동의 시각이다. */
+  public void close(ClosedReason reason, Instant at) {
+    requireOpen();
+    status = RequestStatus.CLOSED;
+    closedReason = Objects.requireNonNull(reason, "reason");
+    closedAt = Objects.requireNonNull(at, "at");
+  }
+
+  /**
+   * 통지가 상대에게 닿았다(문자 전달됨·링크 열람·알림 열람, 03 1-1 "타이머 시작점"). 첫 증거면 기다림을 시작해 {@code first_notified_at}과
+   * {@code renotify_due_at}(= 그 시각 + {@code wait.renotify}, 05 4장 "전달 결과 조회")을 적는다.
+   *
+   * <ul>
+   *   <li>끝난 요청(답함·거둠·닫힘)은 바꾸지 않는다. 늦게 온 전달은 버린다
+   *   <li>이미 시작했으면 기한은 그대로다. 같은 증거가 다시 오거나 다른 채널에서 뒤에 와도 기한을 늘리지 않는다
+   *   <li>처리 순서가 뒤바뀌어 더 이른 증거가 늦게 오면 {@code first_notified_at}만 이른 쪽으로 고친다(정의가 min). 이미 적은 기한은 당기지
+   *       않는다: 저장한 기한은 바꾸지 않고(06 0-1), 받는 쪽에 불리하게 앞당기지 않는다
+   * </ul>
+   *
+   * @return 기다림을 이번에 시작했으면 true
+   */
+  public boolean startWaiting(Instant notifiedAt, Duration renotifyAfter) {
+    Objects.requireNonNull(notifiedAt, "notifiedAt");
+    Objects.requireNonNull(renotifyAfter, "renotifyAfter");
+    if (!isOpen()) {
+      return false;
+    }
+    if (firstNotifiedAt != null) {
+      if (notifiedAt.isBefore(firstNotifiedAt)) {
+        firstNotifiedAt = notifiedAt;
+      }
+      return false;
+    }
+    firstNotifiedAt = notifiedAt;
+    renotifyDueAt = notifiedAt.plus(renotifyAfter);
+    return true;
+  }
+
+  /**
+   * 같은 요청에 더해 기한을 "마지막으로 더한 시각부터 다시 센다"(03 1-4 "기한", 03 E 제안 바꾸기). 혼자 진행이 열리는 종류는 부르지 않는다(기한이 보낸 뒤
+   * 고정).
+   *
+   * <ul>
+   *   <li>기다림 시작 전(첫 통지가 아직 닿지 않음): 바꿀 기한이 없다. 시작은 그 통지가 닿은 시각부터 센다(더하기는 문자 없이 묶기만 해서 기준은 받은 통지다).
+   *       작업자가 전달을 확인한 뒤 적기 전에 더하면 기한이 더한 시각 + 48시간보다 조금 이를 수 있다
+   *   <li>재통지 전: {@code renotify_due_at}을 이 시각 + {@code wait.renotify}로 다시 정한다
+   *   <li>재통지 뒤({@code unconfirmed_due_at}이 있음): 재통지와 미확인 타이머(d3)가 아직 없어 "미확인 72시간을 다시 정함"을 어떻게
+   *       저장할지 정하지 않았다. 조용히 옛 기한을 남기지 않고 {@code IllegalStateException}
+   * </ul>
+   */
+  public void recount(Instant at, Duration renotifyAfter) {
+    Objects.requireNonNull(at, "at");
+    Objects.requireNonNull(renotifyAfter, "renotifyAfter");
+    requireOpen();
+    if (unconfirmedDueAt != null) {
+      throw new IllegalStateException("재통지 뒤 기한 다시 세기는 기다림 타이머(d3)에서 정해요");
+    }
+    if (firstNotifiedAt == null) {
+      return;
+    }
+    renotifyDueAt = at.plus(renotifyAfter);
+  }
+
+  /**
+   * 같은 요청이 다시 기다림이 된다. 두 경우만이다: 제안을 낸 쪽이 자기 안을 바꿨다(05 {@code proposal} ②), 미확인이 된 고친 내용 확인에 같은 기록을
+   * 또 고쳤다(03 1-4 "미확인 뒤 다시 고침", decisions 2026-11-27, #104). 요청 ID·만든 시각·첫 통지 시각은 그대로이고, 미확인 때 열린
+   * 혼자 진행 이유는 지운다. 기한은 그 시각부터 다시 센다({@link #recount}, 03 1-4 "기한"·03 E). 타이머가 만든 미확인은 {@code
+   * unconfirmed_due_at}이 있어 {@link #recount}가 거절한다(재통지 뒤 다시 세기는 d3에서 정함).
+   */
+  public void rewait(Instant at, Duration renotifyAfter) {
+    requireOpen();
+    boolean correctionAgain =
+        kind == RequestKind.CORRECTION_CONFIRM && status == RequestStatus.UNCONFIRMED;
+    if (kind != RequestKind.PROPOSAL && !correctionAgain) {
+      throw new IllegalStateException("다시 기다림은 제안 요청과 미확인 고친 내용 확인만이에요: " + kind);
+    }
+    recount(at, renotifyAfter);
+    status = RequestStatus.WAITING;
+    soloReason = null;
+  }
+
+  /** 기한이 이미 정해졌나(재통지·미확인 중 하나라도). */
+  public boolean hasDeadline() {
+    return renotifyDueAt != null || unconfirmedDueAt != null;
+  }
+
+  private void requireOpen() {
+    if (!isOpen()) {
+      throw new IllegalStateException("끝난 요청은 바꾸지 않아요: " + status);
+    }
   }
 
   /** 저장된 대상 칸을 다시 {@link RequestTarget}으로 돌려준다. 칸이 모두 비어 있으면 호실 기록 자체다. */

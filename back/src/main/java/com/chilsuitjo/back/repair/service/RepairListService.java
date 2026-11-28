@@ -13,10 +13,19 @@ import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
+import com.chilsuitjo.back.notification.dto.RequestView;
+import com.chilsuitjo.back.notification.rule.RequestKind;
+import com.chilsuitjo.back.notification.service.WaitQuery;
+import com.chilsuitjo.back.photo.dto.PhotoCard;
+import com.chilsuitjo.back.photo.dto.PhotoTarget;
+import com.chilsuitjo.back.photo.rule.PhotoTargetType;
+import com.chilsuitjo.back.photo.service.PhotoService;
 import com.chilsuitjo.back.proposal.dto.AgendaRef;
 import com.chilsuitjo.back.proposal.rule.AgendaKind;
 import com.chilsuitjo.back.proposal.service.ProposalService;
 import com.chilsuitjo.back.repair.dto.RepairCaseList;
+import com.chilsuitjo.back.repair.dto.RepairCaseSummary;
+import com.chilsuitjo.back.repair.dto.StaleRepairCase;
 import com.chilsuitjo.back.repair.entity.CauseNote;
 import com.chilsuitjo.back.repair.entity.ProgressNote;
 import com.chilsuitjo.back.repair.entity.RepairCase;
@@ -30,9 +39,13 @@ import com.chilsuitjo.back.repair.repository.RepairStateStore;
 import com.chilsuitjo.back.repair.rule.RepairSight;
 import com.chilsuitjo.back.repair.rule.RepairState;
 import com.chilsuitjo.back.repair.rule.RepairTransitions;
+import com.chilsuitjo.back.repair.rule.StaleRule;
+import com.chilsuitjo.back.room.service.RoomAccessService;
 import com.chilsuitjo.back.room.service.RoomQueryService;
+import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -72,6 +85,11 @@ public class RepairListService {
   private final ActionReader actionReader;
   private final CorrectionQueryService corrections;
   private final ProposalService proposalService;
+  private final PhotoService photos;
+  private final RoomAccessService access;
+  private final WaitQuery waits;
+  private final StaleRule staleRule;
+  private final Clock clock;
 
   /**
    * 이 호실의 수리 건, 새것부터 {@code size}개. 남의 호실은 {@code NOT_FOUND}(ROOM-2a), 틀린 커서·크기는 {@code
@@ -106,12 +124,116 @@ public class RepairListService {
             : afterCursor(roomRecordId, viewer, hiddenAfter, cursor, limit);
     boolean more = page.size() > size;
     List<RepairCase> shown = more ? page.subList(0, size) : page;
+    List<RepairCaseList.Item> items =
+        lines(roomRecordId, memberId, sight, shown).stream().map(Line::item).toList();
+    return new RepairCaseList(
+        asOf, viewer, items, more ? shown.getLast().getId().toString() : null);
+  }
+
+  /**
+   * 이 회원에게 보이는 호실의 수리 건 한 줄씩, 등록 순(퇴거 점검 나란히 보기 06 INSP-3b). 다른 도메인이 부르는 창구다(09 3장 "inspection →
+   * repair"). 보이는 범위·보이는 판·상태·부위 이름은 {@link #list}와 같은 계산이라 상세와 같다(공유 중단 뒤 상대가 등록한 건은 빠짐, 불변식 18).
+   * 사진은 상세와 같은 사진 창구로 한 번에 읽는다({@code PhotoService.cards}). 호실 당사자가 아니면 {@code NOT_FOUND}다.
+   */
+  @Transactional(readOnly = true)
+  public List<RepairCaseSummary> summaries(UUID roomRecordId, UUID memberId) {
+    RoomGate gate = gates.read(roomRecordId, Actor.member(memberId));
+    PartySide viewer = gate.side();
+    RepairSight sight = store.sightFor(roomRecordId, viewer);
+    Instant hiddenAfter =
+        store.hiddenAfter(roomRecordId, counterpartOf(viewer)).orElse(NOTHING_HIDDEN);
+    List<RepairCase> shown =
+        cases.findVisible(roomRecordId, viewer, hiddenAfter, Limit.unlimited()).reversed();
+    List<Line> lines = lines(roomRecordId, memberId, sight, shown);
+    if (lines.isEmpty()) {
+      return List.of();
+    }
+    Map<PhotoTarget, List<PhotoCard>> cards =
+        photos.cards(
+            access.require(roomRecordId, memberId),
+            lines.stream()
+                .<PhotoTarget>map(
+                    line -> new PhotoTarget.Ref(PhotoTargetType.REPAIR_CASE, line.item().id()))
+                .toList());
+    return lines.stream()
+        .map(line -> {
+          RepairCaseList.Item item = line.item();
+          return new RepairCaseSummary(
+              item.id(),
+              line.roomPartId(),
+              item.content().partName(),
+              item.content().title(),
+              item.status(),
+              item.defect().ack(),
+              item.createdAt(),
+              cards.getOrDefault(
+                  new PhotoTarget.Ref(PhotoTargetType.REPAIR_CASE, item.id()), List.of()));
+        })
+        .toList();
+  }
+
+  /**
+   * 이 호실에서 오래 멈춘 수리 건(홈 "오래 멈춘 건", 06 REP-6a·6e, #370 B-2). 다른 도메인이 부르는 창구다(홈, D). 마지막 당사자 행동이 오래된
+   * 것부터, 같으면 ID 순이다. 호실 당사자가 아니면 {@code NOT_FOUND}다.
+   *
+   * <ul>
+   *   <li>기준은 {@link StaleRule}: 처리 중, 또는 시작 전이면서 하자가 보충 요청됨인 건 가운데 {@code lastActionAt}에서 {@code
+   *       repair.stale-after}가 지난 건
+   *   <li>보이는 범위·판·부위 이름·{@code lastActionAt}은 {@link #list}와 같은 계산이다(상대가 탈퇴했으면 탈퇴자가 중단 동안 남긴 행동은
+   *       빠짐)
+   *   <li>공유를 그만둔 뒤(어느 쪽이든, 제한이 살아 있을 때, {@code asOf})에는 빈 목록이다. 진행 상황 묻기가 공유 중단 동안 허용되지 않아 홈의 [진행
+   *       상황 묻기]를 누를 수 없고, {@code lastActionAt}이 중단 시각에 묶여 날수만 늘어나기 때문이다
+   *   <li>호실 단계(거주 중만)는 보지 않는다. 부르는 쪽(홈)이 거주 중인 호실만 부른다
+   * </ul>
+   */
+  @Transactional(readOnly = true)
+  public List<StaleRepairCase> stale(UUID roomRecordId, UUID memberId) {
+    RoomGate gate = gates.read(roomRecordId, Actor.member(memberId));
+    PartySide viewer = gate.side();
+    RepairSight sight = store.sightFor(roomRecordId, viewer);
+    if (sight.asOf() != null) {
+      return List.of();
+    }
+    Instant hiddenAfter =
+        store.hiddenAfter(roomRecordId, counterpartOf(viewer)).orElse(NOTHING_HIDDEN);
+    // 고정되지 않았으니 줄의 상태는 상태 행 그대로다. 줄을 만들기 전에 상태로 먼저 걸러 행동을 덜 읽는다
+    List<RepairCase> candidates =
+        cases.findVisible(roomRecordId, viewer, hiddenAfter, Limit.unlimited()).stream()
+            .filter(row -> StaleRule.reasonOf(row.getStatus(), row.getDefectAck()).isPresent())
+            .toList();
+    Instant now = clock.instant();
+    return lines(roomRecordId, memberId, sight, candidates).stream()
+        .map(Line::item)
+        .filter(item -> staleRule.isStale(item.lastActionAt(), now))
+        .map(item ->
+            new StaleRepairCase(
+                item.id(),
+                item.content().no(),
+                item.content().title(),
+                item.content().partName(),
+                StaleRule.reasonOf(item.status(), item.defect().ack()).orElseThrow(),
+                item.lastActionAt()))
+        .sorted(
+            Comparator.comparing(StaleRepairCase::lastActionAt)
+                .thenComparing(StaleRepairCase::repairCaseId))
+        .toList();
+  }
+
+  /** 목록 한 줄과 그 줄의 보이는 판 부위. 부위 ID는 목록 응답에 없어 나란히 보기에만 쓴다. */
+  private record Line(RepairCaseList.Item item, UUID roomPartId) {}
+
+  /** 보이는 수리 건들의 줄({@link #list}와 {@link #summaries}가 같이 쓴다). 행동·판은 이 건들 것만 한 번에 읽는다. */
+  private List<Line> lines(
+      UUID roomRecordId, UUID memberId, RepairSight sight, List<RepairCase> shown) {
     if (shown.isEmpty()) {
-      return new RepairCaseList(asOf, viewer, List.of(), null);
+      return List.of();
     }
 
-    Map<UUID, List<ActionEntry>> historyByCase =
-        historyByCase(roomRecordId, shown.stream().map(RepairCase::getId).toList());
+    List<UUID> caseIds = shown.stream().map(RepairCase::getId).toList();
+    List<ProgressNote> notesOfPage = progressNotes.findByRepairCaseIdIn(caseIds);
+    Map<UUID, List<ActionEntry>> historyByCase = historyByCase(roomRecordId, caseIds, notesOfPage);
+    Map<UUID, List<RepairCaseList.Waiting>> waitingByCase =
+        sight.asOf() == null ? waitingByCase(roomRecordId, caseIds, notesOfPage) : Map.of();
     Map<UUID, Map<Integer, RepairContent>> contentsByCase = new HashMap<>();
     for (RepairContent content :
         contents.findByRepairCaseIdIn(shown.stream().map(RepairCase::getId).toList())) {
@@ -121,25 +243,33 @@ public class RepairListService {
     }
     Map<UUID, String> partNames = new HashMap<>();
 
-    List<RepairCaseList.Item> items = new ArrayList<>();
+    List<Line> lines = new ArrayList<>();
     for (RepairCase row : shown) {
       List<ActionEntry> visible =
           historyByCase.getOrDefault(row.getId(), List.of()).stream()
               .filter(entry -> sight.sees(entry.actorSide(), entry.createdAt()))
               .toList();
-      items.add(item(row, visible, sight, memberId, contentsByCase.get(row.getId()), partNames));
+      lines.add(
+          line(
+              row,
+              visible,
+              sight,
+              memberId,
+              contentsByCase.get(row.getId()),
+              partNames,
+              waitingByCase.getOrDefault(row.getId(), List.of())));
     }
-    return new RepairCaseList(
-        asOf, viewer, List.copyOf(items), more ? shown.getLast().getId().toString() : null);
+    return List.copyOf(lines);
   }
 
-  private RepairCaseList.Item item(
+  private Line line(
       RepairCase row,
       List<ActionEntry> visible,
       RepairSight sight,
       UUID memberId,
       Map<Integer, RepairContent> contentsOfCase,
-      Map<UUID, String> partNames) {
+      Map<UUID, String> partNames,
+      List<RepairCaseList.Waiting> waiting) {
     List<ActionEntry> caseActions =
         visible.stream().filter(entry -> isRepairCaseTarget(entry, row.getId())).toList();
     // 고정되지 않았으면 상세처럼 상태 행이 원본이고, 고정됐으면 보이는 행동으로 다시 계산한다.
@@ -169,34 +299,84 @@ public class RepairListService {
             .map(ActionEntry::createdAt)
             .max(Instant::compareTo)
             .orElse(row.getCreatedAt());
-    return new RepairCaseList.Item(
-        row.getId(),
-        row.getCreatedBySide(),
-        row.getCreatedAt(),
-        new RepairCaseList.Content(content.getNo(), partName, content.getTitle()),
-        replayed == null ? row.getStatus() : replayed.status(),
-        lastActionAt,
-        replayed == null
-            ? RepairStateStore.closeRequestedBy(row, caseActions)
-            : replayed.closeRequestedBy(),
-        replayed == null ? row.getClosedBy() : replayed.closedBy(),
-        new RepairCaseList.Defect(replayed == null ? row.getDefectAck() : replayed.defectAck()),
-        new RepairCaseList.Money(
+    RepairCaseList.Item item =
+        new RepairCaseList.Item(
+            row.getId(),
+            row.getCreatedBySide(),
+            row.getCreatedAt(),
+            new RepairCaseList.Content(content.getNo(), partName, content.getTitle()),
+            replayed == null ? row.getStatus() : replayed.status(),
+            lastActionAt,
             replayed == null
-                ? row.getMoneyStatus()
-                : RepairAgendaHeadStore.toMoneyStatus(
-                    proposalService.statusAsSeen(
-                        row.getRoomRecordId(),
-                        new AgendaRef(AgendaKind.REPAIR_BURDEN, row.getId()),
-                        sight::sees))),
-        List.of());
+                ? RepairStateStore.closeRequestedBy(row, caseActions)
+                : replayed.closeRequestedBy(),
+            replayed == null ? row.getClosedBy() : replayed.closedBy(),
+            new RepairCaseList.Defect(replayed == null ? row.getDefectAck() : replayed.defectAck()),
+            new RepairCaseList.Money(
+                replayed == null
+                    ? row.getMoneyStatus()
+                    : RepairAgendaHeadStore.toMoneyStatus(
+                        proposalService.statusAsSeen(
+                            row.getRoomRecordId(),
+                            new AgendaRef(AgendaKind.REPAIR_BURDEN, row.getId()),
+                            sight::sees))),
+            waiting);
+    return new Line(item, content.getRoomPartId());
+  }
+
+  /**
+   * 이 쪽 수리 건마다 열린 응답 요청(06 4-6 {@code waiting}). {@code WaitQuery.awaiting}은 "이 측이 답할 것"만 주므로 두 측을
+   * 모두 불러 "내 차례"와 "○○ 님 확인 기다림"을 함께 담는다. 호실 단위라 종류·대상이 섞여 나와서, 대상이 그 수리 건이거나 그 건의 진행 상황인 것만 고르고 지불이
+   * 대상인 금액 확인({@code AMOUNT_CONFIRM})은 뺀다(돈 쪽은 {@code money.status}·상세·홈에서). 순서는 연 시각, 같으면 종류다.
+   *
+   * <p>공유를 그만둔 뒤({@code asOf})에는 부르지 않고 빈 목록이다(#339): 공유 중단으로 걸려 있던 일반 확인 요청은 닫히고 그만둔 사람에게는 새 요청을
+   * 만들지 않으며(03 1-4), 그 시각에 열려 있던 요청을 보여 주면 지금 누를 수 없는 버튼과 어긋난다.
+   */
+  private Map<UUID, List<RepairCaseList.Waiting>> waitingByCase(
+      UUID roomRecordId, List<UUID> caseIds, List<ProgressNote> notesOfPage) {
+    Set<UUID> pageCases = new HashSet<>(caseIds);
+    Map<UUID, UUID> caseOfProgressNote = new HashMap<>();
+    for (ProgressNote note : notesOfPage) {
+      caseOfProgressNote.put(note.getId(), note.getRepairCaseId());
+    }
+    List<RequestView> open = new ArrayList<>();
+    for (PartySide side : PartySide.values()) {
+      open.addAll(waits.awaiting(roomRecordId, side));
+    }
+    open.sort(
+        Comparator.comparing(RequestView::openedAt).thenComparing(view -> view.kind().name()));
+    Map<UUID, List<RepairCaseList.Waiting>> byCase = new HashMap<>();
+    for (RequestView view : open) {
+      if (view.kind() == RequestKind.AMOUNT_CONFIRM) {
+        continue;
+      }
+      UUID caseId =
+          switch (view.target().kind()) {
+            case REPAIR_CASE -> pageCases.contains(view.target().id()) ? view.target().id() : null;
+            case PROGRESS_NOTE -> caseOfProgressNote.get(view.target().id());
+            default -> null;
+          };
+      if (caseId != null) {
+        byCase
+            .computeIfAbsent(caseId, id -> new ArrayList<>())
+            .add(
+                new RepairCaseList.Waiting(
+                    view.kind(),
+                    view.answeringSide(),
+                    view.status(),
+                    view.dueAt(),
+                    view.soloReason()));
+      }
+    }
+    return byCase;
   }
 
   /**
    * 호실 행동을 수리 건마다 나눈다({@code room_seq} 순 그대로). 이 건의 행동은 수리 건이 대상인 행동과, 그 건의 진행 상황·원인 설명·고친 내용이 대상인
    * 행동이다({@code lastActionAt}, 03 G "멈춘 기간", decisions 2026-11-26). 수리비(제안·지불)는 돈 쪽 행동이라 넣지 않는다.
    */
-  private Map<UUID, List<ActionEntry>> historyByCase(UUID roomRecordId, List<UUID> caseIds) {
+  private Map<UUID, List<ActionEntry>> historyByCase(
+      UUID roomRecordId, List<UUID> caseIds, List<ProgressNote> notesOfPage) {
     Set<UUID> pageCases = new HashSet<>(caseIds);
     List<ActionTarget> targets = new ArrayList<>();
     Map<UUID, UUID> caseOfNote = new HashMap<>();
@@ -216,7 +396,7 @@ public class RepairListService {
       caseOfNote.put(note.getId(), note.getRepairCaseId());
       targets.add(ActionTarget.of(TargetKind.CAUSE_NOTE, note.getId()));
     }
-    for (ProgressNote note : progressNotes.findByRepairCaseIdIn(caseIds)) {
+    for (ProgressNote note : notesOfPage) {
       caseOfNote.put(note.getId(), note.getRepairCaseId());
       targets.add(ActionTarget.of(TargetKind.PROGRESS_NOTE, note.getId()));
     }

@@ -21,15 +21,15 @@ import org.springframework.stereotype.Component;
  *
  * <p>정산 완료·합류 전 기록·내 공유 중단은 pipeline이 먼저 막는다(09 3-1 순서 3).
  *
- * <p>지금은 입주·퇴거 점검 시작(INSP-1a·2·3)과 확인 요청(INSP-1f)만 있다. 잠금(INSP-1b~e)과 퇴거 점검 마침({@code
- * FINISH_INSPECTION})은 그 기능을 만들 때 더하고, 그 전까지 다른 행동은 {@code INVALID_STATE}다.
+ * <p>지금은 입주·퇴거 점검 시작(INSP-1a·2·3), 확인 요청(INSP-1f), 서버 잠금({@code LOCK}, INSP-1b·1c·1d)만 있다. 퇴거 점검
+ * 마침({@code FINISH_INSPECTION})은 그 기능을 만들 때 더하고, 그 전까지 다른 행동은 {@code INVALID_STATE}다.
  */
 @Component
 public class InspectionTransitions implements Transitions<InspectionState> {
 
   /** 점검 상태를 바꾸는 행동. 보이는 범위를 다시 계산할 때({@code Replay.fold}) 이 행동만 넣는다. */
   public static final Set<ActionType> CHANGES =
-      Set.of(ActionType.START_INSPECTION, ActionType.REQUEST_INSPECTION_CONFIRM);
+      Set.of(ActionType.START_INSPECTION, ActionType.REQUEST_INSPECTION_CONFIRM, ActionType.LOCK);
 
   /** 작성 중이 이만큼 지나면 상대도 확인 요청을 보낼 수 있다({@code inspection.draft.stale-after}, 06 0-1). */
   private final Duration draftStaleAfter;
@@ -54,6 +54,7 @@ public class InspectionTransitions implements Transitions<InspectionState> {
     return switch (action.type()) {
       case START_INSPECTION -> start(now, action);
       case REQUEST_INSPECTION_CONFIRM -> requestConfirm(now, action);
+      case LOCK -> lock(now);
       default -> throw new BusinessException(ErrorCode.INVALID_STATE);
     };
   }
@@ -85,6 +86,30 @@ public class InspectionTransitions implements Transitions<InspectionState> {
         && side != null
         && (side == state.authorSide() || !state.atRequest() || draftIsStale(state, at))
         && !state.confirmBlocked();
+  }
+
+  /**
+   * 이 종류의 점검을 지금 시작할 수 있나(호실 상세 {@code availableActions}의 {@code inspections}, 06 4-3). {@link
+   * #apply}의 시작과 같은 판단({@link #startRejection})이다. 입주일을 함께 보낼지는 화면이 호실 입주일로 정하므로 보지 않는다. 호실 단위
+   * 거절(정산 완료·공유 중단 등)은 여기서 보지 않는다({@code RoomGate.rejection}).
+   */
+  public boolean canStart(InspectionState now, InspectionKind kind) {
+    return startRejection(now, kind) == null;
+  }
+
+  /**
+   * 시작을 막는 상태 규칙. 버튼({@link #canStart})과 실제 요청({@link #start})이 이 함수를 같이 쓴다(06 4-0 "버튼과 실제 요청은 서버의
+   * 같은 함수"). 이미 같은 종류의 점검이 있으면 {@code INSPECTION_EXISTS}, 거주 종료 뒤 입주 점검이면 {@code INVALID_STATE}, 막지
+   * 않으면 null이다.
+   */
+  private static ErrorCode startRejection(InspectionState now, InspectionKind kind) {
+    if (now.exists()) {
+      return ErrorCode.INSPECTION_EXISTS;
+    }
+    if (kind == InspectionKind.MOVE_IN && Boolean.TRUE.equals(now.roomEnded())) {
+      return ErrorCode.INVALID_STATE;
+    }
+    return null;
   }
 
   /** 상대도 확인 요청을 보낼 수 있게 되는 시각(화면의 "작성 중이에요 · 8일째"). 시작 시각을 모르면 null. */
@@ -124,8 +149,9 @@ public class InspectionTransitions implements Transitions<InspectionState> {
       }
       return started(now, action, in.kind(), now.moveInDateMissing(), false);
     }
-    if (Boolean.TRUE.equals(now.roomEnded())) {
-      throw new BusinessException(ErrorCode.INVALID_STATE);
+    ErrorCode rejection = startRejection(now, in.kind());
+    if (rejection != null) {
+      throw new BusinessException(rejection);
     }
     if (Boolean.TRUE.equals(now.moveInDateMissing()) && !dateGiven) {
       throw new BusinessException(ErrorCode.MOVE_IN_DATE_REQUIRED);
@@ -176,6 +202,18 @@ public class InspectionTransitions implements Transitions<InspectionState> {
       throw new BusinessException(ErrorCode.INVALID_STATE);
     }
     return now.withStatus(InspectionStatus.REQUESTED);
+  }
+
+  /**
+   * 서버 잠금({@code LOCK}, 03 H "잠기는 조건"): 확인 요청 → 잠김. 잠글지는 항목 응답을 남기는 {@code save}가 {@link
+   * InspectionLock}으로 정하고 딸린 서버 행동으로 남긴다. 여기서는 그 기록을 다시 계산할 때({@code Replay.fold}) 상태만 옮긴다. 확인 요청이
+   * 아니면 {@code INVALID_STATE}다(잠금은 한 번만, 작성 중에는 잠기지 않음).
+   */
+  private static InspectionState lock(InspectionState now) {
+    if (now.status() != InspectionStatus.REQUESTED) {
+      throw new BusinessException(ErrorCode.INVALID_STATE);
+    }
+    return now.withStatus(InspectionStatus.LOCKED);
   }
 
   /**

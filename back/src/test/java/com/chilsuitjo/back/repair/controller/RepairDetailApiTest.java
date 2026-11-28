@@ -84,7 +84,8 @@ class RepairDetailApiTest {
         .andExpect(jsonPath("$.asOf").doesNotExist())
         .andExpect(
             jsonPath("$.availableActions")
-                .value(contains("start", "ask-progress", "progress-notes", "cause-notes")));
+                .value(
+                    contains("start", "ask-progress", "progress-notes", "cause-notes", "photos")));
   }
 
   @Test
@@ -261,6 +262,60 @@ class RepairDetailApiTest {
             .header("Idempotency-Key", action + "-" + UUID.randomUUID()));
   }
 
+  // ---- 종료 확인 요청(#339) ----
+
+  @Test
+  void 종료를_요청하기_전에는_closeRequest가_없고_요청하면_기다림이_보인다() throws Exception {
+    UUID caseId = register();
+    detail(caseId, tenant).andExpect(jsonPath("$.closeRequest").doesNotExist());
+
+    respond(caseId, landlord, "ACK", null).andExpect(status().isOk());
+    act(caseId, tenant, "start").andExpect(status().isOk());
+    act(caseId, tenant, "request-close").andExpect(status().isOk());
+
+    for (UUID who : new UUID[] {tenant, landlord}) {
+      detail(caseId, who)
+          .andExpect(jsonPath("$.closeRequest.status").value("WAITING"))
+          .andExpect(jsonPath("$.closeRequest.openedAt").isNotEmpty())
+          .andExpect(jsonPath("$.closeRequest.closedReason").doesNotExist())
+          .andExpect(jsonPath("$.closeRequest.closedAt").doesNotExist());
+    }
+  }
+
+  @Test
+  void 공유를_그만둔_뒤_상대가_종료를_확인해도_그만둔_사람에게는_기다림으로_보인다() throws Exception {
+    // 상세 status는 asOf로 다시 계산해 종료 확인 대기다. closeRequest도 같은 시점으로 맞춘다(불변식 18, #344 리뷰)
+    UUID caseId = register();
+    respond(caseId, landlord, "ACK", null).andExpect(status().isOk());
+    act(caseId, tenant, "start").andExpect(status().isOk());
+    act(caseId, tenant, "request-close").andExpect(status().isOk());
+    stopSharing(PartySide.TENANT, Timestamp.from(Instant.now()));
+    act(caseId, landlord, "confirm-close").andExpect(status().isOk());
+
+    detail(caseId, tenant)
+        .andExpect(jsonPath("$.asOf").isNotEmpty())
+        .andExpect(jsonPath("$.status").value("CLOSE_WAIT"))
+        .andExpect(jsonPath("$.closeRequest.status").value("WAITING"))
+        .andExpect(jsonPath("$.closeRequest.closedAt").doesNotExist());
+    // 확인한 쪽은 지금 값(자기 행동은 보인다)
+    detail(caseId, landlord)
+        .andExpect(jsonPath("$.status").value("DONE"))
+        .andExpect(jsonPath("$.closeRequest.status").value("ANSWERED"));
+  }
+
+  @Test
+  void 종료를_확인하면_closeRequest는_답한_상태로_남는다() throws Exception {
+    UUID caseId = register();
+    respond(caseId, landlord, "ACK", null).andExpect(status().isOk());
+    act(caseId, tenant, "start").andExpect(status().isOk());
+    act(caseId, tenant, "request-close").andExpect(status().isOk());
+    act(caseId, landlord, "confirm-close").andExpect(status().isOk());
+
+    detail(caseId, tenant)
+        .andExpect(jsonPath("$.status").value("DONE"))
+        .andExpect(jsonPath("$.closeRequest.status").value("ANSWERED"));
+  }
+
   // ---- 사진(#175) ----
 
   @Test
@@ -303,7 +358,13 @@ class RepairDetailApiTest {
         .andExpect(
             jsonPath("$.availableActions")
                 .value(
-                    contains("respond", "start", "ask-progress", "progress-notes", "cause-notes")));
+                    contains(
+                        "respond",
+                        "start",
+                        "ask-progress",
+                        "progress-notes",
+                        "cause-notes",
+                        "photos")));
   }
 
   @Test
@@ -317,12 +378,23 @@ class RepairDetailApiTest {
             jsonPath("$.availableActions")
                 .value(
                     contains(
-                        "supplement", "start", "ask-progress", "progress-notes", "cause-notes")));
+                        "supplement",
+                        "start",
+                        "ask-progress",
+                        "progress-notes",
+                        "cause-notes",
+                        "photos")));
     detail(caseId, landlord)
         .andExpect(
             jsonPath("$.availableActions")
                 .value(
-                    contains("respond", "start", "ask-progress", "progress-notes", "cause-notes")));
+                    contains(
+                        "respond",
+                        "start",
+                        "ask-progress",
+                        "progress-notes",
+                        "cause-notes",
+                        "photos")));
   }
 
   @Test
@@ -334,11 +406,13 @@ class RepairDetailApiTest {
         .andExpect(jsonPath("$.defect.ack").value("ACK"))
         .andExpect(
             jsonPath("$.availableActions")
-                .value(contains("start", "ask-progress", "progress-notes", "cause-notes")));
+                .value(
+                    contains("start", "ask-progress", "progress-notes", "cause-notes", "photos")));
     detail(caseId, tenant)
         .andExpect(
             jsonPath("$.availableActions")
-                .value(contains("start", "ask-progress", "progress-notes", "cause-notes")));
+                .value(
+                    contains("start", "ask-progress", "progress-notes", "cause-notes", "photos")));
   }
 
   @Test
@@ -362,7 +436,8 @@ class RepairDetailApiTest {
                 .value(supplementedAt.plus(Duration.ofDays(7)).toString()))
         .andExpect(
             jsonPath("$.availableActions")
-                .value(contains("start", "ask-progress", "progress-notes", "cause-notes")));
+                .value(
+                    contains("start", "ask-progress", "progress-notes", "cause-notes", "photos")));
     // 실제 요청도 같은 판단으로 거절된다
     supplement(caseId, tenant, "한 번 더 찍었어요").andExpect(jsonPath("$.code").value("ASKED_RECENTLY"));
   }

@@ -95,8 +95,8 @@ public class JpaRoomGateReader implements RoomGateReader {
     return new RoomGate(
         room.getId(),
         side,
-        room.getStatus() == RoomStatus.SETTLED,
-        room.getJoinedIntoId() != null,
+        room.isSettled(),
+        room.isJoinedAway(),
         mySharingStopped,
         room.getStatus() != RoomStatus.LIVING); // 거주 종료 또는 정산 완료
   }

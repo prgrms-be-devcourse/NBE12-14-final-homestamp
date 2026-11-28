@@ -1,6 +1,7 @@
 package com.chilsuitjo.back.room.entity;
 
 import com.chilsuitjo.back.global.common.PartySide;
+import com.chilsuitjo.back.global.common.PhoneNumber;
 import com.chilsuitjo.back.room.rule.PartyStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -96,6 +97,13 @@ public class Party {
     return new Party(roomRecordId, side, null, PartyStatus.EMPTY, null, at);
   }
 
+  /** 호실을 만들 때 상대 번호만 넣어 둔 반대쪽 자리(03 B "번호만"). 초대 전이라 문자·링크는 없다. 번호는 정규화된 번호다. 초대하면 초대됨이 된다. */
+  public static Party numberOnly(UUID roomRecordId, PartySide side, String phone, Instant at) {
+    Party party = new Party(roomRecordId, side, null, PartyStatus.NUMBER_ONLY, null, at);
+    party.invitePhone = Objects.requireNonNull(phone, "phone");
+    return party;
+  }
+
   /**
    * 이 자리의 초대 번호가 이 번호와 같은지(06 ROOM-5a·5b). 둘 다 정규화된 번호를 받는다. 번호가 지워졌거나 비교할 번호가 없으면 거짓이다. 번호 자체를 밖으로
    * 내보내지 않으려고 비교만 연다.
@@ -106,11 +114,19 @@ public class Party {
 
   /**
    * 문자를 보낼 때만 읽는 초대 번호(notification의 {@code RecipientDirectory}, 05 {@code party.invite_phone}).
-   * 지워졌으면(연결·수신 거부·탈퇴) 빈 값이다. 화면 응답·로그에 넣지 않는다(04 "개인정보 로그"). 그 밖의 곳은 {@link #isInvitedPhone}으로 비교만
-   * 한다.
+   * 지워졌으면(연결·수신 거부·탈퇴) 빈 값이다. 화면 응답·로그에 넣지 않는다(04 "개인정보 로그"). 화면에는 {@link #maskedInvitePhone}만 주고,
+   * 그 밖의 곳은 {@link #isInvitedPhone}으로 비교만 한다.
    */
   public Optional<String> invitePhoneForSending() {
     return Optional.ofNullable(invitePhone).filter(phone -> !phone.isBlank());
+  }
+
+  /**
+   * 화면에 보일 가린 초대 번호({@code PhoneNumber.mask}, 03 "가린 번호만"). 번호만·초대됨·거절됨처럼 번호가 남아 있을 때만 있고, 지워졌으면 빈
+   * 값이다. 호실을 만든 측이 적은 번호라 그 측 화면에만 준다(부르는 쪽이 판단, {@code RoomViewService}).
+   */
+  public Optional<String> maskedInvitePhone() {
+    return invitePhoneForSending().map(PhoneNumber::mask);
   }
 
   /**

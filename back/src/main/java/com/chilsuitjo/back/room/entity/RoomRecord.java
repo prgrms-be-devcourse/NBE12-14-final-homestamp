@@ -10,6 +10,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Objects;
@@ -26,7 +27,8 @@ import org.hibernate.type.SqlTypes;
  *
  * <p>주소는 법정동 코드 하나와 별칭만 둔다(06 0-1 "주소 저장 범위"). 상태·기한·version 말고는 만들 때 한 번만 쓴다(05 0장). 예외: 비어 있던
  * 입주일은 입주 점검 시작이 한 번 채우고({@link #fillMoveInDate}), 상대가 처음 연결한 시각은 연결이 한 번 채운다({@link
- * #markCounterpartConnected}). 지금은 호실 만들기와 권한 검사에 쓰는 칸만 옮겼다. 기한 칸(자동 마감·삭제·무활동)은 그 기능을 만들 때 더한다.
+ * #markCounterpartConnected}). 거주 종료({@link #end})는 종료 시각과 자동 마감 기한을 함께 쓴다. 남은 기한 칸(정산 완료·삭제·무활동)은
+ * 그 기능을 만들 때 더한다.
  */
 @Entity
 @Table(schema = "state", name = "room_record")
@@ -71,6 +73,14 @@ public class RoomRecord {
   @Column(name = "counterpart_first_connected_at")
   private Instant counterpartFirstConnectedAt;
 
+  /** 거주 종료 시각(06 ROOM-9). 거주 종료·정산 완료이면 필수(V1 CHECK). */
+  @Column(name = "ended_at")
+  private Instant endedAt;
+
+  /** 정산 자동 마감 기한(06 0-1 {@code settlement.autoclose-after}, KEEP-2). 거주 종료 때 정한다. */
+  @Column(name = "autoclose_due_at")
+  private Instant autocloseDueAt;
+
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
 
@@ -111,5 +121,32 @@ public class RoomRecord {
     if (counterpartFirstConnectedAt == null) {
       this.counterpartFirstConnectedAt = Objects.requireNonNull(at, "at");
     }
+  }
+
+  /**
+   * 거주 종료(06 ROOM-9, 03 A). 상태를 거주 종료로 바꾸고 종료 시각과 정산 자동 마감 기한을 남긴다(05 "기한 칸은 사건이 생길 때 저장"). 되돌리는
+   * 전이가 없어서 거주 중이 아니면 부르는 쪽 버그라 {@code IllegalStateException}이다(규칙은 {@code RoomTransitions}가 먼저
+   * 본다).
+   *
+   * @param at 거주 종료가 된 행동의 시각
+   * @param autocloseAfter 거주 종료 뒤 정산 자동 마감까지(06 0-1 {@code settlement.autoclose-after})
+   */
+  public void end(Instant at, Duration autocloseAfter) {
+    if (status != RoomStatus.LIVING) {
+      throw new IllegalStateException("거주 중이 아닌 호실이에요: " + id);
+    }
+    this.status = RoomStatus.ENDED;
+    this.endedAt = Objects.requireNonNull(at, "at");
+    this.autocloseDueAt = at.plus(Objects.requireNonNull(autocloseAfter, "autocloseAfter"));
+  }
+
+  /** 정산 완료(자동 마감 포함). 호실 단위 거절({@code SETTLED})과 링크용 조회가 같은 기준으로 본다. */
+  public boolean isSettled() {
+    return status == RoomStatus.SETTLED;
+  }
+
+  /** 합류 전 기록(03 B "같은 집 기록이 있을 때"). 호실 단위 거절({@code JOINED_RECORD})과 링크용 조회가 같은 기준으로 본다. */
+  public boolean isJoinedAway() {
+    return joinedIntoId != null;
   }
 }

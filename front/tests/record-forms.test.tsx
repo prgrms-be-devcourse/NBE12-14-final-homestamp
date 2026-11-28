@@ -2,7 +2,8 @@ import type { ReactNode } from "react"
 import { describe, expect, test, vi } from "vitest"
 import { fireEvent, render, screen } from "@testing-library/react"
 import { Dialog, DialogContent } from "../src/components/ui/dialog"
-import { createDemo, type Room } from "../src/data/demo"
+import { createDemo, type DemoState, type Room } from "../src/data/demo"
+import { createSampleSeed } from "../src/api/mock/dev-seed"
 import { endpoints } from "../src/api/endpoints"
 import type { ApiRequest } from "../src/api/records"
 import type { Account } from "../src/api/auth"
@@ -160,26 +161,29 @@ describe("호실 만들기", () => {
     submit(/만들기/)
     const [request, by] = send.mock.calls[0] as [ApiRequest, string]
     expect(request.path).toBe(endpoints.rooms)
-    // 서버 모양(06 4-3): 쪽은 TENANT·LANDLORD, 상대 번호는 받지 않아요(초대 ROOM-4에서, #163)
+    // 서버 모양(06 4-3): 쪽은 TENANT·LANDLORD, 상대 번호는 숫자만 counterpartPhone으로 보내요(서버가 NUMBER_ONLY로 저장, #406)
     expect(request.body).toEqual({
       side: "LANDLORD",
       regionCode: "1144012400",
       alias: "302호",
       moveInDate: undefined,
+      counterpartPhone: "01055556666",
     })
     expect(by).toBe("임대인")
     // 목업은 넣은 번호를 호실의 기준 연락처로 저장해요
-    const update = send.mock.calls[0][3] as (d: { rooms: Room[] }) => void
-    const d = { rooms: [] as Room[] }
+    const update = send.mock.calls[0][3] as (d: DemoState) => void
+    const d = { rooms: [] as Room[] } as DemoState
     update(d)
     expect(d.rooms[0]).toMatchObject({
       phone: "01055556666",
       creator: "임대인",
     })
+    // 서버처럼 기본 부위 29개를 그 호실의 부위로 복사해요(ROOM-1a)
+    expect(d.roomParts?.[d.rooms[0].id]).toHaveLength(29)
     await vi.waitFor(() => expect(onCreated).toHaveBeenCalledWith("new-room"))
   })
 
-  test("HTTP에서는 상대 번호 칸을 숨기고 초대할 때 넣는다고 안내한다", () => {
+  test("HTTP에서도 상대 번호 칸을 보여 주고 바로 초대되지 않는다고 안내한다", () => {
     const http = createHttpApi((async () => []) as unknown as HttpRequest)
     inDialog(
       <ApiProvider api={http}>
@@ -192,9 +196,12 @@ describe("호실 만들기", () => {
         />
       </ApiProvider>,
     )
-    expect(screen.queryByLabelText(/휴대폰 번호/)).toBeNull()
+    // 서버가 만들 때 상대 번호를 받아 NUMBER_ONLY로 저장해요(06 4-3, #406). 문자는 초대할 때 나가요
+    expect(screen.getByLabelText(/집주인 휴대폰 번호 · 선택/)).toBeTruthy()
     expect(
-      screen.getByText("집주인 휴대폰 번호는 상대를 초대할 때 넣을 수 있어요."),
+      screen.getByText(
+        "번호를 넣어도 바로 초대되지 않아요. 초대할 때 이 번호를 써요.",
+      ),
     ).toBeTruthy()
   })
 })
@@ -231,20 +238,26 @@ describe("정산 항목", () => {
 })
 
 describe("점검 기록", () => {
-  test("구역·부위를 고르지 않으면 보내지 않는다", () => {
+  test("구역·부위를 고르지 않으면 보내지 않는다", async () => {
     const commit = vi.fn()
     inDialog(
-      <InspectionItemForm
-        kind="in"
-        room={room()}
-        role="임차인"
-        locked={false}
-        defectClosed={false}
-        commit={commit}
-        onCancel={() => {}}
-      />,
+      <ApiProvider
+        api={createMockApi(createMockStore(createSampleSeed))}
+        accountId="dev-tenant"
+      >
+        <InspectionItemForm
+          kind="in"
+          room={room()}
+          role="임차인"
+          locked={false}
+          defectClosed={false}
+          commit={commit}
+          onCancel={() => {}}
+        />
+      </ApiProvider>,
     )
     expect(screen.getByText("입주 당시 기록 남기기")).toBeTruthy()
+    await screen.findByRole("combobox", { name: "구역" })
     submit(/기록 남기기/)
     expect(screen.getByRole("alert").textContent).toBe(ZONE_PART_ERROR)
     expect(commit).not.toHaveBeenCalled()
