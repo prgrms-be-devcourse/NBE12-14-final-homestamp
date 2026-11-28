@@ -8,14 +8,17 @@ import com.chilsuitjo.back.notification.dto.RequestHandle;
 import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.dto.RoomParties;
 import com.chilsuitjo.back.notification.dto.SmsNoticeCommand;
+import com.chilsuitjo.back.notification.entity.Notice;
 import com.chilsuitjo.back.notification.entity.ResponseRequest;
 import com.chilsuitjo.back.notification.repository.NoticeRepository;
 import com.chilsuitjo.back.notification.repository.ResponseRequestRepository;
+import com.chilsuitjo.back.notification.rule.NoticeChannel;
 import com.chilsuitjo.back.notification.rule.NoticeKind;
 import com.chilsuitjo.back.notification.rule.NoticeStatus;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.rule.RequestStatus;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -51,6 +54,14 @@ public class InviteRequestLinker {
   /** 아직 닿지 않은(보내기 전·보낸 뒤 결과 전) 통지 상태. */
   private static final Set<NoticeStatus> NOT_YET_REACHED =
       EnumSet.of(NoticeStatus.REQUESTED, NoticeStatus.SENT);
+
+  /** 닿은 통지 상태(기다림·미확인의 증거, {@link NoticeWaitStart}). */
+  private static final Set<NoticeStatus> REACHED =
+      EnumSet.of(NoticeStatus.DELIVERED, NoticeStatus.VIEWED);
+
+  /** 기다림·미확인을 정한 통지 종류. */
+  private static final Set<NoticeKind> REACHED_KINDS =
+      EnumSet.of(NoticeKind.REQUEST, NoticeKind.INVITE, NoticeKind.RENOTIFY);
 
   private final ObjectProvider<InspectionsAwaitingConfirm> inspections;
   private final CounterpartReader counterparts;
@@ -159,9 +170,33 @@ public class InviteRequestLinker {
         requests
             .findById(handle.requestId())
             .orElseThrow(() -> new IllegalStateException("연 요청이 없어요"));
-    boolean notStarted =
-        request.getStatus() == RequestStatus.WAITING && request.getFirstNotifiedAt() == null;
-    return notStarted ? request.getId() : null;
+    if (request.getStatus() != RequestStatus.WAITING) {
+      return null;
+    }
+    if (request.getFirstNotifiedAt() == null) {
+      return request.getId();
+    }
+    // 기다림이 옛 번호로만 시작됐으면(닿은 통지의 링크가 모두 번호 고치기로 무효) 처음으로 되돌려 새 번호 통지에 다시 잇는다(#370 T-2)
+    // 쓸 수 있는 미도달 통지가 남아 있으면 새 통지를 만들지 않아(onInvite) 새 기회 표지가 생기지 않으므로 되돌리지 않는다
+    if (startedOnlyByOldNumber(request.getId())
+        && !hasUsableNotice(request.getId())
+        && request.restartForNewNumber()) {
+      requests.flush();
+      return request.getId();
+    }
+    return null;
+  }
+
+  /**
+   * 이 요청에 닿은 문자 통지(요청·초대·재통지)가 있고, 그 링크가 모두 번호 고치기로 무효({@code REINVITED})인가. 하나라도 지금 번호에 닿은 통지(유효한
+   * 링크나 링크 없는 통지)가 있으면 false다. 부르는 쪽(room의 번호 고치기 저장)이 이 호출 전에 그 자리 링크를 {@code REINVITED}로 닫는다.
+   */
+  private boolean startedOnlyByOldNumber(UUID requestId) {
+    List<Notice> reached =
+        notices.findByRequest(requestId, REACHED_KINDS, NoticeChannel.SMS, REACHED);
+    return !reached.isEmpty()
+        && reached.stream()
+            .allMatch(n -> n.getLinkId() != null && inviteLinks.isReinvited(n.getLinkId()));
   }
 
   private static PartySide sideOf(RoomParties parties, UUID partyId) {

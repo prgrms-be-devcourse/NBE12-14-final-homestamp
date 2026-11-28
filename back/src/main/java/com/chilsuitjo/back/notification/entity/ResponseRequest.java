@@ -201,6 +201,28 @@ public class ResponseRequest {
   }
 
   /**
+   * 번호를 고쳐 다시 초대해, 지금까지 닿은 통지가 모두 고치기 전 번호로 간 것이 된 기다림을 처음 상태로 되돌린다(#370 T-2, 03 1-1 "타이머 시작점"). 요청
+   * ID와 이미 남은 통지·전달·열람·행동 기록은 그대로이고, 기다림 시작·재통지 기한·미확인 기한만 비운다. 새 번호에 통지가 닿으면({@link
+   * #startWaiting}) 그 시각부터 다시 센다.
+   *
+   * <ul>
+   *   <li>기다림({@code WAITING})이고 기다림이 시작된 요청만 바꾼다. 미확인·답함·거둠·닫힘은 그대로다(미확인 뒤 번호 고치기는 정하기 전)
+   *   <li>옛 번호에 간 증거인지는 부르는 쪽이 본다({@code InviteRequestLinker})
+   * </ul>
+   *
+   * @return 이번에 되돌렸으면 true
+   */
+  public boolean restartForNewNumber() {
+    if (status != RequestStatus.WAITING || firstNotifiedAt == null) {
+      return false;
+    }
+    firstNotifiedAt = null;
+    renotifyDueAt = null;
+    unconfirmedDueAt = null;
+    return true;
+  }
+
+  /**
    * 재통지가 상대에게 닿았다(문자 전달됨·링크 열람, 03 1-1 "미확인이 붙는 조건"). 미확인 기한 {@code unconfirmed_due_at}을 적는다(06 0-1
    * {@code wait.unconfirmed}: 재통지가 <b>전달된 시각</b>부터). 재통지를 만들거나 보낸 것만으로는 적지 않는다(받지 못한 사람을 미확인으로 몰지
    * 않음).

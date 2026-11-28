@@ -20,6 +20,7 @@ import com.chilsuitjo.back.notification.service.CounterpartReader;
 import com.chilsuitjo.back.notification.service.InviteLinks;
 import com.chilsuitjo.back.notification.service.NoticeOutbox;
 import java.time.Clock;
+import java.util.Collections;
 import java.util.EnumSet;
 import java.util.Objects;
 import java.util.Optional;
@@ -51,9 +52,12 @@ import org.springframework.stereotype.Component;
 @Component
 public class RenotifyStateStore implements StateStore<RenotifyPlan> {
 
-  /** 재통지의 자리·링크를 정할 통지: 요청에 걸려 이미 닿은 요청 통지. */
-  private static final Set<NoticeKind> EVIDENCE_KINDS =
-      EnumSet.of(NoticeKind.REQUEST, NoticeKind.INVITE);
+  /**
+   * 재통지의 자리·링크를 정할 통지: 요청에 걸려 이미 닿은 요청 통지. 이 종류의 통지가 재통지 뒤에 새로 생기면 그 재통지는 옛 응답 기회의 것이다({@link
+   * NoticeRepository#existsCurrentRenotify}, 작업자의 후보 조회도 같은 집합).
+   */
+  public static final Set<NoticeKind> EVIDENCE_KINDS =
+      Collections.unmodifiableSet(EnumSet.of(NoticeKind.REQUEST, NoticeKind.INVITE));
 
   private static final Set<NoticeStatus> REACHED =
       EnumSet.of(NoticeStatus.DELIVERED, NoticeStatus.VIEWED);
@@ -100,7 +104,7 @@ public class RenotifyStateStore implements StateStore<RenotifyPlan> {
         || request.getRenotifyDueAt().isAfter(clock.instant())) {
       throw new RenotifySkipped("기다림 아님 또는 기한 전");
     }
-    if (notices.existsByResponseRequestIdAndKind(requestId, NoticeKind.RENOTIFY)) {
+    if (notices.existsCurrentRenotify(requestId, NoticeKind.RENOTIFY, EVIDENCE_KINDS)) {
       throw new RenotifySkipped("이미 재통지함");
     }
     RoomParties parties = counterparts.read(roomRecordId, request.getRequestedBySide());

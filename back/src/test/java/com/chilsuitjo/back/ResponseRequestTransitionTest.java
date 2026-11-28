@@ -244,6 +244,38 @@ class ResponseRequestTransitionTest extends SchemaTestSupport {
   }
 
   @Test
+  void 번호를_고쳐_다시_시작하면_기다림_시작과_두_기한이_비고_새_전달부터_다시_센다() {
+    // #370 T-2: 같은 요청 ID, 기다림만 처음으로
+    UUID room = room();
+    ResponseRequest request = save(room, RequestKind.DEFECT_CONFIRM, repairCase(room));
+    request.startWaiting(DELIVERED, RENOTIFY);
+    request.renotifyReached(DELIVERED.plus(RENOTIFY), UNCONFIRMED);
+
+    assertThat(request.restartForNewNumber()).isTrue();
+    assertThat(request.getFirstNotifiedAt()).isNull();
+    assertThat(request.getRenotifyDueAt()).isNull();
+    assertThat(request.getUnconfirmedDueAt()).isNull();
+    assertThat(request.getStatus()).isEqualTo(RequestStatus.WAITING);
+
+    Instant fresh = DELIVERED.plus(Duration.ofHours(60));
+    assertThat(request.startWaiting(fresh, RENOTIFY)).isTrue();
+    assertThat(request.getRenotifyDueAt()).isEqualTo(fresh.plus(RENOTIFY));
+  }
+
+  @Test
+  void 시작_전이거나_기다림이_아니면_다시_시작하지_않는다() {
+    UUID room = room();
+    ResponseRequest notStarted = save(room, RequestKind.DEFECT_CONFIRM, repairCase(room));
+    assertThat(notStarted.restartForNewNumber()).isFalse();
+
+    ResponseRequest answered = save(room, RequestKind.DEFECT_CONFIRM, repairCase(room));
+    answered.startWaiting(DELIVERED, RENOTIFY);
+    answered.answer(PartySide.LANDLORD);
+    assertThat(answered.restartForNewNumber()).isFalse();
+    assertThat(answered.getFirstNotifiedAt()).isEqualTo(DELIVERED);
+  }
+
+  @Test
   void 같은_증거가_다시_오거나_다른_채널이_뒤에_와도_기한을_늘리지_않는다() {
     UUID room = room();
     ResponseRequest request = save(room, RequestKind.DEFECT_CONFIRM, repairCase(room));
