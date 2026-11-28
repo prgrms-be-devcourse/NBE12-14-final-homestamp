@@ -62,11 +62,34 @@ class InspectionLockTest {
         .contains(LockReason.NO_ITEMS);
   }
 
-  @Test
-  void 기준_측_항목_없이_상대_항목만_있으면_논의_전이라_잠그지_않는다() {
+  @ParameterizedTest
+  @EnumSource(
+      value = AckState.class,
+      names = {"ACK", "NEED_MORE", "DISPUTE", "UNCONFIRMED"})
+  void 기준_측_항목_없이_상대_항목만_있으면_하자_기록_없음_확인과_상대_항목_정리로_잠긴다(AckState answered) {
+    // #392 논의 6: 항목이 있으니 NO_ITEMS가 아니라 ALL_RESOLVED
     assertThat(
             InspectionLock.decide(
-                InspectionStatus.REQUESTED, AUTHOR, List.of(item(OTHER, AckState.ACK)), true))
+                InspectionStatus.REQUESTED, AUTHOR, List.of(item(OTHER, answered)), true))
+        .contains(LockReason.ALL_RESOLVED);
+  }
+
+  @Test
+  void 기준_측_항목_없이_상대_항목만_있으면_하자_기록_없음_확인_전에는_잠기지_않는다() {
+    assertThat(
+            InspectionLock.decide(
+                InspectionStatus.REQUESTED, AUTHOR, List.of(item(OTHER, AckState.ACK)), false))
+        .isEmpty();
+  }
+
+  @Test
+  void 기준_측_항목_없이_상대_항목만_있어도_확인_기다림이_남으면_잠기지_않는다() {
+    assertThat(
+            InspectionLock.decide(
+                InspectionStatus.REQUESTED,
+                AUTHOR,
+                List.of(item(OTHER, AckState.ACK), item(OTHER, AckState.PENDING)),
+                true))
         .isEmpty();
   }
 
