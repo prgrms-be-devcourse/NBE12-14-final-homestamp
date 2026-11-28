@@ -1,11 +1,15 @@
 package com.chilsuitjo.back.payment.service;
 
 import com.chilsuitjo.back.action.dto.ActionCommand;
+import com.chilsuitjo.back.action.dto.ActionTarget;
 import com.chilsuitjo.back.action.dto.Actor;
 import com.chilsuitjo.back.action.dto.PipelineResult;
 import com.chilsuitjo.back.action.rule.ActionType;
 import com.chilsuitjo.back.action.service.ActionPipeline;
+import com.chilsuitjo.back.global.common.AckState;
 import com.chilsuitjo.back.global.common.ResidentIdGuard;
+import com.chilsuitjo.back.global.common.dto.AnswerResult;
+import com.chilsuitjo.back.global.common.dto.RespondRequest;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.payment.dto.PaymentCreateRequest;
@@ -75,6 +79,41 @@ public class JpaPaymentService implements PaymentService {
             store.recording(repairCaseId, req),
             rules);
     return new PaymentRecordResult(result.action().target().id(), result.action().replayed());
+  }
+
+  /**
+   * {@inheritDoc}
+   *
+   * <p>답이 없으면 {@code VALIDATION_FAILED}, 사유에 주민등록번호 형태가 있으면 {@code RESIDENT_ID_BLOCKED}다(pipeline
+   * 전, 03 6-1. 사유는 고칠 수 없는 행동 기록에 남는다). 답은 payload {@code answer}, 사유는 행동 기록의 {@code reason}이고 내용
+   * 지문은 본 판이다(안내서 3-3).
+   */
+  @Override
+  public AnswerResult respond(
+      UUID paymentId, UUID memberId, String idempotencyKey, RespondRequest request) {
+    if (request == null || request.answer() == null) {
+      throw new BusinessException(ErrorCode.VALIDATION_FAILED);
+    }
+    ResidentIdGuard.check(request.reason());
+    PipelineResult<PaymentState> result =
+        pipeline.execute(
+            new ActionCommand(
+                store.roomOf(paymentId),
+                Actor.member(memberId),
+                ActionType.RESPOND_AMOUNT,
+                idempotencyKey,
+                ActionTarget.payment(paymentId),
+                request.seenVersionNo(),
+                store.seenContent(paymentId, request.seenVersionNo()).orElse(null),
+                request.reason() == null || request.reason().isBlank() ? null : request.reason(),
+                Map.of("answer", request.answer().name())),
+            store.responding(),
+            rules);
+    return new AnswerResult(
+        paymentId,
+        request.seenVersionNo(),
+        AckState.valueOf(result.state().response().name()),
+        result.action().replayed());
   }
 
   @Override

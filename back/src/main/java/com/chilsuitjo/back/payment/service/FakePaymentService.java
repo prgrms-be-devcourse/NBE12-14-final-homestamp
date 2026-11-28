@@ -2,6 +2,8 @@ package com.chilsuitjo.back.payment.service;
 
 import com.chilsuitjo.back.action.dto.ActionBatch;
 import com.chilsuitjo.back.global.common.Uuids;
+import com.chilsuitjo.back.global.common.dto.AnswerResult;
+import com.chilsuitjo.back.global.common.dto.RespondRequest;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.payment.dto.PaymentCreateRequest;
@@ -64,6 +66,13 @@ public class FakePaymentService implements PaymentService {
   @Override
   public synchronized long confirmedTotal(UUID roomRecordId, UUID repairCaseId) {
     return confirmedTotals.getOrDefault(new CaseKey(roomRecordId, repairCaseId), 0L);
+  }
+
+  /** 가짜는 응답을 다루지 않는다. 응답이 필요한 테스트는 실제 구현을 쓴다. */
+  @Override
+  public AnswerResult respond(
+      UUID paymentId, UUID memberId, String idempotencyKey, RespondRequest request) {
+    throw new UnsupportedOperationException("가짜 지불 창구는 응답을 다루지 않아요");
   }
 
   /** 이 수리 건의 기준 금액을 적어 둔다(다른 호실의 같은 수리 건 ID로는 읽히지 않는다). */

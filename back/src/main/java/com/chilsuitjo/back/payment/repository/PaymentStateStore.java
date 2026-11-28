@@ -25,6 +25,7 @@ import com.chilsuitjo.back.notification.service.WaitService;
 import com.chilsuitjo.back.payment.dto.PaymentCreateRequest;
 import com.chilsuitjo.back.payment.entity.Payment;
 import com.chilsuitjo.back.payment.entity.PaymentVersion;
+import com.chilsuitjo.back.payment.rule.PaymentAmountConfirmed;
 import com.chilsuitjo.back.payment.rule.PaymentResponse;
 import com.chilsuitjo.back.payment.rule.PaymentState;
 import com.chilsuitjo.back.payment.service.RepairPhotoScope;
@@ -40,6 +41,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 
 /**
@@ -68,6 +70,7 @@ public class PaymentStateStore {
   private final PhotoService photos;
   private final RepairPhotoScope repairPhotos;
   private final WaitService waits;
+  private final ApplicationEventPublisher events;
 
   /**
    * 기록(06 MONEY-1)의 저장 방법. 칸 검증은 서비스가 pipeline 전에 끝낸다. 같은 키로 다시 온 요청이면 pipeline이 처음 만든 지불을 결과로
@@ -292,8 +295,9 @@ public class PaymentStateStore {
     }
 
     /**
-     * 맞아요면 지금 판이 같이 확인한 판이 되고, 보류·이견이면 응답만 바뀐다. 답과 사유는 행동 기록에 남는다. 금액 확인 요청 닫기와 {@code
-     * PaymentAmountConfirmed}는 응답 서비스를 만들 때 더한다.
+     * 맞아요면 지금 판이 같이 확인한 판이 되고, 보류·이견이면 응답만 바뀐다. 답과 사유는 행동 기록에 남는다. 어느 답이든 이 지불의 금액 확인 요청을 닫는다(열린
+     * 요청만, {@code WaitService.answered}). 맞아요면 지불을 DB에 내보낸 뒤 {@code PaymentAmountConfirmed}를 낸다. 같은
+     * 트랜잭션 안의 동기 이벤트라 듣는 쪽은 {@code confirmedTotal}로 새 값을 읽는다.
      */
     @Override
     public SavedState save(ActionCommand command, PaymentState next) {
@@ -301,10 +305,21 @@ public class PaymentStateStore {
           payments
               .findByIdAndRoomRecordId(command.target().id(), command.roomRecordId())
               .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
-      if (next.response() == PaymentResponse.ACK) {
+      boolean confirmed = next.response() == PaymentResponse.ACK;
+      if (confirmed) {
         payment.confirmCurrent();
       } else {
         payment.changeResponse(next.response());
+      }
+      payments.saveAndFlush(payment);
+      waits.answered(
+          RequestTarget.of(TargetKind.PAYMENT, payment.getId()),
+          RequestKind.AMOUNT_CONFIRM,
+          command.actor().side());
+      if (confirmed) {
+        events.publishEvent(
+            new PaymentAmountConfirmed(
+                payment.getRoomRecordId(), payment.getRepairCaseId(), payment.getId()));
       }
       return SavedState.unchanged();
     }
