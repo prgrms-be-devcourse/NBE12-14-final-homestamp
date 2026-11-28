@@ -8,14 +8,19 @@ export type LinkSide = "TENANT" | "LANDLORD"
 
 export interface LinkPhoto {
   id: string
-  // 지운 사진(erased)은 파일이 없어 주소가 없고 지운 시각만 있어요
+  // 지운 사진(erased)은 파일이 없어 주소가 없고 흔적(시각·사유·측)만 있어요
   thumbUrl: string | null
   originalUrl: string | null
   // 사진 주소는 서명한 뒤 5분만 열려요
   expiresAt: string | null
   erased: boolean
   erasedAt: string | null
+  // 지운 사유. 다른 사람의 요청(THIRD_PARTY)으로 지웠으면 측(erasedSide)이 없어요(03 불변식 16)
+  erasedReason?: LinkEraseReason | null
+  erasedSide?: LinkSide | null
 }
+
+export type LinkEraseReason = "PRIVACY" | "WITHDRAWAL" | "THIRD_PARTY"
 
 export interface LinkItem {
   partName: string

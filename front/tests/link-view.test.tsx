@@ -61,6 +61,18 @@ const INSPECTION: LinkView = {
             expiresAt: null,
             erased: true,
             erasedAt: "2026-11-21T03:00:00Z",
+            erasedReason: "PRIVACY",
+            erasedSide: "TENANT",
+          },
+          {
+            id: "p-requested",
+            thumbUrl: null,
+            originalUrl: null,
+            expiresAt: null,
+            erased: true,
+            erasedAt: "2026-11-22T03:00:00Z",
+            erasedReason: "THIRD_PARTY",
+            erasedSide: null,
           },
         ],
       },
@@ -156,7 +168,16 @@ test("점검 링크는 보낸 측과 항목마다 부위·설명·서버 상태 
   expect(within(sink).getByRole("img").getAttribute("src")).toBe(
     "https://photos.invalid/thumb.jpg",
   )
-  expect(within(sink).getByText(/지운 사진이에요 · 11\. 21\./)).toBeTruthy()
+  // 본인이 지운 사진은 측·시각, 다른 사람의 요청으로 지운 사진은 측 없이 사유·시각(03 불변식 16)
+  expect(
+    within(sink).getByText(/^개인정보 때문에 지운 사진 · 세입자 · 11\. 21\./),
+  ).toBeTruthy()
+  expect(
+    within(sink).getByText(/^다른 사람의 요청으로 지운 사진 · 11\. 22\./),
+  ).toBeTruthy()
+  expect(
+    within(sink).queryByText(/요청으로 지운 사진 · (세입자|집주인)/),
+  ).toBeNull()
   expect(within(sink).queryByText("사진 없음")).toBeNull()
   // 사진이 없는 항목은 "사진 없음"이고 다른 항목의 사진이 섞이지 않는다
   expect(
@@ -174,11 +195,35 @@ test("점검 링크는 보낸 측과 항목마다 부위·설명·서버 상태 
 
   // 답하기 버튼은 없다(LINK-1b). 사진 ID·이름·번호가 화면 글자에 없다
   expect(screen.queryByRole("button", { name: /맞아요|보류|이견/ })).toBeNull()
-  expect(container.textContent).not.toMatch(/p-shown|p-erased|님|010/)
+  expect(container.textContent).not.toMatch(
+    /p-shown|p-erased|p-requested|님|010/,
+  )
   expect(
     screen.getByText("여기서 보기만 해서는 답한 것으로 남지 않아요"),
   ).toBeTruthy()
   expect(screen.getByRole("button", { name: "가입하고 응답하기" })).toBeTruthy()
+})
+
+test("원본 주소가 끝났으면 열지 않고 링크를 다시 열어 새 주소를 받고, 끝나기 전이면 그대로 연다", async () => {
+  // 06 4-4: 사진 주소는 5분(expiresAt)만 열린다. 썸네일은 이미 받아 보여도 원본 주소는 끝나 있을 수 있다
+  open("tok-1")
+  const fetch = mockFetch(
+    () => json(200, INSPECTION),
+    () => json(200, INSPECTION),
+  )
+  const now = vi.spyOn(Date, "now")
+  page()
+  await screen.findByText("입주 점검")
+
+  now.mockReturnValue(Date.parse("2026-11-19T01:09:59Z"))
+  expect(fireEvent.click(screen.getByRole("img").closest("a")!)).toBe(true)
+  expect(fetch).toHaveBeenCalledTimes(1)
+
+  now.mockReturnValue(Date.parse("2026-11-19T01:10:00Z"))
+  expect(fireEvent.click(screen.getByRole("img").closest("a")!)).toBe(false)
+  await screen.findByText("입주 점검")
+  expect(fetch).toHaveBeenCalledTimes(2)
+  now.mockRestore()
 })
 
 test("LINK_INVALID만 무효 화면이고 서버 내부 오류·연결 오류는 다시 불러오기를 준다", async () => {

@@ -364,6 +364,27 @@ function RecordView({
   )
 }
 
+// 지운 사진의 흔적(03 불변식 16, 08 사진 지우기). 다른 사람의 요청으로 지웠으면 측을 보이지 않아요
+function erasedLine(photo: LinkPhoto) {
+  const at = photo.erasedAt ? formatted(day, photo.erasedAt) : null
+  const parts =
+    photo.erasedReason === "THIRD_PARTY"
+      ? ["다른 사람의 요청으로 지운 사진", at]
+      : [
+          photo.erasedReason === "WITHDRAWAL"
+            ? "탈퇴로 지운 사진"
+            : "개인정보 때문에 지운 사진",
+          photo.erasedSide ? sideWord(photo.erasedSide) : null,
+          at,
+        ]
+  return parts.filter(Boolean).join(" · ")
+}
+
+// 주소 만료(expiresAt)가 지났는지. 만료가 없으면 지난 것으로 보지 않아요
+function expired(photo: LinkPhoto) {
+  return photo.expiresAt !== null && Date.parse(photo.expiresAt) <= Date.now()
+}
+
 // 사진 주소는 5분만 열려요. 못 불러온 사진은 사진이 없는 것과 다르게 알리고, 링크를 다시 열어 새 주소를 받아요
 function Photos({
   photos,
@@ -378,8 +399,7 @@ function Photos({
       {photos.map((photo) =>
         photo.erased || !photo.thumbUrl ? (
           <div key={photo.id} className="muted" data-photo="erased">
-            지운 사진이에요
-            {photo.erasedAt && ` · ${formatted(day, photo.erasedAt)}`}
+            {erasedLine(photo)}
           </div>
         ) : failed.has(photo.id) ? (
           <div
@@ -400,6 +420,13 @@ function Photos({
             target="_blank"
             rel="noopener noreferrer"
             referrerPolicy="no-referrer"
+            onClick={(event) => {
+              // 화면을 오래 열어 두면 주소가 끝나 있어요. 끝난 주소는 열지 않고 링크를 다시 열어 새 주소를 받아요
+              if (expired(photo)) {
+                event.preventDefault()
+                onReload()
+              }
+            }}
           >
             <img
               src={photo.thumbUrl}
