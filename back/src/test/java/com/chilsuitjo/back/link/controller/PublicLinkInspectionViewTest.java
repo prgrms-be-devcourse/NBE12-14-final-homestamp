@@ -47,8 +47,9 @@ class PublicLinkInspectionViewTest {
 
   @BeforeEach
   void setUp() {
+    // 시·도 목록(RegionApiTest)은 코드 앞 두 자리마다 이름이 하나여야 해서, 다른 테스트의 99 지역과 같은 시·도 이름을 쓴다
     jdbc.update(
-        "INSERT INTO state.region (code, sido, sigungu, dong) VALUES ('9999999971', '서울특별시', '강남구', '링크동')"
+        "INSERT INTO state.region (code, sido, sigungu, dong) VALUES ('9999999971', '테스트', '강남구', '링크동')"
             + " ON CONFLICT DO NOTHING");
     room = UUID.randomUUID();
     jdbc.update(
@@ -108,7 +109,7 @@ class PublicLinkInspectionViewTest {
         view(token)
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.kind").value("RECORD"))
-            .andExpect(jsonPath("$.sido").value("서울특별시"))
+            .andExpect(jsonPath("$.sido").value("테스트"))
             .andExpect(jsonPath("$.dong").value("링크동"))
             .andExpect(jsonPath("$.yourSide").value("LANDLORD"))
             .andExpect(jsonPath("$.hasMoney").value(false))
