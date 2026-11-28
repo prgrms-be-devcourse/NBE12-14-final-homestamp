@@ -48,14 +48,14 @@ class PublicLinkInspectionViewTest {
   @BeforeEach
   void setUp() {
     jdbc.update(
-        "INSERT INTO state.region (code, sido, sigungu, dong) VALUES ('9999999998', '서울특별시', '강남구', '링크동')"
+        "INSERT INTO state.region (code, sido, sigungu, dong) VALUES ('9999999971', '서울특별시', '강남구', '링크동')"
             + " ON CONFLICT DO NOTHING");
     room = UUID.randomUUID();
     jdbc.update(
         """
         INSERT INTO state.room_record
           (id, region_code, alias, move_in_date, status, created_by_side, created_at, version)
-        VALUES (?, '9999999998', '비밀 별칭', DATE '2026-03-01', 'LIVING', 'TENANT', CURRENT_TIMESTAMP, 0)
+        VALUES (?, '9999999971', '비밀 별칭', DATE '2026-03-01', 'LIVING', 'TENANT', CURRENT_TIMESTAMP, 0)
         """,
         room);
     tenant = member();
