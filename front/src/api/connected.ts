@@ -75,6 +75,8 @@ export const CONNECTED_APIS: readonly {
   { method: "POST", path: /^\/api\/me$/ },
   { method: "POST", path: /^\/api\/me\/password$/ },
   { method: "POST", path: /^\/api\/auth\/reset-password$/ },
+  // 가입 전 링크 열람(06 4-4 `POST /api/public/links/view`, S-16, #303). 문자 그만 받기(`links/stop`)는 서버에 아직 없어요
+  { method: "POST", path: /^\/api\/public\/links\/view$/ },
 ]
 
 export const NOT_CONNECTED_MESSAGE = "아직 서버에 연결되지 않은 기능이에요."
