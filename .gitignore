@@ -32,3 +32,6 @@ claude.local.harness.md
 *_credentials.csv
 *_accessKeys.csv
 *accessKeys*.csv
+
+# Claude Code가 서브에이전트용으로 만드는 git worktree
+.claude/worktrees/
