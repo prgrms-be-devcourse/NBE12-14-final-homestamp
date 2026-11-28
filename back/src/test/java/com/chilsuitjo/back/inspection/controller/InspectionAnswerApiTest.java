@@ -520,12 +520,47 @@ class InspectionAnswerApiTest {
   }
 
   @Test
-  void 기준_측_항목_없이_상대_항목만_있으면_아직_잠그지_않는다() throws Exception {
-    // #326 논의 6: "하자 기록 없음" 확인이 따로 필요한지·잠긴 이유가 정해지기 전에는 잠그지 않는다
+  void 기준_측_항목_없이_상대_항목만_있으면_하자_기록_없음_확인_뒤_상대_항목에_답할_때_잠긴다() throws Exception {
+    // #392 논의 6: 확인을 먼저 하고 상대 항목에 나중에 답하는 순서. 항목이 있으니 ALL_RESOLVED
     UUID inspection = created(start());
     requestConfirm(inspection);
     UUID theirs = created(addItemAs(landlord, inspection, "other", "[]"));
-    confirmAll(landlord, inspection, "none", "[]").andExpect(status().isOk());
+    confirmAll(landlord, inspection, "none", "[]")
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("REQUESTED"));
+
+    respond(tenant, theirs, "a1", "DISPUTE", "사실과 달라요", 1).andExpect(status().isOk());
+
+    assertThat(inspectionRow(inspection))
+        .containsEntry("status", "LOCKED")
+        .containsEntry("lock_reason", "ALL_RESOLVED");
+    assertThat(lockActions(inspection)).isEqualTo(1);
+    assertThat(itemRow(theirs).get("confirmed_version_id")).isNotNull();
+    detail(landlord, inspection).andExpect(jsonPath("$.lockReason").value("ALL_RESOLVED"));
+  }
+
+  @Test
+  void 기준_측_항목_없이_상대_항목만_있으면_상대_항목에_먼저_답해도_하자_기록_없음_확인으로_잠긴다() throws Exception {
+    UUID inspection = created(start());
+    UUID theirs = created(addItemAs(landlord, inspection, "other", "[]"));
+    respond(tenant, theirs, "a1", "ACK", null, 1).andExpect(status().isOk());
+    requestConfirm(inspection);
+    assertThat(inspectionRow(inspection)).containsEntry("status", "REQUESTED");
+
+    confirmAll(landlord, inspection, "none", "[]")
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("LOCKED"));
+
+    assertThat(inspectionRow(inspection)).containsEntry("lock_reason", "ALL_RESOLVED");
+    assertThat(lockActions(inspection)).isEqualTo(1);
+    assertReplayedLock(inspection);
+  }
+
+  @Test
+  void 기준_측_항목_없이_상대_항목만_있으면_하자_기록_없음_확인_전에는_잠기지_않는다() throws Exception {
+    UUID inspection = created(start());
+    requestConfirm(inspection);
+    UUID theirs = created(addItemAs(landlord, inspection, "other", "[]"));
 
     respond(tenant, theirs, "a1", "ACK", null, 1).andExpect(status().isOk());
 

@@ -13,12 +13,12 @@ import java.util.Optional;
  * <p>잠기는 조건: 확인 요청 상태이고 <b>모든 항목이 확인·보류·이견·상대 미확인 중 하나</b>(확인 기다림 항목이 하나도 없음). 상대 미확인도 잠금 조건을 채운다.
  * 방향별 점검 확인 요청이 "답함"으로 닫히는 조건(그 방향에 확인 기다림·상대 미확인이 없음, #235)과 다르므로 요청이 닫혔는지가 아니라 항목 상태로 본다.
  *
- * <p>아직 잠그지 않는 경우(#326 논의 사항이라 정하지 않음):
+ * <p>기준 측 항목이 없으면(항목이 하나도 없거나 상대가 더한 항목만 있음) 기준 측이 아닌 쪽의 "하자 기록 없음" 확인이 기준 측 방향의 답이다(03 H "항목이 하나도
+ * 없어도 … 상대가 확인해야 잠긴다", #392 논의 6). 항목이 하나도 없으면 {@link LockReason#NO_ITEMS}, 상대가 더한 항목이 있으면 {@link
+ * LockReason#ALL_RESOLVED}다.
  *
- * <ul>
- *   <li>기준 측 항목이 없고 상대가 더한 항목만 있는 점검(논의 6: "하자 기록 없음" 확인이 따로 필요한지, 잠긴 이유가 무엇인지)
- *   <li>물을 상대가 없는 점검·상대 탈퇴 뒤 혼자 잠금(논의 1·3·4). 이 함수는 응답 사실만 보고 혼자 진행 이유는 보지 않는다
- * </ul>
+ * <p>혼자 잠금(상대 없음·탈퇴 등)과 기준 측 방향의 72시간 미확인으로 잠기는 경로는 #392에서 정하는 중이라 여기서 보지 않는다. 이 함수는 응답 사실만 보고 혼자
+ * 진행 이유는 보지 않는다.
  */
 public final class InspectionLock {
 
@@ -33,7 +33,8 @@ public final class InspectionLock {
    * @param status 점검 상태. 확인 요청일 때만 잠긴다(작성 중이면 아직, 잠겼으면 다시 잠그지 않음)
    * @param author 기준 측
    * @param items 이 점검의 모든 항목(보는 사람과 상관없이)
-   * @param noItemsConfirmed 기준 측이 아닌 쪽이 "하자 기록 없음"을 확인했나({@code CONFIRM_ALL}, 03 H)
+   * @param noItemsConfirmed 기준 측이 아닌 쪽이 "하자 기록 없음"을 확인했나({@code CONFIRM_ALL}, 03 H). 기준 측 항목이 없을 때만
+   *     판단에 쓴다
    */
   public static Optional<LockReason> decide(
       InspectionStatus status, PartySide author, List<Item> items, boolean noItemsConfirmed) {
@@ -48,8 +49,8 @@ public final class InspectionLock {
     if (items.stream().anyMatch(item -> item.status() == AckState.PENDING)) {
       return Optional.empty();
     }
-    if (items.stream().noneMatch(item -> item.addedBy() == author)) {
-      // 논의 6이 정해지기 전에는 잠그지 않는다(잠금은 되돌릴 수 없어 기다리는 쪽이 안전하다)
+    if (items.stream().noneMatch(item -> item.addedBy() == author) && !noItemsConfirmed) {
+      // 기준 측 항목이 없으면 "하자 기록 없음" 확인이 기준 측 방향의 답이다(#392 논의 6)
       return Optional.empty();
     }
     return Optional.of(LockReason.ALL_RESOLVED);

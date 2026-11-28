@@ -642,7 +642,7 @@ export function RoomFinancials({
             const list = items.filter((s) => colOf(s) === status)
             return (
               <div
-                className="min-w-0 rounded-[14px] border border-[#edf1f7] bg-[#f7f9fc] p-3"
+                className="min-w-0 rounded-[14px] border border-[#e3e7eb] bg-[#f5f6f8] p-3"
                 key={status}
               >
                 <h3 className="mb-2 flex items-center justify-between gap-2">
@@ -888,7 +888,7 @@ export function RoomFinancials({
         <div className="flex flex-col gap-2">
           {transfers.map((t) => (
             <div
-              className="flex flex-wrap items-center gap-3 rounded-[12px] bg-[#f6f9fd] p-4"
+              className="flex flex-wrap items-center gap-3 rounded-[12px] bg-[#f5f6f8] p-4"
               key={t.id}
             >
               <div className="min-w-0 flex-1">
