@@ -179,6 +179,19 @@ export interface Payment {
 }
 // inspectionRefs는 과거 시연 연결 메타데이터의 이력 호환성용입니다. 현 MVP에서는 읽거나 새로 기록하지 않습니다.
 export type WaitStage = "재통지" | "미확인"
+// 수리 건에 열린 응답 요청 하나(06 4-6 목록 waiting). by가 보는 사람이면 '내 차례', 아니면 '○○ 확인 기다림'
+export interface RepairWait {
+  // 요청 종류의 화면 이름(하자 확인·종료 확인 등, '내 차례 · ○○'와 같은 글자)
+  kind: string
+  // 답할 측
+  by: Role
+  // 기한이 지나 확인 없음(UNCONFIRMED). 정산 완료 전까지 늦게 답할 수 있어요
+  unconfirmed: boolean
+  // 기다림이고 기한이 정해졌을 때만(ISO). 없으면 남은 시간을 보이지 않아요(NOTI-4b)
+  dueAt?: string
+  // 확인 없음의 이유 문구
+  reason?: string
+}
 export type SoloReason =
   "상대 미확인" | "상대 수신 거부" | "상대 탈퇴" | "상대 없음"
 // 표현 정정(화면: '글 수정'): 제목·설명을 바로 고치고 수정 전·후를 이력으로 남깁니다. photosAdded는 이전 방식(사진 보충) 기록 호환용
@@ -232,6 +245,11 @@ export interface Repair {
   lastActionAt?: string
   // 서버가 준 등록 시각(ISO). 여러 번 받은 수리 건을 서버와 같은 순서(새것부터)로 두는 데 써요. 목업은 없음
   createdAt?: string
+  // 서버가 준 열린 응답 요청(06 4-6 목록 waiting). 있으면 '내 차례'의 하자·종료·비용 제안 확인을 이 값으로 정해요.
+  // 목업과 목록을 받기 전 상세는 없음(상태로 셉니다)
+  waiting?: RepairWait[]
+  // 서버가 준 종료 확인 요청이 확인 없음이 됐을 때(06 4-6 상세 closeRequest UNCONFIRMED). 목업은 없음
+  closeUnconfirmed?: { since?: string; reason?: string }
   id: string
   roomId: string
   title: string
@@ -459,6 +477,10 @@ export interface RoomServerState {
   availableActions?: string[]
   // 상대 자리에 저장된 번호의 가린 모양(06 4-3 counterpartMaskedPhone). 원래 번호는 서버가 주지 않아요
   counterpartMaskedPhone?: string | null
+  // 거주 종료(06 4-3, ROOM-9, #445). 공유를 그만둔 뒤에도 양쪽에 그대로 보여요(03 B "예외 둘")
+  endRequest?: RoomEndRequest | null
+  endedAt?: string | null
+  endSoloReason?: string | null
 }
 // 받은 초대 한 줄의 서버 값(06 4-3 GET /api/invitations). 연결 전이라 호실 기록 ID·별칭·번호는 없어요
 export interface InvitationServerState {
@@ -466,6 +488,15 @@ export interface InvitationServerState {
   partyId: string
   // 초대한 사람의 가린 이름(03 6-1). 탈퇴했으면 null
   inviterName: string | null
+}
+// 집주인 측이 연 가장 최근 거주 종료 요청(06 4-3 endRequest). 닫힌 것도 와요
+export interface RoomEndRequest {
+  status: "WAITING" | "UNCONFIRMED" | "ANSWERED" | "WITHDRAWN" | "CLOSED"
+  openedAt: string
+  // 미확인이 되는 기한. 거주 종료 요청 문자가 아직 없어 지금은 비어 있어요(NOTI-4b: 비면 남은 시간을 보이지 않음)
+  dueAt: string | null
+  // 세입자의 "아직 살고 있어요" 사유
+  rejectReason: string | null
 }
 // 초대 링크 목업(ERD link). 번호 값은 남기지 않고 발급·무효 사실만 남깁니다.
 export interface InviteLink {

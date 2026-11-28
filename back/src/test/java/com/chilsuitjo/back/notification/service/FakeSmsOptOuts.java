@@ -1,6 +1,7 @@
 package com.chilsuitjo.back.notification.service;
 
 import com.chilsuitjo.back.global.common.PhoneNumber;
+import java.time.Instant;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -25,5 +26,17 @@ public class FakeSmsOptOuts implements SmsOptOuts {
   @Override
   public boolean isOptedOut(String phone) {
     return optedOut.contains(PhoneNumber.normalize(phone));
+  }
+
+  /** 등록. 실제 구현처럼 넣었을 때만 {@code true}다. 시각과 트랜잭션은 흉내 내지 않는다. */
+  @Override
+  public boolean optOut(String phone, Instant at) {
+    return optedOut.add(PhoneNumber.normalize(phone));
+  }
+
+  /** 해제. 지웠을 때만 {@code true}다. 감사·아웃박스는 흉내 내지 않는다(그건 {@code JpaSmsOptOutsTest}가 본다). */
+  @Override
+  public boolean releaseForVerifiedOwner(String phone, Instant at) {
+    return optedOut.remove(PhoneNumber.normalize(phone));
   }
 }

@@ -567,6 +567,52 @@ const sessionKey = (kind: Kind) =>
   kind === "in" ? ("moveIn" as const) : ("moveOut" as const)
 export const sessionOf = (room: Room, kind: Kind) => room[sessionKey(kind)]
 export const kindLabel = (kind: Kind) => (kind === "in" ? "입주" : "퇴거")
+// 잠기기 전 하자 더하기 버튼이 '빠뜨린 하자 더하기' 창(부위·설명·사진)을 여는지. 아니면 기록 창(부위 사진·하자)이에요.
+// HTTP: 서버는 점검이 있는 동안 누구든 항목을 더하게 해요(06 4-7 INSP-1d·1e). 작성 중 기준 측만 기록 창을 쓰고,
+// 작성 중 상대와 확인 요청 뒤 양쪽은 이 창을 써요. 목업: 확인 요청 뒤 상대만(작성 중 상대에게는 목업이 버튼을 주지 않아요)
+export function addsMissingDefect(
+  status: ReturnType<typeof inspectionStatus>,
+  mine: boolean,
+  http: boolean,
+) {
+  if (status === "확인 요청") return http || !mine
+  return http && status === "작성 중" && !mine
+}
+// 더한 항목(·확인 요청)에 답할 상대가 있는지. 백엔드 InspectionSight.reachable과 같은 기준이에요:
+// 공유 중단이 없고(어느 쪽이든) 상대가 연결됨(connected)이거나 초대됨(invited)일 때만 확인 요청이 열려요.
+// 상대 없음·거절·탈퇴·공유 중단이면 none(06 4-7 items·request-confirm "받을 상대가 없으면 열지 않음", 03 1-4 ⑥).
+// 서버 값(room.server)이 없는 목업은 화면 연결 상태로 봐요
+export type ConfirmReach = "connected" | "invited" | "none"
+export function confirmReach(room: Room): ConfirmReach {
+  const s = room.server
+  if (
+    room.counterpartLeft ||
+    s?.myStatus === "SHARING_STOPPED" ||
+    s?.counterpartStatus === "SHARING_STOPPED"
+  )
+    return "none"
+  if (s)
+    return s.counterpartStatus === "CONNECTED"
+      ? "connected"
+      : s.counterpartStatus === "INVITED"
+        ? "invited"
+        : "none"
+  return room.connection === "연결됨"
+    ? "connected"
+    : room.connection === "초대됨"
+      ? "invited"
+      : "none"
+}
+// 더한 하자에 누가 언제 답하는지 한 문장(HTTP 안내). 받을 상대가 없으면 오지 않을 답을 기다리지 않게 사실만 적어요(03 1-4 ⑦)
+export function addedItemAnswerText(reach: ConfirmReach) {
+  if (reach === "connected")
+    return "더한 하자는 상대에게 바로 보이고, 상대가 맞아요·보류·이견으로 답해요."
+  // 초대된 상대는 연결 전에도 기록 링크로 볼 수 있어요(06 ROOM-4c). 답은 연결한 뒤에 해요
+  if (reach === "invited")
+    return "초대한 상대는 연결 전에도 기록 링크로 볼 수 있고, 연결한 뒤에 맞아요·보류·이견으로 답할 수 있어요."
+  // 지금 상태만 말해요. 앞서 보낸 확인 요청이 갔는지는 지금 상태로 알 수 없어요(공유 중단 전에 갔을 수 있음)
+  return "지금은 확인을 받을 상대가 없어, 지금 더하는 하자에는 확인 요청이 가지 않아요. 기록은 그대로 남아요."
+}
 // 잠김: 확인 요청 뒤 모든 하자 항목이 확인·이견·상대 미확인으로 정리되거나, 하자 없이 요청해 '하자 기록 없음'으로 잠긴 경우
 export function inspectionStatus(
   room: Room,
@@ -727,4 +773,39 @@ export function finishSoloInspection(
   m.soloLocked = true
   m.noDefects = !items.length
   m.requestedAt = nowText()
+}
+
+// 잠긴 점검에 "하자 기록 없음"을 붙일지(#417 리뷰). 서버 점검이면 lockReason이 NO_ITEMS일 때만이에요:
+// 기준 측 항목 없이 상대가 더한 항목만 있어 잠긴 점검은 ALL_RESOLVED라 하자 카드가 있어요(06 4-7 confirm-all, #409).
+// 목업은 서버 값이 없어 항목 없이 확인 요청한 점검(noDefects)으로 봐요.
+export function lockedWithNoDefects(session?: InspectionSession) {
+  if (session?.server) return session.server.lockReason === "NO_ITEMS"
+  return Boolean(session?.noDefects)
+}
+
+// 기준 측 항목 없이 확인 요청한 점검에서 상대가 더한 항목 중 아직 답이 없는(확인 대기) 것이 있나.
+// 있으면 잠금에 두 가지가 모두 필요해요: 기준 측이 아닌 쪽의 "하자 기록 없음" 확인과 그 항목들에 대한 기준 측의 답(03 H "잠기는 조건", #409)
+export function counterpartItemsAwaitingAnswer(
+  session: InspectionSession | undefined,
+  items: Inspection[],
+) {
+  if (!session?.noDefects || session.status !== "확인 요청") return false
+  return lockItems(items).some(
+    (i) => i.author !== session.author && i.ack === "확인 대기",
+  )
+}
+
+// 모두 확인 자리에 어떤 버튼을 둘지(06 4-7 confirm-all). 서버가 confirm-all을 줄 때만 보여요.
+// - "하자 기록 없음 확인": 기준 측 항목이 없는 점검에서 기준 측이 아닌 쪽만(기준 측은 NOT_COUNTERPART_SIDE)
+// - "남은 항목 모두 확인": 답할 항목이 있는 쪽. 기준 측 항목이 없어도 기준 측은 상대가 더한 항목에 답해요(#409)
+export function confirmAllButtons(
+  session: InspectionSession | undefined,
+  mine: boolean,
+  canConfirmAll: boolean,
+) {
+  const noDefects = Boolean(session?.noDefects)
+  return {
+    noDefects: canConfirmAll && noDefects && !mine,
+    items: canConfirmAll && (!noDefects || mine),
+  }
 }

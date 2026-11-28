@@ -9,7 +9,12 @@ export const endpoints = {
   login: "/api/auth/login",
   refresh: "/api/auth/refresh",
   logout: "/api/auth/logout",
+  // 비밀번호 재설정(ACC-5b, RESET 인증 표)
+  resetPassword: "/api/auth/reset-password",
+  // 내 정보 보기·수정(이름·문자 설정, ACC-4·6)
   me: "/api/me",
+  // 비밀번호 변경(ACC-4a)
+  password: "/api/me/password",
   // 바뀐 약관·확인 항목 다시 확인(CONS-4)
   agreements: "/api/me/agreements",
   // 4-2 홈·알림
@@ -36,6 +41,8 @@ export const endpoints = {
   roomDownload: (rid: string) => `/api/rooms/${id(rid)}/download`,
   invite: (rid: string) => `/api/rooms/${id(rid)}/invite`,
   invitations: "/api/invitations",
+  // 가입 전 링크 열람(S-16, LINK-1). 토큰은 주소에 두지 않고 본문으로 보내요(06 LINK-2b)
+  linkView: "/api/public/links/view",
   connect: (pid: string) => `/api/invitations/${id(pid)}/connect`,
   rejectInvitation: (pid: string) => `/api/invitations/${id(pid)}/reject`,
   roomInfo: (rid: string) => `/api/rooms/${id(rid)}/info`,

@@ -29,12 +29,32 @@ class SoloRuleTest {
   }
 
   @Test
-  void 연결_전_상대는_상대_없음이_아니라_바로_열지_않는다() {
-    // 링크로 볼 수 있는 기록은 72시간 뒤 "아직 연결하지 않았어요"(03 1-1 ⑥). 그 요청 이력 없이는 열지 않는다
+  void 상대가_연결_전이면_거주_종료는_바로_혼자_진행한다() {
+    // 03 A "이사함 기록": 연결 전이면 바로. 거주 종료 요청에는 연결 전 상대가 링크로 답할 기록이 없어 성립 시각이 없다
     SoloCheck check =
-        SoloRule.direct(parties(seat(PartyPresence.INVITED, null)), RequestKind.CLOSE_CONFIRM);
+        SoloRule.direct(parties(seat(PartyPresence.INVITED, null)), RequestKind.END_REQUEST);
 
-    assertThat(check).isEqualTo(SoloCheck.notYet(null));
+    assertThat(check).isEqualTo(SoloCheck.allowedBecause(SoloReason.NOT_CONNECTED));
+    assertThat(check.since()).isNull();
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = RequestKind.class,
+      names = {"DEFECT_CONFIRM", "CLOSE_CONFIRM", "INSPECTION_CONFIRM", "SETTLE_FINISH"})
+  void 상대가_연결_전이면_거주_종료_말고는_바로_열지_않는다(RequestKind kind) {
+    // 링크로 볼 수 있는 기록은 03 1-1 ⑥(72시간 뒤 "아직 연결하지 않았어요", 요청 이력이 필요). 정산 끝내기는 정산 계약과 함께 따로 넣는다
+    assertThat(SoloRule.direct(parties(seat(PartyPresence.INVITED, null)), kind))
+        .isEqualTo(SoloCheck.notYet(null));
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = PartyPresence.class,
+      names = {"REJECTED", "WITHDRAWN"})
+  void 상대가_거절_탈퇴이면_거주_종료도_바로_열지_않는다(PartyPresence presence) {
+    assertThat(SoloRule.direct(parties(seat(presence, null)), RequestKind.END_REQUEST))
+        .isEqualTo(SoloCheck.notYet(null));
   }
 
   @Test
@@ -141,7 +161,7 @@ class SoloRuleTest {
   @ParameterizedTest
   @EnumSource(
       value = SoloReason.class,
-      names = {"NO_COUNTERPART", "COUNTERPART_WITHDRAWN"},
+      names = {"NO_COUNTERPART", "NOT_CONNECTED", "COUNTERPART_WITHDRAWN"},
       mode = EnumSource.Mode.EXCLUDE)
   void 성립_시각_없이_돌려줄_수_없는_이유는_계약_위반이다(SoloReason reason) {
     assertThatThrownBy(() -> SoloRule.requireDirectContract(SoloCheck.allowedBecause(reason)))
@@ -153,7 +173,7 @@ class SoloRuleTest {
   @ParameterizedTest
   @EnumSource(
       value = SoloReason.class,
-      names = {"NO_COUNTERPART", "COUNTERPART_WITHDRAWN"})
+      names = {"NO_COUNTERPART", "NOT_CONNECTED", "COUNTERPART_WITHDRAWN"})
   void 상대가_행동할_수_없는_이유는_성립_시각이_없어도_된다(SoloReason reason) {
     assertThat(SoloRule.requireDirectContract(SoloCheck.allowedBecause(reason)).allowed()).isTrue();
   }

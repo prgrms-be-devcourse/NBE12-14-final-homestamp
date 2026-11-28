@@ -213,19 +213,19 @@ export function RepairActions({
   if (has("close-alone") && !r.closeBy && solo)
     acts.push({
       key: "solo-close",
-      label: "혼자 종료",
+      label: "혼자 끝내기",
       onClick: () => exec((api, s) => api.closeAlone(s, r.id)),
     })
   if (has("request-close"))
     acts.push({
       key: "request-close",
-      label: "종료 확인 요청",
+      label: "다 고쳤어요",
       onClick: () => exec((api, s) => api.requestClose(s, r.id)),
     })
   if (has("confirm-close") && r.closeBy)
     acts.push({
       key: "confirm-close",
-      label: "수리 종료 확인",
+      label: "끝난 것 확인",
       onClick: () => {
         if (r.author !== role && ackPending) {
           setCloseAck(CLOSE_WITH_ACK)
@@ -243,7 +243,7 @@ export function RepairActions({
   if (has("close-alone") && r.closeBy === role)
     acts.push({
       key: "unconfirmed-close",
-      label: "혼자 종료",
+      label: "혼자 끝내기",
       onClick: () => exec((api, s) => api.closeAlone(s, r.id)),
     })
   // 혼자 종료된 건을 늦게 확인(08 8장: "처리 완료(○○ 확인)"에 [종료 확인])

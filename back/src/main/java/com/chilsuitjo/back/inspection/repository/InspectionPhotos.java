@@ -11,6 +11,7 @@ import com.chilsuitjo.back.photo.rule.PhotoStage;
 import com.chilsuitjo.back.photo.rule.PhotoTargetType;
 import com.chilsuitjo.back.photo.service.PhotoService;
 import com.chilsuitjo.back.room.service.RoomAccessService;
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -18,8 +19,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
- * 점검 항목에 사진을 붙인다({@code PhotoService.attach}, 09 2장 "inspection → photo"). 항목 더하기의 {@code
- * StateStore.save} 안에서, 그 행동과 같은 트랜잭션으로 부른다.
+ * 점검 항목에 사진을 붙이고, 확인 요청 때 작성 중에 붙인 사진을 상대에게 보이게 한다({@code PhotoService.attach}·{@code release}, 09
+ * 2장 "inspection → photo"). 항목 더하기·확인 요청의 {@code StateStore.save} 안에서, 그 행동과 같은 트랜잭션으로 부른다.
  *
  * <p>단계는 점검 종류를 따른다(입주 {@code MOVE_IN}, 퇴거 {@code MOVE_OUT}). 한도는 점검 하나 전체 {@code
  * photo.max.inspection}(06 0-1)이고, 지금은 그 점검의 항목 사진만 센다. 부위 사진({@code /part-photos})은 그 기능을 만들 때 셀
@@ -50,6 +51,8 @@ public class InspectionPhotos {
   /**
    * 업로드 표를 항목 사진으로 붙인다. 표가 없으면 아무것도 하지 않는다. 실패하면 사진 번호와 함께 거절하고 그 행동 전체가 되돌려진다.
    *
+   * @param released 붙이는 순간 상대에게 보이나. 기준 측이 작성 중 점검에 더하는 항목이면 false이고, 확인 요청 때 {@link #release}로 보이게
+   *     한다(03 3-1 "작성 중 점검", #295)
    * @return 붙인 사진의 지문. {@code SavedState.withPhotos}로 넘긴다
    */
   List<PhotoDigest> attach(
@@ -57,7 +60,8 @@ public class InspectionPhotos {
       UUID inspectionId,
       InspectionKind kind,
       UUID itemId,
-      List<String> uploadTickets) {
+      List<String> uploadTickets,
+      boolean released) {
     if (uploadTickets.isEmpty()) {
       return List.of();
     }
@@ -67,17 +71,25 @@ public class InspectionPhotos {
             new PhotoTarget.Ref(PhotoTargetType.INSPECTION_ITEM, itemId),
             kind == InspectionKind.MOVE_IN ? PhotoStage.MOVE_IN : PhotoStage.MOVE_OUT,
             uploadTickets,
-            quota(inspectionId),
-            requestContext.at()));
+            new PhotoQuota(maxInspection, targets(inspectionId)),
+            requestContext.at(),
+            released));
   }
 
-  /** 그 점검의 모든 항목 사진(방금 만든 항목 포함)을 센다. */
-  private PhotoQuota quota(UUID inspectionId) {
-    List<PhotoTarget> counted =
-        items.findByInspectionIdOrderByIdAsc(inspectionId).stream()
-            .<PhotoTarget>map(
-                item -> new PhotoTarget.Ref(PhotoTargetType.INSPECTION_ITEM, item.getId()))
-            .toList();
-    return new PhotoQuota(maxInspection, counted);
+  /**
+   * 작성 중에 붙여 아직 상대에게 보이지 않은 그 점검의 사진을 {@code at}부터 보이게 한다(#295). 확인 요청({@code
+   * REQUEST_INSPECTION_CONFIRM})의 {@code StateStore.save} 안에서 부른다. 부위 사진({@code /part-photos})은 그
+   * 기능을 만들 때 대상에 더한다(그 전에는 붙일 일이 없다).
+   */
+  void release(UUID roomRecordId, UUID inspectionId, Instant at) {
+    photos.release(roomRecordId, targets(inspectionId), at);
+  }
+
+  /** 그 점검의 모든 항목(방금 만든 항목 포함). 한도를 셀 대상이자 확인 요청 때 보이게 할 대상이다. */
+  private List<PhotoTarget> targets(UUID inspectionId) {
+    return items.findByInspectionIdOrderByIdAsc(inspectionId).stream()
+        .<PhotoTarget>map(
+            item -> new PhotoTarget.Ref(PhotoTargetType.INSPECTION_ITEM, item.getId()))
+        .toList();
   }
 }
