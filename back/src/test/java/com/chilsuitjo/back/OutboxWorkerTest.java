@@ -24,6 +24,7 @@ import com.chilsuitjo.back.notification.rule.DeliveryPollSchedule;
 import com.chilsuitjo.back.notification.rule.NoticeKind;
 import com.chilsuitjo.back.notification.service.InMemoryRecipientDirectory;
 import com.chilsuitjo.back.notification.service.InviteLinks;
+import com.chilsuitjo.back.notification.service.LinkAddresses;
 import com.chilsuitjo.back.notification.service.NoticeOutbox;
 import com.chilsuitjo.back.notification.service.OutboxPoller;
 import com.chilsuitjo.back.notification.service.OutboxWorker;
@@ -90,6 +91,7 @@ class OutboxWorkerTest {
   @Autowired private FakeSmsGateway gateway;
   @Autowired private InMemoryRecipientDirectory recipients;
   @Autowired private InviteLinks inviteLinks;
+  @Autowired private LinkAddresses linkAddresses;
   @Autowired private TransactionTemplate transaction;
   @Autowired private JdbcTemplate jdbc;
   @Autowired private ApplicationContext context;
@@ -245,6 +247,7 @@ class OutboxWorkerTest {
             outboxRepository,
             noticeRepository,
             inviteLinks,
+            linkAddresses,
             recipients,
             smsOptOuts,
             gateway,
@@ -481,6 +484,7 @@ class OutboxWorkerTest {
         outboxRepository,
         noticeRepository,
         inviteLinks,
+        linkAddresses,
         directory,
         smsOptOuts,
         sender,
@@ -499,6 +503,7 @@ class OutboxWorkerTest {
         outboxRepository,
         noticeRepository,
         inviteLinks,
+        linkAddresses,
         directory,
         optOuts,
         sender,
@@ -516,6 +521,7 @@ class OutboxWorkerTest {
         outboxRepository,
         repository,
         inviteLinks,
+        linkAddresses,
         directory,
         smsOptOuts,
         gateway,
@@ -660,6 +666,7 @@ class OutboxWorkerTest {
             outboxRepository,
             noticeRepository,
             inviteLinks,
+            linkAddresses,
             recipients,
             smsOptOuts,
             new SmsGateway() {
@@ -731,6 +738,7 @@ class OutboxWorkerTest {
         outboxRepository,
         noticeRepository,
         inviteLinks,
+        linkAddresses,
         recipients,
         smsOptOuts,
         gateway,

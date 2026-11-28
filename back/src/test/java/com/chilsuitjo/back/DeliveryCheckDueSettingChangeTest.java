@@ -14,6 +14,7 @@ import com.chilsuitjo.back.notification.service.DeliveryResultPoller;
 import com.chilsuitjo.back.notification.service.FakeSmsOptOuts;
 import com.chilsuitjo.back.notification.service.InMemoryRecipientDirectory;
 import com.chilsuitjo.back.notification.service.InviteLinks;
+import com.chilsuitjo.back.notification.service.LinkAddresses;
 import com.chilsuitjo.back.notification.service.NoticeOutbox;
 import com.chilsuitjo.back.notification.service.NoticeWaitStart;
 import com.chilsuitjo.back.notification.service.OutboxWorker;
@@ -67,6 +68,7 @@ class DeliveryCheckDueSettingChangeTest {
   @Autowired private FakeSmsGateway gateway;
   @Autowired private InMemoryRecipientDirectory recipients;
   @Autowired private InviteLinks inviteLinks;
+  @Autowired private LinkAddresses linkAddresses;
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private NoticeWaitStart waitStart;
   @Autowired private TransactionTemplate transaction;
@@ -165,6 +167,7 @@ class DeliveryCheckDueSettingChangeTest {
             outbox,
             notices,
             inviteLinks,
+            linkAddresses,
             recipients,
             new FakeSmsOptOuts(),
             gateway,

@@ -6,6 +6,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 import com.chilsuitjo.back.action.service.ActionRequestContext;
+import com.chilsuitjo.back.link.service.TestLinkTokens;
 import com.chilsuitjo.back.notification.dto.DeliveryQuery;
 import com.chilsuitjo.back.notification.dto.Recipient;
 import com.chilsuitjo.back.notification.dto.SmsMessage;
@@ -21,6 +22,7 @@ import com.chilsuitjo.back.notification.rule.NoticeKind;
 import com.chilsuitjo.back.notification.service.FakeSmsOptOuts;
 import com.chilsuitjo.back.notification.service.InMemoryRecipientDirectory;
 import com.chilsuitjo.back.notification.service.InviteLinks;
+import com.chilsuitjo.back.notification.service.LinkAddresses;
 import com.chilsuitjo.back.notification.service.NoticeOutbox;
 import com.chilsuitjo.back.notification.service.OutboxWorker;
 import com.chilsuitjo.back.notification.service.RecipientDirectory;
@@ -79,6 +81,7 @@ class SmsCancellationServiceTest {
   @Autowired private FakeSmsGateway gateway;
   @Autowired private InMemoryRecipientDirectory recipients;
   @Autowired private InviteLinks inviteLinks;
+  @Autowired private LinkAddresses linkAddresses;
   @Autowired private DeliveryPollSchedule deliveryPollSchedule;
   @Autowired private ActionRequestContext requestContext;
   @Autowired private TransactionTemplate transaction;
@@ -474,6 +477,7 @@ class SmsCancellationServiceTest {
             outboxRepository,
             noticeRepository,
             inviteLinks,
+            linkAddresses,
             directory,
             new FakeSmsOptOuts(),
             never,
@@ -574,6 +578,7 @@ class SmsCancellationServiceTest {
             outboxRepository,
             noticeRepository,
             inviteLinks,
+            linkAddresses,
             recipients,
             new FakeSmsOptOuts(),
             blocking,
@@ -710,7 +715,7 @@ class SmsCancellationServiceTest {
         roomId,
         partyId,
         member,
-        id.toString(),
+        TestLinkTokens.hash(id),
         invalidated ? java.sql.Timestamp.from(AT) : null,
         invalidated ? "REINVITED" : null);
     return id;
