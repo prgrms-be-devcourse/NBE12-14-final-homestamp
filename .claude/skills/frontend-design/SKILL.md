@@ -8,6 +8,20 @@ license: Complete terms in LICENSE.txt
 
 Approach this as the design lead at a design studio known for giving every client a distinct visual identity that is not mistaken for anyone else's. This client has already rejected proposals that felt cliché or templated, and is paying for a distinctive point of view: make deliberate, opinionated choices about palette, typography, and layout that are specific to this brief, and take aesthetic risk if justified.
 
+## 이 프로젝트에서 (HomeStamp)
+
+> 이 절은 HomeStamp 팀이 원문에 덧붙였다(원문을 바꾼 곳, LICENSE.txt 4(b)). 아래 원문의 "brief(의뢰서)"가 이 프로젝트에서 무엇인지 정한다.
+
+- **시안의 출발점(brief)은 다음 셋이다**
+  - 화면 정의: `docs/rules/08-화면-기본-틀.md`
+  - 화면에 쓰는 말: `docs/rules/06-요구사항-명세.md` 부록 A "사용자 말 표"
+  - 기존 디자인 토큰(`front/src/index.css` 등)과 shadcn(Base UI) 부품
+- **화면 표현은 백엔드 설계가 아니라서, 사용자에게 더 잘 읽히는 쪽이 이긴다.** 화면 말·배치·강조·스타일은 문서에 적힌 것보다 더 나은 표현이 있으면 시안에 그대로 쓴다. 문서는 그 표현을 따라 고친다
+  - PR에 "문서의 말 → 바꾼 말 · 이유"를 적어 팀이 비교할 수 있게 한다
+  - 화면 말은 06 부록 A 한 곳에만 두므로, 채택되면 같은 PR에서 06 부록 A·08을 함께 고친다(코드만 바뀌고 문서가 옛말로 남지 않게). 채택되지 않으면 문서 말로 되돌린다
+- **설계는 문서가 먼저다.** 상태·권한·데이터·API(03·05·06 본문)와, 03·08이 규칙으로 정한 것(판정하는 말 "이상 없음"·"정상"을 쓰지 않음, 탓하지 않는 말, 링크 화면에 이름 없음 등 [반드시])은 표현이 아니라 설계라서 시안에서 바꾸지 않는다. 바꿔야 하면 먼저 팀과 정한다
+- 아래 원문의 "피할 버릇" 목록(가운뎃점 `A · B · C`, 똑같은 카드 등)은 08이 정한 표기를 막지 않는다. 예를 들어 "종료 요청됨 · 확인 없음"의 가운뎃점은 08 표기라 그대로 써도 되고, 더 나은 표현이 있으면 위 순서로 바꾼다
+
 ## Ground your designs in the subject matter
 
 If the brief does not identify what the product or subject matter is, identify it yourself before designing, and confirm with the client. You can come up with one concrete subject, the design's audience, and the design's primary job, as a proposal. If there's any information in your memory about the client's preferences or context about what they're building, use that as a hint. The subject's industry, subject matter, materials, and vernacular are where distinctive visual choices come from — a design for a toy for girls aged 8–11 will be very aesthetically different from a dashboard for financial analysts. Build with the brief's real content and subject matter throughout.
