@@ -59,7 +59,8 @@ public record TermsVersions(
   }
 
   /**
-   * 공유 동의 문구 판이 지금 판인지 본다. 비었는지·길이는 부르는 쪽(초대·연결, #163)이 먼저 본다(decisions 2026-11-25).
+   * 공유 동의 문구 판이 지금 판인지 본다. 비었는지·길이는 부르는 쪽(초대·연결·번호 고쳐 다시 초대)이 먼저 본다(decisions 2026-11-25). 부르는 쪽은
+   * pipeline의 처음 실행 검사({@code ActionBatch.firstRunCheck})로 붙여 같은 키의 재생에서는 보지 않는다(#332).
    *
    * @throws BusinessException {@code VERSION_CONFLICT}
    */

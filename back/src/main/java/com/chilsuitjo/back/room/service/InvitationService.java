@@ -8,6 +8,7 @@ import com.chilsuitjo.back.action.rule.ActionType;
 import com.chilsuitjo.back.action.service.ActionPipeline;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
+import com.chilsuitjo.back.member.service.TermsVersions;
 import com.chilsuitjo.back.room.dto.ConnectRequest;
 import com.chilsuitjo.back.room.dto.InvitationAnswered;
 import com.chilsuitjo.back.room.dto.RejectRequest;
@@ -47,10 +48,12 @@ public class InvitationService {
   private final PartyRepository parties;
   private final PartyStateStore store;
   private final PartyTransitions rules;
+  private final TermsVersions termsVersions;
 
   /**
    * 연결([동의하고 연결하기]). 한 요청에 {@code CONNECT}와 {@code SHARE_CONSENT}(payload {@code consentVersion})를
-   * 남긴다(09 3-1 {@code asInvitee} 예시).
+   * 남긴다(09 3-1 {@code asInvitee} 예시). 판이 지금 판이 아니면 잠금·자리 확인·멱등 조회 뒤 처음 실행에서만 {@code
+   * VERSION_CONFLICT}다(같은 키의 재생은 처음 결과, #332).
    */
   public InvitationAnswered.Result connect(
       UUID partyId, UUID memberId, String idempotencyKey, ConnectRequest request) {
@@ -62,6 +65,7 @@ public class InvitationService {
         pipeline.executeAll(
             ActionBatch.of(roomRecordId, Actor.member(memberId), idempotencyKey)
                 .asInvitee(partyId)
+                .firstRunCheck(() -> termsVersions.requireCurrentShareConsent(consentVersion))
                 .step(
                     ActionType.CONNECT,
                     done -> ActionTarget.party(partyId),

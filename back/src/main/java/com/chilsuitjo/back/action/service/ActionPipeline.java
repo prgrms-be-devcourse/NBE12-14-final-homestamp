@@ -38,6 +38,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  *
  * <pre>
  * 1 잠금 + RoomGate 읽기(newRoom이면 건너뜀) → 현재 접근 검증(설정된 경우) → 2 멱등(같은 키면 처음 결과를 돌려주고 끝)
+ * → 처음 실행 검사(설정된 경우, 재생에서는 부르지 않음)
  * 단계마다: 3 호실 단위 거절 → 4 대상 정하기 → 5 load → (when이 거짓이면 건너뜀) → 6 apply → 7 save → 8 기록 → 9 딸린 행동 기록
  * </pre>
  *
@@ -134,6 +135,7 @@ public class ActionPipeline {
     if (!done.isEmpty()) {
       return replay(batch, done);
     }
+    batch.runFirstRunCheck(); // 2 뒤(처음 실행만)
 
     Actor actor =
         gate != null && batch.actor().isMember()

@@ -697,6 +697,81 @@ class ActionPipelineTest {
   }
 
   @Test
+  void 처음_실행_검사는_처음_실행에서만_부르고_같은_키의_재생에서는_부르지_않는다() {
+    List<String> order = new ArrayList<>();
+    pipeline.executeAll(consentBatch("k1", () -> order.add("check")));
+
+    BatchResult again =
+        pipeline.executeAll(
+            consentBatch(
+                "k1",
+                () -> {
+                  order.add("check");
+                  throw new BusinessException(ErrorCode.VERSION_CONFLICT);
+                }));
+
+    assertThat(again.replayed()).isTrue();
+    assertThat(order).containsExactly("check");
+    assertThat(writer.findByRoom(room)).hasSize(1);
+  }
+
+  @Test
+  void 처음_실행_검사가_거절하면_아무것도_남기지_않는다() {
+    assertThatThrownBy(() ->
+            pipeline.executeAll(
+                consentBatch(
+                    "k1",
+                    () -> {
+                      throw new BusinessException(ErrorCode.VERSION_CONFLICT);
+                    })))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            e -> assertThat(e.errorCode()).isEqualTo(ErrorCode.VERSION_CONFLICT));
+    assertThat(writer.findByRoom(room)).isEmpty();
+  }
+
+  @Test
+  void 처음_실행_검사는_당사자_확인_뒤_호실_단위_거절보다_먼저다() {
+    List<String> order = new ArrayList<>();
+    Runnable check =
+        () -> {
+          order.add("check");
+          throw new BusinessException(ErrorCode.VERSION_CONFLICT);
+        };
+    assertThatThrownBy(() ->
+            pipeline.executeAll(
+                ActionBatch.of(room, Actor.member(UUID.randomUUID()), "k1")
+                    .firstRunCheck(check)
+                    .record(ActionType.INVITE, Map.of())))
+        .hasMessage(ErrorCode.NOT_FOUND.name());
+    assertThat(order).isEmpty();
+
+    gates.put(tenantId, new RoomGate(room, PartySide.TENANT, true, false, false, false));
+    assertThatThrownBy(() ->
+            pipeline.executeAll(
+                ActionBatch.of(room, Actor.member(tenantId), "k2")
+                    .firstRunCheck(check)
+                    .record(ActionType.INVITE, Map.of())))
+        .hasMessage(ErrorCode.VERSION_CONFLICT.name());
+    assertThat(order).containsExactly("check");
+  }
+
+  @Test
+  void 처음_실행_검사를_두_번_붙이면_개발_오류다() {
+    ActionBatch batch = consentBatch("k1", () -> {});
+
+    assertThatThrownBy(() -> batch.firstRunCheck(() -> {}))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("하나만");
+  }
+
+  private ActionBatch consentBatch(String key, Runnable check) {
+    return ActionBatch.of(room, Actor.member(tenantId), key)
+        .firstRunCheck(check)
+        .record(ActionType.SHARE_CONSENT, Map.of("consentVersion", "v1"));
+  }
+
+  @Test
   void 가운데_단계를_건너뛰어도_뒤_단계_키가_이어지고_다시_오면_같은_결과() {
     ActionBatch batch =
         ActionBatch.of(room, Actor.member(tenantId), "k1")

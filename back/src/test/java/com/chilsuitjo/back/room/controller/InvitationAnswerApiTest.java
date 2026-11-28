@@ -41,6 +41,9 @@ class InvitationAnswerApiTest {
   /** {@code InvitationApiTest}와 같은 법정동(시·도 97). */
   private static final String REGION = "9799999901";
 
+  /** 지금 판({@code terms.version.share-consent} = {@code v1})이 아닌 판. 배포 전 화면이 보낸 옛 판과 같다. */
+  private static final String STALE_VERSION = "v0";
+
   @Autowired private MockMvc mvc;
   @Autowired private JdbcTemplate jdbc;
 
@@ -163,6 +166,61 @@ class InvitationAnswerApiTest {
         .andExpect(jsonPath("$.code").value(ErrorCode.CONSENT_REQUIRED.name()));
 
     assertNotAnswered(room, seat);
+  }
+
+  @Test
+  void 동의_문구_판이_지금_판이_아니면_VERSION_CONFLICT이고_아무것도_남지_않는다() throws Exception {
+    UUID room = room("LIVING");
+    UUID seat = invitedSeat(room, phone);
+
+    connect(seat, me, key(), STALE_VERSION)
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value(ErrorCode.VERSION_CONFLICT.name()));
+
+    assertNotAnswered(room, seat);
+  }
+
+  @Test
+  void 옛_판은_입력_검사와_자리_찾기_뒤_호실_단위_거절과_자리_규칙보다_먼저다() throws Exception {
+    UUID room = room("LIVING");
+    UUID seat = invitedSeat(room, phone);
+    // 입력 검사(초대 회차 없음)가 먼저
+    connect(seat, null, me, key(), STALE_VERSION)
+        .andExpect(jsonPath("$.code").value(ErrorCode.VALIDATION_FAILED.name()));
+    // 자리 찾기(잠금)가 먼저
+    connect(UUID.randomUUID(), UUID.randomUUID(), me, key(), STALE_VERSION)
+        .andExpect(jsonPath("$.code").value(ErrorCode.NOT_FOUND.name()));
+    // 자리 규칙(옛 초대 회차·번호 다름)보다 먼저
+    connect(seat, UUID.randomUUID(), me, key(), STALE_VERSION)
+        .andExpect(jsonPath("$.code").value(ErrorCode.VERSION_CONFLICT.name()));
+    connect(seat, member(newPhone()), key(), STALE_VERSION)
+        .andExpect(jsonPath("$.code").value(ErrorCode.VERSION_CONFLICT.name()));
+    assertNotAnswered(room, seat);
+
+    // 호실 단위 거절(정산 완료)보다 먼저
+    UUID settled = room("SETTLED");
+    UUID settledSeat = invitedSeat(settled, phone);
+    connect(settledSeat, me, key(), STALE_VERSION)
+        .andExpect(jsonPath("$.code").value(ErrorCode.VERSION_CONFLICT.name()));
+    assertNotAnswered(settled, settledSeat);
+  }
+
+  @Test
+  void 같은_키의_재생은_문구_판을_다시_보지_않고_처음_결과를_돌려준다() throws Exception {
+    UUID room = room("LIVING");
+    UUID seat = invitedSeat(room, phone);
+    UUID inviteId = inviteIdOf(seat);
+    String key = key();
+    connect(seat, inviteId, me, key, "v1").andExpect(status().isOk());
+
+    // 처음 요청 뒤 판이 바뀐 것과 같다: 처음 실행 검사는 재생에서 부르지 않는다
+    connect(seat, inviteId, me, key, STALE_VERSION)
+        .andExpect(status().isOk())
+        .andExpect(header().string("Idempotent-Replayed", "true"))
+        .andExpect(jsonPath("$.roomRecordId").value(room.toString()))
+        .andExpect(jsonPath("$.status").value("CONNECTED"));
+
+    assertThat(actions(room)).hasSize(2);
   }
 
   @Test

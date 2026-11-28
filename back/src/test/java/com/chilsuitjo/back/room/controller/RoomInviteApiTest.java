@@ -41,6 +41,9 @@ class RoomInviteApiTest {
   /** {@code InvitationApiTest}와 같은 법정동(시·도 97). */
   private static final String REGION = "9799999901";
 
+  /** 지금 판({@code terms.version.share-consent} = {@code v1})이 아닌 판. 배포 전 화면이 보낸 옛 판과 같다. */
+  private static final String STALE_VERSION = "v0";
+
   @Autowired private MockMvc mvc;
   @Autowired private JdbcTemplate jdbc;
   @Autowired private PhoneHmacs phoneHmacs;
@@ -368,6 +371,63 @@ class RoomInviteApiTest {
         .andExpect(jsonPath("$.code").value(ErrorCode.CONSENT_REQUIRED.name()));
 
     assertNothingSaved(room, counterpart);
+  }
+
+  @Test
+  void 동의_문구_판이_지금_판이_아니면_VERSION_CONFLICT이고_아무것도_남지_않는다() throws Exception {
+    UUID room = room("LIVING", "TENANT");
+    seat(room, "TENANT", me, "CONNECTED", null);
+    UUID counterpart = seat(room, "LANDLORD", null, "EMPTY", null);
+
+    invite(room, me, key(), body(phone, STALE_VERSION, null))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value(ErrorCode.VERSION_CONFLICT.name()));
+
+    assertNothingSaved(room, counterpart);
+  }
+
+  @Test
+  void 옛_판은_입력_검사와_당사자_확인_뒤_호실_단위_거절과_자리_규칙보다_먼저다() throws Exception {
+    UUID room = room("LIVING", "TENANT");
+    seat(room, "TENANT", me, "CONNECTED", null);
+    UUID counterpart = seat(room, "LANDLORD", null, "EMPTY", null);
+    // 입력 검사(번호 모양)가 먼저
+    invite(room, me, key(), body("12345", STALE_VERSION, null))
+        .andExpect(jsonPath("$.code").value(ErrorCode.VALIDATION_FAILED.name()));
+    // 당사자 확인(잠금)이 먼저: 남의 호실에는 판이 맞는지 알려 주지 않는다
+    invite(room, member(newPhone()), key(), body(phone, STALE_VERSION, null))
+        .andExpect(jsonPath("$.code").value(ErrorCode.NOT_FOUND.name()));
+    // 자리 규칙(내 인증 번호)보다 먼저
+    invite(room, me, key(), body(myPhone, STALE_VERSION, null))
+        .andExpect(jsonPath("$.code").value(ErrorCode.VERSION_CONFLICT.name()));
+    assertNothingSaved(room, counterpart);
+
+    // 호실 단위 거절(정산 완료)보다 먼저
+    UUID settled = room("SETTLED", "TENANT");
+    seat(settled, "TENANT", me, "CONNECTED", null);
+    UUID settledSeat = seat(settled, "LANDLORD", null, "EMPTY", null);
+    invite(settled, me, key(), body(phone, STALE_VERSION, null))
+        .andExpect(jsonPath("$.code").value(ErrorCode.VERSION_CONFLICT.name()));
+    assertNothingSaved(settled, settledSeat);
+  }
+
+  @Test
+  void 같은_키의_재생은_문구_판을_다시_보지_않고_처음_결과를_돌려준다() throws Exception {
+    UUID room = room("LIVING", "TENANT");
+    seat(room, "TENANT", me, "CONNECTED", null);
+    UUID counterpart = seat(room, "LANDLORD", null, "EMPTY", null);
+    String key = key();
+    invite(room, me, key, body(phone, "v1", null)).andExpect(status().isOk());
+
+    // 처음 요청 뒤 판이 바뀐 것과 같다: 처음 실행 검사는 재생에서 부르지 않는다
+    invite(room, me, key, body(phone, STALE_VERSION, null))
+        .andExpect(status().isOk())
+        .andExpect(header().string("Idempotent-Replayed", "true"))
+        .andExpect(jsonPath("$.partyId").value(counterpart.toString()));
+
+    List<Map<String, Object>> actions = actions(room);
+    assertThat(actions).hasSize(2);
+    assertThat(actions.get(0).get("consent_version")).isEqualTo("v1");
   }
 
   @Test
