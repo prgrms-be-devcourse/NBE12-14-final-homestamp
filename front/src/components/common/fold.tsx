@@ -59,21 +59,21 @@ export function Fold({
       className={cn(
         "mt-2.5 overflow-hidden rounded-[12px] border",
         amber ? "border-warn-line bg-warn-soft" : "border-line bg-white",
-        "in-data-fold:bg-[#fafbfe]",
+        "in-data-fold:bg-[#f5f6f8]",
         className,
       )}
     >
       <CollapsibleTrigger
         className={cn(
           "group/fold flex min-h-12 w-full cursor-pointer items-center gap-2.5 border-0 bg-transparent px-3.5 py-2.5 text-left text-ink focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand",
-          amber ? "hover:bg-[#fff1dc]" : "hover:bg-hover",
+          amber ? "hover:bg-[#f1f3f6]" : "hover:bg-hover",
         )}
       >
         {icon && (
           <span
             className={cn(
               "grid size-[30px] flex-none place-items-center rounded-[9px]",
-              amber ? "bg-[#ffe8c7] text-warn-ink" : "bg-brand-soft text-brand",
+              amber ? "bg-[#e3e7eb] text-warn-ink" : "bg-brand-soft text-brand",
             )}
             aria-hidden
           >
