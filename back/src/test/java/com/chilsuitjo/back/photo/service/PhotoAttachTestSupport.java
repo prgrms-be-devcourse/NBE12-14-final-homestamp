@@ -313,6 +313,12 @@ abstract class PhotoAttachTestSupport {
     return id;
   }
 
+  /** 아직 상대에게 보이지 않은 사진으로 바꾼다(작성 중 점검에 기준 측이 붙인 사진처럼 {@code released_at}이 빈 것, #295). */
+  UUID unreleased(UUID photoId) {
+    jdbc.update("UPDATE state.photo_visibility SET released_at = NULL WHERE photo_id = ?", photoId);
+    return photoId;
+  }
+
   List<UUID> existingPhotos(int count) {
     List<UUID> ids = new ArrayList<>();
     for (int i = 0; i < count; i++) {
