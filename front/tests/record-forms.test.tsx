@@ -341,6 +341,67 @@ describe("점검 기록", () => {
     })
     expect(text).toMatch(/^입주 점검 · 욕실 · 천장 등록/)
   })
+
+  // #405 리뷰: 사진 올리기·항목 저장을 기다리는 동안 다시 보내면 같은 하자가 두 번 남아요
+  test("보내는 동안은 [기록 남기기]를 막고, 실패하면 쓴 내용을 둔 채 다시 보낼 수 있다", async () => {
+    const parts = {
+      asOf: null,
+      parts: [
+        {
+          id: "part-ceiling",
+          zone: "욕실",
+          name: "천장",
+          enabled: true,
+          hidden: false,
+          toggleable: false,
+        },
+      ],
+    }
+    const http = createHttpApi((async (_m: string, path: string) =>
+      path === endpoints.roomParts("302") ? parts : []) as HttpRequest)
+    let finish!: (ok: boolean) => void
+    const commit = vi.fn(
+      () => new Promise<boolean>((resolve) => (finish = resolve)),
+    )
+    inDialog(
+      <ApiProvider api={http} accountId="dev-tenant">
+        <InspectionItemForm
+          kind="out"
+          room={room({ id: "302" })}
+          role="임차인"
+          locked={false}
+          defectClosed={false}
+          commit={commit}
+          onCancel={() => {}}
+        />
+      </ApiProvider>,
+    )
+    await choose("구역", "욕실")
+    await choose("부위", "천장")
+    type("상태 설명", "천장에 금이 있어요")
+    const button = () =>
+      screen.getByRole("button", { name: /기록 남기기/ }) as HTMLButtonElement
+
+    submit(/기록 남기기/)
+    expect(commit).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => expect(button().disabled).toBe(true))
+    // 막힌 동안 폼을 다시 보내도(Enter 등) 요청이 더 가지 않아요
+    fireEvent.submit(button().closest("form")!)
+    expect(commit).toHaveBeenCalledTimes(1)
+
+    finish(false)
+    await vi.waitFor(() => expect(button().disabled).toBe(false))
+    expect(
+      (screen.getByLabelText("상태 설명") as HTMLTextAreaElement).value,
+    ).toBe("천장에 금이 있어요")
+    submit(/기록 남기기/)
+    expect(commit).toHaveBeenCalledTimes(2)
+    const [again] = commit.mock.calls[1] as unknown as [ApiRequest]
+    expect(again.body).toEqual({
+      roomPartId: "part-ceiling",
+      description: "천장에 금이 있어요",
+    })
+  })
 })
 
 describe("호실 연결", () => {

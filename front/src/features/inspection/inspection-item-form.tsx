@@ -54,6 +54,21 @@ export function InspectionItemForm({
   const [photos, setPhotos] = useState<string[]>([])
   const [hasDefect, setHasDefect] = useState(false)
   const [error, setError] = useState("")
+  // 사진 올리기 · 항목 저장을 기다리는 동안은 다시 보내지 않아요(같은 하자가 두 번 남지 않게, #405 리뷰).
+  // 성공하면 App이 창을 닫고, 실패하면 쓴 내용을 그대로 두고 다시 보낼 수 있게 풀어요
+  const [sending, setSending] = useState(false)
+  const send: Commit = (...args) => {
+    const saved = commit(...args)
+    if (!saved) return
+    setSending(true)
+    void saved.then(
+      (ok) => {
+        if (!ok) setSending(false)
+      },
+      () => setSending(false),
+    )
+    return saved
+  }
   // 입주 점검에서 하자를 고르지 않으면 부위 사진으로 남겨요
   const basicPhotoMode = kind === "in" && !hasDefect
   const partField = (
@@ -74,6 +89,7 @@ export function InspectionItemForm({
     />
   )
   const submit = (text: (name: string) => string) => {
+    if (sending) return
     if (!part) {
       setError(ZONE_PART_ERROR)
       return
@@ -93,7 +109,7 @@ export function InspectionItemForm({
         )
         return
       }
-      commit(
+      send(
         post(
           endpoints.inspectionAction(
             inspectionIdOf(roomId, "in"),
@@ -163,7 +179,7 @@ export function InspectionItemForm({
       return
     }
     const title = text("title") || where
-    commit(
+    send(
       postWithPhotos(
         endpoints.inspectionAction(inspectionIdIn(room, kind), "items"),
         { roomPartId, description },
@@ -211,6 +227,7 @@ export function InspectionItemForm({
       onError={setError}
       onCancel={onCancel}
       onSubmit={submit}
+      submitDisabled={sending}
     >
       {kind === "in" ? (
         <>
