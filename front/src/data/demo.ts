@@ -486,6 +486,8 @@ export interface RoomServerState {
 export interface InvitationServerState {
   // 초대받은 자리. 연결·거절 주소에 써요(/api/invitations/{partyId}/connect)
   partyId: string
+  // 초대 회차. 연결·거절 본문에 보내요(#437)
+  inviteId: string
   // 초대한 사람의 가린 이름(03 6-1). 탈퇴했으면 null
   inviterName: string | null
 }

@@ -5,7 +5,12 @@ import { FormDialog } from "@/components/common/form-dialog"
 import { ConsentList } from "@/components/common/consent-list"
 import { post } from "@/api/records"
 import { endpoints } from "@/api/endpoints"
-import { SHARE_CONSENT_VERSION, type ConnectBody } from "@/api/http-invitations"
+import {
+  inviteIdOf,
+  rejectInvitation,
+  SHARE_CONSENT_VERSION,
+  type ConnectBody,
+} from "@/api/http-invitations"
 import type { Account } from "@/api/auth"
 import type { DemoState, Role, Room } from "@/data/demo"
 import { roomOptions } from "@/lib/room-options"
@@ -108,10 +113,11 @@ export function ConnectForm({
         const joining = sameHouseRooms.map((x) => x.id)
         const accountPhone = account.phone,
           me = account.id
-        // 서버 본문은 공유 동의 문구 판만이에요(06 4-3 connect). 같은 집 합류는 목업만 update로 해요(ROOM-6은 별도 작업)
+        // 서버 본문은 공유 동의 문구 판과 초대 회차예요(06 4-3 connect, #437). 같은 집 합류는 목업만 update로 해요(ROOM-6은 별도 작업)
         void act(
           post(endpoints.connect(sharedRoom.id), {
             consentVersion: SHARE_CONSENT_VERSION,
+            inviteId: inviteIdOf(sharedRoom),
           } satisfies ConnectBody),
           "호실 연결 수락 · 번호 일치 확인 및 기록 공유 동의",
           (d) => {
@@ -244,7 +250,7 @@ export function ConnectForm({
                 onClick={() => {
                   const own = sameHouseRooms[0]
                   void act(
-                    post(endpoints.rejectInvitation(sharedRoom.id)),
+                    rejectInvitation(sharedRoom),
                     "같은 집 기록 · 거절하고 내 기록으로 상대 초대 선택",
                     (d) => {
                       declineInvitation(

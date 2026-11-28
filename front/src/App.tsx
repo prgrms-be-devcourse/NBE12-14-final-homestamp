@@ -42,7 +42,7 @@ import { hasAction, type RoomAction } from "@/api/actions"
 import { ApiProvider } from "@/api"
 import { useApi } from "@/api/hooks"
 import { repairStub } from "@/api/http-repair-view"
-import { withAccountPhone } from "@/api/http-invitations"
+import { rejectInvitation, withAccountPhone } from "@/api/http-invitations"
 import { errorMessage, shouldReload } from "@/api/errors"
 import { createApi } from "@/api/create-api"
 import {
@@ -745,7 +745,7 @@ function HomeStampApp({
       return
     // 서버가 거절을 받은 뒤에만 창을 닫고 알려요. 실패하면 send가 오류를 알리고 창은 그대로 둬요
     void act(
-      post(endpoints.rejectInvitation(sharedRoom.id)),
+      rejectInvitation(sharedRoom),
       "호실 연결 거절 · 제 집이 아니에요",
       (d) =>
         declineInvitation(

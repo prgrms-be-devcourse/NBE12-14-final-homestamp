@@ -1,6 +1,7 @@
 import { other, type Room } from "@/data/demo"
 import { regionName } from "@/lib/region"
 import { endpoints } from "./endpoints"
+import { post } from "./records"
 import type { HttpRequest } from "./http-client"
 import { toRole, type ServerRegion, type ServerSide } from "./http-rooms"
 
@@ -13,6 +14,8 @@ export const SHARE_CONSENT_VERSION = "v1"
 // GET /api/invitations 한 줄(InvitationSummary). 연결 전이라 호실 기록 ID·별칭·번호는 주지 않아요
 export interface InvitationSummaryBody {
   partyId: string
+  // 초대 회차. 연결·거절에 함께 보내요. 번호를 고쳐 다시 초대하면 바뀌어 예전 화면의 요청은 INVALID_STATE예요(#437)
+  inviteId: string
   // 연결하면 내가 앉는 측
   side: ServerSide
   region: ServerRegion
@@ -30,7 +33,21 @@ export interface InviteBody {
 // POST /api/invitations/{partyId}/connect 본문. 같은 집 기록 합류(ROOM-6)는 아직 받지 않아요
 export interface ConnectBody {
   consentVersion: string
+  inviteId?: string
 }
+// POST /api/invitations/{partyId}/reject 본문(#437)
+export interface RejectBody {
+  inviteId?: string
+}
+
+// 연결·거절 본문의 초대 회차(받은 초대 목록의 inviteId). 목업 호실은 서버 초대가 아니라 비어 있어요(목업은 본문을 보지 않아요)
+export const inviteIdOf = (room: Room) => room.invitation?.inviteId
+
+// "제 집이 아니에요" 요청. 받은 초대 창과 같은 집 고르기(내 기록으로 초대) 두 곳이 같이 써요
+export const rejectInvitation = (room: Room) =>
+  post(endpoints.rejectInvitation(room.id), {
+    inviteId: inviteIdOf(room),
+  } satisfies RejectBody)
 
 export const listInvitations = (request: HttpRequest) =>
   request<InvitationSummaryBody[]>("GET", endpoints.invitations)
@@ -52,7 +69,11 @@ export function roomFromInvitation(b: InvitationSummaryBody): Room {
     received: true,
     creator: other(mine),
     members: {},
-    invitation: { partyId: b.partyId, inviterName: b.inviterName },
+    invitation: {
+      partyId: b.partyId,
+      inviteId: b.inviteId,
+      inviterName: b.inviterName,
+    },
   }
 }
 

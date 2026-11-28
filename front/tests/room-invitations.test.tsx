@@ -9,6 +9,7 @@ import { endpoints } from "../src/api/endpoints"
 import { ApiError } from "../src/api/errors"
 import type { HttpRequest } from "../src/api/http-client"
 import {
+  rejectInvitation,
   roomFromInvitation,
   SHARE_CONSENT_VERSION,
   withAccountPhone,
@@ -42,6 +43,7 @@ const invitation = (
   patch: Partial<InvitationSummaryBody> = {},
 ): InvitationSummaryBody => ({
   partyId: "party-1",
+  inviteId: "invite-1",
   side: "TENANT",
   region: {
     code: "3611010100",
@@ -91,12 +93,23 @@ describe("받은 초대 → 호실 자리표", () => {
       address: "세종특별자치시 반곡동",
       connection: "초대됨",
       creator: "임대인",
-      invitation: { partyId: "party-1", inviterName: "정*윤" },
+      invitation: {
+        partyId: "party-1",
+        inviteId: "invite-1",
+        inviterName: "정*윤",
+      },
     })
     expect(inviteeSide(room)).toBe("임차인")
     expect(canReceiveInvitation(room, "임차인", account.phone)).toBe(false)
     const [mine] = withAccountPhone([room], account.phone)
     expect(canReceiveInvitation(mine, "임차인", account.phone)).toBe(true)
+  })
+
+  test("거절은 받은 초대의 회차를 본문에 보낸다(번호를 고쳐 다시 초대하면 예전 화면의 거절을 서버가 막음, #437)", () => {
+    expect(rejectInvitation(roomFromInvitation(invitation()))).toEqual({
+      path: endpoints.rejectInvitation("party-1"),
+      body: { inviteId: "invite-1" },
+    })
   })
 
   test("초대한 사람이 탈퇴했으면 이름 없이 보인다", () => {
@@ -171,6 +184,7 @@ describe("HTTP 기록 API의 받은 초대", () => {
       {
         request: post(endpoints.connect("party-1"), {
           consentVersion: SHARE_CONSENT_VERSION,
+          inviteId: "invite-1",
         }),
         role: "임차인",
         text: "연결",
@@ -196,7 +210,7 @@ describe("HTTP 기록 API의 받은 초대", () => {
       records.send(
         { accountId: "me" },
         {
-          request: post(endpoints.rejectInvitation("party-1")),
+          request: rejectInvitation(roomFromInvitation(invitation())),
           role: "임차인",
           text: "거절",
           update: () => {},
@@ -314,7 +328,7 @@ describe("HTTP 기록 API의 받은 초대", () => {
 })
 
 const rejectCommand = () => ({
-  request: post(endpoints.rejectInvitation("party-1")),
+  request: rejectInvitation(roomFromInvitation(invitation())),
   role: "임차인" as const,
   text: "거절",
   update: () => {},
@@ -411,7 +425,7 @@ describe("서버 호실의 상대 초대", () => {
 })
 
 describe("서버 초대 연결", () => {
-  test("공유 동의 판만 보내고, 같은 집 합류는 고르지 않으며, 연결한 호실 기록 ID로 간다", async () => {
+  test("공유 동의 판과 초대 회차를 보내고, 같은 집 합류는 고르지 않으며, 연결한 호실 기록 ID로 간다", async () => {
     const shared = withAccountPhone(
       [roomFromInvitation(invitation())],
       account.phone,
@@ -448,7 +462,7 @@ describe("서버 초대 연결", () => {
     const [request] = act.mock.calls[0] as [ApiRequest]
     expect(request).toEqual({
       path: endpoints.connect("party-1"),
-      body: { consentVersion: SHARE_CONSENT_VERSION },
+      body: { consentVersion: SHARE_CONSENT_VERSION, inviteId: "invite-1" },
     })
     await vi.waitFor(() => expect(onConnected).toHaveBeenCalled())
     expect(onConnected.mock.calls[0][0].id).toBe("room-9")
