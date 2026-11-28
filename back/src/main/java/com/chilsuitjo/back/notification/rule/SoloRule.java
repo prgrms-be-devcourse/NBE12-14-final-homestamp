@@ -24,8 +24,13 @@ import java.util.Set;
  *       없어 확인할 수 없다. KEEP-4가 접근 차단을 넣을 때 성립 시각 없이 연다
  *   <li>수신 거부: 열지 않는다. {@code optedOut}의 출처가 정해지지 않았다(#100, {@code JpaCounterpartReader} "아직 채우지 않는
  *       칸"). 회원의 문자 끔({@code smsEnabled})은 수신 거부가 아니다(03 K)
- *   <li>연결 전({@code INVITED})·미확인·문자 안 감: 열지 않는다. 이 건의 요청 이력과 기한·전달 결과가 있어야 한다(실제 기다림 타이머, #124).
- *       연결 전 상대를 바로 혼자 진행으로 보지 않는다(링크로 볼 수 있는 기록은 72시간 뒤, 03 1-1 ⑥)
+ *   <li>연결 전({@code INVITED}): 거주 종료 요청에서만 연다, 성립 시각 없음({@link SoloReason#NOT_CONNECTED}). 03 A
+ *       "이사함 기록"(세입자 측이 없거나 연결 전이면 바로 거주 종료)이고, 03 1-4가 연결 전 상대를 기다리는 것은 링크로 볼 수 있는 기록뿐이라서다. 시각을 두지
+ *       않는 까닭: 거주 종료 요청은 연결 전 상대가 링크로 답할 기록이 없어 "그 뒤 상대 행동"을 확인할 대상이 없고, 연결은 호실을 잠그고 연결됨으로 바꾸며 이
+ *       판단도 호실을 잠근 뒤다. 수신 거부로 번호를 비운 초대됨 자리(03 K)도 연결 전이라 같다. 링크로 볼 수 있는 기록(하자·점검·수리 종료)은 열지
+ *       않는다(72시간 뒤 "아직 연결하지 않았어요", 03 1-1 ⑥, 요청 이력이 필요함). 정산 끝내기(03 A "상대 없음(연결 전 포함)이면 바로")는 정산
+ *       계약과 함께 따로 연결하고 지금은 열지 않는다(decisions 2026-11-28 D-1)
+ *   <li>미확인·문자 안 감: 열지 않는다. 이 건의 요청 이력과 기한·전달 결과가 있어야 한다(실제 기다림 타이머, #124)
  *   <li>초대 거절({@code REJECTED}): 03 1-1의 이유에 없어 열지 않는다
  * </ul>
  *
@@ -52,9 +57,19 @@ public final class SoloRule {
   private static final Set<RequestKind> NOT_BY_SHARING_STOPPED =
       EnumSet.of(RequestKind.SETTLE_FINISH, RequestKind.END_REQUEST, RequestKind.CLOSE_CONFIRM);
 
-  /** 그 이유가 이어지는 동안 상대가 이 호실에서 행동할 수 없어 성립 시각 없이 돌려줄 수 있는 이유. */
+  /**
+   * 상대가 연결 전이어도 바로 혼자 진행하는 종류(03 A "이사함 기록"). 링크로 볼 수 있는 기록은 요청 이력이 있어야 한다(03 1-1 ⑥, 1-4). 정산 끝내기는
+   * 정산 계약과 함께 따로 넣는다.
+   */
+  private static final Set<RequestKind> BY_NOT_CONNECTED = EnumSet.of(RequestKind.END_REQUEST);
+
+  /**
+   * 성립 시각 없이 돌려줄 수 있는 이유. 상대 없음·상대 탈퇴는 상대가 이 호실에서 행동할 수 없고, 연결 전은 그 이유를 여는 종류(거주 종료 요청)에 상대가 링크로 답할
+   * 기록이 없다.
+   */
   private static final Set<SoloReason> WITHOUT_SINCE =
-      EnumSet.of(SoloReason.NO_COUNTERPART, SoloReason.COUNTERPART_WITHDRAWN);
+      EnumSet.of(
+          SoloReason.NO_COUNTERPART, SoloReason.NOT_CONNECTED, SoloReason.COUNTERPART_WITHDRAWN);
 
   private SoloRule() {}
 
@@ -79,8 +94,12 @@ public final class SoloRule {
                   ? SoloCheck.allowedSince(
                       SoloReason.SHARING_STOPPED, counterpart.sharingStoppedAt())
                   : SoloCheck.notYet(null);
-          // 탈퇴는 접근 차단(KEEP-4) 전이라, 연결 전·거절은 요청 이력이 필요하거나 이유가 아니라 열지 않는다(클래스 설명)
-          case WITHDRAWN, INVITED, REJECTED -> SoloCheck.notYet(null);
+          case INVITED ->
+              BY_NOT_CONNECTED.contains(kind)
+                  ? SoloCheck.allowedBecause(SoloReason.NOT_CONNECTED)
+                  : SoloCheck.notYet(null);
+          // 탈퇴는 접근 차단(KEEP-4) 전이라, 거절은 03 1-1의 이유가 아니라 열지 않는다(클래스 설명)
+          case WITHDRAWN, REJECTED -> SoloCheck.notYet(null);
         };
     return requireDirectContract(check);
   }

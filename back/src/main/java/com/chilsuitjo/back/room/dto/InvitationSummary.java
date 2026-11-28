@@ -11,9 +11,10 @@ import java.util.UUID;
  * 공개").
  *
  * @param partyId 초대받은 자리
+ * @param inviteId 초대 회차 ID(#437). 연결·거절에 함께 보낸다. 번호를 고쳐 다시 초대하면 바뀐다
  * @param side 연결하면 내가 앉는 측
  * @param region 호실의 시·구·동
  * @param inviterName 초대한 사람의 가린 이름(03 6-1 "이름 가리기"). 탈퇴했으면 null
  */
 public record InvitationSummary(
-    UUID partyId, PartySide side, RoomRegion region, String inviterName) {}
+    UUID partyId, UUID inviteId, PartySide side, RoomRegion region, String inviterName) {}

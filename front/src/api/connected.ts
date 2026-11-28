@@ -27,9 +27,24 @@ export const CONNECTED_APIS: readonly {
   { method: "POST", path: /^\/api\/rooms$/ },
   { method: "GET", path: /^\/api\/rooms$/ },
   { method: "GET", path: /^\/api\/rooms\/[^/]+$/ },
-  // 부위 목록·부위 더하기(06 4-3, ROOM-3, #356). 숨김·다시 보이기·켜고 끔은 그 화면이 생길 때 더해요
+  // 받은 초대·연결·거절(06 4-3, ROOM-5, #429). 같은 집 기록 합류(ROOM-6)는 아직 보내지 않아요.
+  // 상대 초대(POST /api/rooms/{id}/invite, ROOM-4)는 요청 모양만 맞추고 아직 넣지 않아요: #370 "활성화 조건"(거절 때 초대 링크 무효,
+  // 링크 공개 조회 준비)이 남았고 서버도 호실 availableActions에 invite를 주지 않아요. 켤 때 이 줄 아래에 더해요
+  { method: "GET", path: /^\/api\/invitations$/ },
+  { method: "POST", path: /^\/api\/invitations\/[^/]+\/(connect|reject)$/ },
+  // 거주 종료·거주 종료 요청과 답(06 4-3, ROOM-9, #445). 버튼은 서버 availableActions가 있을 때만 보여요
+  {
+    method: "POST",
+    path: /^\/api\/rooms\/[^/]+\/move-out(\/(confirm|reject))?$/,
+  },
+  // 부위 목록·부위 더하기(06 4-3, ROOM-3, #356)
   { method: "GET", path: /^\/api\/rooms\/[^/]+\/parts$/ },
   { method: "POST", path: /^\/api\/rooms\/[^/]+\/parts$/ },
+  // 부위 숨김·다시 보이기·켜고 끔(06 4-3, ROOM-3a·3b·3d, #456)
+  {
+    method: "POST",
+    path: /^\/api\/rooms\/[^/]+\/parts\/[^/]+\/(hide|show|toggle)$/,
+  },
   // 호실 경과(06 4장, REP-11, #359)
   { method: "GET", path: /^\/api\/rooms\/[^/]+\/timeline$/ },
   // 호실 기록 내려받기 목록과 사진 주소 받기(06 4장·4-5, DL-1·S-19, #321)
@@ -38,12 +53,12 @@ export const CONNECTED_APIS: readonly {
   // 사진 올리기: 업로드 표 받기(06 4-5, PHO-1, #365). S3에는 화면이 presigned POST로 직접 올려요
   { method: "POST", path: /^\/api\/rooms\/[^/]+\/upload-tickets$/ },
   // 입주 점검 시작·상세·확인 요청·항목 응답·남은 항목 모두 확인·보충(06 4-7, INSP-1, #357).
-  // 점검 ID는 위 호실 경과에서 찾아요. 항목 더하기·부위 사진은 아직 연결 전이에요
+  // 점검 ID는 위 호실 경과에서 찾아요. 항목 더하기(사진은 업로드 표로)도 연결했어요. 부위 사진은 아직 연결 전이에요
   { method: "POST", path: /^\/api\/rooms\/[^/]+\/inspections$/ },
   { method: "GET", path: /^\/api\/inspections\/[^/]+$/ },
   {
     method: "POST",
-    path: /^\/api\/inspections\/[^/]+\/(request-confirm|confirm-all)$/,
+    path: /^\/api\/inspections\/[^/]+\/(items|request-confirm|confirm-all)$/,
   },
   {
     method: "POST",
@@ -70,6 +85,8 @@ export const CONNECTED_APIS: readonly {
   { method: "POST", path: /^\/api\/me$/ },
   { method: "POST", path: /^\/api\/me\/password$/ },
   { method: "POST", path: /^\/api\/auth\/reset-password$/ },
+  // 가입 전 링크 열람(06 4-4 `POST /api/public/links/view`, S-16, #303). 문자 그만 받기(`links/stop`)는 서버에 아직 없어요
+  { method: "POST", path: /^\/api\/public\/links\/view$/ },
 ]
 
 export const NOT_CONNECTED_MESSAGE = "아직 서버에 연결되지 않은 기능이에요."

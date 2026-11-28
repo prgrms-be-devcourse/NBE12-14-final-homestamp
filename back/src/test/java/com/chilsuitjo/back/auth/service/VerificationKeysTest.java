@@ -3,6 +3,7 @@ package com.chilsuitjo.back.auth.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.Arrays;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -94,5 +95,29 @@ class VerificationKeysTest {
   void 번호_잠금_키는_번호마다_같고_번호가_다르면_다르다() {
     assertThat(keys.phoneLockKey("01012345678")).isEqualTo(keys.phoneLockKey("01012345678"));
     assertThat(keys.phoneLockKey("01012345678")).isNotEqualTo(keys.phoneLockKey("01012345679"));
+  }
+
+  @Test
+  void 번호_HMAC으로_만든_잠금_키는_같은_번호의_잠금_키와_같다() {
+    boolean sawNegative = false;
+    for (int i = 0; i < 64; i++) {
+      String phone = String.format("010%08d", i);
+      long lockKey = keys.phoneLockKey(phone);
+      assertThat(keys.phoneLockKeyOfHmac(keys.phoneHmac(phone))).isEqualTo(lockKey);
+      sawNegative |= lockKey < 0;
+    }
+    // 앞 바이트가 0x80 이상인 번호(부호 있는 long에서 음수)도 같은 값인지 확인했어야 한다
+    assertThat(sawNegative).isTrue();
+  }
+
+  @Test
+  void 소문자_hex_64자가_아닌_번호_HMAC으로는_잠금_키를_만들지_않는다() {
+    String hmac = keys.phoneHmac("01012345678");
+    for (String bad :
+        Arrays.asList(
+            null, "", hmac.substring(1), hmac + "0", hmac.toUpperCase(), "z" + hmac.substring(1))) {
+      assertThatThrownBy(() -> keys.phoneLockKeyOfHmac(bad))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
   }
 }

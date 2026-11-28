@@ -172,7 +172,7 @@ class WithdrawRaceTest {
             .with(loginAs(me))
             .header("Idempotency-Key", UUID.randomUUID().toString())
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"consentVersion\":\"v1\"}"));
+            .content("{\"consentVersion\":\"v1\",\"inviteId\":\"%s\"}".formatted(party)));
   }
 
   private static void await(CountDownLatch latch) {
@@ -216,15 +216,15 @@ class WithdrawRaceTest {
     return id;
   }
 
-  /** 초대됨 자리면 {@link #phone}으로 초대한 자리다. */
+  /** 초대됨 자리면 {@link #phone}으로 초대한 자리이고 초대 회차 ID는 자리 ID와 같다(#437). */
   private UUID seat(UUID room, String side, UUID memberId, String seatStatus) {
     UUID id = UUID.randomUUID();
     jdbc.update(
         """
         INSERT INTO state.party
-          (id, room_record_id, side, member_id, invite_phone, status, connected_at, created_at,
-           version)
-        VALUES (?, ?, ?, ?, ?, ?,
+          (id, room_record_id, side, member_id, invite_phone, invite_id, status, connected_at,
+           created_at, version)
+        VALUES (?, ?, ?, ?, ?, ?, ?,
           CASE WHEN CAST(? AS varchar) = 'CONNECTED' THEN CURRENT_TIMESTAMP ELSE NULL END,
           CURRENT_TIMESTAMP, 0)
         """,
@@ -233,6 +233,7 @@ class WithdrawRaceTest {
         side,
         memberId,
         "INVITED".equals(seatStatus) ? phone : null,
+        "INVITED".equals(seatStatus) ? id : null,
         seatStatus,
         seatStatus);
     return id;

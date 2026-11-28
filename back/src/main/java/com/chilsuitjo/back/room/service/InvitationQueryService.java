@@ -91,6 +91,7 @@ public class InvitationQueryService {
         .map(c ->
             new InvitationSummary(
                 c.seat().getId(),
+                c.seat().currentInviteId().orElseThrow(),
                 c.seat().getSide(),
                 RoomRegion.of(regionByCode.get(c.room().getRegionCode())),
                 c.inviterId() == null
