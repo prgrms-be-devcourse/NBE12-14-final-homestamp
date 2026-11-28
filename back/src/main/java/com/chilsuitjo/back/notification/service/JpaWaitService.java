@@ -40,10 +40,10 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <ul>
  *   <li>통지·문자: 요청을 열어도 통지를 만들지 않는다(요청 → 통지 연결은 NOTI-1, #100). 기다림 시작({@code first_notified_at}·재통지
- *       기한)은 요청에 걸린 통지가 닿을 때 {@link NoticeWaitStart}가 적는다. 재통지·미확인 작업자가 없어 요청은 {@code WAITING}에서
- *       넘어가지 않는다
- *   <li>재통지 뒤 기한 다시 세기: {@code unconfirmed_due_at}이 있으면 {@code IllegalStateException}이다(기다림 타이머
- *       d3에서 정함)
+ *       기한)은 요청에 걸린 통지가 닿을 때 {@link NoticeWaitStart}가 적는다. 재통지는 {@link RenotifyWorker}가 내고 재통지가 닿으면
+ *       미확인 기한이 생기지만, 미확인 작업자가 없어 요청은 {@code WAITING}에서 넘어가지 않는다
+ *   <li>재통지가 닿은 뒤 기한 다시 세기: 고친 내용 확인·제안만 미확인 기한을 그 시각부터 72시간으로 다시 정하고(03 1-4·03 E, 미확인 뒤 다시 기다림
+ *       포함), 그 밖의 종류는 저장한 기한 그대로다({@link ResponseRequest#recount})
  *   <li>{@link #closeAll}: 상대 탈퇴와 거주 종료(#370 B-1)만 닫고, 공유 중단·정산 완료는 #113에서 정하기 전이라 {@code
  *       UnsupportedOperationException}이다
  * </ul>
@@ -58,16 +58,19 @@ public class JpaWaitService implements WaitService, WaitQuery {
   private final CounterpartReader counterparts;
   private final ActionRequestContext requestContext;
   private final Duration renotifyAfter;
+  private final Duration unconfirmedAfter;
 
   public JpaWaitService(
       ResponseRequestRepository requests,
       CounterpartReader counterparts,
       ActionRequestContext requestContext,
-      @Value("${app.wait.renotify:48h}") Duration renotifyAfter) {
+      @Value("${app.wait.renotify:48h}") Duration renotifyAfter,
+      @Value("${app.wait.unconfirmed:24h}") Duration unconfirmedAfter) {
     this.requests = requests;
     this.counterparts = counterparts;
     this.requestContext = requestContext;
     this.renotifyAfter = WaitDurations.require(renotifyAfter, "app.wait.renotify");
+    this.unconfirmedAfter = WaitDurations.require(unconfirmedAfter, "app.wait.unconfirmed");
   }
 
   @Override
@@ -132,16 +135,16 @@ public class JpaWaitService implements WaitService, WaitQuery {
         throw new IllegalStateException(
             "상대 쪽 제안 요청이 열려 있어요. 역제안이면 answered 다음 open을 불러 주세요(05 proposal ③)");
       }
-      request.rewait(requestContext.at(), renotifyAfter);
+      request.rewait(requestContext.at(), renotifyAfter, unconfirmedAfter);
     } else if (command.kind() == RequestKind.CORRECTION_CONFIRM
         && request.getStatus() == RequestStatus.UNCONFIRMED) {
       // 미확인 뒤 같은 기록을 또 고치면 새 요청을 열지 않고 같은 요청이 다시 기다림이 된다(03 1-4 "미확인 뒤 다시 고침", #104)
-      request.rewait(requestContext.at(), renotifyAfter);
+      request.rewait(requestContext.at(), renotifyAfter, unconfirmedAfter);
     } else if (!SoloRule.opensSolo(command.kind())
         && request.getStatus() == RequestStatus.WAITING) {
       // 고친 내용 확인 등은 마지막으로 더한 시각부터 다시 센다(03 1-4 "기한"). 혼자 진행이 열리는 종류는 기한이 보낸 뒤 고정이라 묶기만
       // 한다(미확인이어도 상태·기한 그대로)
-      request.recount(requestContext.at(), renotifyAfter);
+      request.recount(requestContext.at(), renotifyAfter, unconfirmedAfter);
     }
     return new RequestHandle(request.getId(), false);
   }
