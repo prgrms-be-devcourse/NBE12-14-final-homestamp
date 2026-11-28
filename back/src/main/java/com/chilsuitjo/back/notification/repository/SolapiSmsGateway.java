@@ -8,6 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,9 +33,10 @@ import org.springframework.stereotype.Component;
  * </ul>
  *
  * <p>결과 조회: 메시지 ID가 있는 문자만 업체에 묻는다. 4000이면 {@code DELIVERED}, 3000을 뺀 3xxx면 원인과 상관없이 {@code
- * FAILED}(보내지 못한 사실, 받는 사람 탓이 아닌 코드는 error 로그), 2000(접수 뒤 잔액·한도로 보관될 수 있음)·3000과 찾지 못한 것과 메시지 ID가
- * 없는 것은 {@code NONE}(04 4-2, {@link DeliveryOutcome}). 업체가 돌려준 사용자 정의 칸의 묶음 ID가 묻는 묶음과 다르면 그 결과를 쓰지
- * 않는다(다른 문자의 결과로 기다림을 시작하지 않게).
+ * FAILED}(보내지 못한 사실, 받는 사람 탓이 아닌 코드는 error 로그), 공식 표의 발송불가 2xxx({@link #PLATFORM_REJECTED_CODES})도
+ * {@code FAILED}, 2000(발송대기: 잔액·한도로 보류)·3000·표에 없는 2xxx·1xxx와 찾지 못한 것과 메시지 ID가 없는 것은 {@code
+ * NONE}(04 4-2, {@link DeliveryOutcome}). 업체가 돌려준 사용자 정의 칸의 묶음 ID가 묻는 묶음과 다르면 그 결과를 쓰지 않는다(다른 문자의
+ * 결과로 기다림을 시작하지 않게).
  */
 @Component
 @ConditionalOnProperty(name = "app.sms.mode", havingValue = "solapi")
@@ -48,6 +50,18 @@ public class SolapiSmsGateway implements SmsGateway {
    */
   static final Set<String> OPERATIONAL_RESULT_CODES =
       Set.of("3012", "3013", "3014", "3024", "3048", "3059", "3112");
+
+  /**
+   * 결과 조회의 발송불가(2xxx, 2000 제외) 가운데 공식 상태 코드 표에 있는 것. 공식 안내: "이통사 전달 전 플랫폼 내부 검증 단계에서 발송이 실패한
+   * 경우"(guides/message-status-codes 발송불가(2XXX)), "검증 단계에서 발송이 실패하는 경우, 상태코드 (2XXX)로 반환되며 발송은 진행되지
+   * 않습니다"(message-processing). 그래서 그 문자는 실패다. 2000은 잔액·하루 한도로 보류된 발송대기라 결과 없음이고, 표에 없는 2xxx는 뜻을 몰라
+   * 결과 없음으로 둔다.
+   */
+  static final Set<String> PLATFORM_REJECTED_CODES =
+      Set.of("2011", "2012", "2024", "2025", "2061", "2062", "2064", "2065", "2230", "2254");
+
+  /** 발송불가 가운데 받는 사람이 수신을 거부한 것. 나머지는 계정·발신번호·형식·업체 원인이라 운영자가 알아야 한다. */
+  private static final Set<String> RECIPIENT_REJECTED_CODES = Set.of("2061", "2065");
 
   private final SolapiClient client;
 
@@ -83,16 +97,23 @@ public class SolapiSmsGateway implements SmsGateway {
             .toList();
     Map<String, SolapiClient.ListedMessage> found = ids.isEmpty() ? Map.of() : client.list(ids);
     Map<UUID, DeliveryOutcome> results = new LinkedHashMap<>();
+    Map<String, Integer> unknownCodes = new TreeMap<>();
     for (DeliveryQuery query : queries) {
       String id = query.providerMessageId();
       // 메시지 ID 없이 보낸 문자(결과 모름)는 업체에서 찾을 방법이 정해지지 않아 결과 없음이다(OPS-1)
       results.put(
-          query.batchLeadId(), id == null ? DeliveryOutcome.NONE : outcome(query, found.get(id)));
+          query.batchLeadId(),
+          id == null ? DeliveryOutcome.NONE : outcome(query, found.get(id), unknownCodes));
+    }
+    if (!unknownCodes.isEmpty()) {
+      // 결과 없음은 다음 주기에 다시 묻는다. 문자마다 남기면 3일 동안 같은 줄이 쌓여 한 번의 조회에 코드별 개수 한 줄만 남긴다(ID·번호 없음)
+      log.error("솔라피 결과가 접수 중·처리 중 오류인데 뜻을 몰라 결과 없음으로 둠(계정·발신번호 확인): codes={}", unknownCodes);
     }
     return results;
   }
 
-  private static DeliveryOutcome outcome(DeliveryQuery query, SolapiClient.ListedMessage message) {
+  private static DeliveryOutcome outcome(
+      DeliveryQuery query, SolapiClient.ListedMessage message, Map<String, Integer> unknownCodes) {
     if (message == null) {
       return DeliveryOutcome.NONE;
     }
@@ -113,14 +134,20 @@ public class SolapiSmsGateway implements SmsGateway {
       }
       return DeliveryOutcome.FAILED;
     }
+    if (PLATFORM_REJECTED_CODES.contains(code)) {
+      // 결과 조회가 실패를 알 뿐이다. 다시 보내기·혼자 진행은 이 결과로 정하지 않는다(통지에는 원인 칸이 없음, A에 전달). 실패가 되면 더
+      // 묻지 않아 이 로그는 문자마다 한 번이다
+      if (!RECIPIENT_REJECTED_CODES.contains(code)) {
+        log.error("솔라피가 이통사 전달 전 발송불가로 끝냄(계정·발신번호·형식 확인): code={}", code);
+      }
+      return DeliveryOutcome.FAILED;
+    }
     if (code != null
         && code.length() == 4
         && (code.startsWith("1") || code.startsWith("2"))
         && !"2000".equals(code)) {
-      // 1xxx·2xxx(2000 제외)는 공식 표가 "접수 중·플랫폼 내부 처리 중 오류"라고만 하고 끝난 실패인지는 적지 않는다(잔액 부족 등은 보관 뒤 나갈
-      // 수 있음). 합의한 계약(04 6장·03 "3xxx 또는 3일 결과 없음")대로 결과 없음으로 두어 전달 확인 기한에 실패가 되지만, 발신번호 미등록처럼
-      // 운영자가 바로 고쳐야 하는 경우가 많아 조회할 때마다 알린다. 바로 실패로 볼지는 A 결정
-      log.error("솔라피 결과가 접수·처리 중 오류(최종 여부 모름, 계정·발신번호 확인): code={}", code);
+      // 표에 없는 2xxx와 접수 뒤 조회의 1xxx는 끝난 실패인지 공식 근거가 없어 결과 없음으로 둔다(전달 확인 기한에 실패, 04 6장)
+      unknownCodes.merge(code, 1, Integer::sum);
     }
     return DeliveryOutcome.NONE;
   }

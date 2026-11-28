@@ -241,9 +241,14 @@ class SolapiSmsGatewayTest {
   }
 
   @Test
-  void 접수_중_처리_중_오류_코드는_합의대로_결과_없음이다() {
-    // 공식 표는 1xxx·2xxx를 "접수 중·플랫폼 내부 처리 중 오류"라고만 한다. 바로 실패로 볼지는 A 결정, 지금은 error 로그 + 결과 없음
+  void 공식_표의_발송불가_2xxx는_실패이고_2000_발송대기와_모르는_코드는_결과_없음이다() {
+    // guides/message-status-codes: 발송대기(2000)는 잔액·한도 보류, 발송불가(2XXX)는 "이통사 전달 전 플랫폼 내부 검증 단계에서 발송이
+    // 실패"
     UUID unregistered = UUID.randomUUID();
+    UUID optedOut = UUID.randomUUID();
+    UUID noBalance = UUID.randomUUID();
+    UUID held = UUID.randomUUID();
+    UUID unlisted = UUID.randomUUID();
     UUID acceptFailed = UUID.randomUUID();
     solapi.reply(
         LIST,
@@ -251,19 +256,34 @@ class SolapiSmsGatewayTest {
         """
         {"messageList":{
           "M1":{"messageId":"M1","statusCode":"2062","customFields":{"batchLeadId":"%s"}},
-          "M2":{"messageId":"M2","statusCode":"1062","customFields":{"batchLeadId":"%s"}}}}
+          "M2":{"messageId":"M2","statusCode":"2061","customFields":{"batchLeadId":"%s"}},
+          "M3":{"messageId":"M3","statusCode":"2230","customFields":{"batchLeadId":"%s"}},
+          "M4":{"messageId":"M4","statusCode":"2000","customFields":{"batchLeadId":"%s"}},
+          "M5":{"messageId":"M5","statusCode":"2999","customFields":{"batchLeadId":"%s"}},
+          "M6":{"messageId":"M6","statusCode":"1062","customFields":{"batchLeadId":"%s"}}}}
         """
-            .formatted(unregistered, acceptFailed));
+            .formatted(unregistered, optedOut, noBalance, held, unlisted, acceptFailed));
 
     assertThat(
             gateway()
                 .queryResults(
                     List.of(
                         new DeliveryQuery(unregistered, "M1"),
-                        new DeliveryQuery(acceptFailed, "M2"))))
+                        new DeliveryQuery(optedOut, "M2"),
+                        new DeliveryQuery(noBalance, "M3"),
+                        new DeliveryQuery(held, "M4"),
+                        new DeliveryQuery(unlisted, "M5"),
+                        new DeliveryQuery(acceptFailed, "M6"))))
         .containsExactly(
-            Map.entry(unregistered, DeliveryOutcome.NONE),
+            Map.entry(unregistered, DeliveryOutcome.FAILED),
+            Map.entry(optedOut, DeliveryOutcome.FAILED),
+            Map.entry(noBalance, DeliveryOutcome.FAILED),
+            Map.entry(held, DeliveryOutcome.NONE),
+            Map.entry(unlisted, DeliveryOutcome.NONE),
             Map.entry(acceptFailed, DeliveryOutcome.NONE));
+    // 결과 조회는 한 번 묻기만 한다(다시 보내지 않음)
+    assertThat(solapi.received()).hasSize(1);
+    assertThat(solapi.received().getFirst().method()).isEqualTo("GET");
   }
 
   @Test
