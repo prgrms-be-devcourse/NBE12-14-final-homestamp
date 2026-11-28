@@ -52,6 +52,9 @@ app:
       interval-ms: 5000
       batch-size: 50
   # 06 0-1 설정값
+  # 서비스 안 알림 보관(06 0-1 notification.ttl). 만들 때 만료 시각으로 저장해서 값을 바꿔도 이미 만든 알림은 그대로다
+  notification:
+    ttl: 30d
   notice:
     send:
       retry: 1m,5m,15m

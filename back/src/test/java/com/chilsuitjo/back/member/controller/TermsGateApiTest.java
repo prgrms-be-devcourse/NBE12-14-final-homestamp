@@ -59,11 +59,7 @@ class TermsGateApiTest {
    * 지우기의 {@code redactedUpload}(가린 사본 등록)를 확인 전에 받을지는 그때 정한다(#338 리뷰 4).
    */
   private static final Set<String> NOT_YET_MAPPED =
-      Set.of(
-          "/api/me/withdraw",
-          "/api/me/notifications/*/read",
-          "/api/rooms/*/stop-sharing",
-          "/api/photos/*/erase");
+      Set.of("/api/me/withdraw", "/api/rooms/*/stop-sharing", "/api/photos/*/erase");
 
   private static final Path SPEC = Path.of("../docs/rules/06-요구사항-명세.md");
 
@@ -169,6 +165,16 @@ class TermsGateApiTest {
         .andExpect(status().isBadRequest());
     mvc.perform(post("/api/auth/logout").with(loginAs(memberId)))
         .andExpect(status().is2xxSuccessful());
+  }
+
+  @Test
+  void CONS_4b_확인_전에도_알림_읽음은_막지_않는다() throws Exception {
+    UUID memberId = memberWithOldVersions();
+
+    // 막히지 않으면 알림을 찾는 데까지 간다(없는 알림이라 NOT_FOUND, TERMS_UPDATE_REQUIRED가 아님)
+    mvc.perform(post("/api/me/notifications/{id}/read", UUID.randomUUID()).with(loginAs(memberId)))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.code").value(ErrorCode.NOT_FOUND.name()));
   }
 
   @Test

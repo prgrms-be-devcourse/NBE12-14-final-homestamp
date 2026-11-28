@@ -28,6 +28,7 @@ import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.dto.RoomParties;
 import com.chilsuitjo.back.notification.dto.SoloCheck;
 import com.chilsuitjo.back.notification.dto.SoloQuery;
+import com.chilsuitjo.back.notification.rule.InAppTopic;
 import com.chilsuitjo.back.notification.rule.PartyPresence;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.service.CounterpartReader;
@@ -740,8 +741,8 @@ public class RepairStateStore {
             new InfoCommand(
                 counterpart.memberId(),
                 command.roomRecordId(),
-                RequestTarget.of(TargetKind.REPAIR_CASE, row.getId()),
-                null));
+                InAppTopic.REPAIR_PHOTO_ADDED,
+                RequestTarget.of(TargetKind.REPAIR_CASE, row.getId())));
       }
       return SavedState.unchanged().withPhotos(added);
     }
