@@ -210,6 +210,10 @@ public class RoomViewService {
     names.put(ActionType.REGISTER, "repair-cases"); // 하자 등록(POST /api/rooms/{id}/repair-cases)
     names.put(
         ActionType.START_INSPECTION, "inspections"); // 입주 점검 시작만(POST /api/rooms/{id}/inspections)
+    // 부위 바꾸기(POST /api/rooms/{id}/parts, .../{partId}/hide·show·toggle, #456).
+    // 네 행동(ADD_PART·HIDE_PART·SHOW_PART·TOGGLE_PART)은 호실 단위 허용 값이 같아 ADD_PART로 판단한다.
+    // 부위마다의 거절(이미 그 상태 등)은 부위 목록 값으로 화면이 정한다.
+    names.put(ActionType.ADD_PART, "parts");
     return names;
   }
 
