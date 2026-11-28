@@ -28,7 +28,7 @@ class FakePaymentServiceTest {
       new PaymentCreateRequest(
           new PayerRequest(PayerKind.TENANT, null),
           new PayeeRequest(PayeeKind.VENDOR, null),
-          10000,
+          10_000L,
           LocalDate.of(2026, 11, 24),
           null,
           List.of(),

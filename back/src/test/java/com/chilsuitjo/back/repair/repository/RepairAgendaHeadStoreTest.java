@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.chilsuitjo.back.TestcontainersConfiguration;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
+import com.chilsuitjo.back.payment.service.FakePaymentConfig;
 import com.chilsuitjo.back.payment.service.FakePaymentService;
 import com.chilsuitjo.back.proposal.dto.AgendaRef;
 import com.chilsuitjo.back.proposal.rule.AgendaKind;
@@ -35,7 +36,7 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>제안 ID 칸은 V1 복합 FK({@code fk_repair_case_current_proposal}·{@code
  * fk_repair_case_agreed_proposal})가 있어 실제 {@code proposal} 행을 넣고 쓴다. 테스트는 끝나면 되돌린다.
  */
-@Import(TestcontainersConfiguration.class)
+@Import({TestcontainersConfiguration.class, FakePaymentConfig.class})
 @SpringBootTest(
     properties =
         "spring.datasource.hikari.connection-init-sql=SET search_path TO state, record, log, public")

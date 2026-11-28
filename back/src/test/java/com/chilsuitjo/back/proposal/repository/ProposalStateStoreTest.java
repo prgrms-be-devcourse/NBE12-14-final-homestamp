@@ -18,6 +18,7 @@ import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.rule.RequestStatus;
 import com.chilsuitjo.back.notification.service.FakeWaitService;
+import com.chilsuitjo.back.payment.service.FakePaymentConfig;
 import com.chilsuitjo.back.payment.service.FakePaymentService;
 import com.chilsuitjo.back.proposal.dto.AgendaRef;
 import com.chilsuitjo.back.proposal.dto.MoneyLine;
@@ -48,7 +49,7 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>응답 요청은 지금 가짜({@link FakeWaitService})라 DB가 아니라 가짜의 상태로 확인한다. 테스트는 끝나면 되돌린다.
  */
-@Import(TestcontainersConfiguration.class)
+@Import({TestcontainersConfiguration.class, FakePaymentConfig.class})
 @SpringBootTest(
     properties =
         "spring.datasource.hikari.connection-init-sql=SET search_path TO state, record, log, public")

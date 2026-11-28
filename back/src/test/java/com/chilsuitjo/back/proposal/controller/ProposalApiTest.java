@@ -15,6 +15,7 @@ import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.rule.RequestStatus;
 import com.chilsuitjo.back.notification.service.FakeWaitService;
+import com.chilsuitjo.back.payment.service.FakePaymentConfig;
 import com.chilsuitjo.back.payment.service.FakePaymentService;
 import java.util.Map;
 import java.util.UUID;
@@ -41,7 +42,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * RepairProposalApiTest}가 본다. pipeline이 바깥 트랜잭션을 거절해서 {@code @Transactional}로 되돌리지 않는다. 테스트마다 새 호실을
  * 만들어 섞이지 않게 한다.
  */
-@Import(TestcontainersConfiguration.class)
+@Import({TestcontainersConfiguration.class, FakePaymentConfig.class})
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")

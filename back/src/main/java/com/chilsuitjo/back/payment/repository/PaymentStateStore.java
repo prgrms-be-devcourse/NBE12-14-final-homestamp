@@ -15,8 +15,13 @@ import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.global.common.Uuids;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
+import com.chilsuitjo.back.notification.dto.OpenRequestCommand;
+import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.dto.RoomParties;
+import com.chilsuitjo.back.notification.rule.PartyPresence;
+import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.service.CounterpartReader;
+import com.chilsuitjo.back.notification.service.WaitService;
 import com.chilsuitjo.back.payment.dto.PaymentCreateRequest;
 import com.chilsuitjo.back.payment.entity.Payment;
 import com.chilsuitjo.back.payment.entity.PaymentVersion;
@@ -62,6 +67,7 @@ public class PaymentStateStore {
   private final RoomAccessService access;
   private final PhotoService photos;
   private final RepairPhotoScope repairPhotos;
+  private final WaitService waits;
 
   /**
    * 기록(06 MONEY-1)의 저장 방법. 칸 검증은 서비스가 pipeline 전에 끝낸다. 같은 키로 다시 온 요청이면 pipeline이 처음 만든 지불을 결과로
@@ -141,6 +147,28 @@ public class PaymentStateStore {
         room.counterpart().withdrawn());
   }
 
+  /**
+   * 남긴 지불에 상대의 금액 확인 요청을 연다(03 F "금액 확인", 06 LINK-1e). 하자 확인 요청과 같이, 받을 상대가 없거나(연결·초대 전이 아님) 공유 중단
+   * 제한이 살아 있거나 호실 단계에서 열 수 없으면 열지 않는다({@code RepairStateStore.openDefectRequest}). 통지·문자는 만들지 않는다.
+   */
+  private void openAmountConfirm(UUID roomRecordId, UUID paymentId, PartySide side) {
+    RoomParties room = parties.read(roomRecordId, side);
+    PartyPresence presence = room.counterpart().presence();
+    if ((presence != PartyPresence.CONNECTED && presence != PartyPresence.INVITED)
+        || room.mySharingStoppedApplies()
+        || room.counterpartSharingStoppedApplies()
+        || !room.canOpen(RequestKind.AMOUNT_CONFIRM)
+        || !waits.canOpen(roomRecordId, RequestKind.AMOUNT_CONFIRM)) {
+      return;
+    }
+    waits.open(
+        new OpenRequestCommand(
+            roomRecordId,
+            RequestKind.AMOUNT_CONFIRM,
+            RequestTarget.of(TargetKind.PAYMENT, paymentId),
+            side));
+  }
+
   private final class Recording implements StateStore<PaymentState> {
 
     private final UUID repairCaseId;
@@ -210,6 +238,7 @@ public class PaymentStateStore {
                   request.evidenceKind(),
                   null,
                   at));
+      openAmountConfirm(command.roomRecordId(), paymentId, command.actor().side());
       return new SavedState(ActionTarget.payment(paymentId), digest(version))
           .withPhotos(attach(command, paymentId));
     }

@@ -14,6 +14,7 @@ import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.rule.RequestStatus;
 import com.chilsuitjo.back.notification.service.FakeWaitService;
+import com.chilsuitjo.back.payment.service.FakePaymentConfig;
 import com.chilsuitjo.back.payment.service.FakePaymentService;
 import com.jayway.jsonpath.JsonPath;
 import java.util.List;
@@ -51,7 +52,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <p>응답 요청은 가짜({@code FakeWaitService})라 상태만 확인하고, 기준 금액은 가짜 지불 창구({@code FakePaymentService})에 적어
  * 둔다. pipeline이 바깥 트랜잭션을 거절해서 {@code @Transactional}로 되돌리지 않는다. 테스트마다 새 호실을 만든다.
  */
-@Import(TestcontainersConfiguration.class)
+@Import({TestcontainersConfiguration.class, FakePaymentConfig.class})
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")

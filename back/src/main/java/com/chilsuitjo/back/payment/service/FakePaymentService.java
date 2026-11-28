@@ -10,7 +10,6 @@ import com.chilsuitjo.back.room.dto.RoomAccess;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
-import org.springframework.stereotype.Service;
 
 /**
  * 지불 가짜(#111). DB·행동 기록 없이 지불 ID·소속과 재요청 결과를 메모리에 보관한다. 멱등 키 검사와 재요청 판정은 진짜 {@code ActionPipeline}과
@@ -19,9 +18,9 @@ import org.springframework.stereotype.Service;
  * <p>진짜와 다른 점: 지불만 기억하므로 같은 키를 하자 등록처럼 다른 종류 행동에 먼저 썼어도 새 지불을 만든다(진짜는 {@code
  * IDEMPOTENCY_KEY_REUSED}). 요청 칸({@link PaymentCreateRequest})도 검사하지 않는다.
  *
- * <p>실제 구현이 들어오면 이 클래스를 지운다. 다른 도메인은 {@link PaymentService}만 쓰므로 바뀌지 않는다.
+ * <p>빈이 아니다: {@link PaymentService} 빈은 {@link JpaPaymentService}다. 기준 금액을 적어 쓰는 테스트가 테스트 설정으로 붙여
+ * 쓴다. 그 테스트를 실제 구현으로 옮기면 이 클래스를 지운다. 다른 도메인은 {@link PaymentService}만 쓰므로 바뀌지 않는다.
  */
-@Service
 public class FakePaymentService implements PaymentService {
   private final Map<Key, RecordedPayment> payments = new HashMap<>();
   private final Map<CaseKey, Long> confirmedTotals = new HashMap<>();

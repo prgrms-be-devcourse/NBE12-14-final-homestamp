@@ -5,7 +5,7 @@ import com.chilsuitjo.back.payment.dto.PaymentRecordResult;
 import com.chilsuitjo.back.room.dto.RoomAccess;
 import java.util.UUID;
 
-/** 다른 도메인이 지불을 부르는 창구(#111). 지금은 {@link FakePaymentService}가 구현한다. */
+/** 다른 도메인이 지불을 부르는 창구(#111). {@link JpaPaymentService}가 구현한다. */
 public interface PaymentService {
 
   /**
@@ -22,7 +22,7 @@ public interface PaymentService {
    * @return 지불 ID와 다시 온 요청인지
    * @throws com.chilsuitjo.back.global.error.BusinessException {@code VALIDATION_FAILED}(키가 비었거나
    *     {@code #}가 들었거나 64자 초과), {@code IDEMPOTENCY_KEY_REUSED}(같은 키를 다른 호실에), {@code
-   *     DUPLICATE_PAYMENT}(같은 지불이 이미 있음, MONEY-1a·1c. 진짜 구현부터)
+   *     DUPLICATE_PAYMENT}(같은 지불이 이미 있음, MONEY-1a·1c)
    */
   PaymentRecordResult record(
       RoomAccess access, String idempotencyKey, UUID repairCaseId, PaymentCreateRequest req);

@@ -6,6 +6,8 @@ import com.chilsuitjo.back.global.common.dto.RespondRequest;
 import com.chilsuitjo.back.global.common.dto.SupplementRequest;
 import com.chilsuitjo.back.global.response.CreatedResponse;
 import com.chilsuitjo.back.global.security.LoginMember;
+import com.chilsuitjo.back.payment.dto.PaymentCreateRequest;
+import com.chilsuitjo.back.payment.dto.PaymentRecordResult;
 import com.chilsuitjo.back.proposal.dto.ProposalRequest;
 import com.chilsuitjo.back.proposal.dto.ProposalResult;
 import com.chilsuitjo.back.repair.dto.AddPhotosRequest;
@@ -157,6 +159,22 @@ public class RepairController {
     ProposalResult result = repairs.propose(id, memberId, idempotencyKey, request);
     return withReplayed(ResponseEntity.status(HttpStatus.CREATED), result.replayed())
         .body(new CreatedResponse(result.proposalId()));
+  }
+
+  /**
+   * 지불 기록(MONEY-1). 처음 성공과 다시 온 요청 모두 201과 만든 지불 ID다. 다시 온 요청이면 {@code Idempotent-Replayed: true}를
+   * 붙인다(06 4-0). 같은 지불이 있으면 409 {@code DUPLICATE_PAYMENT}와 {@code duplicateOf}·{@code
+   * similar}다(MONEY-1a·1c).
+   */
+  @PostMapping("/api/repair-cases/{id}/payments")
+  public ResponseEntity<CreatedResponse> recordPayment(
+      @PathVariable UUID id,
+      @LoginMember UUID memberId,
+      @RequestHeader("Idempotency-Key") String idempotencyKey,
+      @RequestBody PaymentCreateRequest request) {
+    PaymentRecordResult result = repairs.recordPayment(id, memberId, idempotencyKey, request);
+    return withReplayed(ResponseEntity.status(HttpStatus.CREATED), result.replayed())
+        .body(new CreatedResponse(result.id()));
   }
 
   /** 수리 시작(REP-4a). 누구든, 시작 전에서만. 처음 성공과 다시 온 요청 모두 200이다. */
