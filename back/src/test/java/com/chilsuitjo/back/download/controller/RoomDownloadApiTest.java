@@ -154,13 +154,15 @@ class RoomDownloadApiTest {
 
     String theirs = body(download(landlord).andExpect(status().isOk()));
     List<String> landlordSees = JsonPath.read(theirs, "$.record.actions[*].type");
-    assertThat(landlordSees).containsExactly("START_INSPECTION", "REQUEST_INSPECTION_CONFIRM");
+    // 퇴거 점검 시작은 같은 요청에서 정산을 연다(#320). 그만두기 전 행동이라 보인다
+    assertThat(landlordSees)
+        .containsExactly("START_INSPECTION", "OPEN_SETTLEMENT", "REQUEST_INSPECTION_CONFIRM");
     assertThat((Integer) JsonPath.read(theirs, "$.photoCount")).isZero();
 
     // 기준 측은 자기 항목과 사진을 그대로 본다
     String mine = body(download(tenant).andExpect(status().isOk()));
     List<String> tenantSees = JsonPath.read(mine, "$.record.actions[*].type");
-    assertThat(tenantSees).containsExactly("START_INSPECTION", "ADD_ITEM");
+    assertThat(tenantSees).containsExactly("START_INSPECTION", "OPEN_SETTLEMENT", "ADD_ITEM");
     assertThat((Integer) JsonPath.read(mine, "$.photoCount")).isEqualTo(1);
   }
 
