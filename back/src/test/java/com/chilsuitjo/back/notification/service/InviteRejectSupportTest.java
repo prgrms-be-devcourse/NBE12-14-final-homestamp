@@ -66,7 +66,7 @@ class InviteRejectSupportTest {
         .containsEntry("closed_reason", "INVITE_REJECTED");
     assertThat(((Timestamp) request(mine).get("closed_at")).toInstant()).isEqualTo(REJECTED_AT);
     assertThat(request(theirs)).containsEntry("status", "WAITING");
-    // 거절된 자리의 링크만 V15 CHECK의 새 이유로 닫히고, 무효 시각은 같은 행동 시각이다
+    // 거절된 자리의 링크만 V16 CHECK의 새 이유로 닫히고, 무효 시각은 같은 행동 시각이다
     assertThat(closedLinks).containsExactly(link);
     assertThat(linkReason(link)).isEqualTo("INVITE_REJECTED");
     assertThat(linkInvalidatedAt(link)).isEqualTo(REJECTED_AT);

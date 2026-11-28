@@ -1,7 +1,7 @@
 package com.chilsuitjo.back.global.common;
 
 /**
- * 링크가 무효가 된 이유. 값은 05 ERD {@code link.invalidated_reason}(V1 CHECK, V15에서 {@code INVITE_REJECTED}
+ * 링크가 무효가 된 이유. 값은 05 ERD {@code link.invalidated_reason}(V1 CHECK, V16에서 {@code INVITE_REJECTED}
  * 더함)와 같다(03 C).
  *
  * <p>{@code link}가 두고 다른 도메인이 {@code InviteLinks}(notification 포트)로 넘기므로 {@code global/common}에

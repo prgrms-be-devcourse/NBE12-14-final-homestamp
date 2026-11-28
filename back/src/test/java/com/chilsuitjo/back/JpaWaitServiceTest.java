@@ -496,7 +496,7 @@ class JpaWaitServiceTest extends SchemaTestSupport {
 
     assertThat(closed).isEqualTo(2);
     for (RequestHandle h : java.util.List.of(defect, inspectionConfirm)) {
-      // V15 CHECK가 새 이유를 받는다
+      // V16 CHECK가 새 이유를 받는다
       assertThat(row(h.requestId()))
           .containsEntry("status", "CLOSED")
           .containsEntry("closed_reason", "INVITE_REJECTED");
