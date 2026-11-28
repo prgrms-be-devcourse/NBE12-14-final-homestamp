@@ -52,6 +52,19 @@ public class SmsCancellationService implements SmsCancellation {
     Objects.requireNonNull(linkIds, "linkIds");
     // MANDATORY는 트랜잭션 안인지만 본다. save 밖(커밋 뒤 리스너·예약 작업 등)이면 여기서 IllegalStateException(#236과 같은 방식)
     requestContext.requestId();
+    return cancel(roomRecordId, linkIds);
+  }
+
+  @Override
+  @Transactional(propagation = Propagation.MANDATORY)
+  public int cancelPendingSmsOnWithdrawal(UUID roomRecordId, Collection<UUID> linkIds) {
+    Objects.requireNonNull(roomRecordId, "roomRecordId");
+    Objects.requireNonNull(linkIds, "linkIds");
+    // 탈퇴 트랜잭션은 pipeline 밖이라 요청 문맥이 없다. 트랜잭션 안인지(MANDATORY)와 호실 잠금(아래)으로 지킨다
+    return cancel(roomRecordId, linkIds);
+  }
+
+  private int cancel(UUID roomRecordId, Collection<UUID> linkIds) {
     Set<UUID> links = Set.copyOf(linkIds);
     if (links.isEmpty()) {
       return 0;

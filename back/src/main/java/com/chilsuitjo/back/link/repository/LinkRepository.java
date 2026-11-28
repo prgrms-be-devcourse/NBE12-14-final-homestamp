@@ -61,6 +61,18 @@ public interface LinkRepository extends JpaRepository<Link, UUID> {
       @Param("room") UUID roomRecordId, @Param("party") UUID partyId, @Param("kind") LinkKind kind);
 
   /**
+   * 호실을 잠근 뒤 그 호실에서 한 회원이 발급한 링크를 종류와 상관없이, 이미 무효인 것까지 모두 잠근다(호실 → 링크, 09 3-1). 발급한 사람 탈퇴 무효화에
+   * 쓴다({@code InviteLinks.invalidateIssuedBy}). ID 순 정렬은 잠그는 순서를 고정하려는 것이다.
+   */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      "select l from Link l where l.roomRecordId = :room and l.issuedByMemberId = :issuer"
+          + " order by l.id")
+  @Transactional(propagation = Propagation.MANDATORY)
+  List<Link> lockAllIssuedBy(
+      @Param("room") UUID roomRecordId, @Param("issuer") UUID issuerMemberId);
+
+  /**
    * 링크를 찾았는데 열지 못한 횟수를 하나 올린다(무효 링크, 호실 상태로 막힘, 내용을 못 읽음, pipeline 거절. 05 {@code
    * link.failed_view_count}: 링크를 식별할 수 있는 실패만 센다). 이 횟수만으로 링크를 무효로 하지 않는다. 자기 트랜잭션으로 돌아 열람이 되돌려져도
    * 남는다.
