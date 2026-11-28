@@ -2,7 +2,7 @@
 \set QUIET 1
 
 -- Read-only audit of the Human read group and every per-person LOGIN role in it.
--- Required psql variable: human_role (the NOLOGIN read group, e.g. homestamp_human_read).
+-- Required psql variable: human_role (the NOLOGIN read group, production: hs_human_read).
 -- Run as a trusted DB administrator after adding or removing a person and before each
 -- production deployment. It changes nothing; any violation fails with a non-zero exit code.
 -- People are identified as the members of the group. It does not check PUBLIC privileges (they are
