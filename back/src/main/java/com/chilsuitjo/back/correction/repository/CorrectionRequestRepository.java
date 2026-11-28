@@ -3,6 +3,7 @@ package com.chilsuitjo.back.correction.repository;
 import com.chilsuitjo.back.correction.entity.CorrectionRequest;
 import com.chilsuitjo.back.correction.rule.CorrectionStatus;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -25,6 +26,10 @@ public interface CorrectionRequestRepository extends JpaRepository<CorrectionReq
 
   /** 이 호실에서 수리 건이 대상인 고친 내용 모두(상태와 상관없이). */
   List<CorrectionRequest> findByRoomRecordIdAndRepairCaseIdNotNull(UUID roomRecordId);
+
+  /** 이 호실에서 이 상태들인 고친 내용 모두(정산 완료로 닫을 때). */
+  List<CorrectionRequest> findByRoomRecordIdAndStatusIn(
+      UUID roomRecordId, Collection<CorrectionStatus> statuses);
 
   /** 그 기록에서 이 상태인 고친 내용 모두(처리 완료 등으로 닫을 때). */
   List<CorrectionRequest> findByTargetKeyAndStatus(String targetKey, CorrectionStatus status);

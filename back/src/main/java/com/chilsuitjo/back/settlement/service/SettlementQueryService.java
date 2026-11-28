@@ -22,11 +22,15 @@ import com.chilsuitjo.back.settlement.entity.Settlement;
 import com.chilsuitjo.back.settlement.entity.SettlementTransfer;
 import com.chilsuitjo.back.settlement.entity.SettlementTransferVersion;
 import com.chilsuitjo.back.settlement.repository.SettlementRepository;
+import com.chilsuitjo.back.settlement.repository.SettlementStateStore;
 import com.chilsuitjo.back.settlement.repository.SettlementTransferRepository;
 import com.chilsuitjo.back.settlement.repository.SettlementTransferVersionRepository;
 import com.chilsuitjo.back.settlement.repository.TransferStateStore;
+import com.chilsuitjo.back.settlement.rule.SettlementState;
+import com.chilsuitjo.back.settlement.rule.SettlementTransitions;
 import com.chilsuitjo.back.settlement.rule.TransferDirection;
 import com.chilsuitjo.back.settlement.rule.TransferTransitions;
+import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -56,6 +60,9 @@ public class SettlementQueryService {
   private final CounterpartReader parties;
   private final WaitQuery waits;
   private final CorrectionReader correctionReader;
+  private final SettlementStateStore settlementStore;
+  private final SettlementTransitions rules;
+  private final Clock clock;
   private final ActionReader actions;
 
   /**
@@ -110,6 +117,21 @@ public class SettlementQueryService {
     if (gate.rejection(ActionType.RECORD_TRANSFER).isEmpty()) {
       actions.add("transfers");
     }
+    // 끝내기 버튼은 실제 요청과 같은 판단이다(06 4-0): 호실 단위 거절은 RoomGate, 정산 규칙은 SettlementTransitions
+    SettlementState state = settlementStore.current(row, viewer);
+    if (gate.rejection(ActionType.PROPOSE_FINISH).isEmpty()
+        && rules.proposeBlocked(state, viewer, clock.instant()) == null) {
+      actions.add("finish");
+    }
+    if (gate.rejection(ActionType.CONFIRM_FINISH).isEmpty()
+        && SettlementTransitions.canAnswer(state, viewer)) {
+      actions.add("finish-confirm");
+      actions.add("finish-not-yet");
+    }
+    if (gate.rejection(ActionType.FINISH_ALONE).isEmpty()
+        && SettlementTransitions.aloneBlocked(state, viewer) == null) {
+      actions.add("finish-alone");
+    }
     return new SettlementDetail(
         row.getId(),
         row.getRoomRecordId(),
@@ -117,6 +139,8 @@ public class SettlementQueryService {
         row.getDepositStatus(),
         row.getSnapshotNo(),
         row.getCreatedAt(),
+        state.settled(),
+        state.finishRequestedBy(),
         unanswered,
         List.copyOf(views),
         confirmedTotal(views, TransferDirection.REFUND),

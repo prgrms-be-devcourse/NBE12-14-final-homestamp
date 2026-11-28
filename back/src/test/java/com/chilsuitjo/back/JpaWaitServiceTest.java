@@ -307,7 +307,7 @@ class JpaWaitServiceTest extends SchemaTestSupport {
             () -> closeAll(room, ClosedReason.ROOM_ENDED, Set.of(RequestKind.CLOSE_CONFIRM)))
         .isInstanceOf(IllegalArgumentException.class); // 거주 종료는 넷을 함께
     assertThatThrownBy(() -> closeAll(room, ClosedReason.SETTLED, CloseAllScope.roomEndedKinds()))
-        .isInstanceOf(UnsupportedOperationException.class);
+        .isInstanceOf(IllegalArgumentException.class); // 정산 완료는 모든 종류를 함께
     assertThatThrownBy(() ->
             closeAll(room, ClosedReason.COUNTERPART_WITHDRAWN, Set.of(RequestKind.DEFECT_CONFIRM)))
         .isInstanceOf(IllegalArgumentException.class);
@@ -435,6 +435,35 @@ class JpaWaitServiceTest extends SchemaTestSupport {
     assertThat(((java.sql.Timestamp) row(mine.requestId()).get("closed_at")).toInstant())
         .isEqualTo(LATER);
     assertThat(status(theirs)).isEqualTo("CLOSED");
+    assertThat(status(answered)).isEqualTo("ANSWERED");
+    assertThat(status(elsewhere)).isEqualTo("WAITING");
+  }
+
+  @Test
+  void 정산_완료는_그_호실의_열린_요청을_양방향_모두_닫는다() {
+    UUID room = room();
+    UUID otherRoom = room();
+    RequestHandle mine = open(room, RequestKind.DEFECT_CONFIRM, repairCase(room), PartySide.TENANT);
+    RequestHandle theirs =
+        open(room, RequestKind.CLOSE_CONFIRM, repairCase(room), PartySide.LANDLORD);
+    setStatus(theirs.requestId(), "UNCONFIRMED");
+    RequestHandle answered =
+        open(room, RequestKind.DEFECT_CONFIRM, repairCase(room), PartySide.LANDLORD);
+    setStatus(answered.requestId(), "ANSWERED");
+    RequestHandle elsewhere =
+        open(otherRoom, RequestKind.DEFECT_CONFIRM, repairCase(otherRoom), PartySide.TENANT);
+
+    int closed = closeAll(room, ClosedReason.SETTLED, EnumSet.allOf(RequestKind.class));
+
+    assertThat(closed).isEqualTo(2);
+    assertThat(row(mine.requestId()))
+        .containsEntry("status", "CLOSED")
+        .containsEntry("closed_reason", "SETTLED");
+    assertThat(((java.sql.Timestamp) row(mine.requestId()).get("closed_at")).toInstant())
+        .isEqualTo(LATER);
+    assertThat(row(theirs.requestId()))
+        .containsEntry("status", "CLOSED")
+        .containsEntry("closed_reason", "SETTLED");
     assertThat(status(answered)).isEqualTo("ANSWERED");
     assertThat(status(elsewhere)).isEqualTo("WAITING");
   }

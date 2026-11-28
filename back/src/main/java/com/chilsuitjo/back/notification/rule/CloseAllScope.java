@@ -16,7 +16,8 @@ import java.util.Set;
  *   <li>거주 종료({@code ROOM_ENDED}, #370 B-1): 하자 확인·진행 상황 묻기·상황 변화 확인은 열린 것(기다림·미확인) 모두, 종료 확인은
  *       기다림만(미확인 종료 확인과 수리 상태는 그대로, 03 3장 권한 표 "열린 수리 건의 수리 행동"). 종류는 이 넷이어야 한다(그 밖의 요청은 거주 종료로 닫지
  *       않는다)
- *   <li>공유 중단·정산 완료 등 그 밖의 이유: #113에서 정하기 전이라 {@code UnsupportedOperationException}
+ *   <li>정산 완료({@code SETTLED}, 06 SET-5f): 그 호실의 열린 요청(기다림·미확인) 모두, 양방향. 종류는 전부여야 한다
+ *   <li>공유 중단 등 그 밖의 이유: #113에서 정하기 전이라 {@code UnsupportedOperationException}
  * </ul>
  *
  * <p>닫힌 요청은 다시 열리지 않는다. 거주 종료 뒤에도 정산 완료 전까지 기록 화면에서 늦게 답할 수 있지만(03 1-4 "72시간 뒤"), 그 답은 그 기록의 행동이고
@@ -48,6 +49,15 @@ public final class CloseAllScope {
       case COUNTERPART_WITHDRAWN -> {
         if (!kinds.containsAll(EnumSet.allOf(RequestKind.class))) {
           throw new IllegalArgumentException("탈퇴는 그 호실의 열린 요청을 모든 종류 닫아요");
+        }
+        Map<RequestKind, Set<RequestStatus>> all = new EnumMap<>(RequestKind.class);
+        kinds.forEach(kind -> all.put(kind, OPEN));
+        yield all;
+      }
+      case SETTLED -> {
+        // 정산 완료(확인·혼자 끝내기·자동 마감): 남은 기다림은 모두 닫힌다(06 SET-5f, 03 1-4 "정산 끝내기"). 미확인도 늦은 답이 끝나 닫는다
+        if (!kinds.containsAll(EnumSet.allOf(RequestKind.class))) {
+          throw new IllegalArgumentException("정산 완료는 그 호실의 열린 요청을 모든 종류 닫아요");
         }
         Map<RequestKind, Set<RequestStatus>> all = new EnumMap<>(RequestKind.class);
         kinds.forEach(kind -> all.put(kind, OPEN));
