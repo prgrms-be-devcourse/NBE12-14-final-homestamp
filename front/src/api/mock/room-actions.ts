@@ -17,6 +17,9 @@ export function roomAvailableActions(
   }
   add("invite", room.connection !== "연결됨" && room.creator === role)
   add("counterpart-phone", canEditNumberOnlyPhone(room, role))
+  // 부위 바꾸기(ROOM-3, #456): 정산 완료·합류 전 기록(위 readOnly)만 막고 거주 종료 뒤에도 돼요.
+  // 공유를 그만둔 사람은 서버가 빼요(목업에는 그 상태가 없음)
+  add("parts", true)
   add("repair-cases", living)
   // 거주 종료(ROOM-9): 세입자 쪽은 바로, 집주인 쪽은 요청(이미 요청했으면 답을 기다려요)
   add("move-out", living && !(role === "임대인" && room.endRequested))

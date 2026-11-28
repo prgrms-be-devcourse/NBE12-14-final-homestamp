@@ -8,6 +8,7 @@ import java.util.Base64;
 import java.util.HexFormat;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.regex.Pattern;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import org.springframework.beans.factory.annotation.Value;
@@ -23,6 +24,7 @@ import org.springframework.stereotype.Component;
 class VerificationKeys {
 
   private static final String HMAC = "HmacSHA256";
+  private static final Pattern PHONE_HMAC = Pattern.compile("[0-9a-f]{64}");
   private static final Base64.Encoder TICKET_ENCODER = Base64.getUrlEncoder().withoutPadding();
 
   private final byte[] codeKey;
@@ -75,6 +77,19 @@ class VerificationKeys {
    */
   String phoneHmac(String phone) {
     return HexFormat.of().formatHex(hmac(phoneKey, phone));
+  }
+
+  /**
+   * 저장된 번호 HMAC({@link #phoneHmac} 값)에서 번호 잠금 키를 만든다(#83 Q2). 앞 16자(8바이트)를 부호 있는 long으로 읽어 같은 번호의
+   * {@link #phoneLockKey}와 같은 값이다. 원문 번호 없이 가입과 같은 잠금을 잡을 때 쓴다.
+   *
+   * @throws IllegalArgumentException 소문자 hex 64자가 아님(서버가 저장한 값만 받으므로 사용자 입력 오류가 아니다)
+   */
+  long phoneLockKeyOfHmac(String phoneHmac) {
+    if (phoneHmac == null || !PHONE_HMAC.matcher(phoneHmac).matches()) {
+      throw new IllegalArgumentException("번호 HMAC은 소문자 hex 64자여야 한다");
+    }
+    return HexFormat.fromHexDigitsToLong(phoneHmac, 0, 16);
   }
 
   /** 인증 표: 행 ID + "." + 행 ID의 서명. 행 ID는 verify 주소에 드러나므로 서명 없이는 표로 쓸 수 없다. */

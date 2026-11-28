@@ -4,6 +4,7 @@ import com.chilsuitjo.back.auth.repository.PhoneVerificationRepository;
 import com.chilsuitjo.back.auth.rule.VerificationPurpose;
 import com.chilsuitjo.back.member.dto.SignupRequest;
 import com.chilsuitjo.back.member.service.MemberService;
+import com.chilsuitjo.back.notification.service.PhoneHmacs;
 import com.chilsuitjo.back.notification.service.SmsOptOuts;
 import java.time.Clock;
 import java.time.Instant;
@@ -17,9 +18,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 가입(06 ACC-1, 4-1 {@code POST /api/auth/signup}).
  *
  * <p>순서: 확인 항목(ACC-1a) → 인증 표 미리 확인(쓰지 않고 잠그지 않음) → 이메일 중복(ACC-1c) → 비밀번호 해시 → <b>한 트랜잭션</b>에서
- * SIGNUP 인증 표 쓰기(ACC-1f·1l) → 번호 잠금 → 같은 번호를 쓰던 계정의 번호 비우기(ACC-3a) → 회원과 확인 기록 세 줄(ACC-1b) → 그 번호의
- * 수신 거부 해제와 삭제 감사·{@code AUDIT_WRITE}(06 NOTI-8c). 트랜잭션 안에서 실패하면 롤백되어 인증 표가 그대로 남는다(ACC-1f). 해시는
- * 잠금을 오래 잡지 않으려고 트랜잭션 전에 만든다.
+ * SIGNUP 인증 표 쓰기(ACC-1f·1l) → 번호 잠금 → 같은 번호를 쓰던 계정의 번호 비우기(ACC-3a) → 회원(번호 HMAC 포함, #462)과 확인 기록 세
+ * 줄(ACC-1b) → 그 번호의 수신 거부 해제와 삭제 감사·{@code AUDIT_WRITE}(06 NOTI-8c). 트랜잭션 안에서 실패하면 롤백되어 인증 표가 그대로
+ * 남는다(ACC-1f). 해시는 잠금을 오래 잡지 않으려고 트랜잭션 전에 만든다.
  *
  * <p>가입 완료 시각은 번호 잠금 뒤에 한 번 정해 회원·확인 기록·해제 감사에 같은 값으로 쓴다. 수신 거부 해제는 이 완료 트랜잭션에서만 하고(인증 코드 발급·확인에서는
  * 하지 않음), 실패하면 잡지 않아 가입 전체가 되돌아간다. 옛 초대·링크는 건드리지 않는다(되살리지 않음, decisions 2026-11-28).
@@ -35,6 +36,7 @@ public class SignupService {
   private final VerificationKeys keys;
   private final MemberService members;
   private final SmsOptOuts smsOptOuts;
+  private final PhoneHmacs phoneHmacs;
   private final PasswordEncoder passwordEncoder;
   private final TransactionTemplate transaction;
   private final Clock clock;
@@ -58,7 +60,9 @@ public class SignupService {
       // 같은 번호의 SIGNUP 표가 둘 있어 동시에 가입해도 차례로 처리한다(인증 요청과 같은 번호 잠금, 05)
       verificationRows.lockPhone(keys.phoneLockKey(phone));
       Instant at = clock.instant();
-      UUID memberId = members.register(request, passwordHash, phone, at);
+      // 회원 번호와 같은 값을 수신 거부·링크 번호가 쓴다(PhoneHmacs 한 곳에서 계산, #462)
+      String phoneHmac = phoneHmacs.phoneHmac(phone);
+      UUID memberId = members.register(request, passwordHash, phone, phoneHmac, at);
       // 번호 주인 확인이 끝난 완료 트랜잭션이라 여기서 푼다. 실패는 잡지 않는다(가입까지 롤백)
       smsOptOuts.releaseForVerifiedOwner(phone, at);
       return memberId;

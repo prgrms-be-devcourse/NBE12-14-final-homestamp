@@ -62,13 +62,16 @@ public class MemberService {
    *
    * @param passwordHash 부르는 쪽이 트랜잭션 전에 만든 해시
    * @param phone 인증 표에서 읽은 정규화된 번호
+   * @param phoneHmac {@code phone}의 번호 HMAC({@code PhoneHmacs}, #462). 이전 계정은 번호와 함께 이 값도 비우므로
+   *     ({@link Member#releasePhone}) {@code ux_member_phone_hmac}에도 걸리지 않는다
    * @param now 가입 완료 시각(회원의 가입·번호 인증 시각, 확인 기록 시각). 부르는 쪽이 번호 잠금 뒤에 한 번 정해 같은 트랜잭션의 수신 거부 해제 감사에도
    *     같은 값을 쓴다
    * @return 만든 회원 ID
    * @throws BusinessException {@code EMAIL_TAKEN}(같은 이메일 가입이 동시에 와서 유니크 인덱스에 걸림)
    */
   @Transactional(propagation = Propagation.MANDATORY)
-  public UUID register(SignupRequest request, String passwordHash, String phone, Instant now) {
+  public UUID register(
+      SignupRequest request, String passwordHash, String phone, String phoneHmac, Instant now) {
     SignupAcknowledgements confirmed = request.acknowledgements();
     String email = request.email();
     String displayName = request.displayName();
@@ -78,7 +81,9 @@ public class MemberService {
 
     Member member;
     try {
-      member = members.saveAndFlush(new Member(email, passwordHash, displayName, phone, now, now));
+      member =
+          members.saveAndFlush(
+              new Member(email, passwordHash, displayName, phone, phoneHmac, now, now));
     } catch (DataIntegrityViolationException e) {
       if (String.valueOf(e.getMessage()).contains(EMAIL_UNIQUE_INDEX)) {
         throw new BusinessException(ErrorCode.EMAIL_TAKEN);
