@@ -112,6 +112,8 @@ export interface Account {
   email: string
   name: string
   phone: string
+  // 문자 받기(06 4-1 smsEnabled, ACC-6). 꺼도 서비스 안 알림은 받아요(03 K)
+  smsEnabled: boolean
   // 다시 확인해야 할 문구(06 4-1 GET /api/me, CONS-4). 비어 있지 않으면 로그인 뒤 확인 화면을 먼저 띄워요
   pendingAcknowledgements: PendingAcknowledgement[]
 }
@@ -128,6 +130,13 @@ export interface PhoneVerification {
   expiresAt: string
   delivered: boolean
 }
+// 휴대폰 인증 목적(06 4-1 purpose). 화면이 쓰는 것은 가입과 비밀번호 재설정이에요(아이디 찾기·번호 변경은 아직 화면이 없어요)
+export type VerificationPurpose = "SIGNUP" | "RESET"
+// 내 정보 수정(06 4-1 POST /api/me): 보낸 칸만 바뀌어요
+export interface AccountPatch {
+  name?: string
+  smsEnabled?: boolean
+}
 export interface SignupInput {
   email: string
   password: string
@@ -138,7 +147,10 @@ export interface SignupInput {
 }
 export interface AuthApi {
   mode: "mock" | "http"
-  requestPhoneCode(phone: string): Promise<PhoneVerification>
+  requestPhoneCode(
+    phone: string,
+    purpose?: VerificationPurpose,
+  ): Promise<PhoneVerification>
   verifyPhoneCode(
     verificationId: string,
     code: string,
@@ -159,6 +171,14 @@ export interface AuthApi {
   acknowledge(items: PendingAcknowledgement[]): Promise<Account>
   // 상태를 바꾸는 요청이 403 TERMS_UPDATE_REQUIRED로 거절됐을 때 알려요. 화면은 확인 화면을 열어요(CONS-4a)
   onTermsRequired(listener: (e: Error) => void): () => void
+  // 이름·문자 설정 바꾸기(06 4-1 POST /api/me, ACC-4·6). 바뀐 내 정보를 받아요.
+  // 바뀐 약관을 확인하기 전에는 문자 끄기만 되고, 이름 바꾸기·문자 켜기는 TERMS_UPDATE_REQUIRED예요(CONS-4b)
+  updateAccount(patch: AccountPatch): Promise<Account>
+  // 비밀번호 변경(06 4-1 POST /api/me/password, ACC-4a). 지금 기기는 로그인이 그대로고 다른 기기는 로그아웃돼요
+  changePassword(currentPassword: string, newPassword: string): Promise<void>
+  // 비밀번호 재설정(06 4-1 POST /api/auth/reset-password, ACC-5b). RESET 인증 표로 부르고 모든 기기가 로그아웃돼요.
+  // 그 번호를 인증한 회원이 없어도 가입 여부를 따로 알리지 않고 CODE_EXPIRED예요(ACC-5c)
+  resetPassword(phoneToken: string, newPassword: string): Promise<void>
 }
 
 // 임시(개발용) 고정 인증번호. 서버 없이 개발할 때(createLocalAuth)만 쓰여요.
@@ -184,6 +204,9 @@ export const DEV_ACCOUNTS = [
 export const PASSWORD_RULE =
   "8자 이상, 영문과 숫자를 함께 써 주세요. 72바이트(한글은 한 글자에 3바이트)까지 쓸 수 있어요."
 export const PASSWORD_MAX_BYTES = 72
+// 이름 규칙(06 4-1 POST /api/me displayName: 비어 있지 않고 50자 이하, 05 member.display_name)
+export const NAME_MAX = 50
+export const NAME_RULE = `이름은 1~${NAME_MAX}자로 넣어 주세요.`
 export const validPassword = (p: string) =>
   p.length >= 8 &&
   /[A-Za-z]/.test(p) &&
@@ -222,7 +245,7 @@ export const SMS_SEND_FAILED_MESSAGE =
   "문자를 보내지 못했어요. 잠시 뒤 다시 받아 주세요"
 
 /* ── 백엔드 연결 ── */
-// GET /api/me 응답(06 4-1). smsEnabled(ACC-6)는 아직 쓰는 화면이 없어 Account로 옮기지 않아요.
+// GET /api/me 응답(06 4-1)
 interface MeResponse {
   id: string
   email: string
@@ -245,6 +268,7 @@ export function createHttpAuth({
     email: r.email,
     name: r.displayName,
     phone: r.phone ?? "",
+    smsEnabled: r.smsEnabled,
     pendingAcknowledgements: r.pendingAcknowledgements ?? [],
   })
   const me = async (): Promise<Account> =>
@@ -273,14 +297,39 @@ export function createHttpAuth({
       })
       return toAccount(r)
     },
+    // 내 정보 수정(06 4-1): 보낸 칸만 바뀌어요. 행동 기록이 아니라 Idempotency-Key를 보내지 않아요(06 4-0)
+    async updateAccount(patch) {
+      const body: { displayName?: string; smsEnabled?: boolean } = {}
+      if (patch.name !== undefined) body.displayName = patch.name.trim()
+      if (patch.smsEnabled !== undefined) body.smsEnabled = patch.smsEnabled
+      return toAccount(
+        await request<MeResponse>("POST", endpoints.me, {
+          body,
+          idempotent: false,
+        }),
+      )
+    },
+    // 비밀번호 변경·재설정(06 4-1): 204. 행동 기록이 아니라 Idempotency-Key를 보내지 않아요
+    async changePassword(currentPassword, newPassword) {
+      await request<void>("POST", endpoints.password, {
+        body: { currentPassword, newPassword },
+        idempotent: false,
+      })
+    },
+    async resetPassword(phoneToken, newPassword) {
+      await request<void>("POST", endpoints.resetPassword, {
+        body: { verificationTicket: phoneToken, newPassword },
+        idempotent: false,
+      })
+    },
     // 인증 문자(06 4-1): 서버는 201 + 인증 ID(id)만 줘요. 만료 시각은 받은 때부터 verify.code.ttl(5분)로 계산해요.
     // 가입·인증 문자는 행동 기록을 남기지 않아 Idempotency-Key를 보내지 않아요(06 4-0).
-    async requestPhoneCode(phone) {
+    async requestPhoneCode(phone, purpose = "SIGNUP") {
       const r = await request<{ id: string }>(
         "POST",
         endpoints.phoneVerifications,
         {
-          body: { phone: normalizePhone(phone), purpose: "SIGNUP" },
+          body: { phone: normalizePhone(phone), purpose },
           idempotent: false,
         },
       )
@@ -376,8 +425,12 @@ export function createHttpAuth({
 /* ── 서버 없이 개발할 때: 브라우저 메모리 계정 저장소 ──
    문자를 실제로 보내지 않으므로 delivered=false를 돌려주고, 화면은 '문자를 보내지 않았어요'를 그대로 알립니다.
    인증번호는 개발자 콘솔에만 남깁니다. 규칙(5분·5회, 이메일·번호 중복, 비밀번호)은 명세와 같게 검사해요. */
-interface LocalAccount extends Omit<Account, "pendingAcknowledgements"> {
+interface LocalAccount extends Omit<
+  Account,
+  "pendingAcknowledgements" | "smsEnabled"
+> {
   password: string
+  smsEnabled?: boolean
 }
 export function createLocalAuth(): AuthApi {
   const accounts: LocalAccount[] = DEV_ACCOUNTS.map((a) => ({ ...a }))
@@ -385,6 +438,7 @@ export function createLocalAuth(): AuthApi {
     string,
     {
       phone: string
+      purpose: VerificationPurpose
       code: string
       expires: number
       tries: number
@@ -392,11 +446,20 @@ export function createLocalAuth(): AuthApi {
     }
   >()
   // 같은 번호의 인증 진행(ACC-1g): 마지막 보낸 시각, 오늘 보낸 횟수, 지금 쓸 수 있는 인증
+  // 같은 인증 진행은 (번호, 목적)이에요(05 phone_verification)
   const sends = new Map<
     string,
     { lastAt: number; day: string; count: number; current?: string }
   >()
-  const tokens = new Map<string, string>()
+  const tokens = new Map<
+    string,
+    { phone: string; purpose: VerificationPurpose }
+  >()
+  // 인증 표는 목적이 같은 API에만 써요(06 4-1 verify)
+  const ticketPhone = (t: string, purpose: VerificationPurpose) => {
+    const v = tokens.get(t)
+    return v?.purpose === purpose ? v.phone : undefined
+  }
   let current: Account | null = null
   const fail = (code: string, detail: string, status = 400): never => {
     throw new ApiError({ status, code, detail })
@@ -407,11 +470,16 @@ export function createLocalAuth(): AuthApi {
     email: a.email,
     name: a.name,
     phone: a.phone,
+    smsEnabled: a.smsEnabled ?? true,
     pendingAcknowledgements: [],
   })
   const signedIn = () =>
     current ??
     fail("LOGIN_REQUIRED", "로그인이 필요해요. 다시 로그인해 주세요.", 401)
+  const signedInAccount = () => {
+    const id = signedIn().id
+    return accounts.find((a) => a.id === id)!
+  }
   return {
     mode: "mock",
     getToken: () => current?.id,
@@ -425,13 +493,14 @@ export function createLocalAuth(): AuthApi {
     async acknowledge() {
       return signedIn()
     },
-    async requestPhoneCode(phone) {
+    async requestPhoneCode(phone, purpose = "SIGNUP") {
       const n = normalizePhone(phone)
       if (!isMobilePhone(n)) fail("VALIDATION_FAILED", MOBILE_PHONE_MESSAGE)
       // 이미 가입에 쓰인 번호도 막지 않아요. 새 계정이 인증하면 이전 계정의 번호 인증이 풀려요(ACC-3a)
       const now = Date.now()
       const day = new Date(now).toDateString()
-      const s = sends.get(n)
+      const key = `${purpose}:${n}`
+      const s = sends.get(key)
       const count = s && s.day === day ? s.count : 0
       if (count >= VERIFY_DAILY_PER_PHONE)
         fail("DAILY_LIMIT", DAILY_LIMIT_MESSAGE, 429)
@@ -449,7 +518,7 @@ export function createLocalAuth(): AuthApi {
       const prev = s?.current ? codes.get(s.current) : undefined
       if (prev) prev.replaced = true
       const verificationId = crypto.randomUUID()
-      sends.set(n, {
+      sends.set(key, {
         lastAt: now,
         day,
         count: count + 1,
@@ -460,6 +529,7 @@ export function createLocalAuth(): AuthApi {
       const code = DEV_FIXED_CODE
       codes.set(verificationId, {
         phone: n,
+        purpose,
         code,
         expires: now + VERIFY_CODE_TTL_MS,
         tries: 0,
@@ -494,11 +564,11 @@ export function createLocalAuth(): AuthApi {
       }
       codes.delete(vid)
       const phoneToken = crypto.randomUUID()
-      tokens.set(phoneToken, v!.phone)
+      tokens.set(phoneToken, { phone: v!.phone, purpose: v!.purpose })
       return { phoneToken }
     },
     async signup(input) {
-      const phone = tokens.get(input.phoneToken)
+      const phone = ticketPhone(input.phoneToken, "SIGNUP")
       if (!phone) fail("CODE_EXPIRED", "휴대폰 인증을 다시 해 주세요.")
       if (!input.agreements.age14)
         fail("AGE_CONFIRM_REQUIRED", "만 14세 이상만 가입할 수 있어요.")
@@ -539,6 +609,38 @@ export function createLocalAuth(): AuthApi {
     },
     async restore() {
       return current
+    },
+    async updateAccount(patch) {
+      const a = signedInAccount()
+      if (patch.name !== undefined) {
+        const name = patch.name.trim()
+        if (!name || name.length > NAME_MAX)
+          fail("VALIDATION_FAILED", NAME_RULE)
+        a.name = name
+      }
+      if (patch.smsEnabled !== undefined) a.smsEnabled = patch.smsEnabled
+      current = strip(a)
+      return current
+    },
+    async changePassword(currentPassword, newPassword) {
+      const a = signedInAccount()
+      if (a.password !== currentPassword)
+        fail("PASSWORD_MISMATCH", "지금 비밀번호가 맞지 않아요")
+      if (!validPassword(newPassword))
+        fail("VALIDATION_FAILED", `비밀번호는 ${PASSWORD_RULE}`)
+      a.password = newPassword
+    },
+    async resetPassword(phoneToken, newPassword) {
+      if (!validPassword(newPassword))
+        fail("VALIDATION_FAILED", `비밀번호는 ${PASSWORD_RULE}`)
+      const phone = ticketPhone(phoneToken, "RESET")
+      const a = phone ? accounts.find((x) => x.phone === phone) : undefined
+      // 회원이 없는 번호도 가입 여부를 따로 알리지 않고 CODE_EXPIRED, 표는 쓰지 않아요(ACC-5c)
+      if (!a) fail("CODE_EXPIRED", "휴대폰 인증을 다시 해 주세요.")
+      a!.password = newPassword
+      tokens.delete(phoneToken)
+      // 모든 기기가 로그아웃돼요
+      if (current?.id === a!.id) current = null
     },
     async logout() {
       current = null
