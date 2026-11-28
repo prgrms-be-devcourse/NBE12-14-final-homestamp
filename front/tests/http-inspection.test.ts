@@ -20,7 +20,10 @@ import {
 import {
   confirmAll,
   confirmableItems,
+  confirmAllButtons,
+  counterpartItemsAwaitingAnswer,
   inspectionStatus,
+  lockedWithNoDefects,
 } from "../src/lib/inspection-rules"
 import { emptyState, type Room } from "../src/data/demo"
 
@@ -246,6 +249,63 @@ test("하자 기록 없음: 확인 요청 뒤 기준 측 항목이 없을 때만
   expect(draft.session.noDefects).toBe(false)
 })
 
+test("잠긴 점검의 하자 기록 없음 표시는 서버 lockReason이 NO_ITEMS일 때만이다(#417 리뷰)", () => {
+  // 기준 측 항목 없이 상대가 더한 항목만 있어 잠긴 점검(ALL_RESOLVED, #409): 하자 카드가 있어 하자 기록 없음이 아니에요
+  const counterpartOnly = inspectionFromDetail(
+    inspection({
+      status: "LOCKED",
+      lockedAt: "2026-11-21T00:00:00Z",
+      lockReason: "ALL_RESOLVED",
+      items: [item({ addedBy: "TENANT", status: "ACK" })],
+    }),
+  )
+  const empty = inspectionFromDetail(
+    inspection({
+      status: "LOCKED",
+      lockedAt: "2026-11-21T00:00:00Z",
+      lockReason: "NO_ITEMS",
+      items: [],
+    }),
+  )
+
+  expect(counterpartOnly.session.noDefects).toBe(true)
+  expect(lockedWithNoDefects(counterpartOnly.session)).toBe(false)
+  expect(lockedWithNoDefects(empty.session)).toBe(true)
+})
+
+test("상대가 더한 항목에 답이 남았을 때만 잠금 두 조건을 함께 안내한다(03 H, #409)", () => {
+  const waiting = inspectionFromDetail(
+    inspection({ items: [item({ addedBy: "TENANT", status: "PENDING" })] }),
+  )
+  const answered = inspectionFromDetail(
+    inspection({ items: [item({ addedBy: "TENANT", status: "NEED_MORE" })] }),
+  )
+  const empty = inspectionFromDetail(inspection({ items: [] }))
+  const withAuthorItems = inspectionFromDetail(
+    inspection({
+      items: [
+        item({ id: "base", addedBy: "LANDLORD" }),
+        item({ id: "theirs", addedBy: "TENANT" }),
+      ],
+    }),
+  )
+
+  expect(counterpartItemsAwaitingAnswer(waiting.session, waiting.items)).toBe(
+    true,
+  )
+  expect(counterpartItemsAwaitingAnswer(answered.session, answered.items)).toBe(
+    false,
+  )
+  expect(counterpartItemsAwaitingAnswer(empty.session, empty.items)).toBe(false)
+  // 기준 측 항목이 있으면 하자 기록 없음 점검이 아니라 평소 안내예요
+  expect(
+    counterpartItemsAwaitingAnswer(
+      withAuthorItems.session,
+      withAuthorItems.items,
+    ),
+  ).toBe(false)
+})
+
 test("남은 항목 모두 확인 대상은 서버의 미응답(확인 기다림·상대 미확인) 중 응답 버튼이 있는 항목이다", () => {
   const { items } = inspectionFromDetail(
     inspection({
@@ -455,4 +515,47 @@ test("연결한 점검 API만 서버로 보낸다(항목 더하기·부위 사�
     expect(isConnected("POST", endpoints.inspectionAction(INSPECTION, a))).toBe(
       false,
     )
+})
+
+test("모두 확인 자리의 버튼은 기준 측과 상대 측에 맞게 나온다(#417 리뷰)", () => {
+  // 기준 측(임대인) 항목 없이 상대(임차인)가 더한 항목만 있는 점검
+  const counterpartOnly = inspectionFromDetail(
+    inspection({ items: [item({ addedBy: "TENANT" })] }),
+  )
+  const withAuthorItems = inspectionFromDetail(inspection())
+  const mine = (s: typeof counterpartOnly.session, role: string) =>
+    s.author === role
+
+  // 기준 측: 상대가 더한 항목에 답하는 "남은 항목 모두 확인"만(하자 기록 없음 확인은 NOT_COUNTERPART_SIDE)
+  expect(
+    confirmAllButtons(
+      counterpartOnly.session,
+      mine(counterpartOnly.session, "임대인"),
+      true,
+    ),
+  ).toEqual({ noDefects: false, items: true })
+  // 상대 측: "하자 기록 없음 확인"만(자기가 더한 항목에는 답하지 않음)
+  expect(
+    confirmAllButtons(
+      counterpartOnly.session,
+      mine(counterpartOnly.session, "임차인"),
+      true,
+    ),
+  ).toEqual({ noDefects: true, items: false })
+  // 기준 측 항목이 있으면 상대 측은 평소처럼 "남은 항목 모두 확인"
+  expect(
+    confirmAllButtons(
+      withAuthorItems.session,
+      mine(withAuthorItems.session, "임차인"),
+      true,
+    ),
+  ).toEqual({ noDefects: false, items: true })
+  // 서버가 confirm-all을 주지 않으면 아무 버튼도 없음(이미 확인함·답할 항목 없음)
+  expect(
+    confirmAllButtons(
+      counterpartOnly.session,
+      mine(counterpartOnly.session, "임차인"),
+      false,
+    ),
+  ).toEqual({ noDefects: false, items: false })
 })
