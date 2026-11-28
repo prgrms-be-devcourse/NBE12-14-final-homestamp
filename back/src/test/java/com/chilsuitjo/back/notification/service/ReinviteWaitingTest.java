@@ -154,14 +154,14 @@ class ReinviteWaitingTest {
   void 옛_번호에_닿은_뒤_번호를_고치면_같은_요청의_기다림이_비고_새_번호에_닿아야_다시_시작한다() throws Exception {
     UUID old = requestNotice();
     deliver(old, now.minus(Duration.ofHours(49)));
-    assertThat(row()).extracting(r -> r.get("first_notified_at")).isNotNull();
+    Instant firstNotified = instant("first_notified_at");
 
     changePhone(key(), phone());
 
-    // 같은 요청, 기다림만 비움. 옛 통지의 전달 사실은 그대로
+    // 같은 요청, 기한 두 칸만 비움. 옛 통지의 전달 사실과 첫 통지 시각(전달 기록, 05 0장)은 그대로
     Map<String, Object> reset = row();
     assertThat(reset.get("status")).isEqualTo("WAITING");
-    assertThat(reset.get("first_notified_at")).isNull();
+    assertThat(instant("first_notified_at")).isEqualTo(firstNotified);
     assertThat(reset.get("renotify_due_at")).isNull();
     assertThat(reset.get("unconfirmed_due_at")).isNull();
     assertThat(noticeStatus(old)).isEqualTo("DELIVERED");
@@ -174,12 +174,13 @@ class ReinviteWaitingTest {
     worker.runOnce(50);
     assertThat(renotices()).isEmpty();
     deliver(old, now.minus(Duration.ofHours(50)));
-    assertThat(row().get("first_notified_at")).isNull();
+    assertThat(row().get("renotify_due_at")).isNull();
+    assertThat(instant("first_notified_at")).isEqualTo(firstNotified);
 
-    // 새 번호에 닿으면 그 시각부터. 재통지는 이 기회에 한 번
+    // 새 번호에 닿으면 기한은 그 시각부터(첫 통지 시각은 그대로). 재통지는 이 기회에 한 번
     Instant reached = now.minus(Duration.ofHours(49));
     deliver(fresh, reached);
-    assertThat(instant("first_notified_at")).isEqualTo(reached);
+    assertThat(instant("first_notified_at")).isEqualTo(firstNotified);
     assertThat(instant("renotify_due_at")).isEqualTo(reached.plus(RENOTIFY));
     worker.runOnce(50);
     worker.runOnce(50);
@@ -203,7 +204,8 @@ class ReinviteWaitingTest {
     changePhone(key(), phone());
 
     Map<String, Object> reset = row();
-    assertThat(reset.get("first_notified_at")).isNull();
+    assertThat(reset.get("first_notified_at")).isNotNull();
+    assertThat(reset.get("renotify_due_at")).isNull();
     assertThat(reset.get("unconfirmed_due_at")).isNull();
     // 옛 재통지와 그 전달은 기록으로 남는다
     assertThat(noticeStatus(oldRenotify)).isEqualTo("DELIVERED");
@@ -252,7 +254,7 @@ class ReinviteWaitingTest {
     changePhone(key, newPhone);
 
     assertThat(noticeCount()).isEqualTo(before);
-    assertThat(instant("first_notified_at")).isEqualTo(now.minus(Duration.ofHours(1)));
+    assertThat(instant("renotify_due_at")).isEqualTo(now.minus(Duration.ofHours(1)).plus(RENOTIFY));
   }
 
   @Test
@@ -293,7 +295,7 @@ class ReinviteWaitingTest {
     changePhone(key(), phone());
 
     assertThat(noticeStatus(oldRenotify)).isEqualTo("CANCELLED");
-    assertThat(row().get("first_notified_at")).isNull();
+    assertThat(row().get("renotify_due_at")).isNull();
     UUID fresh = requestNotice();
     deliver(fresh, now.minus(Duration.ofHours(49)));
     worker.runOnce(50);
@@ -329,7 +331,7 @@ class ReinviteWaitingTest {
     }
 
     // 어느 쪽이 먼저 잠갔든: 기다림은 비었고, 만들어진 옛 재통지는 보내기 전에 취소됐다
-    assertThat(row().get("first_notified_at")).isNull();
+    assertThat(row().get("renotify_due_at")).isNull();
     assertThat(renotices()).allSatisfy(n -> assertThat(n.get("status")).isEqualTo("CANCELLED"));
     int old = renotices().size();
     UUID fresh = requestNotice();
@@ -428,7 +430,7 @@ class ReinviteWaitingTest {
     runInLockOrder(() -> changePhone(key(), phone()), () -> worker.runOnce(50));
 
     assertThat(renotices()).isEmpty();
-    assertThat(row().get("first_notified_at")).isNull();
+    assertThat(row().get("renotify_due_at")).isNull();
     assertThat(row().get("renotify_due_at")).isNull();
   }
 
@@ -445,7 +447,7 @@ class ReinviteWaitingTest {
           assertThat(n.get("link_id")).isEqualTo(linkOf(old));
           assertThat(n.get("status")).isEqualTo("CANCELLED");
         });
-    assertThat(row().get("first_notified_at")).isNull();
+    assertThat(row().get("renotify_due_at")).isNull();
     // 새 기회에는 한 번 더
     deliver(requestNotice(), now.minus(Duration.ofHours(49)));
     worker.runOnce(50);
@@ -473,7 +475,7 @@ class ReinviteWaitingTest {
 
     // 실패한 시도는 멱등 키도 남기지 않아 같은 키로 다시 하면 처리된다
     changePhone(key, newPhone);
-    assertThat(row().get("first_notified_at")).isNull();
+    assertThat(row().get("renotify_due_at")).isNull();
     assertThat(
             jdbc.queryForObject(
                 "SELECT invite_phone FROM state.party WHERE id = ?", String.class, seat))

@@ -173,7 +173,7 @@ public class InviteRequestLinker {
     if (request.getStatus() != RequestStatus.WAITING) {
       return null;
     }
-    if (request.getFirstNotifiedAt() == null) {
+    if (!request.isWaitStarted()) {
       return request.getId();
     }
     // 기다림이 옛 번호로만 시작됐으면(닿은 통지의 링크가 모두 번호 고치기로 무효) 처음으로 되돌려 새 번호 통지에 다시 잇는다(#370 T-2)

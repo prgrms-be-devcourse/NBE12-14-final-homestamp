@@ -189,6 +189,14 @@ public class ResponseRequest {
     if (!isOpen()) {
       return false;
     }
+    if (awaitingNewNumber()) {
+      // 번호를 고쳐 처음으로 되돌린 기다림(#370 T-2): 첫 통지 시각(전달 기록)은 그대로 두고 기한만 새 번호에 닿은 시각부터 센다(05 0장)
+      if (notifiedAt.isBefore(firstNotifiedAt)) {
+        firstNotifiedAt = notifiedAt;
+      }
+      renotifyDueAt = notifiedAt.plus(renotifyAfter);
+      return true;
+    }
     if (firstNotifiedAt != null) {
       if (notifiedAt.isBefore(firstNotifiedAt)) {
         firstNotifiedAt = notifiedAt;
@@ -201,9 +209,23 @@ public class ResponseRequest {
   }
 
   /**
+   * 기다림이 시작됐나(기한을 세는 중). 첫 통지가 닿았고, 번호를 고쳐 새 번호에 닿기를 기다리는 중({@link #restartForNewNumber})이 아니다. 기다림
+   * 시작 여부는 이 함수로 본다. {@code first_notified_at}은 전달 기록이라 번호를 고쳐도 비우지 않는다.
+   */
+  public boolean isWaitStarted() {
+    return firstNotifiedAt != null && !awaitingNewNumber();
+  }
+
+  /** 번호를 고쳐 기한을 비운 기다림: 첫 통지는 있지만 재통지 기한이 없다(기다림이 시작되면 늘 함께 적으므로 이 경우뿐이다). */
+  private boolean awaitingNewNumber() {
+    return status == RequestStatus.WAITING && firstNotifiedAt != null && renotifyDueAt == null;
+  }
+
+  /**
    * 번호를 고쳐 다시 초대해, 지금까지 닿은 통지가 모두 고치기 전 번호로 간 것이 된 기다림을 처음 상태로 되돌린다(#370 T-2, 03 1-1 "타이머 시작점"). 요청
-   * ID와 이미 남은 통지·전달·열람·행동 기록은 그대로이고, 기다림 시작·재통지 기한·미확인 기한만 비운다. 새 번호에 통지가 닿으면({@link
-   * #startWaiting}) 그 시각부터 다시 센다.
+   * ID와 이미 남은 통지·전달·열람·행동 기록, 첫 통지 시각({@code first_notified_at}, 전달 기록이라 바꾸지 않음, 05 0장)은 그대로이고, 재통지
+   * 기한·미확인 기한 두 칸만 비운다. 새 번호에 통지가 닿으면({@link #startWaiting}) 그 시각부터 다시 센다. 그 사이 기다림 시작 여부는 {@link
+   * #isWaitStarted}로 본다.
    *
    * <ul>
    *   <li>기다림({@code WAITING})이고 기다림이 시작된 요청만 바꾼다. 미확인·답함·거둠·닫힘은 그대로다(미확인 뒤 번호 고치기는 정하기 전)
@@ -213,10 +235,9 @@ public class ResponseRequest {
    * @return 이번에 되돌렸으면 true
    */
   public boolean restartForNewNumber() {
-    if (status != RequestStatus.WAITING || firstNotifiedAt == null) {
+    if (status != RequestStatus.WAITING || !isWaitStarted()) {
       return false;
     }
-    firstNotifiedAt = null;
     renotifyDueAt = null;
     unconfirmedDueAt = null;
     return true;
@@ -239,7 +260,7 @@ public class ResponseRequest {
   public boolean renotifyReached(Instant reachedAt, Duration unconfirmedAfter) {
     Objects.requireNonNull(reachedAt, "reachedAt");
     Objects.requireNonNull(unconfirmedAfter, "unconfirmedAfter");
-    if (status != RequestStatus.WAITING || firstNotifiedAt == null || unconfirmedDueAt != null) {
+    if (status != RequestStatus.WAITING || !isWaitStarted() || unconfirmedDueAt != null) {
       return false;
     }
     Instant base =
@@ -272,7 +293,7 @@ public class ResponseRequest {
     Objects.requireNonNull(renotifyAfter, "renotifyAfter");
     Objects.requireNonNull(unconfirmedAfter, "unconfirmedAfter");
     requireOpen();
-    if (firstNotifiedAt == null) {
+    if (!isWaitStarted()) {
       return;
     }
     if (unconfirmedDueAt == null) {

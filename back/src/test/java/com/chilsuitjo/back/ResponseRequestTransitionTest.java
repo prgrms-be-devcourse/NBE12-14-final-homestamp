@@ -244,21 +244,31 @@ class ResponseRequestTransitionTest extends SchemaTestSupport {
   }
 
   @Test
-  void 번호를_고쳐_다시_시작하면_기다림_시작과_두_기한이_비고_새_전달부터_다시_센다() {
-    // #370 T-2: 같은 요청 ID, 기다림만 처음으로
+  void 번호를_고쳐_다시_시작하면_두_기한이_비고_새_전달부터_다시_센다() {
+    // #370 T-2: 같은 요청 ID, 기한만 처음으로. 첫 통지 시각은 전달 기록이라 그대로(05 0장)
     UUID room = room();
     ResponseRequest request = save(room, RequestKind.DEFECT_CONFIRM, repairCase(room));
     request.startWaiting(DELIVERED, RENOTIFY);
     request.renotifyReached(DELIVERED.plus(RENOTIFY), UNCONFIRMED);
 
     assertThat(request.restartForNewNumber()).isTrue();
-    assertThat(request.getFirstNotifiedAt()).isNull();
+    assertThat(request.getFirstNotifiedAt()).isEqualTo(DELIVERED);
     assertThat(request.getRenotifyDueAt()).isNull();
     assertThat(request.getUnconfirmedDueAt()).isNull();
     assertThat(request.getStatus()).isEqualTo(RequestStatus.WAITING);
+    assertThat(request.isWaitStarted()).isFalse();
+    // 새 번호에 닿기 전에는 다시 시작하지 않고, 기한을 다시 세지도 않는다
+    assertThat(request.restartForNewNumber()).isFalse();
+    request.recount(DELIVERED.plus(Duration.ofHours(55)), RENOTIFY, UNCONFIRMED);
+    assertThat(request.getRenotifyDueAt()).isNull();
 
     Instant fresh = DELIVERED.plus(Duration.ofHours(60));
     assertThat(request.startWaiting(fresh, RENOTIFY)).isTrue();
+    assertThat(request.isWaitStarted()).isTrue();
+    assertThat(request.getFirstNotifiedAt()).isEqualTo(DELIVERED);
+    assertThat(request.getRenotifyDueAt()).isEqualTo(fresh.plus(RENOTIFY));
+    // 같은 기회의 뒤 증거는 기한을 늘리지 않는다
+    assertThat(request.startWaiting(fresh.plusSeconds(60), RENOTIFY)).isFalse();
     assertThat(request.getRenotifyDueAt()).isEqualTo(fresh.plus(RENOTIFY));
   }
 
@@ -421,9 +431,10 @@ class ResponseRequestTransitionTest extends SchemaTestSupport {
     UUID room = room();
     ResponseRequest proposal = save(room, RequestKind.PROPOSAL, repairCase(room));
     jdbc.update(
-        "UPDATE state.response_request SET first_notified_at = ?, unconfirmed_due_at = ?"
-            + " WHERE id = ?",
+        "UPDATE state.response_request SET first_notified_at = ?, renotify_due_at = ?,"
+            + " unconfirmed_due_at = ? WHERE id = ?",
         Timestamp.from(DELIVERED),
+        Timestamp.from(DELIVERED.plus(RENOTIFY)),
         Timestamp.from(CLOSED_AT),
         proposal.getId());
     entityManager.clear();
