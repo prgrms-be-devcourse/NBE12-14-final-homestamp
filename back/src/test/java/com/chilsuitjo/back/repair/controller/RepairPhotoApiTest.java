@@ -13,9 +13,9 @@ import com.chilsuitjo.back.global.common.PartySide;
 import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.notification.dto.InfoCommand;
 import com.chilsuitjo.back.notification.dto.RequestTarget;
+import com.chilsuitjo.back.notification.rule.InAppTopic;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.rule.RequestStatus;
-import com.chilsuitjo.back.notification.service.FakeInAppNotifier;
 import com.chilsuitjo.back.notification.service.FakeWaitService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -55,7 +55,6 @@ class RepairPhotoApiTest {
 
   @Autowired private MockMvc mvc;
   @Autowired private JdbcTemplate jdbc;
-  @Autowired private FakeInAppNotifier notifier;
   @Autowired private FakeWaitService waits;
 
   private UUID room;
@@ -151,17 +150,18 @@ class RepairPhotoApiTest {
   @Test
   void REP_7g_상대가_연결된_회원이면_서비스_안_알림이_하나_가고_확인_요청은_새로_열리지_않는다() throws Exception {
     UUID caseId = acked();
-    int sentBefore = notifier.sent().size();
+    int sentBefore = storedCount();
     var statusBefore =
         waits.statusOf(
             RequestTarget.of(TargetKind.REPAIR_CASE, caseId), RequestKind.DEFECT_CONFIRM);
 
     add(caseId, tenant, "a1", tickets(1)).andExpect(status().isOk());
 
-    assertThat(notifier.sent()).hasSize(sentBefore + 1);
+    assertThat(storedCount()).isEqualTo(sentBefore + 1);
     List<InfoCommand> toLandlord = sentTo(landlord);
     assertThat(toLandlord).hasSize(1);
     assertThat(toLandlord.getFirst().roomRecordId()).isEqualTo(room);
+    assertThat(toLandlord.getFirst().topic()).isEqualTo(InAppTopic.REPAIR_PHOTO_ADDED);
     assertThat(toLandlord.getFirst().target())
         .isEqualTo(RequestTarget.of(TargetKind.REPAIR_CASE, caseId));
     assertThat(
@@ -407,9 +407,30 @@ class RepairPhotoApiTest {
     return JSON.readTree(result.andReturn().getResponse().getContentAsString());
   }
 
-  /** {@code FakeInAppNotifier.sent()} 중 이 회원이 받은 것(기록의 {@code recipientMemberId}). */
+  /** 이 회원에게 저장된 서비스 안 알림({@code state.in_app_notification}, 저장 순서). */
   private List<InfoCommand> sentTo(UUID memberId) {
-    return notifier.sent().stream().filter(s -> memberId.equals(s.recipientMemberId())).toList();
+    return jdbc.query(
+        "SELECT room_record_id, topic, target_kind, target_id FROM state.in_app_notification"
+            + " WHERE member_id = ? ORDER BY created_at, id",
+        (rs, i) ->
+            new InfoCommand(
+                memberId,
+                rs.getObject("room_record_id", UUID.class),
+                InAppTopic.valueOf(rs.getString("topic")),
+                rs.getString("target_kind") == null
+                    ? null
+                    : RequestTarget.of(
+                        TargetKind.valueOf(rs.getString("target_kind")),
+                        rs.getObject("target_id", UUID.class))),
+        memberId);
+  }
+
+  /** 이 호실에 저장된 서비스 안 알림 수. */
+  private int storedCount() {
+    return jdbc.queryForObject(
+        "SELECT count(*) FROM state.in_app_notification WHERE room_record_id = ?",
+        Integer.class,
+        room);
   }
 
   /** 세입자가 사진 한 장으로 하자를 등록하고 수리 건 ID를 돌려준다. */

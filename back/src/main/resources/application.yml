@@ -52,6 +52,16 @@ app:
       interval-ms: 5000
       batch-size: 50
   # 06 0-1 설정값
+  # 서비스 안 알림 보관(06 0-1 notification.ttl). 만들 때 만료 시각으로 저장해서 값을 바꿔도 이미 만든 알림은 그대로다
+  notification:
+    ttl: 30d
+    # 만료된 알림을 실제로 지우는 작업(04 "켜질 때 따라잡기"). 켜진 뒤 1분, 그 뒤 1시간마다. 한 번에 500줄씩 최대 20묶음
+    cleanup:
+      enabled: true
+      initial-delay-ms: 60000
+      interval-ms: 3600000
+      batch-size: 500
+      max-batches: 20
   notice:
     send:
       retry: 1m,5m,15m

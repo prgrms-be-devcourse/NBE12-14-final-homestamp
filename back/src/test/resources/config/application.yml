@@ -11,6 +11,10 @@ app:
   delivery:
     poller:
       enabled: false
+  # 다른 테스트가 넣은 만료 알림을 예약 정리가 지우지 않게 끈다(정리 테스트는 직접 부름)
+  notification:
+    cleanup:
+      enabled: false
   # 회원 번호 HMAC 채우기(#462)는 테스트에서 끈다. 다른 테스트가 커밋한 빈 행을 바꾸거나 "채우지 않은 행" 단언과 겹치지 않게. 채우기는 테스트가 직접 부른다
   member:
     phone-hmac-fill:
