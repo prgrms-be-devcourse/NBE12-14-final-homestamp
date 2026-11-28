@@ -431,7 +431,7 @@ class ReinviteWaitingTest {
 
     assertThat(renotices()).isEmpty();
     assertThat(row().get("renotify_due_at")).isNull();
-    assertThat(row().get("renotify_due_at")).isNull();
+    assertThat(row().get("first_notified_at")).isNotNull();
   }
 
   @Test

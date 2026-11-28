@@ -17,7 +17,8 @@ import java.util.Objects;
  * @param status 지금 상태
  * @param openedAt 요청을 처음 만든 시각({@code created_at}). {@code restart}로 묶여도 바뀌지 않는다(다시 세는 기한의 기준과 다른
  *     값)
- * @param firstNotifiedAt 첫 통지가 전달되거나 열린 시각. 아직 없으면 null
+ * @param firstNotifiedAt 첫 통지가 전달되거나 열린 시각. 아직 없으면 null. 번호를 고쳐 새 번호에 닿기를 기다리는 중에도 옛 번호 시각이 남으므로
+ *     기다림 시작 신호가 아니다(기한은 {@code dueAt})
  * @param dueAt 미확인이 되는 기한({@code unconfirmed_due_at}). 실제로 {@code UNCONFIRMED}가 된 시각이 아니다. null이면
  *     기한이 아직 정해지지 않았다는 뜻일 뿐, 알림이 보내졌거나 전달됐다는 보장은 없다
  * @param soloReason 혼자 진행이 열린 이유({@code solo_reason}, "확인 없음 · 이유" 화면). 없으면 null

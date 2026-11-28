@@ -96,7 +96,7 @@ public class RenotifyStateStore implements StateStore<RenotifyPlan> {
     ResponseRequest request =
         requests.findById(requestId).orElseThrow(() -> new RenotifySkipped("없음"));
     if (request.getStatus() != RequestStatus.WAITING
-        || request.getFirstNotifiedAt() == null
+        || !request.isWaitStarted()
         || request.getRenotifyDueAt() == null
         || request.getRenotifyDueAt().isAfter(clock.instant())) {
       throw new RenotifySkipped("기다림 아님 또는 기한 전");
