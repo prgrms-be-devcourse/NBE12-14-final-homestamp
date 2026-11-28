@@ -1,6 +1,6 @@
 package com.chilsuitjo.back.auth.service;
 
-import com.chilsuitjo.back.auth.rule.PhoneNumber;
+import com.chilsuitjo.back.global.common.PhoneNumber;
 import com.chilsuitjo.back.notification.service.PhoneHmacs;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;

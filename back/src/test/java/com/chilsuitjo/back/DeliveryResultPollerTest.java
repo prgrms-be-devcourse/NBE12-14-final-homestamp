@@ -18,6 +18,7 @@ import com.chilsuitjo.back.notification.rule.DeliveryPollSchedule;
 import com.chilsuitjo.back.notification.service.DeliveryPollClaimer;
 import com.chilsuitjo.back.notification.service.DeliveryPollScheduler;
 import com.chilsuitjo.back.notification.service.DeliveryResultPoller;
+import com.chilsuitjo.back.notification.service.InviteLinks;
 import com.chilsuitjo.back.notification.service.NoticeWaitStart;
 import java.sql.Timestamp;
 import java.time.Clock;
@@ -74,6 +75,7 @@ class DeliveryResultPollerTest {
   @Autowired private NoticeWaitStart waitStart;
   @Autowired private ResponseRequestRepository requests;
   @Autowired private RoomGateReader rooms;
+  @Autowired private InviteLinks inviteLinks;
   @Autowired private JdbcTemplate jdbc;
   @Autowired private ApplicationContext context;
 
@@ -855,7 +857,7 @@ class DeliveryResultPollerTest {
         List.of(
             linkedNotice(request, "RENOTIFY"),
             linkedNotice(request, "INFO"),
-            linkedNotice(request, "INVITE"));
+            linkedNotice(request, "SETTLEMENT_INVITE"));
     others.forEach(id -> fake.respondDelivery(id, DeliveryOutcome.DELIVERED));
 
     poller(FIRST_POLL, FIRST_POLL, fake).runOnce(50);
@@ -863,6 +865,36 @@ class DeliveryResultPollerTest {
     others.forEach(id -> assertThat(column(id, "status")).isEqualTo("DELIVERED"));
     assertThat(requestTime(request, "first_notified_at")).isNull();
     assertThat(requestTime(request, "renotify_due_at")).isNull();
+  }
+
+  @Test
+  void 요청이_걸린_초대_문자가_닿으면_기다림이_시작된다() {
+    // 같은 점검 초대는 초대 문자 한 통이 그 점검의 확인 요청 통지다(#370 A-7, InviteRequestLinker)
+    UUID request = linkedRequest("WAITING");
+    UUID id = linkedNotice(request, "INVITE");
+    fake.respondDelivery(id, DeliveryOutcome.DELIVERED);
+
+    poller(FIRST_POLL, FIRST_POLL, fake).runOnce(50);
+
+    assertThat(column(id, "status")).isEqualTo("DELIVERED");
+    assertThat(requestTime(request, "first_notified_at")).isNotNull();
+  }
+
+  @Test
+  void 요청이_걸린_초대_문자가_최종_실패면_기다림도_미확인도_되지_않는다() {
+    // 전달 실패는 미확인이 아니다(03 1-1): 요청은 기다림 시작 전 그대로 남는다
+    UUID request = linkedRequest("WAITING");
+    UUID id = linkedNotice(request, "INVITE");
+    fake.respondDelivery(id, DeliveryOutcome.FAILED);
+
+    poller(FIRST_POLL, FIRST_POLL, fake).runOnce(50);
+
+    assertThat(column(id, "status")).isEqualTo("FAILED");
+    assertThat(requestTime(request, "first_notified_at")).isNull();
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT status FROM state.response_request WHERE id = ?", String.class, request))
+        .isEqualTo("WAITING");
   }
 
   @Test
@@ -878,13 +910,129 @@ class DeliveryResultPollerTest {
     assertThat(requestTime(request, "first_notified_at")).isNull();
   }
 
+  // ---- 번호를 고쳐 무효가 된 링크의 통지(#370 T-2, #399): 업체 전달 사실은 남기고 기다림 증거로는 쓰지 않는다 ----
+
+  @Test
+  void 번호를_고쳐_무효가_된_링크의_요청_통지가_늦게_닿으면_전달은_남고_기다림은_시작되지_않는다() {
+    UUID request = linkedRequest("WAITING");
+    UUID id = linkedNotice(request, "REQUEST");
+    attachLink(id, inviteLink("REINVITED"));
+    fake.respondDelivery(id, DeliveryOutcome.DELIVERED);
+
+    poller(FIRST_POLL, FIRST_POLL, fake).runOnce(50);
+
+    assertThat(column(id, "status")).isEqualTo("DELIVERED");
+    assertThat(time(id, "delivered_at")).isEqualTo(FIRST_POLL);
+    assertThat(requestColumn(request, "status")).isEqualTo("WAITING");
+    assertThat(requestTime(request, "first_notified_at")).isNull();
+    assertThat(requestTime(request, "renotify_due_at")).isNull();
+  }
+
+  @Test
+  void 번호를_고쳐_무효가_된_링크의_초대_문자에_걸린_요청도_그_전달로_시작하지_않는다() {
+    // 같은 점검 초대의 초대 문자 한 통(#370 A-7)이 옛 번호로 간 경우
+    UUID request = linkedRequest("WAITING");
+    UUID id = linkedNotice(request, "INVITE");
+    attachLink(id, inviteLink("REINVITED"));
+    fake.respondDelivery(id, DeliveryOutcome.DELIVERED);
+
+    poller(FIRST_POLL, FIRST_POLL, fake).runOnce(50);
+
+    assertThat(column(id, "status")).isEqualTo("DELIVERED");
+    assertThat(requestTime(request, "first_notified_at")).isNull();
+  }
+
+  @Test
+  void 옛_번호_통지가_더_이른_시각으로_늦게_와도_새_번호로_시작한_기다림과_기한은_그대로다() {
+    // T-1 "더 이른 증거는 시작점을 앞당김"은 지금 번호로 간 통지끼리만이다
+    UUID request = linkedRequest("WAITING");
+    Instant started = FIRST_POLL.plus(Duration.ofHours(1));
+    jdbc.update(
+        "UPDATE response_request SET first_notified_at = ?, renotify_due_at = ? WHERE id = ?",
+        Timestamp.from(started),
+        Timestamp.from(started.plus(RENOTIFY)),
+        request);
+    UUID old = linkedNotice(request, "REQUEST");
+    attachLink(old, inviteLink("REINVITED"));
+    fake.respondDelivery(old, DeliveryOutcome.DELIVERED);
+
+    poller(FIRST_POLL, FIRST_POLL, fake).runOnce(50);
+
+    assertThat(column(old, "status")).isEqualTo("DELIVERED");
+    assertThat(requestTime(request, "first_notified_at")).isEqualTo(started);
+    assertThat(requestTime(request, "renotify_due_at")).isEqualTo(started.plus(RENOTIFY));
+  }
+
+  @Test
+  void 연결로_무효가_된_링크의_요청_통지는_닿으면_기다림이_시작된다() {
+    // 맞는 사람이 연결해 무효가 된 링크라 그 전달은 상대에게 닿은 증거다
+    UUID request = linkedRequest("WAITING");
+    UUID id = linkedNotice(request, "REQUEST");
+    attachLink(id, inviteLink("CONNECTED"));
+    fake.respondDelivery(id, DeliveryOutcome.DELIVERED);
+
+    poller(FIRST_POLL, FIRST_POLL, fake).runOnce(50);
+
+    assertThat(requestTime(request, "first_notified_at")).isEqualTo(FIRST_POLL);
+    assertThat(requestTime(request, "renotify_due_at")).isEqualTo(FIRST_POLL.plus(RENOTIFY));
+  }
+
+  @Test
+  void 유효한_링크의_요청_통지는_닿으면_기다림이_시작된다() {
+    UUID request = linkedRequest("WAITING");
+    UUID id = linkedNotice(request, "REQUEST");
+    attachLink(id, inviteLink(null));
+    fake.respondDelivery(id, DeliveryOutcome.DELIVERED);
+
+    poller(FIRST_POLL, FIRST_POLL, fake).runOnce(50);
+
+    assertThat(requestTime(request, "first_notified_at")).isEqualTo(FIRST_POLL);
+    assertThat(requestTime(request, "renotify_due_at")).isEqualTo(FIRST_POLL.plus(RENOTIFY));
+  }
+
+  @Test
+  void 번호_고치기가_호실을_잡고_링크를_무효로_하는_동안_닿은_결과는_그_뒤에_적혀_기다림을_시작하지_않는다() throws Exception {
+    UUID request = linkedRequest("WAITING");
+    UUID id = linkedNotice(request, "REQUEST");
+    UUID link = inviteLink(null);
+    attachLink(id, link);
+    fake.respondDelivery(id, DeliveryOutcome.DELIVERED);
+    TransactionTemplate tx = new TransactionTemplate(transactionManager);
+    CountDownLatch locked = new CountDownLatch(1);
+    CountDownLatch release = new CountDownLatch(1);
+    CompletableFuture<Void> reinvite =
+        CompletableFuture.runAsync(() ->
+            tx.executeWithoutResult(status -> {
+              // 번호 고치기(room save)처럼 호실 → 링크 순서로 잡고 무효로 한다
+              jdbc.queryForList("SELECT id FROM room_record WHERE id = ? FOR UPDATE", room);
+              jdbc.update(
+                  "UPDATE link SET invalidated_at = ?, invalidated_reason = 'REINVITED' WHERE id = ?",
+                  Timestamp.from(FIRST_POLL),
+                  link);
+              locked.countDown();
+              await(release);
+            }));
+    await(locked);
+    DeliveryResultPoller poller = poller(FIRST_POLL, FIRST_POLL, fake);
+    CompletableFuture<Integer> polling = CompletableFuture.supplyAsync(() -> poller.runOnce(50));
+    try {
+      awaitRoomLockWaiter();
+    } finally {
+      release.countDown();
+      reinvite.get(10, TimeUnit.SECONDS);
+      assertThat(polling.get(10, TimeUnit.SECONDS)).isEqualTo(1);
+    }
+    assertThat(column(id, "status")).isEqualTo("DELIVERED");
+    assertThat(requestTime(request, "first_notified_at")).isNull();
+  }
+
   @Test
   void 기다림_시작이_실패하면_전달됨도_되돌아가_다음_조회에서_다시_적는다() {
     UUID request = linkedRequest("WAITING");
     UUID id = linkedNotice(request, "REQUEST");
     fake.respondDelivery(id, DeliveryOutcome.DELIVERED);
     NoticeWaitStart failing =
-        new NoticeWaitStart(notices, requests, rooms, RENOTIFY) {
+        new NoticeWaitStart(notices, requests, rooms, inviteLinks, RENOTIFY) {
           @Override
           public boolean reached(Notice notice, Instant at) {
             throw new IllegalStateException("기다림 시작 실패");
@@ -1077,6 +1225,35 @@ class DeliveryResultPollerTest {
     jdbc.update(
         "UPDATE notice SET response_request_id = ?, kind = ? WHERE id = ?", requestId, kind, id);
     return id;
+  }
+
+  /** 이 호실·자리의 초대 링크. {@code reason}이 null이면 유효한 링크. */
+  private UUID inviteLink(String reason) {
+    UUID member = UUID.randomUUID();
+    jdbc.update(
+        "INSERT INTO member (id, status, created_at, version)"
+            + " VALUES (?, 'ACTIVE', CURRENT_TIMESTAMP, 0)",
+        member);
+    UUID id = UUID.randomUUID();
+    jdbc.update(
+        """
+        INSERT INTO link (id, room_record_id, kind, party_id, token_hash, issued_by_member_id,
+          invalidated_at, invalidated_reason, created_at, version)
+        VALUES (?, ?, 'INVITE', ?, ?, ?, ?, ?, ?, 0)
+        """,
+        id,
+        room,
+        party,
+        "hash-" + id,
+        member,
+        reason == null ? null : Timestamp.from(SENT.plusSeconds(30)),
+        reason,
+        Timestamp.from(SENT.minusSeconds(30)));
+    return id;
+  }
+
+  private void attachLink(UUID noticeId, UUID linkId) {
+    jdbc.update("UPDATE notice SET link_id = ? WHERE id = ?", linkId, noticeId);
   }
 
   private String requestColumn(UUID id, String column) {

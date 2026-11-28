@@ -117,11 +117,9 @@ export function InspectionItemCorrections({
 }) {
   const [mode, setMode] = useState<"edit" | "photos" | null>(null)
   // 고치기 창의 부위: 기다리는 부위 고치기가 있으면 그 부위, 없으면 지금 부위(roomPartId, 06 4-7)
-  // pick.part는 창에서 고른 부위(고르지 않았으면 비어 있고, 처음 부위 start를 그대로 써요)
+  // pick은 부위 칸이 넘긴 부위예요. 처음 부위 start는 부위 칸이 고를 수 있는지 본 뒤에 넘겨요(#402)
   const [start, setStart] = useState({ id: "", label: "" })
-  const [pick, setPick] = useState<{ id: string; part?: RoomPart }>({
-    id: "",
-  })
+  const [pick, setPick] = useState<RoomPart>()
   const [photos, setPhotos] = useState<string[]>([])
   const [error, setError] = useState("")
   const run = (
@@ -286,7 +284,7 @@ export function InspectionItemCorrections({
                         pendingValue(i.corrections, "부위") ?? i.zone,
                       ),
                     })
-                    setPick({ id })
+                    setPick(undefined)
                     setError("")
                     setMode("edit")
                   },
@@ -425,11 +423,11 @@ export function InspectionItemCorrections({
         submitLabel={direct ? "고치기" : "확인 요청"}
         onClose={() => setMode(null)}
         onSubmit={(f) => {
-          if (!pick.id) return ZONE_PART_ERROR
+          if (!pick) return ZONE_PART_ERROR
           const next = {
             title: String(f.get("title") || ""),
             description: String(f.get("text") || ""),
-            zone: pick.part ? partLabel(pick.part) : start.label,
+            zone: partLabel(pick),
             roomPartId: pick.id,
           }
           return run(
@@ -481,9 +479,12 @@ export function InspectionItemCorrections({
         <PartField
           key={start.id + start.label}
           roomId={i.roomId}
-          value={pick.id}
-          onChange={(p) => setPick({ id: p?.id ?? "", part: p })}
-          defaultPart={splitPartLabel(start.label)}
+          value={pick?.id ?? ""}
+          onChange={setPick}
+          defaultPart={{
+            ...splitPartLabel(start.label),
+            id: start.id || undefined,
+          }}
         />
         {!draft && (
           <div className="field">

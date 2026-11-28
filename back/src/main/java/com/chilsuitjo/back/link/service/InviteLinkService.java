@@ -69,6 +69,14 @@ public class InviteLinkService implements InviteLinks {
 
   @Override
   @Transactional(propagation = Propagation.MANDATORY)
+  public boolean isReinvited(UUID linkId) {
+    Objects.requireNonNull(linkId, "linkId");
+    return links.existsByIdAndKindAndInvalidatedReason(
+        linkId, LinkKind.INVITE, LinkInvalidReason.REINVITED);
+  }
+
+  @Override
+  @Transactional(propagation = Propagation.MANDATORY)
   public UUID issueInvite(
       UUID roomRecordId, UUID recipientPartyId, RequestTarget record, UUID issuedByMemberId) {
     Objects.requireNonNull(roomRecordId, "roomRecordId");
