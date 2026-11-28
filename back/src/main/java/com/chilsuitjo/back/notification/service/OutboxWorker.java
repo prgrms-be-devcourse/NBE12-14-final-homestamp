@@ -49,6 +49,7 @@ public class OutboxWorker {
   private final OutboxRepository outbox;
   private final NoticeRepository notices;
   private final InviteLinks inviteLinks;
+  private final LinkAddresses linkAddresses;
   private final RecipientDirectory recipients;
   private final SmsOptOuts smsOptOuts;
   private final SmsGateway gateway;
@@ -64,6 +65,7 @@ public class OutboxWorker {
       OutboxRepository outbox,
       NoticeRepository notices,
       InviteLinks inviteLinks,
+      LinkAddresses linkAddresses,
       RecipientDirectory recipients,
       SmsOptOuts smsOptOuts,
       SmsGateway gateway,
@@ -87,6 +89,7 @@ public class OutboxWorker {
     this.outbox = outbox;
     this.notices = notices;
     this.inviteLinks = inviteLinks;
+    this.linkAddresses = linkAddresses;
     this.recipients = recipients;
     this.smsOptOuts = smsOptOuts;
     this.gateway = gateway;
@@ -141,6 +144,8 @@ public class OutboxWorker {
     Optional<Notice> notice;
     Optional<String> phone;
     boolean optedOut;
+    Optional<String> address = Optional.empty();
+    boolean linkUnsendable = false;
     try {
       Outbox row = outbox.findById(outboxId).orElse(null);
       if (row == null) {
@@ -177,6 +182,15 @@ public class OutboxWorker {
       // 가지 않게(decisions 2026-11-27 수신 거부 조회 "발송 직전 재확인"). 조회가 실패하면 예외라 아래에서 보내지 않고 다시 시도로 둔다(false로
       // 바꾸지 않음)
       optedOut = phone.isPresent() && smsOptOuts.isOptedOut(phone.get());
+      UUID linkId = notice.get().getLinkId();
+      if (phone.isPresent() && !optedOut && linkId != null) {
+        // 링크 주소는 업체를 부르기 직전에 이 통지의 링크로만 만든다(통지마다 한 통이라 다른 통지의 링크가 섞이지 않음). 받는 자리가 다르거나 그 사이 닫힌
+        // 링크면 빈 값이라 보내지 않는다. 조회가 실패하면 예외라 다시 시도로 둔다
+        address =
+            linkAddresses.inviteAddress(
+                notice.get().getRoomRecordId(), linkId, notice.get().getRecipientPartyId());
+        linkUnsendable = address.isEmpty();
+      }
     } catch (RuntimeException e) {
       log.warn("보내기 전 단계 실패, 다시 시도: outbox={}, error={}", outboxId, e.getClass().getName());
       finish(outboxId, null, SmsSendResult.retry());
@@ -190,7 +204,11 @@ public class OutboxWorker {
       skipOptedOut(outboxId, notice.get().getId());
       return;
     }
-    SmsSendResult result = send(notice.get(), phone.get());
+    if (linkUnsendable) {
+      skipUnsendableLink(outboxId, notice.get());
+      return;
+    }
+    SmsSendResult result = send(notice.get(), phone.get(), address);
     finish(outboxId, notice.get().getId(), result);
   }
 
@@ -255,6 +273,30 @@ public class OutboxWorker {
     };
   }
 
+  /**
+   * 통지의 링크로 이 받는 사람에게 보낼 주소를 만들 수 없다: 확인 뒤에 링크가 닫혔거나, 링크의 받는 자리·호실이 통지와 다르거나, 지금 키로 만든 토큰이 저장된 해시와
+   * 다르다. 링크가 닫혔으면 무효 링크와 같이 취소로 끝낸다. 나머지는 다른 사람에게 갈 링크나 열리지 않는 링크를 보내지 않으려고 줄만 보내지 않은 채 끝내고 통지는 그대로
+   * 둔다(업체 실패가 아님). 개발·설정 오류라 error로 남기고, 주소·토큰은 남기지 않는다.
+   */
+  private void skipUnsendableLink(UUID outboxId, Notice notice) {
+    boolean invalidated;
+    try {
+      invalidated = inviteLinks.isInvalidatedInvite(notice.getLinkId());
+    } catch (RuntimeException e) {
+      // 아직 업체를 부르지 않았다. 다시 시도로 둔다(보내기 전 단계 실패와 같음)
+      log.warn("보내기 전 단계 실패, 다시 시도: outbox={}, error={}", outboxId, e.getClass().getName());
+      finish(outboxId, null, SmsSendResult.retry());
+      return;
+    }
+    if (invalidated) {
+      cancelInvalidatedInvite(outboxId, notice.getId());
+      return;
+    }
+    transaction.executeWithoutResult(
+        status -> outbox.findById(outboxId).ifPresent(Outbox::markFailed));
+    log.error("통지의 링크로 이 받는 사람에게 보낼 주소를 만들 수 없어 보내지 않음: notice={}", notice.getId());
+  }
+
   /** disabled에서 보내지 않고 끝낸다. 번호가 없을 때와 같은 끝(줄만 끝내고 통지는 그대로)이고, 로그로 이유를 구분한다. */
   private void skipWhileDisabled(UUID outboxId, UUID noticeId) {
     transaction.executeWithoutResult(
@@ -262,9 +304,20 @@ public class OutboxWorker {
     log.warn("문자 발송이 꺼져 있어(app.sms.mode=disabled) 보내지 않음: notice={}", noticeId);
   }
 
-  private SmsSendResult send(Notice notice, String phone) {
+  private SmsSendResult send(Notice notice, String phone, Optional<String> address) {
+    // 본문은 업체를 부르기 전에 만든다. 여기서 실패하면 업체에 닿지 않았으니 결과 모름이 아니라 다시 시도로 둔다
+    String text;
     try {
-      return gateway.send(new SmsMessage(notice.getId(), phone, NoticeText.of(notice.getKind())));
+      text =
+          address
+              .map(value -> NoticeText.of(notice.getKind(), value))
+              .orElseGet(() -> NoticeText.of(notice.getKind()));
+    } catch (RuntimeException e) {
+      log.warn("문자 본문을 만들지 못함, 다시 시도: notice={}, error={}", notice.getId(), e.getClass().getName());
+      return SmsSendResult.retry();
+    }
+    try {
+      return gateway.send(new SmsMessage(notice.getId(), phone, text));
     } catch (RuntimeException e) {
       // 업체에 닿았는지 모른다. 보낸 것으로 보고 다시 보내지 않는다. 예외 문구에 번호가 있을 수 있어 종류만 남긴다.
       log.warn(
