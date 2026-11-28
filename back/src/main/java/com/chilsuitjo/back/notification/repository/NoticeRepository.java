@@ -78,6 +78,24 @@ public interface NoticeRepository extends JpaRepository<Notice, UUID> {
   long countSentWithoutDeliveryCheckDue();
 
   /**
+   * 이 링크로 보낸 문자 통지 가운데 상태가 {@code status}이고 {@code at} 이전에 보낸 것의 ID(ID 순서). 잠그지 않는다(링크 열람의 최근 열람 예외
+   * 판단, {@code NoticeWaitStart#unviewedSent}).
+   */
+  @Query(
+      """
+      SELECT n.id FROM Notice n
+      WHERE n.roomRecordId = :roomRecordId AND n.linkId = :linkId AND n.channel = :channel
+        AND n.status = :status AND n.sentAt <= :at
+      ORDER BY n.id
+      """)
+  List<UUID> findSentIdsByLink(
+      @Param("roomRecordId") UUID roomRecordId,
+      @Param("linkId") UUID linkId,
+      @Param("channel") NoticeChannel channel,
+      @Param("status") NoticeStatus status,
+      @Param("at") Instant at);
+
+  /**
    * 이 호실에서 넘겨받은 링크를 가리키는 문자 통지를 모두 잠근다(#100 U2 취소). 상태로 거르지 않는다: 문자 줄이 {@code PENDING}인데 통지가 {@code
    * REQUESTED}가 아닌 이상한 조합도 찾아야 해서다. 작업자가 결과를 적을 때와 같이 통지를 문자 줄보다 먼저 잠그고, 여러 행은 ID 순서로 잠근다.
    */
@@ -102,5 +120,25 @@ public interface NoticeRepository extends JpaRepository<Notice, UUID> {
           + " and n.status in :statuses")
   List<UUID> findLinkIdsByRequestAndStatusIn(
       @Param("requestId") UUID responseRequestId,
+      @Param("statuses") Collection<NoticeStatus> statuses);
+
+  /** 이 요청에 이 종류의 통지가 있나(상태 무관). 재통지는 요청당 한 번이라(03 1-4 "기한") 있으면 다시 만들지 않는다. */
+  boolean existsByResponseRequestIdAndKind(UUID responseRequestId, NoticeKind kind);
+
+  /**
+   * 이 요청에 걸린 통지 중 종류가 {@code kinds}, 채널이 {@code channel}, 상태가 {@code statuses}인 것(만든 순서 거꾸로, 같으면 ID
+   * 거꾸로). 재통지가 갈 자리와 링크를 고를 때 쓴다. 잠그지 않는다(호실을 잠근 뒤 부름).
+   */
+  @Query(
+      """
+      SELECT n FROM Notice n
+      WHERE n.responseRequestId = :requestId AND n.kind IN :kinds AND n.channel = :channel
+        AND n.status IN :statuses
+      ORDER BY n.createdAt DESC, n.id DESC
+      """)
+  List<Notice> findByRequest(
+      @Param("requestId") UUID responseRequestId,
+      @Param("kinds") Collection<NoticeKind> kinds,
+      @Param("channel") NoticeChannel channel,
       @Param("statuses") Collection<NoticeStatus> statuses);
 }

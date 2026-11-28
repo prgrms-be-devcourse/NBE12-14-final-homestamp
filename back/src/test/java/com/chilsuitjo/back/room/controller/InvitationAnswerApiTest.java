@@ -2,6 +2,7 @@ package com.chilsuitjo.back.room.controller;
 
 import static com.chilsuitjo.back.global.security.SecurityTestSupport.loginAs;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -366,6 +367,71 @@ class InvitationAnswerApiTest {
   }
 
   @Test
+  void 초대_회차_ID가_없으면_연결도_거절도_VALIDATION_FAILED다() throws Exception {
+    UUID room = room("LIVING");
+    UUID seat = invitedSeat(room, phone);
+
+    connect(seat, null, me, key(), "v1")
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value(ErrorCode.VALIDATION_FAILED.name()));
+    mvc.perform(
+            post("/api/invitations/{id}/reject", seat)
+                .with(loginAs(me))
+                .header("Idempotency-Key", key()))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value(ErrorCode.VALIDATION_FAILED.name()));
+
+    assertNotAnswered(room, seat);
+  }
+
+  @Test
+  void X에서_Y를_거쳐_다시_X로_초대하면_예전_초대_화면의_늦은_연결과_거절은_INVALID_STATE다() throws Exception {
+    // #437·#370 ①: 자리 ID와 번호가 같아도 초대 회차가 다르면 예전 요청이다
+    UUID room = room("LIVING");
+    UUID seat = invitedSeat(room, phone);
+    UUID first = inviteIdOf(seat);
+    jdbc.update(
+        "UPDATE state.party SET invite_phone = ?, invite_id = gen_random_uuid() WHERE id = ?",
+        newPhone(),
+        seat);
+    jdbc.update(
+        "UPDATE state.party SET invite_phone = ?, invite_id = gen_random_uuid() WHERE id = ?",
+        phone,
+        seat);
+
+    reject(seat, first, me, key())
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value(ErrorCode.INVALID_STATE.name()));
+    connect(seat, first, me, key(), "v1")
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value(ErrorCode.INVALID_STATE.name()));
+    assertNotAnswered(room, seat);
+
+    // 지금 회차로 보내면 연결된다
+    connect(seat, me, key(), "v1")
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("CONNECTED"));
+  }
+
+  @Test
+  void 회차_없이_초대된_자리는_자리_ID를_회차로_받아_연결한다() throws Exception {
+    // V14 배포 중 이전 버전 앱이 회차 없이 초대한 자리(04 8장 "이전 버전 앱과도 맞게")
+    UUID room = room("LIVING");
+    UUID seat = invitedSeat(room, phone);
+    jdbc.update("UPDATE state.party SET invite_id = NULL WHERE id = ?", seat);
+
+    mvc.perform(get("/api/invitations").with(loginAs(me)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[0].partyId").value(seat.toString()))
+        .andExpect(jsonPath("$[0].inviteId").value(seat.toString()));
+    reject(seat, UUID.randomUUID(), me, key())
+        .andExpect(jsonPath("$.code").value(ErrorCode.INVALID_STATE.name()));
+    connect(seat, seat, me, key(), "v1")
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("CONNECTED"));
+  }
+
+  @Test
   void 로그인하지_않으면_401이다() throws Exception {
     mvc.perform(
             post("/api/invitations/{id}/connect", UUID.randomUUID())
@@ -379,21 +445,55 @@ class InvitationAnswerApiTest {
         .andExpect(status().isUnauthorized());
   }
 
+  /** 지금 초대 회차로 연결한다(받은 초대 목록이 준 값). */
   private ResultActions connect(UUID party, UUID memberId, String key, String consentVersion)
+      throws Exception {
+    return connect(party, inviteIdOf(party), memberId, key, consentVersion);
+  }
+
+  private ResultActions connect(
+      UUID party, UUID inviteId, UUID memberId, String key, String consentVersion)
       throws Exception {
     return mvc.perform(
         post("/api/invitations/{id}/connect", party)
             .with(loginAs(memberId))
             .header("Idempotency-Key", key)
             .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"consentVersion\":\"" + consentVersion + "\"}"));
+            .content(
+                "{\"consentVersion\":\""
+                    + consentVersion
+                    + "\",\"inviteId\":"
+                    + json(inviteId)
+                    + "}"));
   }
 
+  /** 지금 초대 회차로 거절한다(받은 초대 목록이 준 값). */
   private ResultActions reject(UUID party, UUID memberId, String key) throws Exception {
+    return reject(party, inviteIdOf(party), memberId, key);
+  }
+
+  private ResultActions reject(UUID party, UUID inviteId, UUID memberId, String key)
+      throws Exception {
     return mvc.perform(
         post("/api/invitations/{id}/reject", party)
             .with(loginAs(memberId))
-            .header("Idempotency-Key", key));
+            .header("Idempotency-Key", key)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"inviteId\":" + json(inviteId) + "}"));
+  }
+
+  /** 자리의 지금 초대 회차. 없는 자리면 아무 값(서버가 자리부터 찾아 NOT_FOUND). */
+  private UUID inviteIdOf(UUID party) {
+    return jdbc
+        .queryForList("SELECT invite_id FROM state.party WHERE id = ?", UUID.class, party)
+        .stream()
+        .filter(java.util.Objects::nonNull)
+        .findFirst()
+        .orElseGet(UUID::randomUUID);
+  }
+
+  private static String json(UUID value) {
+    return value == null ? "null" : "\"" + value + "\"";
   }
 
   private void assertNotAnswered(UUID room, UUID seat) {
@@ -459,8 +559,10 @@ class InvitationAnswerApiTest {
     jdbc.update(
         """
         INSERT INTO state.party
-          (id, room_record_id, side, member_id, invite_phone, status, connected_at, created_at, version)
+          (id, room_record_id, side, member_id, invite_phone, status, invite_id, connected_at,
+           created_at, version)
         VALUES (?, ?, ?, ?, ?, ?,
+          CASE WHEN CAST(? AS varchar) IN ('INVITED', 'REJECTED') THEN gen_random_uuid() END,
           CASE WHEN CAST(? AS varchar) = 'CONNECTED' THEN CURRENT_TIMESTAMP ELSE NULL END,
           CURRENT_TIMESTAMP, 0)
         """,
@@ -469,6 +571,7 @@ class InvitationAnswerApiTest {
         side,
         memberId,
         invitePhone,
+        seatStatus,
         seatStatus,
         seatStatus);
     return id;
