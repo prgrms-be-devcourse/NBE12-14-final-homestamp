@@ -73,8 +73,11 @@ public interface InAppNotificationRepository extends JpaRepository<InAppNotifica
       nativeQuery = true)
   int deleteExpired(@Param("now") Instant now, @Param("limit") int limit);
 
-  /** 이 회원이 받은 알림을 모두 지운다(탈퇴, {@code MemberNotifications}). 지운 줄 수. */
-  @Modifying(flushAutomatically = true, clearAutomatically = true)
+  /**
+   * 이 회원이 받은 알림을 모두 지운다(탈퇴, {@code MemberNotifications}). 지운 줄 수. 탈퇴 트랜잭션이 읽어 둔 엔티티(회원 등)를 떼어 내지 않게
+   * 영속성 컨텍스트는 비우지 않는다(알림 엔티티는 이 트랜잭션에서 다시 쓰지 않음).
+   */
+  @Modifying(flushAutomatically = true)
   @Query("DELETE FROM InAppNotification n WHERE n.memberId = :memberId")
   int deleteAllOfMember(@Param("memberId") UUID memberId);
 }

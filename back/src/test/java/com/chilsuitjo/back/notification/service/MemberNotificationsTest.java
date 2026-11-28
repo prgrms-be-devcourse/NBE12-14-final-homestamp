@@ -13,6 +13,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -42,6 +43,7 @@ class MemberNotificationsTest {
   @Autowired private JdbcTemplate jdbc;
 
   private final ExecutorService pool = Executors.newFixedThreadPool(2);
+  private final AtomicInteger holder = new AtomicInteger();
 
   @AfterEach
   void tearDown() {
@@ -110,6 +112,7 @@ class MemberNotificationsTest {
         pool.submit(() ->
             transaction.executeWithoutResult(s -> {
               notifier.notify(InfoCommand.account(member, TOPIC));
+              holder.set(backendPid());
               held.countDown();
               await(release);
             }));
@@ -135,6 +138,7 @@ class MemberNotificationsTest {
         pool.submit(() ->
             transaction.executeWithoutResult(s -> {
               withdrawIn(member);
+              holder.set(backendPid());
               held.countDown();
               await(release);
             }));
@@ -169,15 +173,19 @@ class MemberNotificationsTest {
     transaction.executeWithoutResult(s -> notifier.notify(InfoCommand.account(member, TOPIC)));
   }
 
-  /** 다른 쪽이 회원 행 잠금을 기다리기 시작할 때까지 기다린다. */
+  private int backendPid() {
+    return jdbc.queryForObject("SELECT pg_backend_pid()", Integer.class);
+  }
+
+  /** 잠금을 쥔 트랜잭션(holder)에 막힌 세션이 생길 때까지 기다린다. 다른 테스트의 대기와 섞이지 않게 쥔 쪽 pid로 본다. */
   private void awaitBlocked() throws Exception {
     long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
     while (System.nanoTime() < deadline) {
       Integer waiting =
           jdbc.queryForObject(
-              "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()"
-                  + " AND wait_event_type = 'Lock' AND query ILIKE '%state.member%'",
-              Integer.class);
+              "SELECT count(*) FROM pg_stat_activity WHERE ? = ANY(pg_blocking_pids(pid))",
+              Integer.class,
+              holder.get());
       if (waiting != null && waiting > 0) {
         return;
       }
