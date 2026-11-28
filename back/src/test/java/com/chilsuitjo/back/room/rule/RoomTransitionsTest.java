@@ -146,6 +146,46 @@ class RoomTransitionsTest {
     assertThat(living(LANDLORD, false, true, false).movesOutNow()).isFalse();
   }
 
+  /**
+   * 호실 상세 {@code availableActions}가 쓰는 세 함수가 실제 요청의 {@code apply}와 같은 답을 내는지 모든 조합으로 대 본다(06 4-0
+   * "서버의 같은 함수", #463 리뷰).
+   */
+  @Test
+  void 버튼_판단은_모든_상태_조합에서_apply와_같다() {
+    for (RoomStatus status : RoomStatus.values()) {
+      for (PartySide side : PartySide.values()) {
+        for (boolean open : new boolean[] {false, true}) {
+          for (boolean answers : new boolean[] {false, true}) {
+            for (Boolean alone : new Boolean[] {null, false, true}) {
+              RoomState now = new RoomState(status, side, open, answers, alone);
+              String at = now.toString();
+              assertThat(RoomTransitions.canMoveOut(now, side))
+                  .as("MOVE_OUT %s", at)
+                  .isEqualTo(accepts(now, entry(ActionType.MOVE_OUT, side, null)));
+              assertThat(RoomTransitions.canRequestEnd(now, side))
+                  .as("REQUEST_END %s", at)
+                  .isEqualTo(accepts(now, entry(ActionType.REQUEST_END, side, null)));
+              assertThat(RoomTransitions.canAnswerEnd(now, side))
+                  .as("CONFIRM_END %s", at)
+                  .isEqualTo(accepts(now, entry(ActionType.CONFIRM_END, side, null)))
+                  .isEqualTo(accepts(now, entry(ActionType.REJECT_END, side, "사유")));
+            }
+          }
+        }
+      }
+    }
+  }
+
+  private boolean accepts(RoomState now, ActionEntry action) {
+    try {
+      rules.apply(now, action);
+      return true;
+    } catch (BusinessException e) {
+      assertThat(e.errorCode()).isEqualTo(ErrorCode.INVALID_STATE);
+      return false;
+    }
+  }
+
   private void assertInvalid(RoomState now, ActionEntry action) {
     assertThatThrownBy(() -> rules.apply(now, action))
         .isInstanceOfSatisfying(
