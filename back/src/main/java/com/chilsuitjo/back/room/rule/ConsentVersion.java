@@ -7,8 +7,9 @@ import com.chilsuitjo.back.global.error.ErrorCode;
  * 기록 공유 동의 문구 판(06 CONS-2, 03 6-2). 초대·연결 요청이 보낸 판을 행동 {@code SHARE_CONSENT}의 payload {@code
  * consentVersion}으로 남긴다(06 CONS-2 "payload에 문구 판", 09 3-1 초대 예시).
  *
- * <p>가입 확인 항목 판({@code SignupAcknowledgements})과 같은 방식으로 본다: 비어 있지 않고 20자 이하인지만 본다. 지금 유효한 판인지는 보지
- * 않는다(판을 정식으로 관리하는 일은 CONS-4, decisions 2026-11-25).
+ * <p>여기서는 요청 본문만 본다: 비어 있지 않고 20자 이하인지(decisions 2026-11-25). 지금 유효한 판인지는 서비스가 {@code
+ * TermsVersions.requireCurrentShareConsent}를 pipeline의 처음 실행 검사({@code ActionBatch.firstRunCheck})로
+ * 붙여 본다(CONS-4, decisions 2026-11-27, #332). 같은 키의 재생은 그사이 판이 바뀌어도 처음 결과를 돌려준다.
  */
 public final class ConsentVersion {
 

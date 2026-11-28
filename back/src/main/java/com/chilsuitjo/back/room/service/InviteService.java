@@ -11,6 +11,7 @@ import com.chilsuitjo.back.global.common.PhoneNumber;
 import com.chilsuitjo.back.global.common.TargetKind;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
+import com.chilsuitjo.back.member.service.TermsVersions;
 import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.room.dto.CounterpartPhoneRequest;
 import com.chilsuitjo.back.room.dto.InviteRequest;
@@ -38,9 +39,9 @@ import org.springframework.stereotype.Service;
  * "상대 초대하기", #407 리뷰). 비어 있음 자리에 번호가 없으면 {@code VALIDATION_FAILED}다.
  *
  * <p>오류: 판이 없으면 {@code CONSENT_REQUIRED}, 번호·기록 모양이 틀리면 {@code VALIDATION_FAILED}(여기서 먼저), 당사자가 아니면
- * {@code NOT_FOUND}, 정산 완료·합류 전 기록·공유 중단이면 pipeline 거절, 만든 측이 아니거나 거주 종료이거나 비어 있음·번호만 자리가 아니면
- * {@code INVALID_STATE}, 내 인증 번호면 {@code SELF_INVITE}, 수신 거부 목록에 있는 번호면 {@code
- * PHONE_OPTED_OUT}({@code PartyTransitions}).
+ * {@code NOT_FOUND}, 판이 지금 판이 아니면 {@code VERSION_CONFLICT}(처음 실행만, 같은 키의 재생은 처음 결과), 정산 완료·합류 전
+ * 기록·공유 중단이면 pipeline 거절, 만든 측이 아니거나 거주 종료이거나 비어 있음·번호만 자리가 아니면 {@code INVALID_STATE}, 내 인증 번호면
+ * {@code SELF_INVITE}, 수신 거부 목록에 있는 번호면 {@code PHONE_OPTED_OUT}({@code PartyTransitions}).
  *
  * <p>아직 하지 않는 것(#163): 기록 링크의 확인 요청 열기(#163 D 추천의 D 메서드·inspection 읽기 포트 뒤. 그전까지 점검 확인 요청은 점검의 확인
  * 요청 보내기가 연결 전 상대에게 연다).
@@ -54,6 +55,7 @@ public class InviteService {
   private final PartyRepository parties;
   private final PartyStateStore store;
   private final PartyTransitions rules;
+  private final TermsVersions termsVersions;
 
   public Invited.Result invite(
       UUID roomRecordId, UUID memberId, String idempotencyKey, InviteRequest request) {
@@ -65,6 +67,7 @@ public class InviteService {
     BatchResult result =
         pipeline.executeAll(
             ActionBatch.of(roomRecordId, Actor.member(memberId), idempotencyKey)
+                .firstRunCheck(() -> termsVersions.requireCurrentShareConsent(consentVersion))
                 .record(ActionType.SHARE_CONSENT, Map.of("consentVersion", consentVersion))
                 .step(
                     ActionType.INVITE,
@@ -82,9 +85,9 @@ public class InviteService {
    * PartyStateStore.changingPhone}.
    *
    * <p>오류: 판이 없으면 {@code CONSENT_REQUIRED}, 번호가 없거나 모양이 틀리면 {@code VALIDATION_FAILED}(여기서 먼저), 당사자가
-   * 아니면 {@code NOT_FOUND}, 정산 완료·합류 전 기록·공유 중단이면 pipeline 거절, 지금 초대 번호와 같으면 {@code
-   * VALIDATION_FAILED}, 만든 측이 아니거나 거주 종료이거나 초대됨·거절됨 자리가 아니면 {@code INVALID_STATE}, 내 인증 번호면 {@code
-   * SELF_INVITE}, 수신 거부 목록에 있는 번호면 {@code PHONE_OPTED_OUT}.
+   * 아니면 {@code NOT_FOUND}, 판이 지금 판이 아니면 {@code VERSION_CONFLICT}(처음 실행만), 정산 완료·합류 전 기록·공유 중단이면
+   * pipeline 거절, 지금 초대 번호와 같으면 {@code VALIDATION_FAILED}, 만든 측이 아니거나 거주 종료이거나 초대됨·거절됨 자리가 아니면
+   * {@code INVALID_STATE}, 내 인증 번호면 {@code SELF_INVITE}, 수신 거부 목록에 있는 번호면 {@code PHONE_OPTED_OUT}.
    *
    * <p>호실 상세 {@code availableActions}에는 아직 넣지 않는다. 초대 링크를 새로 발급하므로 상대 초대와 같이 #370 활성화 조건이 채워진 뒤
    * 더한다.
@@ -102,6 +105,7 @@ public class InviteService {
     BatchResult result =
         pipeline.executeAll(
             ActionBatch.of(roomRecordId, Actor.member(memberId), idempotencyKey)
+                .firstRunCheck(() -> termsVersions.requireCurrentShareConsent(consentVersion))
                 .record(ActionType.SHARE_CONSENT, Map.of("consentVersion", consentVersion))
                 .step(
                     ActionType.CHANGE_INVITE_PHONE,

@@ -43,6 +43,9 @@ class CounterpartPhoneApiTest {
   /** {@code InvitationApiTest}와 같은 법정동(시·도 97). */
   private static final String REGION = "9799999901";
 
+  /** 지금 판({@code terms.version.share-consent} = {@code v1})이 아닌 판. 배포 전 화면이 보낸 옛 판과 같다. */
+  private static final String STALE_VERSION = "v0";
+
   @Autowired private MockMvc mvc;
   @Autowired private JdbcTemplate jdbc;
   @Autowired private PhoneHmacs phoneHmacs;
@@ -281,6 +284,55 @@ class CounterpartPhoneApiTest {
         .andExpect(jsonPath("$.code").value(ErrorCode.CONSENT_REQUIRED.name()));
 
     assertUnchanged(room, seat);
+  }
+
+  @Test
+  void 동의_문구_판이_지금_판이_아니면_VERSION_CONFLICT이고_아무것도_바뀌지_않는다() throws Exception {
+    UUID room = room("LIVING");
+    UUID seat = invitedSeat(room);
+
+    change(room, me, key(), body(newPhone, STALE_VERSION))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value(ErrorCode.VERSION_CONFLICT.name()));
+
+    assertUnchanged(room, seat);
+  }
+
+  @Test
+  void 옛_판은_입력_검사와_당사자_확인_뒤_자리_규칙보다_먼저다() throws Exception {
+    UUID room = room("LIVING");
+    UUID seat = invitedSeat(room);
+    // 입력 검사(번호 없음·모양)가 먼저
+    change(room, me, key(), body(null, STALE_VERSION))
+        .andExpect(jsonPath("$.code").value(ErrorCode.VALIDATION_FAILED.name()));
+    change(room, me, key(), body("12345", STALE_VERSION))
+        .andExpect(jsonPath("$.code").value(ErrorCode.VALIDATION_FAILED.name()));
+    // 당사자 확인(잠금)이 먼저
+    change(room, member(phone()), key(), body(newPhone, STALE_VERSION))
+        .andExpect(jsonPath("$.code").value(ErrorCode.NOT_FOUND.name()));
+    // 자리 규칙(지금 번호와 같음·내 인증 번호)보다 먼저
+    change(room, me, key(), body(oldPhone, STALE_VERSION))
+        .andExpect(jsonPath("$.code").value(ErrorCode.VERSION_CONFLICT.name()));
+    change(room, me, key(), body(myPhone, STALE_VERSION))
+        .andExpect(jsonPath("$.code").value(ErrorCode.VERSION_CONFLICT.name()));
+    assertUnchanged(room, seat);
+  }
+
+  @Test
+  void 같은_키의_재생은_문구_판을_다시_보지_않고_처음_결과를_돌려준다() throws Exception {
+    UUID room = room("LIVING");
+    invitedSeat(room);
+    String key = key();
+    change(room, me, key, body(newPhone, "v1")).andExpect(status().isOk());
+
+    // 처음 요청 뒤 판이 바뀐 것과 같다: 처음 실행 검사는 재생에서 부르지 않는다
+    change(room, me, key, body(newPhone, STALE_VERSION))
+        .andExpect(status().isOk())
+        .andExpect(header().string("Idempotent-Replayed", "true"))
+        .andExpect(jsonPath("$.status").value("INVITED"));
+
+    assertThat(actions(room)).hasSize(4);
+    assertThat(count("state.link", room)).isEqualTo(2);
   }
 
   @Test

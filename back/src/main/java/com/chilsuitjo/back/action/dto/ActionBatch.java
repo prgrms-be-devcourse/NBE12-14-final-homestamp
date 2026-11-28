@@ -31,6 +31,7 @@ public final class ActionBatch {
   private final boolean newRoom;
   private final List<ActionStep<?>> steps = new ArrayList<>();
   private Runnable accessCheck;
+  private Runnable firstRunCheck;
   private UUID inviteePartyId;
 
   private ActionBatch(UUID roomRecordId, Actor actor, String idempotencyKey, boolean newRoom) {
@@ -162,6 +163,22 @@ public final class ActionBatch {
   }
 
   /**
+   * 처음 실행에서만 하는 입력 검사(09 3-1 순서 2 뒤). pipeline이 잠금·접근 검증·멱등 조회를 마친 뒤 <b>처음 실행일 때만</b> 단계(순서 3)보다
+   * 앞에서 부른다. 같은 키의 재생에서는 부르지 않아, 처음 요청이 받아들인 입력을 그사이 바뀐 서버 설정(문구 판 등)으로 다시 거절하지 않는다(06 4-0 "같은 키는
+   * 처음 결과").
+   *
+   * <p>요청 본문만으로 정해지는 검사(비었는지·모양)는 여기 두지 않고 서비스가 batch를 만들기 전에 한다. 처음 요청과 재생 사이에 바뀔 수 있는 서버 값과 맞춰 보는
+   * 검사만 둔다(예: 공유 동의 문구 판이 지금 판인지, #332). 호실 상태는 판단하지 않는다. 한 요청에 하나만 붙인다.
+   */
+  public ActionBatch firstRunCheck(Runnable check) {
+    if (firstRunCheck != null) {
+      throw new IllegalStateException("처음 실행 검사는 한 요청에 하나만 붙여요");
+    }
+    this.firstRunCheck = Objects.requireNonNull(check, "check");
+    return this;
+  }
+
+  /**
    * 초대 자리로 들어온 요청(#163, #249). 아직 연결하지 않은 초대받은 회원은 당사자가 아니라 pipeline 1단계에서 {@code NOT_FOUND}가 나므로,
    * 이 표시가 있으면 pipeline이 {@code RoomGateReader.lockAndReadAsInvitee}로 잠근다(같은 키의 재생도 같음). 그 요청에서는
    * {@code Allow.BY_INVITEE} 행동만 된다.
@@ -209,6 +226,13 @@ public final class ActionBatch {
   public void runAccessCheck() {
     if (accessCheck != null) {
       accessCheck.run();
+    }
+  }
+
+  /** 처음 실행 검사 실행. {@code ActionPipeline}만 부른다(멱등 조회 뒤 처음 실행일 때, 단계 전). */
+  public void runFirstRunCheck() {
+    if (firstRunCheck != null) {
+      firstRunCheck.run();
     }
   }
 
