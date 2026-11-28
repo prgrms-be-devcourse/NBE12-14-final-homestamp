@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.chilsuitjo.back.global.common.AckState;
@@ -15,11 +16,15 @@ import com.chilsuitjo.back.inspection.dto.InspectionForLink;
 import com.chilsuitjo.back.inspection.rule.InspectionKind;
 import com.chilsuitjo.back.inspection.rule.InspectionStatus;
 import com.chilsuitjo.back.inspection.service.InspectionLinkQuery;
+import com.chilsuitjo.back.link.dto.LinkRecordResponse;
 import com.chilsuitjo.back.link.dto.LinkRoom;
 import com.chilsuitjo.back.payment.service.PaymentService;
 import com.chilsuitjo.back.photo.dto.PhotoTarget;
 import com.chilsuitjo.back.photo.rule.PhotoTargetType;
 import com.chilsuitjo.back.photo.service.PhotoService;
+import com.chilsuitjo.back.repair.dto.RepairLinkView;
+import com.chilsuitjo.back.repair.rule.RepairStatus;
+import com.chilsuitjo.back.repair.service.RepairLinkQuery;
 import com.chilsuitjo.back.room.dto.RoomForLink;
 import com.chilsuitjo.back.room.dto.RoomRegion;
 import com.chilsuitjo.back.room.rule.PartyStatus;
@@ -38,10 +43,11 @@ class LinkContentsTest {
 
   private final RoomLinkQuery rooms = mock(RoomLinkQuery.class);
   private final InspectionLinkQuery inspections = mock(InspectionLinkQuery.class);
+  private final RepairLinkQuery repairs = mock(RepairLinkQuery.class);
   private final PhotoService photos = mock(PhotoService.class);
   private final PaymentService payments = mock(PaymentService.class);
   private final LinkContents contents =
-      new LinkContents(rooms, inspections, photos, payments, ZoneId.of("Asia/Seoul"));
+      new LinkContents(rooms, inspections, repairs, photos, payments, ZoneId.of("Asia/Seoul"));
   private final UUID room = UUID.randomUUID();
   private final UUID record = UUID.randomUUID();
 
@@ -130,9 +136,54 @@ class LinkContentsTest {
   }
 
   @Test
-  void 수리_건은_주인_조회가_없어_빈_값으로_덮지_않고_예외다() {
+  void 수리_건은_repair_조회를_받는_측으로_부르고_보이지_않으면_빈_값이다() {
+    when(repairs.forLink(room, record, PartySide.LANDLORD)).thenReturn(Optional.empty());
+
+    assertThat(contents.record(room, TargetKind.REPAIR_CASE, record, PartySide.LANDLORD)).isEmpty();
+    verify(repairs).forLink(room, record, PartySide.LANDLORD);
+    verifyNoInteractions(photos);
+  }
+
+  @Test
+  void 수리_건_사진은_보이는_대상으로만_photo에서_받는다() {
+    PhotoTarget target = new PhotoTarget.Ref(PhotoTargetType.REPAIR_CASE, record);
+    when(repairs.forLink(room, record, PartySide.LANDLORD))
+        .thenReturn(
+            Optional.of(
+                new RepairLinkView(
+                    PartySide.TENANT,
+                    RepairStatus.NOT_STARTED,
+                    null,
+                    null,
+                    AckState.PENDING,
+                    Instant.parse("2026-11-20T01:00:00Z"),
+                    null,
+                    "세면대",
+                    "물이 새요",
+                    null,
+                    target,
+                    List.of(),
+                    List.of(),
+                    List.of(),
+                    List.of())));
+    when(photos.linkPhotos(room, List.of(target))).thenReturn(Map.of(target, List.of()));
+
+    LinkRecordResponse response =
+        contents.record(room, TargetKind.REPAIR_CASE, record, PartySide.LANDLORD).orElseThrow();
+
+    assertThat(response.targetKind()).isEqualTo(TargetKind.REPAIR_CASE);
+    assertThat(response.items()).isEmpty();
+    verify(photos).linkPhotos(room, List.of(target));
+  }
+
+  @Test
+  void 수리_건_공개_상태를_되살리지_못한_예외는_잡지_않는다() {
+    when(repairs.forLink(room, record, PartySide.LANDLORD))
+        .thenThrow(new IllegalStateException("보이는 판이 없어요"));
+
     assertThatThrownBy(
             () -> contents.record(room, TargetKind.REPAIR_CASE, record, PartySide.LANDLORD))
-        .isInstanceOf(IllegalStateException.class);
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("판");
   }
 }

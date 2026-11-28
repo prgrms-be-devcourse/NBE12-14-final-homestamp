@@ -7,8 +7,11 @@ import com.chilsuitjo.back.inspection.service.InspectionLinkQuery;
 import com.chilsuitjo.back.link.dto.LinkRecordResponse;
 import com.chilsuitjo.back.link.dto.LinkRoom;
 import com.chilsuitjo.back.link.rule.InspectionLinkRecord;
+import com.chilsuitjo.back.link.rule.RepairLinkRecord;
 import com.chilsuitjo.back.payment.service.PaymentService;
 import com.chilsuitjo.back.photo.service.PhotoService;
+import com.chilsuitjo.back.repair.dto.RepairLinkView;
+import com.chilsuitjo.back.repair.service.RepairLinkQuery;
 import com.chilsuitjo.back.room.dto.RoomForLink;
 import com.chilsuitjo.back.room.service.RoomLinkQuery;
 import java.time.ZoneId;
@@ -27,8 +30,9 @@ import org.springframework.stereotype.Service;
  *   <li>점검: inspection {@link InspectionLinkQuery#forLink}(#397)와 사진 {@link
  *       PhotoService#linkPhotos}. 보이는 범위(작성 중 제외, 공유 중단 기준 시각, 연결 전 열람자)는 inspection이 정하고, 숨긴 사진은
  *       photo가 뺀다. link는 다시 판단하지 않는다
- *   <li>수리 건: repair의 링크용 조회(#303 합의 7206508708)가 아직 없다. 빈 값으로 덮으면 "그런 기록 없음"과 구별되지 않아 {@code
- *       IllegalStateException}이다. 운영에는 아직 수리 건 링크를 발급하는 곳이 없다
+ *   <li>수리 건: repair {@link RepairLinkQuery#forLink}(#447)와 사진 {@link PhotoService#linkPhotos}. 보이는
+ *       범위(공유 중단 기준 시각, 숨긴 수리 건, 불변식 18)는 repair가 정하고, 숨긴 사진은 photo가 뺀다. link는 모양과 문구만 만든다({@link
+ *       RepairLinkRecord}). 운영에는 아직 수리 건 링크를 발급하는 곳이 없다
  *   <li>돈 기록이 있는지: payment {@link PaymentService#hasMoney}. 운영 빈은 아직 가짜라 늘 {@code false}다. 링크 열람을
  *       켜기 전에 #340이 필요하다(#303 7210814659)
  * </ul>
@@ -41,6 +45,7 @@ public class LinkContents implements LinkContentSource {
 
   private final RoomLinkQuery rooms;
   private final InspectionLinkQuery inspections;
+  private final RepairLinkQuery repairs;
   private final PhotoService photos;
   private final PaymentService payments;
   private final ZoneId zone;
@@ -48,11 +53,13 @@ public class LinkContents implements LinkContentSource {
   public LinkContents(
       RoomLinkQuery rooms,
       InspectionLinkQuery inspections,
+      RepairLinkQuery repairs,
       PhotoService photos,
       PaymentService payments,
       @Value("${app.zone}") ZoneId zone) {
     this.rooms = rooms;
     this.inspections = inspections;
+    this.repairs = repairs;
     this.photos = photos;
     this.payments = payments;
     this.zone = zone;
@@ -72,7 +79,10 @@ public class LinkContents implements LinkContentSource {
           inspections
               .forLink(roomRecordId, recordId, viewerSide)
               .map(inspection -> inspection(roomRecordId, inspection, viewerSide));
-      case REPAIR_CASE -> throw new IllegalStateException("수리 건 링크 조회(repair)가 아직 없어요(#303)");
+      case REPAIR_CASE ->
+          repairs
+              .forLink(roomRecordId, recordId, viewerSide)
+              .map(repair -> repair(roomRecordId, repair, viewerSide));
       default -> throw new IllegalArgumentException("링크로 공유하는 기록이 아니에요: " + kind);
     };
   }
@@ -87,6 +97,15 @@ public class LinkContents implements LinkContentSource {
     return InspectionLinkRecord.of(
         inspection,
         photos.linkPhotos(roomRecordId, InspectionLinkRecord.photoTargets(inspection)),
+        zone,
+        viewerSide);
+  }
+
+  private LinkRecordResponse repair(
+      UUID roomRecordId, RepairLinkView repair, PartySide viewerSide) {
+    return RepairLinkRecord.of(
+        repair,
+        photos.linkPhotos(roomRecordId, RepairLinkRecord.photoTargets(repair)),
         zone,
         viewerSide);
   }
