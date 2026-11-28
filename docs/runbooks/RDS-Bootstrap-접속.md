@@ -14,7 +14,7 @@ psql: host=<RDS 주소>(인증서 이름 확인)  hostaddr=127.0.0.1(실제로 �
 ## 지켜야 할 것
 
 - Secret 값·비밀번호를 화면에 출력하지 않는다. 명령 인자, 셸 기록, GitHub, 이슈·채팅, 로그에 넣지 않는다
-- 비밀번호는 노트북의 임시 `PGPASSFILE`(0600)에만 두고 끝나면 지운다. **EC2에는 두지 않는다**(셸로 EC2에서 psql을 돌리지 않는다. 셸 세션 기록에 남을 수 있다)
+- 마스터 비밀번호는 노트북의 임시 `PGPASSFILE`(0600)에만 두고 끝나면 지운다. **EC2에는 두지 않는다**(셸로 EC2에서 psql을 돌리지 않는다. 셸 세션 기록에 남을 수 있다). EC2에 두는 것은 Migration 비밀 파일뿐이다(배포-블루그린 "Migration 비밀 폴더")
 - `sslmode`를 `require` 이하로 낮추지 않는다. 인증서 확인이 안 되면 멈춘다
 - 실패해도 11단계(임시 파일 삭제, 포워딩 종료)는 반드시 한다(아래 `trap`)
 
@@ -98,6 +98,18 @@ psql -X -v ON_ERROR_STOP=1 -v human_role='<NOLOGIN human read group identifier>'
 - 7·8 모두 종료 코드 0이어야 성공. 하나라도 0이 아니면 멈추고, 출력에서 비밀값이 아닌 오류 문장만 대장에 적는다. 같은 단계를 고쳐 다시 돌리기 전에 원인을 팀에 공유한다
 - 실패해도 아래 10~11단계(세션·파일 정리)는 하고, 12단계(교체)는 원인을 정리한 뒤 따로 정한다
 
+### 9b. 로그인 역할 비밀번호 (처음 설치 때, 같은 세션에서)
+- **대상은 `hs_app`·`hs_migrator` 둘뿐이다.** `hs_owner`와 `hs_human_read`는 NOLOGIN이다. `hs_purge`는 LOGIN이지만 비밀번호를 정하지 않는다. 비밀번호가 없으면 비밀번호 인증이 실패하고 IAM DB 인증은 꺼져 있다(`rds.tf` `iam_database_authentication_enabled = false`). 그래서 Purge 작업자를 만들 때까지 지금의 운영 인증 방식으로는 이 역할로 직접 로그인할 수 없다. 역할 자체는 관리자(마스터)가 그대로 관리할 수 있다. 사람별 LOGIN 역할은 DB-보관-삭제 "사람별 Human 계정"을 따른다
+- **값 만들기**: AI 도구·화면 녹화 밖의 별도 터미널에서 `openssl rand -hex 32`(64자, 셸·URL 특수 문자 없음)로 만든다. **하나씩** 만들고 DB에 정한 뒤 바로 공급처에 넣고 지운다
+- **DB에 정하기**: 이 psql 세션에서 `\password hs_app`, 프롬프트에 두 번 붙여 넣는다. psql은 해시(SCRAM)로 바꿔 보내므로 평문이 psql 기록·DB 로그에 남지 않는다. `ALTER ROLE ... PASSWORD '<값>'`을 직접 치지 않는다(평문이 `~/.psql_history`에 남고, `log_statement`를 켜면 DB 로그에도 남는다)
+- **App 공급**: 콘솔 → Systems Manager → Parameter Store. 두 값을 넣는다(04 6장 표, 형식이 다르면 앱이 시작하지 않는다)
+  - `/homestamp/prod/app/spring.datasource.username`: `hs_app`, **SecureString**
+  - `/homestamp/prod/app/spring.datasource.password`: 새 값, **SecureString**, KMS 키는 기본(`alias/aws/ssm`)
+  - CLI `put-parameter --value`는 쓰지 않는다(셸 기록·프로세스 인자에 남는다)
+- **Migration 공급**: `\password hs_migrator`로 정한 뒤 EC2에서 배포-블루그린 "Migration 비밀 폴더 → 처음 만들기"를 한다
+- 끝나면 클립보드를 비운다(macOS `pbcopy </dev/null`). 값은 노트북 어디에도 남기지 않는다
+- **확인(값 없이)**: App은 첫 배포의 헬스, Migration은 첫 배포의 `--migrate`(또는 배포-블루그린 "연결 확인")로 본다
+
 ### 10. 다른 마스터 세션 정리 (아직 붙어 있는 동안)
 비밀번호를 바꿔도 **이미 열린 세션은 끊기지 않는다**(PostgreSQL은 접속할 때만 인증한다. 실환경 확인 NOT_RUN). 그래서 마스터 계정으로 열린 다른 세션을 먼저 확인하고 끊는다.
 ```sh
@@ -158,6 +170,27 @@ AWS_PROFILE=homestamp aws secretsmanager describe-secret --secret-id "$SECRET_AR
 | 누가 | RDS | 운영 담당(교육 계정은 공용 팀 사용자 프로필) |
 | 목적 | 정기적으로 바꿈 | 노트북에 꺼낸 값의 유효 기간을 줄임 |
 | 열린 세션 | 끊지 않음 | 끊지 않음 → 10·14단계에서 직접 끊는다 |
+
+## 로그인 역할 비밀번호 교체 (코드 배포와 따로)
+
+언제: 노출이 의심될 때, 담당자가 바뀔 때, EC2·EBS를 잃었을 때(`hs_migrator`). 교체는 무중단이 아니다. 교체하는 동안 배포 승인을 멈추고, `--status`로 진행 중인 배포가 없는지 본 뒤 대장에 적는다. 3~6단계로 마스터 세션을 열어 둔다.
+
+**App(`hs_app`)**: 앱은 SSM을 **시작할 때만** 읽는다. 같은 digest 재배포는 noop이라 새 값을 읽지 않으므로 재시작으로 대신한다.
+1. 새 값을 만든다(9b)
+2. 콘솔에서 `/homestamp/prod/app/spring.datasource.password`를 새 값으로 바꾼다. 실행 중인 앱은 아직 이전 값으로 동작한다
+3. 마스터 세션에서 `\password hs_app`에 같은 값을 넣는다. 이미 열린 연결은 유지되지만 앱 연결 풀의 새 연결은 이때부터 실패하므로 바로 4로 간다
+4. EC2: `sudo flock -n /run/lock/homestamp-deploy.lock docker restart -t 30 homestamp-app-<활성 슬롯>`. 시작하면서 새 값을 읽는다. 다시 뜰 때까지 수십 초 동안 API가 503이다
+5. 확인: `--status`, 헬스 200·UP, `sudo docker logs --since 10m homestamp-app-<활성 슬롯> 2>&1 | grep -c 'password authentication failed'`가 0
+- 새 값은 5가 끝날 때까지 지우지 않는다
+- 3이 실패하면 4를 하지 않는다(앱은 이전 값으로 계속 돈다). 같은 값으로 3을 다시 한다
+- 4 뒤에 앱이 뜨지 않고 인증 실패가 보이면 SSM과 DB 값이 다르다. 들고 있는 값으로 3을 다시 하고 4를 다시 한다. 값을 잃었으면 1부터 새 값으로 한다
+- 멈춰 둔 이전 슬롯 앱과 다음 배포의 새 앱은 시작할 때 새 값을 읽는다
+
+**Migration(`hs_migrator`)**: 새 값 → `\password hs_migrator` → 배포-블루그린 "Migration 비밀 폴더 → 처음 만들기·교체" → "연결 확인". 그사이 배포는 11로 멈추고 서비스는 그대로다.
+
+**마스터**: 12~14단계(RDS 관리형 교체)만 쓴다. Secrets Manager `rotate-secret`을 직접 부르지 않는다.
+
+**앱 키**: 무엇을 바꿔도 되는지는 04 6장 "키를 잃거나 바꾸면"을 본다. 바꾼 뒤 적용은 App과 같다(값 바꿈 → 재시작).
 
 ## apply 뒤 1회 확인 (보안 경계로 쓰기 전)
 
