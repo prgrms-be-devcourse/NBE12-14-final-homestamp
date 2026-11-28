@@ -74,6 +74,9 @@ export const inspectionIdIn = (room: Room, kind: "in" | "out") =>
   (kind === "in" ? room.moveIn : room.moveOut)?.server?.id ??
   inspectionIdOf(room.id, kind)
 export const settlementIdOf = (roomId: string) => roomId
+// 정산 주소에 쓸 ID. 서버에서 받은 정산이면 서버 정산 ID(06 4-8, #442), 목업이면 자리표예요.
+export const settlementIdIn = (room: Room) =>
+  room.settlement?.id ?? settlementIdOf(room.id)
 // 사진도 화면 모델에서는 기록 안의 자리(b:0, a:기록:0)로만 알아서, 서버의 사진 ID가 생기기 전까지 이것으로 대신해요.
 export const photoIdOf = (recordId: string, key: string) => `${recordId}:${key}`
 // 부담 제안(돈 안건)도 지금 화면 모델에 ID가 없어 '그 기록의 지금 안'으로 대신해요.

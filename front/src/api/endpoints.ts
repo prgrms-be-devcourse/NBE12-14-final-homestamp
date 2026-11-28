@@ -106,7 +106,7 @@ export const endpoints = {
   ) => `/api/inspections/${id(iid)}/${action}`,
   inspectionItemAction: (itemId: string, action: "respond" | "supplement") =>
     `/api/inspection-items/${id(itemId)}/${action}`,
-  // 4-8 정산
+  // 4-8 정산. 같은 주소의 GET은 호실의 정산(아직 열지 않았으면 404, #442)
   openSettlement: (rid: string) => `/api/rooms/${id(rid)}/settlement`,
   settlement: (sid: string) => `/api/settlements/${id(sid)}`,
   settlementAction: (

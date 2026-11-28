@@ -433,6 +433,23 @@ export interface Room {
   // HTTP: 서버가 준 원래 값(06 4-3 GET /api/rooms, /api/rooms/{id}). 위 화면 칸은 이 값에서 바꿔 채우고,
   // 바꾸며 뭉뚱그린 상태(공유 그만둠·탈퇴·합류 전)는 여기서 그대로 읽어요. 목업에는 없어요.
   server?: RoomServerState
+  // HTTP: 서버가 준 정산 머리(06 4-8 GET /api/rooms/{id}/settlement). null이면 아직 열지 않은 정산(404),
+  // 없으면 아직 받지 못했어요(받는 중이거나 받기가 실패함). 목업에는 없어요.
+  settlement?: SettlementServerState | null
+}
+// 정산 머리(06 4-8 GET /api/settlements/{id}). 보증금 금액·항목·송금은 그 기능을 연결할 때 칸을 더해요(#442)
+export interface SettlementServerState {
+  // 서버의 정산 ID(요청 주소에 써요)
+  id: string
+  // 보증금 확인 상태(05 settlement.deposit_status). 화면 말은 "보증금 확인 전"/"둘 다 확인"(08 10장)
+  depositStatus: "NOT_ENTERED" | "PENDING" | "AGREED" | "DISPUTE"
+  // 정산 모습 번호. 끝내기 확인 때 본 번호(seenVersionNo)로 보내요(SET-5e)
+  snapshotNo: number
+  createdAt: string
+  // 내가 아직 답하지 않은 확인 요청 수(SET-5g)
+  unansweredForMe: number
+  // 정산에 지금 누를 수 있는 행동(finish·finish-confirm·finish-not-yet·finish-alone)
+  availableActions: string[]
 }
 // 당사자 자리 상태(05 party.status). 서버 값 그대로예요.
 export type PartyStatus =

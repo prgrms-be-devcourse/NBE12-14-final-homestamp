@@ -221,6 +221,9 @@ describe("HTTP 기록 API의 호실 받기", () => {
         return { items: [summary()], nextCursor: null }
       if (isRepairPage(path)) return emptyRepairs
       if (path.endsWith("/timeline")) return emptyTimeline
+      // 호실의 정산(#442): 아직 열지 않음
+      if (path.endsWith("/settlement"))
+        throw new ApiError({ status: 404, code: "NOT_FOUND" })
       if (path.startsWith(`${endpoints.rooms}/`))
         return detailOf(decodeURIComponent(path.split("/").pop()!))
       return []

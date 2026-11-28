@@ -156,7 +156,7 @@ export function InspectionPage({
   const [stillLiving, setStillLiving] = useState(false)
   const roomHas = (a: RoomAction) => hasAction(roomActions, a)
   // 버튼은 서버가 준 availableActions로만 그려요(08 0장 원칙 6). 값은 api.actions가 줘요(GET /api/inspections/{id}).
-  const { actions: available } = useApi()
+  const { actions: available, mode } = useApi()
   const actions = available.inspection(db, room, sessKind, role, {
     readOnly,
   })
@@ -932,8 +932,39 @@ export function InspectionPage({
           혼자 남겼어요.
         </Notice>
       )}
-      {page === "checkout" && (
+      {/* HTTP: 정산은 서버에서 받은 것만 보여요(06 4-8, #442). 아직 열지 않았으면(404) [정산 열기] */}
+      {page === "checkout" && mode === "http" && !room.settlement && (
+        <Panel title="정산" className="my-[22px]">
+          {room.settlement === null ? (
+            <>
+              <p className="muted">아직 정산을 열지 않았어요.</p>
+              {!readOnly && (
+                <div className="actions mt-4">
+                  <Button
+                    onClick={() =>
+                      commit(
+                        post(endpoints.openSettlement(roomId)),
+                        "정산 열기",
+                        () => {},
+                      )
+                    }
+                  >
+                    정산 열기
+                  </Button>
+                </div>
+              )}
+            </>
+          ) : (
+            // 받는 중이거나 받기가 실패했어요(실패는 호실 받기 때 다시 받아요)
+            <p className="muted">
+              정산을 불러오는 중이에요. 오래 걸리면 잠시 뒤 다시 들어와 주세요.
+            </p>
+          )}
+        </Panel>
+      )}
+      {page === "checkout" && (mode !== "http" || room.settlement) && (
         <RoomFinancials
+          server={room.settlement ?? undefined}
           room={room}
           role={role}
           items={settlements}

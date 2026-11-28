@@ -1,7 +1,7 @@
 import {
   post,
   proposalIdOf,
-  settlementIdOf,
+  settlementIdIn,
   type RecordRequest,
 } from "@/api/records"
 import { endpoints } from "@/api/endpoints"
@@ -53,6 +53,7 @@ import {
   type DemoState,
   type AmountOffer,
   type Transfer,
+  type SettlementServerState,
 } from "@/data/demo"
 import { sideName, sideText } from "@/lib/words"
 import {
@@ -78,6 +79,16 @@ interface Props {
   actions: readonly SettlementAction[]
   itemActionsOf: (s: Settlement) => readonly SettlementItemAction[]
   transferActionsOf: (t: Transfer) => readonly TransferAction[]
+  // HTTP: 서버가 준 정산 머리(room.settlement). 있으면 보증금 상태·끝내기는 서버 값으로 보이고,
+  // 끝내기 행동은 화면이 규칙을 미리 검사하지 않아요(서버가 검사). 목업에는 없어요
+  server?: SettlementServerState
+}
+// 보증금 확인 상태의 화면 말(08 10장 "보증금 카드": "제안·합의" 대신 "적기·확인", SET-1b)
+const DEPOSIT_TEXT: Record<SettlementServerState["depositStatus"], string> = {
+  NOT_ENTERED: "보증금 금액을 아직 적지 않았어요",
+  PENDING: "보증금 확인 전",
+  AGREED: "보증금 · 둘 다 확인 ✓",
+  DISPUTE: "보증금 금액이 서로 달라요",
 }
 type Mode =
   | "deposit"
@@ -120,6 +131,7 @@ export function RoomFinancials({
   actions,
   itemActionsOf,
   transferActionsOf,
+  server,
 }: Props) {
   const has = (a: SettlementAction) => hasAction(actions, a)
   // 빼기 제안에 상대가 동의한 항목은 정산 계산과 세 칸에서 빠지고, 아래 '뺀 항목'에 보존됩니다.
@@ -140,18 +152,20 @@ export function RoomFinancials({
   const finish = finishState(room, allItems)
   const [finishError, setFinishError] = useState("")
   // 정산 끝내기 행동: 먼저 복사본에 적용해 규칙 위반을 확인한 뒤 기록해요.
-  const sid = settlementIdOf(room.id)
+  // 서버 정산이면 미리 검사하지 않아요(화면 모델에 끝내기 요청 칸이 없고, 서버가 같은 규칙으로 거절해요)
+  const sid = settlementIdIn(room)
   const runFinish = (
     request: RecordRequest,
     text: string,
     update: (r: Room, list: Settlement[]) => void,
   ) => {
-    try {
-      update(structuredClone(room), structuredClone(allItems))
-    } catch (e) {
-      setFinishError(e instanceof Error ? e.message : "처리할 수 없어요.")
-      return
-    }
+    if (!server)
+      try {
+        update(structuredClone(room), structuredClone(allItems))
+      } catch (e) {
+        setFinishError(e instanceof Error ? e.message : "처리할 수 없어요.")
+        return
+      }
     setFinishError("")
     onAction(request, text, (d) =>
       update(
@@ -161,6 +175,9 @@ export function RoomFinancials({
     )
   }
   const transfers = roomTransfers(room)
+  const depositAgreed = server
+    ? server.depositStatus === "AGREED"
+    : room.depositConfirmed || offer?.status === "합의됨"
   const myConfirmed =
     room.depositConfirmed || offer?.by === role || offer?.status === "합의됨"
   const otherConfirmed =
@@ -545,30 +562,41 @@ export function RoomFinancials({
       <div className="my-[22px]">
         <Panel title="보증금 기준 금액">
           <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
-            <div className="min-w-0">
+            {/* 서버 정산은 아직 보증금 금액을 주지 않아 확인 상태만 보여요(#442) */}
+            {server ? (
               <div className={cn(amount, "text-ink")}>
-                {room.deposit != null ? won(room.deposit) : "미입력"}
+                {DEPOSIT_TEXT[server.depositStatus]}
               </div>
-              {room.deposit == null && (
-                <p className="muted">
-                  호실을 만들 때 보증금을 입력하지 않았어요. 보증금
-                  확인·제안으로 금액을 남길 수 있어요.
-                </p>
-              )}
-            </div>
-            <div className="flex flex-wrap items-center gap-1.5">
-              <Status>내 확인 · {myConfirmed ? "확인" : "확인 전"}</Status>
-              <Status>상대 확인 · {otherConfirmed ? "확인" : "확인 전"}</Status>
-              <Status>
-                {room.depositConfirmed || offer?.status === "합의됨"
-                  ? "보증금 · 둘 다 확인 ✓"
-                  : offer?.status === "이견"
-                    ? "이견"
-                    : myConfirmed || otherConfirmed
-                      ? "상대 확인 대기"
-                      : "보증금 확인 전"}
-              </Status>
-            </div>
+            ) : (
+              <>
+                <div className="min-w-0">
+                  <div className={cn(amount, "text-ink")}>
+                    {room.deposit != null ? won(room.deposit) : "미입력"}
+                  </div>
+                  {room.deposit == null && (
+                    <p className="muted">
+                      호실을 만들 때 보증금을 입력하지 않았어요. 보증금
+                      확인·제안으로 금액을 남길 수 있어요.
+                    </p>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <Status>내 확인 · {myConfirmed ? "확인" : "확인 전"}</Status>
+                  <Status>
+                    상대 확인 · {otherConfirmed ? "확인" : "확인 전"}
+                  </Status>
+                  <Status>
+                    {room.depositConfirmed || offer?.status === "합의됨"
+                      ? "보증금 · 둘 다 확인 ✓"
+                      : offer?.status === "이견"
+                        ? "이견"
+                        : myConfirmed || otherConfirmed
+                          ? "상대 확인 대기"
+                          : "보증금 확인 전"}
+                  </Status>
+                </div>
+              </>
+            )}
           </div>
           {offer && (
             <CurrentProposal
@@ -819,9 +847,7 @@ export function RoomFinancials({
           <p className="muted">보증금 − 합의된 차감 + 합의된 가산</p>
           <p className="muted">
             확인 대기·이견 {unsettled.length}건 제외
-            {!room.depositConfirmed && offer?.status !== "합의됨"
-              ? " · 보증금 확인 전 기준 계산"
-              : ""}
+            {!depositAgreed ? " · 보증금 확인 전 기준 계산" : ""}
           </p>
           {/* 정해지지 않은 금액: 항목마다 금액을 따로(계산에는 넣지 않아요) */}
           {unsettled.length > 0 && (
@@ -959,12 +985,26 @@ export function RoomFinancials({
                     : ""}
                 </p>
               )}
+              {/* 끝내기 확인 화면에 내가 아직 답하지 않은 확인 수(SET-5g). 확인은 막지 않아요 */}
+              {has("finish-confirm") &&
+                server &&
+                server.unansweredForMe > 0 && (
+                  <p className="text-sm text-warn-ink">
+                    아직 답하지 않은 확인 {server.unansweredForMe}건
+                  </p>
+                )}
               <div className="actions">
                 {has("finish-confirm") && (
                   <Button
                     onClick={() =>
                       runFinish(
-                        post(endpoints.settlementAction(sid, "finish/confirm")),
+                        // 본 정산 모습 번호를 함께 보내요. 그사이 바뀌었으면 서버가 VERSION_CONFLICT로 거절해요(SET-5e)
+                        post(
+                          endpoints.settlementAction(sid, "finish/confirm"),
+                          server
+                            ? { seenVersionNo: server.snapshotNo }
+                            : undefined,
+                        ),
                         "정산 끝내기 · 양측 확인",
                         (r, list) => confirmFinish(r, list, role),
                       )
