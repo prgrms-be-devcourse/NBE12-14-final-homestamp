@@ -1,4 +1,10 @@
-import type { PartyStatus, Role, Room, RoomServerState } from "@/data/demo"
+import type {
+  PartyStatus,
+  Role,
+  Room,
+  RoomEndRequest,
+  RoomServerState,
+} from "@/data/demo"
 // ServerSide(TENANT·LANDLORD)로 바꾸기는 화면이 요청 본문을 만들 때 쓰므로 records.ts(roomSide)에 있어요
 import { regionName } from "@/lib/region"
 import { endpoints } from "./endpoints"
@@ -6,8 +12,8 @@ import { ApiError } from "./errors"
 import type { HttpRequest } from "./http-client"
 
 // 호실 API(06 4-3)의 서버 모양과 화면 모델(Room) 사이 변환. 서버 값은 room.server에 그대로 남겨요.
-type ServerSide = RoomServerState["mySide"]
-interface ServerRegion {
+export type ServerSide = RoomServerState["mySide"]
+export interface ServerRegion {
   code: string
   sido: string
   sigungu: string | null
@@ -40,7 +46,20 @@ export interface RoomDetailBody {
   asOf: string | null
   createdAt: string
   availableActions: string[]
+  // 상대 자리에 저장된 번호의 가린 모양(010-****-5678). 내가 만든 측이고 번호가 남아 있을 때(번호만·초대됨·거절됨)만 와요(#317)
+  counterpartMaskedPhone: string | null
+  endRequest: RoomEndRequest | null
+  endedAt: string | null
+  endSoloReason: string | null
 }
+// 서버 행동 이름(API 끝 단어, 06 4-0) → 화면 행동 이름. 거주 종료 요청의 답만 화면에서 이름을 달리 써요
+const ROOM_ACTION_NAMES: Record<string, string> = {
+  confirm: "move-out-confirm",
+  reject: "move-out-reject",
+}
+export const roomActionsOf = (names: string[]) =>
+  names.map((n) => ROOM_ACTION_NAMES[n] ?? n)
+const OPEN_END = new Set<RoomEndRequest["status"]>(["WAITING", "UNCONFIRMED"])
 interface RoomPage {
   items: RoomSummaryBody[]
   nextCursor: string | null
@@ -49,7 +68,8 @@ interface RoomPage {
 // 서버 시각(UTC Instant) → 화면 날짜(한국 날짜, 목업의 todayKey와 같은 모양 YYYY-MM-DD)
 export const seoulDate = (iso: string) =>
   new Date(iso).toLocaleDateString("sv-SE", { timeZone: "Asia/Seoul" })
-const toRole = (s: ServerSide): Role => (s === "TENANT" ? "임차인" : "임대인")
+export const toRole = (s: ServerSide): Role =>
+  s === "TENANT" ? "임차인" : "임대인"
 const STATUS: Record<RoomSummaryBody["status"], Room["status"]> = {
   LIVING: "거주 중",
   ENDED: "거주 종료",
@@ -116,6 +136,8 @@ export function roomFromDetail(
     ),
     since: b.moveInDate ?? "",
     creator: toRole(b.createdBySide),
+    // 목업과 같은 칸도 맞춰 둬요(열린 요청만 참)
+    endRequested: Boolean(b.endRequest && OPEN_END.has(b.endRequest.status)),
     server: {
       mySide: b.mySide,
       counterpartStatus: b.counterpartStatus,
@@ -124,7 +146,11 @@ export function roomFromDetail(
       myStatus: b.myStatus,
       createdBySide: b.createdBySide,
       asOf: b.asOf,
-      availableActions: b.availableActions,
+      availableActions: roomActionsOf(b.availableActions),
+      counterpartMaskedPhone: b.counterpartMaskedPhone ?? null,
+      endRequest: b.endRequest,
+      endedAt: b.endedAt,
+      endSoloReason: b.endSoloReason,
     },
   }
 }

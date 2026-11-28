@@ -13,12 +13,14 @@ import com.chilsuitjo.back.member.service.MemberQueryService;
 import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.service.InviteLinks;
 import com.chilsuitjo.back.notification.service.InviteRequestLinker;
+import com.chilsuitjo.back.notification.service.SmsCancellation;
 import com.chilsuitjo.back.notification.service.SmsOptOuts;
 import com.chilsuitjo.back.room.entity.Party;
 import com.chilsuitjo.back.room.entity.RoomRecord;
 import com.chilsuitjo.back.room.rule.PartyState;
 import com.chilsuitjo.back.room.rule.PartyStatus;
 import com.chilsuitjo.back.room.rule.RoomStatus;
+import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -40,6 +42,7 @@ public class PartyStateStore {
   private final InviteLinks inviteLinks;
   private final InviteRequestLinker inviteRequests;
   private final SmsOptOuts smsOptOuts;
+  private final SmsCancellation smsCancellation;
   private final ActionRequestContext requestContext;
 
   /**
@@ -69,33 +72,56 @@ public class PartyStateStore {
   }
 
   /**
+   * 번호 고쳐 다시 초대({@code CHANGE_INVITE_PHONE}, 06 4-3 {@code counterpart-phone}, ROOM-4·LINK-4,
+   * #437)의 저장 방법. 저장 순서는 #163 7170158423 합의대로다: 그 자리의 초대 링크를 무효({@code REINVITED}) → 그 링크의 보내지 않은
+   * 문자 취소 → 자리를 새 번호로 초대됨(초대 회차도 새로) → 새 초대 링크 → 초대 문자. 이미 열려 있던 응답 요청은 닫지 않는다(새 통지·기한은 #370 T-2).
+   *
+   * @param phone 새 번호(정규화된 번호)
+   */
+  public StateStore<PartyState> changingPhone(String phone) {
+    return new ChangingPhone(phone);
+  }
+
+  /**
    * 연결({@code CONNECT}, 06 ROOM-5a)의 저장 방법. 자리를 연결됨으로 바꾸고(초대 번호는 지움), 호실에 상대가 처음 연결한 시각을 남기고, 그 자리로
    * 보낸 초대 링크를 모두 무효로 한다({@code CONNECTED}, 03 C, #236 {@code InviteLinks}).
+   *
+   * @param inviteId 요청이 보낸 초대 회차 ID(#437). 지금 회차와 다르면 규칙이 {@code INVALID_STATE}로 막는다
    */
-  public StateStore<PartyState> connecting() {
-    return new Connecting();
+  public StateStore<PartyState> connecting(UUID inviteId) {
+    return new Connecting(inviteId);
   }
 
   /**
    * 거절({@code REJECT_INVITE}, "제 집이 아니에요")의 저장 방법. 자리만 거절됨으로 바꾼다. 초대 링크를 무효로 할지는 D 확인 전이라 하지
-   * 않는다(#163).
+   * 않는다(#163, #436).
+   *
+   * @param inviteId 요청이 보낸 초대 회차 ID(#437). 지금 회차와 다르면 규칙이 {@code INVALID_STATE}로 막는다
    */
-  public StateStore<PartyState> rejecting() {
-    return new Rejecting();
+  public StateStore<PartyState> rejecting(UUID inviteId) {
+    return new Rejecting(inviteId);
   }
 
   /**
    * 초대받은 회원의 자리 상태. 행동하는 회원의 인증 번호가 이 자리의 초대 번호와 같은지 본다(06 ROOM-5a·5b). 인증 번호가 없으면 다르다. 그 회원이 이 호실의
-   * 다른 자리에 이미 있는지도 본다(불변식 13, 연결·거절 모두).
+   * 다른 자리에 이미 있는지도 본다(불변식 13, 연결·거절 모두). 보낸 초대 회차가 지금 회차인지도 본다(#437).
    */
-  private PartyState inviteeState(ActionCommand command) {
+  private PartyState inviteeState(ActionCommand command, UUID inviteId) {
     Party party = row(command);
     UUID memberId = command.actor().memberId();
     boolean phoneMatches = members.verifiedPhone(memberId).map(party::isInvitedPhone).orElse(false);
     boolean alreadyInRoom =
         parties.findByRoomRecordId(command.roomRecordId()).stream()
             .anyMatch(seat -> memberId.equals(seat.getMemberId()));
-    return new PartyState(party.getStatus(), null, null, null, phoneMatches, alreadyInRoom);
+    return new PartyState(
+        party.getStatus(),
+        null,
+        null,
+        null,
+        phoneMatches,
+        alreadyInRoom,
+        null,
+        party.isCurrentInvite(inviteId));
   }
 
   private Party row(ActionCommand command) {
@@ -183,11 +209,72 @@ public class PartyStateStore {
     }
   }
 
-  private final class Connecting implements StateStore<PartyState> {
+  /**
+   * 만든 측·거주 중은 초대와 같이 본다. 새 번호가 지금 초대 번호와 같으면 입력 오류라 {@code VALIDATION_FAILED}로 막는다. 만든 측·거주
+   * 중·초대됨·거절됨 자리일 때만 본다(그 밖은 규칙이 {@code INVALID_STATE}로 먼저 막아, 권한 확인 전에 번호가 같은지 알리지 않음). 내 번호·수신
+   * 거부는 초대와 같이 잠근 뒤 읽는다.
+   */
+  private final class ChangingPhone implements StateStore<PartyState> {
+
+    private final String phone;
+
+    private ChangingPhone(String phone) {
+      this.phone = phone;
+    }
 
     @Override
     public PartyState load(ActionCommand command) {
-      return inviteeState(command);
+      Party party = row(command);
+      RoomRecord room = room(command);
+      boolean byCreatorSide =
+          command.actor().side() == room.getCreatedBySide()
+              && party.getSide() != room.getCreatedBySide();
+      boolean living = room.getStatus() == RoomStatus.LIVING;
+      boolean reinvitable =
+          party.getStatus() == PartyStatus.INVITED || party.getStatus() == PartyStatus.REJECTED;
+      if (byCreatorSide && living && reinvitable && party.isInvitedPhone(phone)) {
+        throw new BusinessException(ErrorCode.VALIDATION_FAILED);
+      }
+      boolean selfInvite =
+          members.verifiedPhone(command.actor().memberId()).map(phone::equals).orElse(false);
+      return new PartyState(
+          party.getStatus(),
+          byCreatorSide,
+          living,
+          selfInvite,
+          null,
+          null,
+          smsOptOuts.isOptedOut(phone));
+    }
+
+    /** 하나라도 실패하면 행동·자리·링크·문자가 함께 되돌아간다(pipeline 트랜잭션). */
+    @Override
+    public SavedState save(ActionCommand command, PartyState next) {
+      Party party = row(command);
+      UUID roomRecordId = command.roomRecordId();
+      List<UUID> oldLinks =
+          inviteLinks.invalidateInvites(roomRecordId, party.getId(), LinkInvalidReason.REINVITED);
+      smsCancellation.cancelPendingSms(roomRecordId, oldLinks);
+      party.reinvite(phone);
+      parties.flush();
+      UUID memberId = command.actor().memberId();
+      UUID linkId = inviteLinks.issueInvite(roomRecordId, party.getId(), null, memberId);
+      inviteRequests.onInvite(roomRecordId, party.getId(), null, linkId, memberId);
+      return SavedState.unchanged();
+    }
+  }
+
+  private final class Connecting implements StateStore<PartyState> {
+
+    private final UUID inviteId;
+
+    private Connecting(UUID inviteId) {
+      this.inviteId = inviteId;
+    }
+
+    @Override
+    public PartyState load(ActionCommand command) {
+      return inviteeState(command, inviteId);
     }
 
     /** 자리 → 호실 → 링크 순서로 한 트랜잭션에 넣는다. 시각은 행동 기록과 같은 {@code at()}이다. */
@@ -206,9 +293,15 @@ public class PartyStateStore {
 
   private final class Rejecting implements StateStore<PartyState> {
 
+    private final UUID inviteId;
+
+    private Rejecting(UUID inviteId) {
+      this.inviteId = inviteId;
+    }
+
     @Override
     public PartyState load(ActionCommand command) {
-      return inviteeState(command);
+      return inviteeState(command, inviteId);
     }
 
     @Override

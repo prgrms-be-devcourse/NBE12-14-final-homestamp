@@ -31,7 +31,7 @@ import org.springframework.stereotype.Service;
  * 있는 단계로 두고 잠근 뒤 읽은 상태로 하나만 남긴다: 바로 거주 종료면 {@code MOVE_OUT}, 아니면 거주 종료 요청 {@code REQUEST_END}.
  *
  * <p>오류: 남의 호실 {@code NOT_FOUND}, 정산 완료·합류 전 기록이면 pipeline 거절, 거주 중이 아니거나 이미 요청을 보냈거나 답할 요청이 없거나
- * 세입자가 답할 수 없는 자리(연결 전·거절·탈퇴, D 확인 전, #415)면 {@code INVALID_STATE}, 사유 없는 "아직 살고 있어요"는 {@code
+ * 세입자가 답할 수 없고 바로 거주 종료도 아닌 자리(거절·탈퇴)면 {@code INVALID_STATE}, 사유 없는 "아직 살고 있어요"는 {@code
  * REASON_REQUIRED}.
  */
 @Service

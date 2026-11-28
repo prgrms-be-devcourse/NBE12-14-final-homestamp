@@ -36,10 +36,13 @@ import { CounterpartNotice } from "@/components/common/counterpart-notice"
 import { RoomsPage } from "@/pages/rooms-page"
 import { RepairsPage } from "@/pages/repairs-page"
 import { SharePage, type SharedKind } from "@/pages/share-page"
+import { LinkViewPage } from "@/features/link/link-view-page"
+import { isLinkViewPath } from "@/api/link-view"
 import { hasAction, type RoomAction } from "@/api/actions"
 import { ApiProvider } from "@/api"
 import { useApi } from "@/api/hooks"
 import { repairStub } from "@/api/http-repair-view"
+import { rejectInvitation, withAccountPhone } from "@/api/http-invitations"
 import { errorMessage, shouldReload } from "@/api/errors"
 import { createApi } from "@/api/create-api"
 import {
@@ -51,6 +54,8 @@ import {
   type RecordRequest,
 } from "@/api/records"
 import { endpoints } from "@/api/endpoints"
+import { RoomEndCard } from "@/features/room/room-end-card"
+import { moveOutEndsNow, roomEndView } from "@/lib/room-end"
 import { createAuth, type Account, type AuthApi } from "@/api/auth"
 import { AuthScreen } from "@/features/auth/auth-screen"
 import { TermsReconfirmDialog } from "@/features/member/terms-reconfirm-dialog"
@@ -158,6 +163,9 @@ export default function App() {
   const [restoreError, setRestoreError] = useState<string>()
   const [restoreTry, setRestoreTry] = useState(0)
   const [authOpen, setAuthOpen] = useState(false)
+  // 문자 링크(/l#토큰, S-16)로 들어왔는지. 가입·로그인을 마치거나 [받은 초대 보기]를 누르면 링크 화면을 닫고 홈으로 가요
+  const [linkOpen, setLinkOpen] = useState(isLinkViewPath)
+  const [authMode, setAuthMode] = useState<"signup" | "login">("signup")
   // 쓰는 중에 세션이 끝나 로그인 화면으로 보낼 때의 안내(LOGIN_REQUIRED·REFRESH_REUSED 문구)
   const [ended, setEnded] = useState<string>()
   useEffect(() => {
@@ -187,34 +195,61 @@ export default function App() {
     [auth],
   )
   const link = isShareLink()
+  // 링크 화면을 떠나면 주소에서 토큰(#)을 지워요. 연결은 토큰이 아니라 인증한 번호로 받은 초대에서 해요(06 4-3 invitations)
+  const leaveLink = () => {
+    replaceUrl(null, "", "/")
+    setLinkOpen(false)
+  }
+  const retryRestore = () => {
+    setRestoreError(undefined)
+    setRestoreTry((n) => n + 1)
+  }
+  // 문자 링크는 로그인과 상관없는 공개 열람이라 로그인 복원을 기다리지 않고, 복원이 실패해도 열어요(#411 리뷰).
+  // 복원이 끝나기 전에는 회원인지 몰라 가입·로그인 대신 확인 중이나 다시 불러오기를 보여요(누르면 복원 화면에 갇히지 않게)
+  if (linkOpen && !authOpen)
+    return (
+      <LinkViewPage
+        member={Boolean(account)}
+        session={
+          restoring ? { error: restoreError, onRetry: retryRestore } : undefined
+        }
+        onSignup={() => {
+          setAuthMode("signup")
+          setAuthOpen(true)
+        }}
+        onLogin={() => {
+          setAuthMode("login")
+          setAuthOpen(true)
+        }}
+        onContinue={leaveLink}
+      />
+    )
   if (restoring)
     return (
       <div className="auth-loading">
         {restoreError ? (
-          <ErrorState
-            message={restoreError}
-            onRetry={() => {
-              setRestoreError(undefined)
-              setRestoreTry((n) => n + 1)
-            }}
-          />
+          <ErrorState message={restoreError} onRetry={retryRestore} />
         ) : (
           <LoadingState label="HomeStamp를 여는 중이에요" />
         )}
       </div>
     )
-  if (!account && (!link || authOpen))
+  if (!account && (!(link || linkOpen) || authOpen))
     return (
       <AuthScreen
+        key={linkOpen ? `link-${authMode}` : "auth"}
         auth={auth}
-        initialMode={link && !ended ? "signup" : "login"}
+        initialMode={
+          ended ? "login" : linkOpen ? authMode : link ? "signup" : "login"
+        }
         onDone={(a) => {
           setAccount(a)
           setAuthOpen(false)
           setEnded(undefined)
+          if (linkOpen) leaveLink()
         }}
         onBack={
-          link
+          link || linkOpen
             ? () => {
                 setAuthOpen(false)
                 setEnded(undefined)
@@ -223,9 +258,11 @@ export default function App() {
         }
         notice={
           ended ??
-          (link
-            ? "공유받은 기록에 응답하려면 가입한 뒤, 초대받은 번호로 호실에 연결해 주세요."
-            : undefined)
+          (linkOpen
+            ? "링크로 받은 기록에 답하거나 호실에 연결하려면 가입한 뒤, 초대받은 번호로 인증해 주세요."
+            : link
+              ? "공유받은 기록에 응답하려면 가입한 뒤, 초대받은 번호로 호실에 연결해 주세요."
+              : undefined)
         }
       />
     )
@@ -378,7 +415,8 @@ function HomeStampApp({
     (r) => r.id === repairId && r.roomId === roomId,
   )
   // http 모드는 목록을 받기 전(주소로 바로 연 상세)이나 목록을 다시 받기 전(방금 등록한 건)에도 상세 주소로 열고,
-  // 상세 화면이 서버에서 받아요(#179, #290). 남의 수리 건·없는 건이면 상세 화면이 서버의 404를 받아 '찾을 수 없음'을 보여요
+  // 상세 화면이 서버에서 받아요(#179, #290). 남의 수리 건·없는 건이면 상세 화면이 서버의 404를 받아 '찾을 수 없음'을 보여요.
+  // 빼면 그 두 경우에 '찾을 수 없음'이 잠깐 떴다가 바뀌어서 남겨요(#364). 그동안 '내 차례'는 waiting 없이 상태로 셉니다(lib/turn)
   const serverOnlyRepair =
     api.mode === "http" &&
     page === "detail" &&
@@ -397,7 +435,13 @@ function HomeStampApp({
   )
   const sharedPhoto = db.partPhotos.find((p) => p.id === sharedPhotoId)
   const sharedRepair = sharedKind === "repair" ? repair : undefined
-  const sharedRoom = db.rooms.find(
+  // HTTP의 받은 초대(GET /api/invitations)는 내 호실 목록 밖이라 따로 받아 둬요. 서버가 내 인증 번호로 온 것만 주니
+  // 그 번호를 넣어 목업과 같은 받은 초대 확인을 지나게 해요(api/http-invitations)
+  const invitationRooms = withAccountPhone(
+    db.invitations ?? [],
+    account?.phone ?? "",
+  )
+  const sharedRoom = [...db.rooms, ...invitationRooms].find(
     (r) =>
       r.id ===
       (sharedKind === "part-photo"
@@ -455,7 +499,7 @@ function HomeStampApp({
   const accessibleRooms = myRooms
   // 받은 초대: 가입할 때 인증한 번호로 온, 아직 연결하지 않은 초대
   const receivedInvitations = account
-    ? db.rooms.filter(
+    ? [...db.rooms, ...invitationRooms].filter(
         (r) =>
           !sideOf(r, accountId) &&
           canReceiveInvitation(r, inviteeSide(r), account.phone),
@@ -588,20 +632,21 @@ function HomeStampApp({
     eventRoomId = roomId,
     privateTo?: Role,
     recordTarget?: RecordTarget,
-  ) {
+  ): Promise<boolean> {
     const targetRoom = db.rooms.find((r) => r.id === eventRoomId)
     if (
       targetRoom &&
       !(sideOf(targetRoom, accountId) && canAccessRoom(targetRoom, role))
     ) {
       toast("호실 연결 후에 기록할 수 있어요.")
-      return
+      return Promise.resolve(false)
     }
     if (/거주 종료$|정산 끝내기/.test(text)) {
       setPending({ request, text, update })
-      return
+      return Promise.resolve(true)
     }
-    void act(
+    // 저장 결과(성공 true, 실패 false)를 돌려줘요. 창이 기다렸다가 성공일 때만 닫게요(실패면 쓴 내용을 그대로 둬요)
+    return act(
       request,
       text,
       update,
@@ -611,9 +656,10 @@ function HomeStampApp({
       privateTo,
       recordTarget,
     ).then((ok) => {
-      if (!ok) return
+      if (!ok) return false
       toast("기록했어요.")
       setModal(null)
+      return true
     })
   }
   // 공유받은 기록 한 건 보기(받은 초대에서 '공유받은 기록 보기')
@@ -697,8 +743,9 @@ function HomeStampApp({
       !canReceiveInvitation(sharedRoom, role, account.phone)
     )
       return
+    // 서버가 거절을 받은 뒤에만 창을 닫고 알려요. 실패하면 send가 오류를 알리고 창은 그대로 둬요
     void act(
-      post(endpoints.rejectInvitation(sharedRoom.id)),
+      rejectInvitation(sharedRoom),
       "호실 연결 거절 · 제 집이 아니에요",
       (d) =>
         declineInvitation(
@@ -709,12 +756,14 @@ function HomeStampApp({
       true,
       sharedRoom.id,
       true,
-    )
-    setGuest(false)
-    setModal(null)
-    replaceUrl(null, "", "/")
-    navigate((r) => ({ ...r, page: "home", roomId: "" }))
-    toast("초대를 거절했어요. 그 호실 기록에는 접근할 수 없어요.")
+    ).then((ok) => {
+      if (!ok) return
+      setGuest(false)
+      setModal(null)
+      replaceUrl(null, "", "/")
+      navigate((r) => ({ ...r, page: "home", roomId: "" }))
+      toast("초대를 거절했어요. 그 호실 기록에는 접근할 수 없어요.")
+    })
   }
   function detail(id: string) {
     setRepairId(id)
@@ -755,7 +804,7 @@ function HomeStampApp({
     update: (d: DemoState) => void,
     targetId: string,
   ) {
-    commit(
+    return commit(
       request,
       text,
       update,
@@ -1166,6 +1215,57 @@ function HomeStampApp({
                       />
                     )}
                   {page === "home" && (
+                    <RoomEndCard
+                      view={roomEndView(room, role)}
+                      role={role}
+                      canMoveOut={roomHas("move-out")}
+                      canConfirm={roomHas("move-out-confirm")}
+                      canReject={roomHas("move-out-reject")}
+                      onMoveOut={() => {
+                        // 바로 거주 종료가 되면 확인 창을 먼저 띄워요(되돌릴 수 없어서). 판단은 lib/room-end(moveOutEndsNow)
+                        const direct = moveOutEndsNow(room, role)
+                        commit(
+                          post(endpoints.moveOut(roomId)),
+                          role === "임차인"
+                            ? "이사했어요 · 거주 종료"
+                            : direct
+                              ? "이사함 · 거주 종료"
+                              : "거주 종료 요청",
+                          (d) => {
+                            const r = d.rooms.find((r) => r.id === roomId)!
+                            if (direct) r.status = "거주 종료"
+                            else r.endRequested = true
+                          },
+                        )
+                      }}
+                      onConfirm={() =>
+                        commit(
+                          post(endpoints.moveOutAnswer(roomId, "confirm")),
+                          "거주 종료 요청에 맞아요 · 거주 종료",
+                          (d) => {
+                            const r = d.rooms.find((r) => r.id === roomId)!
+                            r.status = "거주 종료"
+                            r.endRequested = false
+                            r.endWait = undefined
+                          },
+                        )
+                      }
+                      onReject={(reason) =>
+                        commit(
+                          post(endpoints.moveOutAnswer(roomId, "reject"), {
+                            reason,
+                          }),
+                          `거주 종료 요청 · 아직 살고 있어요 · ${reason}`,
+                          (d) => {
+                            const r = d.rooms.find((r) => r.id === roomId)!
+                            r.endRequested = false
+                            r.endWait = undefined
+                          },
+                        )
+                      }
+                    />
+                  )}
+                  {page === "home" && (
                     <HomePage
                       showFirstSteps={showFirstSteps}
                       onStartInspection={() => go("inspection")}
@@ -1277,7 +1377,6 @@ function HomeStampApp({
                       inspectionAct={inspectionAct}
                       itemMasks={itemMasks}
                       photoContent={photoContent}
-                      roomActions={roomActions}
                     />
                   )}
                   {page === "connection" && (

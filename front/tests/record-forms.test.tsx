@@ -10,6 +10,7 @@ import type { Account } from "../src/api/auth"
 import { PhoneForm } from "../src/features/room/phone-form"
 import { InviteForm } from "../src/features/room/invite-form"
 import { ConnectForm } from "../src/features/room/connect-form"
+import { SHARE_CONSENT_VERSION } from "../src/api/http-invitations"
 import { RoomForm } from "../src/features/room/room-form"
 import { SettlementItemForm } from "../src/features/settlement/settlement-item-form"
 import { InspectionItemForm } from "../src/features/inspection/inspection-item-form"
@@ -121,7 +122,10 @@ describe("초대", () => {
     submit(/동의하고 보여 주기/)
     const [request] = commit.mock.calls[0] as [ApiRequest]
     expect(request.path).toBe(endpoints.invite(r.id))
-    expect(request.body).toMatchObject({ phone: "01055556666", consent: true })
+    expect(request.body).toEqual({
+      phone: "01055556666",
+      consentVersion: SHARE_CONSENT_VERSION,
+    })
     expect(toast).toHaveBeenCalledTimes(1)
   })
 })
@@ -261,6 +265,146 @@ describe("점검 기록", () => {
     submit(/기록 남기기/)
     expect(screen.getByRole("alert").textContent).toBe(ZONE_PART_ERROR)
     expect(commit).not.toHaveBeenCalled()
+  })
+
+  // 고르기 칸(Base UI Select)은 jsdom에서 클릭으로 고르지 않아 키보드로 골라요
+  const choose = async (label: string, option: string) => {
+    const box = await screen.findByRole("combobox", { name: label })
+    if (box.getAttribute("aria-expanded") !== "true") fireEvent.click(box)
+    const o = await screen.findByRole("option", { name: option })
+    o.focus()
+    fireEvent.keyDown(o, { key: "Enter" })
+    await vi.waitFor(() =>
+      expect(screen.getByRole("combobox", { name: label }).textContent).toMatch(
+        option,
+      ),
+    )
+  }
+
+  test("HTTP에서는 제목 칸 없이 부위·설명·사진만 서버 점검 주소로 보낸다(상대가 작성 중에 더해도 서버가 정함)", async () => {
+    const parts = {
+      asOf: null,
+      parts: [
+        {
+          id: "part-ceiling",
+          zone: "욕실",
+          name: "천장",
+          enabled: true,
+          hidden: false,
+          toggleable: false,
+        },
+      ],
+    }
+    const http = createHttpApi((async (_m: string, path: string) =>
+      path === endpoints.roomParts("302") ? parts : []) as HttpRequest)
+    const commit = vi.fn()
+    inDialog(
+      <ApiProvider api={http} accountId="dev-tenant">
+        <InspectionItemForm
+          kind="in"
+          room={room({
+            id: "302",
+            moveIn: {
+              author: "임대인",
+              status: "작성 중",
+              server: {
+                id: "insp-1",
+                availableActions: ["items"],
+                lockedAt: null,
+                lockReason: null,
+                counterpartCanRequestAt: "2026-12-01T00:00:00Z",
+                asOf: null,
+              },
+            },
+          })}
+          role="임차인"
+          locked={false}
+          defectClosed={false}
+          commit={commit}
+          onCancel={() => {}}
+        />
+      </ApiProvider>,
+    )
+    await choose("구역", "욕실")
+    await choose("부위", "천장")
+    fireEvent.click(screen.getByRole("checkbox"))
+    expect(screen.queryByLabelText("기록 제목")).toBeNull()
+    type("상태 설명", "천장에 물 자국이 있어요")
+    type(/사진 메모/, "왼쪽 모서리")
+    submit(/기록 남기기/)
+
+    expect(screen.queryByRole("alert")).toBeNull()
+    const [request, text] = commit.mock.calls[0] as [ApiRequest, string]
+    expect(request).toEqual({
+      path: endpoints.inspectionAction("insp-1", "items"),
+      body: {
+        roomPartId: "part-ceiling",
+        description: "천장에 물 자국이 있어요\n\n사진 메모: 왼쪽 모서리",
+      },
+      photos: [],
+    })
+    expect(text).toMatch(/^입주 점검 · 욕실 · 천장 등록/)
+  })
+
+  // #405 리뷰: 사진 올리기·항목 저장을 기다리는 동안 다시 보내면 같은 하자가 두 번 남아요
+  test("보내는 동안은 [기록 남기기]를 막고, 실패하면 쓴 내용을 둔 채 다시 보낼 수 있다", async () => {
+    const parts = {
+      asOf: null,
+      parts: [
+        {
+          id: "part-ceiling",
+          zone: "욕실",
+          name: "천장",
+          enabled: true,
+          hidden: false,
+          toggleable: false,
+        },
+      ],
+    }
+    const http = createHttpApi((async (_m: string, path: string) =>
+      path === endpoints.roomParts("302") ? parts : []) as HttpRequest)
+    let finish!: (ok: boolean) => void
+    const commit = vi.fn(
+      () => new Promise<boolean>((resolve) => (finish = resolve)),
+    )
+    inDialog(
+      <ApiProvider api={http} accountId="dev-tenant">
+        <InspectionItemForm
+          kind="out"
+          room={room({ id: "302" })}
+          role="임차인"
+          locked={false}
+          defectClosed={false}
+          commit={commit}
+          onCancel={() => {}}
+        />
+      </ApiProvider>,
+    )
+    await choose("구역", "욕실")
+    await choose("부위", "천장")
+    type("상태 설명", "천장에 금이 있어요")
+    const button = () =>
+      screen.getByRole("button", { name: /기록 남기기/ }) as HTMLButtonElement
+
+    submit(/기록 남기기/)
+    expect(commit).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => expect(button().disabled).toBe(true))
+    // 막힌 동안 폼을 다시 보내도(Enter 등) 요청이 더 가지 않아요
+    fireEvent.submit(button().closest("form")!)
+    expect(commit).toHaveBeenCalledTimes(1)
+
+    finish(false)
+    await vi.waitFor(() => expect(button().disabled).toBe(false))
+    expect(
+      (screen.getByLabelText("상태 설명") as HTMLTextAreaElement).value,
+    ).toBe("천장에 금이 있어요")
+    submit(/기록 남기기/)
+    expect(commit).toHaveBeenCalledTimes(2)
+    const [again] = commit.mock.calls[1] as unknown as [ApiRequest]
+    expect(again.body).toEqual({
+      roomPartId: "part-ceiling",
+      description: "천장에 금이 있어요",
+    })
   })
 })
 

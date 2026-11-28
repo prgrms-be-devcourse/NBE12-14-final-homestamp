@@ -216,6 +216,60 @@ class NoticeTest {
     assertThatThrownBy(() -> sent.scheduleNextPoll(null)).isInstanceOf(NullPointerException.class);
   }
 
+  // ---- 링크 열람(06 NOTI-3b) ----
+
+  @Test
+  void 결과가_없는_보낸_통지는_링크를_열면_열람이_되고_더_묻지_않으며_전달_시각은_비운_채다() {
+    Notice notice = sent();
+    notice.claimDeliveryPoll(UUID.randomUUID(), LATER);
+
+    assertThat(notice.markViewed(LATER)).isTrue();
+
+    assertThat(notice.getStatus()).isEqualTo(NoticeStatus.VIEWED);
+    assertThat(notice.getViewedAt()).isEqualTo(LATER);
+    assertThat(notice.getDeliveredAt()).isNull();
+    assertThat(notice.getNextPollAt()).isNull();
+    assertThat(notice.getDeliveryPollToken()).isNull();
+    // 늦게 온 업체 결과는 열람을 바꾸지 않는다
+    notice.markDelivered(MUCH_LATER);
+    notice.markDeliveryFailed(MUCH_LATER);
+    assertThat(notice.getStatus()).isEqualTo(NoticeStatus.VIEWED);
+  }
+
+  @Test
+  void 전달된_통지도_열면_열람이_되고_전달_시각은_그대로다() {
+    Notice notice = sent();
+    notice.markDelivered(LATER);
+
+    assertThat(notice.markViewed(MUCH_LATER)).isTrue();
+
+    assertThat(notice.getStatus()).isEqualTo(NoticeStatus.VIEWED);
+    assertThat(notice.getDeliveredAt()).isEqualTo(LATER);
+    assertThat(notice.getViewedAt()).isEqualTo(MUCH_LATER);
+  }
+
+  @Test
+  void 보내기_전_실패_취소_이미_연_통지는_열람으로_바뀌지_않는다() {
+    Notice requested = requested();
+    Notice failed = sent();
+    failed.markDeliveryFailed(LATER);
+    Notice cancelled = requested();
+    cancelled.markCancelled();
+    Notice viewed = sent();
+    viewed.markViewed(LATER);
+
+    assertThat(requested.markViewed(MUCH_LATER)).isFalse();
+    assertThat(failed.markViewed(MUCH_LATER)).isFalse();
+    assertThat(cancelled.markViewed(MUCH_LATER)).isFalse();
+    assertThat(viewed.markViewed(MUCH_LATER)).isFalse();
+
+    assertThat(requested.getStatus()).isEqualTo(NoticeStatus.REQUESTED);
+    assertThat(failed.getStatus()).isEqualTo(NoticeStatus.FAILED);
+    assertThat(cancelled.getStatus()).isEqualTo(NoticeStatus.CANCELLED);
+    assertThat(viewed.getViewedAt()).isEqualTo(LATER);
+    assertThatThrownBy(() -> sent().markViewed(null)).isInstanceOf(NullPointerException.class);
+  }
+
   private static Notice requested() {
     return new Notice(
         UUID.randomUUID(),

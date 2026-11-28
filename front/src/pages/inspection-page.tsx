@@ -11,8 +11,6 @@ import { Camera, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
-import { ActionDialog } from "@/components/common/action-dialog"
 import { Panel, Status } from "@/components/common/blocks"
 import { EmptyState } from "@/components/common/states"
 import { Notice } from "@/components/common/notice"
@@ -44,8 +42,11 @@ import {
   confirmItem,
   respondItem,
   supplementItem,
+  addedItemAnswerText,
+  addsMissingDefect,
   confirmNoDefects,
   confirmAllButtons,
+  confirmReach,
   counterpartItemsAwaitingAnswer,
   finishSoloInspection,
   inspectionStatus,
@@ -56,13 +57,9 @@ import {
 } from "@/lib/inspection-rules"
 import { activeSettlementLink, sendSettlementLink } from "@/lib/workflows"
 import type { maskOf } from "@/lib/photo-privacy"
-import { ackText, sideName, sideText, waitLabel } from "@/lib/words"
+import { ackText, sideName, sideText } from "@/lib/words"
 import { reaskWaitDays } from "@/lib/reask"
-import {
-  hasAction,
-  type InspectionAction,
-  type RoomAction,
-} from "@/api/actions"
+import { hasAction, type InspectionAction } from "@/api/actions"
 import { useApi } from "@/api/hooks"
 import { RespondButtons } from "@/components/common/respond-buttons"
 import { SupplementRequest } from "@/components/common/supplement-request"
@@ -115,8 +112,6 @@ export interface InspectionPageProps {
   ) => void
   itemMasks: (i: Inspection, wrong?: boolean) => ReturnType<typeof maskOf>[]
   photoContent: (p: PartPhoto) => ReactNode
-  // 호실 기록에서 서버가 준 지금 누를 수 있는 행동(거주 종료 등)
-  roomActions: readonly RoomAction[]
 }
 
 // S-14 점검(입주·퇴거, 나란히 보기). 퇴거 화면에는 거주 종료와 정산(S-15)이 함께 있어요.
@@ -149,18 +144,20 @@ export function InspectionPage({
   inspectionAct,
   itemMasks,
   photoContent,
-  roomActions,
 }: InspectionPageProps) {
   const [missingOpen, setMissingOpen] = useState(false)
   const [settlePhone, setSettlePhone] = useState("")
-  const [stillLiving, setStillLiving] = useState(false)
-  const roomHas = (a: RoomAction) => hasAction(roomActions, a)
   // 버튼은 서버가 준 availableActions로만 그려요(08 0장 원칙 6). 값은 api.actions가 줘요(GET /api/inspections/{id}).
-  const { actions: available } = useApi()
+  const { actions: available, mode } = useApi()
   const actions = available.inspection(db, room, sessKind, role, {
     readOnly,
   })
   const has = (a: InspectionAction) => hasAction(actions, a)
+  const http = mode === "http"
+  // 잠기기 전 [+] 버튼이 '빠뜨린 하자 더하기' 창을 여는지(아니면 기록 창). 잠긴 뒤는 늘 그 창이에요
+  const addsMissing = addsMissingDefect(moveIn, moveInMine, http)
+  // 더한 하자·확인 요청에 답할 상대가 있는지(서버와 같은 기준). HTTP 안내 문구가 오지 않을 답을 기다리게 하지 않게 써요
+  const reach = confirmReach(room)
   // 입주 점검 시작 때 입주일을 물을지: 호실 입주일이 비어 있을 때만(INSP-2b). 목업은 이때만 시작 버튼을 줘요
   const askMoveInDate = !room.since
   const itemActions = (i: Inspection) =>
@@ -501,7 +498,7 @@ export function InspectionPage({
               )}
               {has("items") && missingHint}
             </div>
-          ) : moveIn === "확인 요청" && !moveInMine ? (
+          ) : addsMissing ? (
             has("items") && (
               <div className="flex flex-col items-end gap-1">
                 <Button variant="outline" onClick={() => setMissingOpen(true)}>
@@ -558,6 +555,9 @@ export function InspectionPage({
             {moveIn === "작성 중" && !moveInMine && (
               <small className="muted">
                 {sideText(session!.author)}이 기준 기록을 쓰고 있어요.
+                {addsMissing && has("items")
+                  ? ` 그사이 빠진 하자를 더할 수 있어요. ${addedItemAnswerText(reach)}`
+                  : ""}
               </small>
             )}
             {((moveIn === "없음" && !needMoveInDate) ||
@@ -607,7 +607,11 @@ export function InspectionPage({
             {moveIn === "확인 요청" && !session?.noDefects && (
               <small className="muted">
                 {moveInMine
-                  ? "상대가 항목마다 확인·이견을 남기면 점검이 잠겨요. 하자는 이제 고치기로 덧붙이고, 부위 사진은 계속 올릴 수 있어요."
+                  ? http
+                    ? reach === "none"
+                      ? `빠진 하자는 [+ 빠뜨린 하자 더하기]로 더할 수 있어요. ${addedItemAnswerText(reach)}`
+                      : `상대가 항목마다 확인·이견을 남기면 점검이 잠겨요. 빠진 하자는 [+ 빠뜨린 하자 더하기]로 더해요. ${addedItemAnswerText(reach)}`
+                    : "상대가 항목마다 확인·이견을 남기면 점검이 잠겨요. 하자는 이제 고치기로 덧붙이고, 부위 사진은 계속 올릴 수 있어요."
                   : "항목마다 확인·이견을 남기거나 ‘남은 항목 모두 확인’을 눌러 주세요. 빠진 하자는 [+ 빠뜨린 하자 더하기]로 더해요."}
               </small>
             )}
@@ -741,117 +745,8 @@ export function InspectionPage({
           onAct={inspectionAct}
         />
 
-        {page === "checkout" && room.status === "거주 중" && (
-          <div className="actions mt-5">
-            {roomHas("move-out") && (
-              <Button
-                onClick={() =>
-                  commit(
-                    post(endpoints.moveOut(roomId)),
-                    role === "임차인"
-                      ? "퇴거 점검 마침 · 거주 종료"
-                      : "거주 종료 확인 요청",
-                    (d) => {
-                      const r = d.rooms.find((r) => r.id === roomId)!
-                      if (role === "임차인" || r.connection === "연결 전")
-                        r.status = "거주 종료"
-                      else r.endRequested = true
-                    },
-                  )
-                }
-              >
-                {role === "임차인"
-                  ? "점검 마침 · 이사했어요"
-                  : "점검 마침 · 거주 종료 요청"}
-              </Button>
-            )}
-            {roomHas("move-out-confirm") && (
-              <>
-                <Notice>
-                  집주인이 이사했다고 남겼어요. 맞으면 거주 종료가 돼요.
-                </Notice>
-                <Button
-                  onClick={() =>
-                    commit(
-                      post(endpoints.moveOutAnswer(roomId, "confirm")),
-                      "거주 종료 요청 확인 · 맞아요",
-                      (d) => {
-                        const r = d.rooms.find((r) => r.id === roomId)!
-                        r.status = "거주 종료"
-                        r.endWait = undefined
-                      },
-                    )
-                  }
-                >
-                  맞아요
-                </Button>
-              </>
-            )}
-            {roomHas("move-out-reject") && (
-              <Button variant="outline" onClick={() => setStillLiving(true)}>
-                아직 살고 있어요
-              </Button>
-            )}
-            {room.endRequested && role === "임대인" && (
-              <small className="muted">
-                {room.endWait === "미확인"
-                  ? waitLabel("미확인", { who: "세입자", long: true })
-                  : `세입자의 답을 기다려요${room.endWait ? ` · ${waitLabel(room.endWait)}` : ""}`}
-              </small>
-            )}
-            {roomHas("move-out-alone") && (
-              <Button
-                onClick={() =>
-                  commit(
-                    notInSpec("혼자 거주 종료(세입자 미확인)"),
-                    "거주 종료 요청 적용 · 세입자 미확인",
-                    (d) => {
-                      const r = d.rooms.find((r) => r.id === roomId)!
-                      r.status = "거주 종료"
-                      r.endUnconfirmed = true
-                    },
-                  )
-                }
-              >
-                혼자 거주 종료
-              </Button>
-            )}
-            <small className="muted">
-              거주 종료와 점검 항목 확인·정산 완료는 별개예요.
-            </small>
-            {/* [아직 살고 있어요]는 사유와 함께 답해요(06 S-06, move-out/reject REASON_REQUIRED) */}
-            <ActionDialog
-              open={stillLiving}
-              title="아직 살고 있어요"
-              description="집주인의 거주 종료 요청에 답해요. 사유가 함께 남아요."
-              submitLabel="보내기"
-              onClose={() => setStillLiving(false)}
-              onSubmit={(f) => {
-                const reason = String(f.get("reason") || "").trim()
-                if (!reason) return "사유를 입력해 주세요."
-                commit(
-                  post(endpoints.moveOutAnswer(roomId, "reject"), { reason }),
-                  `거주 종료 요청 · 아직 살고 있어요 · ${reason}`,
-                  (d) => {
-                    const r = d.rooms.find((r) => r.id === roomId)!
-                    r.endRequested = false
-                    r.endWait = undefined
-                  },
-                )
-              }}
-            >
-              <div className="field">
-                <label htmlFor="still-living-reason">사유 · 필수</label>
-                <Textarea
-                  id="still-living-reason"
-                  name="reason"
-                  required
-                  placeholder="예: 이사는 다음 달 15일이에요"
-                />
-              </div>
-            </ActionDialog>
-          </div>
-        )}
+        {/* 거주 종료(이사했어요·이사함·요청 답)는 호실 홈의 거주 종료 카드에서 해요(06 S-06, #445).
+            퇴거 점검 마침(POST /api/inspections/{id}/finish, INSP-3)은 아직 없어 여기서 거주 종료를 보내지 않아요 */}
       </Panel>
       {page === "checkout" &&
         room.status === "거주 종료" &&

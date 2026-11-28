@@ -1,12 +1,13 @@
 import {
   inspectionIdIn,
-  inspectionIdOf,
   notInSpec,
   photoIdOf,
   post,
+  postWithPhotos,
   type RecordRequest,
 } from "@/api/records"
 import { endpoints } from "@/api/endpoints"
+import { useApi } from "@/api/hooks"
 import { useState, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -31,10 +32,12 @@ import { readPhotos } from "@/lib/photos"
 import { pendingValue } from "@/lib/corrections"
 import {
   acceptAllItem,
+  addedItemAnswerText,
   addItemPhotos,
   answer,
   confirmAll,
   confirmableItems,
+  confirmReach,
   isItemStamped,
   requestAdd,
   requestItemEdits,
@@ -72,7 +75,11 @@ export type OnInspectionAct = (
   text: string,
   update: (d: DemoState) => void,
   targetId: string,
-) => void
+  // 저장 결과(성공 true). 기다릴 창만 써요(App.tsx commit)
+) => void | Promise<boolean>
+// 빠뜨린 하자 더하기가 실패했을 때 창에 남기는 한 줄(이유는 앱 안내에 따로 떠요). 쓴 설명과 고른 사진은 그대로 둬요
+export const MISSING_DEFECT_FAILED =
+  "하자를 더하지 못했어요. 쓴 설명과 사진은 그대로 있으니 다시 시도해 주세요."
 // 규칙 위반은 복사본에서 먼저 확인합니다.
 function check(db: DemoState, update: (d: DemoState) => void) {
   try {
@@ -569,18 +576,25 @@ export function MissingDefectDialog({
   const [part, setPart] = useState<RoomPart>()
   const [photos, setPhotos] = useState<string[]>([])
   const [error, setError] = useState("")
+  // HTTP는 서버가 받는 칸(부위 + 설명 + 사진, 06 4-7)만 보여요. 제목·추가 이유 칸이 없고, 규칙은 서버가 정해요(목업 규칙 확인은 하지 않아요)
+  const http = useApi().mode === "http"
   return (
     <ActionDialog
       open={open}
       title="빠진 하자 추가"
-      description="점검을 고치는 일이라 기준 기록을 쓴 쪽이 확인해야 반영돼요. 빠진 하자 추가도 상대 쪽이 확인해야 항목이 돼요(응답이 없어도 혼자 반영되지 않아요). 기존 항목의 고치기·사진 추가는 각 항목 카드에서 할 수 있어요."
-      submitLabel="추가 요청"
+      description={
+        http
+          ? // 서버: 더하면 바로 항목이 되고, 받을 상대가 있을 때만 상대(더하지 않은 쪽)에게 확인 요청이 가요. 점검 상태·잠금은 그대로예요(06 4-7 INSP-1d·1e)
+            `빠뜨린 하자를 새 항목으로 더해요. ${addedItemAnswerText(confirmReach(room))} 점검이 잠긴 뒤에 더해도 잠금은 그대로예요.`
+          : "점검을 고치는 일이라 기준 기록을 쓴 쪽이 확인해야 반영돼요. 빠진 하자 추가도 상대 쪽이 확인해야 항목이 돼요(응답이 없어도 혼자 반영되지 않아요). 기존 항목의 고치기·사진 추가는 각 항목 카드에서 할 수 있어요."
+      }
+      submitLabel={http ? "하자 더하기" : "추가 요청"}
       onClose={() => {
         setPhotos([])
         setError("")
         onClose()
       }}
-      onSubmit={(f) => {
+      onSubmit={async (f) => {
         if (!part) return ZONE_PART_ERROR
         const data = {
           roomPartId: part.id,
@@ -600,18 +614,21 @@ export function MissingDefectDialog({
             reason,
           )
         }
-        const e = check(db, update)
+        const e = http ? "" : check(db, update)
         if (e) return e
-        onAct(
-          post(
-            endpoints.inspectionAction(inspectionIdOf(room.id, kind), "items"),
-            { ...data, reason },
+        // 사진 올리기와 항목 저장을 기다려요(ActionDialog가 그동안 버튼을 막아요). 성공이면 창이 닫히며 onClose가 사진을 비우고,
+        // 실패면 문구를 돌려줘 창·설명·사진을 그대로 둬요(#405 리뷰)
+        const saved = await onAct(
+          postWithPhotos(
+            endpoints.inspectionAction(inspectionIdIn(room, kind), "items"),
+            { roomPartId: data.roomPartId, description: data.description },
+            data.photos,
           ),
-          `${kind === "in" ? "입주" : "퇴거"} 점검 · 빠뜨린 하자 더하기 · ${data.title}`,
+          `${kind === "in" ? "입주" : "퇴거"} 점검 · 빠뜨린 하자 더하기 · ${data.title || data.zone}`,
           update,
           "",
         )
-        setPhotos([])
+        if (saved === false) return MISSING_DEFECT_FAILED
       }}
     >
       <PartField
@@ -620,13 +637,15 @@ export function MissingDefectDialog({
         onChange={setPart}
         defaultPart={{ zone: "욕실", name: "천장" }}
       />
-      <div className="field">
-        <label htmlFor="im-title">하자 제목</label>
-        <Input id="im-title" name="title" maxLength={80} required />
-      </div>
+      {!http && (
+        <div className="field">
+          <label htmlFor="im-title">하자 제목</label>
+          <Input id="im-title" name="title" maxLength={80} required />
+        </div>
+      )}
       <div className="field">
         <label htmlFor="im-desc">상태 설명</label>
-        <Textarea id="im-desc" name="description" required />
+        <Textarea id="im-desc" name="description" maxLength={2000} required />
       </div>
       <div className="field">
         <label htmlFor="im-photos">사진 · 선택</label>
@@ -645,15 +664,17 @@ export function MissingDefectDialog({
           <small className="muted">{photos.length}장 선택됨</small>
         )}
       </div>
-      <div className="field">
-        <label htmlFor="im-reason">추가하는 이유 · 필수</label>
-        <Textarea
-          id="im-reason"
-          name="reason"
-          required
-          placeholder="예: 입주 점검 때 빠뜨린 하자예요"
-        />
-      </div>
+      {!http && (
+        <div className="field">
+          <label htmlFor="im-reason">추가하는 이유 · 필수</label>
+          <Textarea
+            id="im-reason"
+            name="reason"
+            required
+            placeholder="예: 입주 점검 때 빠뜨린 하자예요"
+          />
+        </div>
+      )}
       {error && (
         <p role="alert" className="form-error">
           {error}

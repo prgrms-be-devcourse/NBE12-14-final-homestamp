@@ -33,6 +33,7 @@ class ResponseRequestTransitionTest extends SchemaTestSupport {
   private static final Instant CLOSED_AT = Instant.parse("2026-11-26T02:00:00.654321Z");
   private static final Instant DELIVERED = Instant.parse("2026-11-26T01:05:00.111111Z");
   private static final Duration RENOTIFY = Duration.ofHours(48);
+  private static final Duration UNCONFIRMED = Duration.ofHours(24);
 
   @Autowired private ResponseRequestRepository requests;
   @PersistenceContext private EntityManager entityManager;
@@ -109,7 +110,7 @@ class ResponseRequestTransitionTest extends SchemaTestSupport {
     ResponseRequest proposal = save(room, RequestKind.PROPOSAL, repairCase(room));
     proposal.close(ClosedReason.AMOUNT_CHANGED, CLOSED_AT);
 
-    assertThatThrownBy(() -> proposal.rewait(CLOSED_AT, RENOTIFY))
+    assertThatThrownBy(() -> proposal.rewait(CLOSED_AT, RENOTIFY, UNCONFIRMED))
         .isInstanceOf(IllegalStateException.class);
     assertThat(proposal.getStatus()).isEqualTo(RequestStatus.CLOSED);
   }
@@ -126,7 +127,7 @@ class ResponseRequestTransitionTest extends SchemaTestSupport {
 
     ResponseRequest unconfirmed = requests.findById(proposal.getId()).orElseThrow();
     assertThat(unconfirmed.getSoloReason()).isEqualTo(SoloReason.UNCONFIRMED);
-    unconfirmed.rewait(CLOSED_AT, RENOTIFY);
+    unconfirmed.rewait(CLOSED_AT, RENOTIFY, UNCONFIRMED);
     entityManager.flush();
 
     assertThat(row(proposal)).containsEntry("status", "WAITING").containsEntry("solo_reason", null);
@@ -145,7 +146,7 @@ class ResponseRequestTransitionTest extends SchemaTestSupport {
 
     // 03 1-4 "미확인 뒤 다시 고침", decisions 2026-11-27(#104)
     ResponseRequest unconfirmed = requests.findById(correction.getId()).orElseThrow();
-    unconfirmed.rewait(CLOSED_AT, RENOTIFY);
+    unconfirmed.rewait(CLOSED_AT, RENOTIFY, UNCONFIRMED);
     entityManager.flush();
     entityManager.clear();
 
@@ -158,7 +159,8 @@ class ResponseRequestTransitionTest extends SchemaTestSupport {
   }
 
   @Test
-  void 재통지_뒤_미확인인_고친_내용_확인은_기한_다시_세기를_타이머_전이라_거절한다() {
+  void 재통지_뒤_미확인인_고친_내용_확인을_다시_기다리게_하면_미확인_기한을_그_시각부터_72시간으로_정한다() {
+    // 03 1-4 "미확인 뒤 다시 고침"(#313) + "재통지 뒤면 미확인 72시간을 다시 정함". 이전에는 d3 전이라 거절했다
     UUID room = room();
     ResponseRequest correction = save(room, RequestKind.CORRECTION_CONFIRM, repairCase(room));
     jdbc.update(
@@ -170,9 +172,39 @@ class ResponseRequestTransitionTest extends SchemaTestSupport {
     entityManager.clear();
 
     ResponseRequest renotified = requests.findById(correction.getId()).orElseThrow();
-    assertThatThrownBy(() -> renotified.rewait(CLOSED_AT, RENOTIFY))
-        .isInstanceOf(IllegalStateException.class);
-    assertThat(renotified.getStatus()).isEqualTo(RequestStatus.UNCONFIRMED);
+    renotified.rewait(CLOSED_AT, RENOTIFY, UNCONFIRMED);
+
+    assertThat(renotified.getStatus()).isEqualTo(RequestStatus.WAITING);
+    assertThat(renotified.getUnconfirmedDueAt())
+        .isEqualTo(CLOSED_AT.plus(RENOTIFY).plus(UNCONFIRMED));
+  }
+
+  @Test
+  void 고친_내용_제안이_아닌_요청은_재통지_뒤_다시_세도_저장한_기한이_그대로다() {
+    UUID room = room();
+    ResponseRequest ask = save(room, RequestKind.PROGRESS_CHECK, repairCase(room));
+    ask.startWaiting(DELIVERED, RENOTIFY);
+    Instant renotifiedAt = DELIVERED.plus(RENOTIFY);
+    ask.renotifyReached(renotifiedAt, UNCONFIRMED);
+
+    ask.recount(renotifiedAt.plusSeconds(600), RENOTIFY, UNCONFIRMED);
+
+    assertThat(ask.getRenotifyDueAt()).isEqualTo(DELIVERED.plus(RENOTIFY));
+    assertThat(ask.getUnconfirmedDueAt()).isEqualTo(renotifiedAt.plus(UNCONFIRMED));
+  }
+
+  @Test
+  void 고친_내용_제안이_아닌_요청은_재통지가_닿기_전_다시_세도_미확인_기한은_닿은_시각부터다() {
+    UUID room = room();
+    ResponseRequest ask = save(room, RequestKind.PROGRESS_CHECK, repairCase(room));
+    ask.startWaiting(DELIVERED, RENOTIFY);
+    Instant asked = DELIVERED.plus(RENOTIFY).plusSeconds(60);
+    ask.recount(asked, RENOTIFY, UNCONFIRMED);
+    Instant reached = asked.plusSeconds(30);
+
+    ask.renotifyReached(reached, UNCONFIRMED);
+
+    assertThat(ask.getUnconfirmedDueAt()).isEqualTo(reached.plus(UNCONFIRMED));
   }
 
   @Test
@@ -180,7 +212,7 @@ class ResponseRequestTransitionTest extends SchemaTestSupport {
     UUID room = room();
     ResponseRequest waiting = save(room, RequestKind.CORRECTION_CONFIRM, repairCase(room));
 
-    assertThatThrownBy(() -> waiting.rewait(CLOSED_AT, RENOTIFY))
+    assertThatThrownBy(() -> waiting.rewait(CLOSED_AT, RENOTIFY, UNCONFIRMED))
         .isInstanceOf(IllegalStateException.class);
   }
 
@@ -189,7 +221,7 @@ class ResponseRequestTransitionTest extends SchemaTestSupport {
     UUID room = room();
     ResponseRequest defect = save(room, RequestKind.DEFECT_CONFIRM, repairCase(room));
 
-    assertThatThrownBy(() -> defect.rewait(CLOSED_AT, RENOTIFY))
+    assertThatThrownBy(() -> defect.rewait(CLOSED_AT, RENOTIFY, UNCONFIRMED))
         .isInstanceOf(IllegalStateException.class);
   }
 
@@ -238,6 +270,86 @@ class ResponseRequestTransitionTest extends SchemaTestSupport {
     assertThat(request.getRenotifyDueAt()).isEqualTo(DELIVERED.plus(RENOTIFY));
   }
 
+  // ---- 재통지가 닿으면 미확인 기한(06 0-1 wait.unconfirmed, 03 1-1 "미확인이 붙는 조건") ----
+
+  @Test
+  void 재통지가_닿으면_닿은_시각부터_미확인_기한이_생기고_다시_와도_바꾸지_않는다() {
+    UUID room = room();
+    ResponseRequest request = save(room, RequestKind.DEFECT_CONFIRM, repairCase(room));
+    request.startWaiting(DELIVERED, RENOTIFY);
+    Instant renotified = DELIVERED.plus(RENOTIFY).plusSeconds(90);
+
+    assertThat(request.renotifyReached(renotified, UNCONFIRMED)).isTrue();
+    assertThat(request.renotifyReached(renotified.plusSeconds(600), UNCONFIRMED)).isFalse();
+    assertThat(request.renotifyReached(renotified.minusSeconds(30), UNCONFIRMED)).isFalse();
+    entityManager.flush();
+    entityManager.clear();
+
+    ResponseRequest reread = requests.findById(request.getId()).orElseThrow();
+    assertThat(reread.getUnconfirmedDueAt()).isEqualTo(renotified.plus(UNCONFIRMED));
+    assertThat(reread.getRenotifyDueAt()).isEqualTo(DELIVERED.plus(RENOTIFY));
+    assertThat(reread.getStatus()).isEqualTo(RequestStatus.WAITING);
+  }
+
+  @Test
+  void 기다림이_시작되지_않았거나_끝난_요청에는_재통지가_닿아도_미확인_기한이_없다() {
+    UUID room = room();
+    ResponseRequest notStarted = save(room, RequestKind.DEFECT_CONFIRM, repairCase(room));
+    ResponseRequest answered = save(room, RequestKind.CLOSE_CONFIRM, repairCase(room));
+    answered.startWaiting(DELIVERED, RENOTIFY);
+    answered.answer(
+        answered.getRequestedBySide() == PartySide.TENANT ? PartySide.LANDLORD : PartySide.TENANT);
+
+    assertThat(notStarted.renotifyReached(DELIVERED, UNCONFIRMED)).isFalse();
+    assertThat(answered.renotifyReached(DELIVERED, UNCONFIRMED)).isFalse();
+    assertThat(notStarted.getUnconfirmedDueAt()).isNull();
+    assertThat(answered.getUnconfirmedDueAt()).isNull();
+  }
+
+  @Test
+  void 재통지가_닿기_전에_더해_기한을_다시_셌으면_더한_시각부터_72시간보다_이르지_않다() {
+    // 03 1-4 "기한": 재통지 뒤 묶으면 미확인 72시간을 다시 정함. 닿기 전 다시 센 재통지 기한 + 미확인 = 더한 시각 + 72시간
+    UUID room = room();
+    ResponseRequest request =
+        save(room, RequestKind.CORRECTION_CONFIRM, RequestTarget.roomRecord(room));
+    request.startWaiting(DELIVERED, RENOTIFY);
+    Instant added = DELIVERED.plus(RENOTIFY).plusSeconds(60);
+    request.recount(added, RENOTIFY, UNCONFIRMED);
+
+    request.renotifyReached(added.plusSeconds(30), UNCONFIRMED);
+
+    assertThat(request.getUnconfirmedDueAt()).isEqualTo(added.plus(RENOTIFY).plus(UNCONFIRMED));
+  }
+
+  @Test
+  void 재통지가_닿은_기다림에_더하면_미확인_기한을_더한_시각부터_72시간으로_다시_정한다() {
+    // 03 1-4 "기한": 재통지 뒤면 미확인 72시간을 다시 정함. 재통지는 다시 가지 않는다(요청당 한 번)
+    UUID room = room();
+    ResponseRequest request =
+        save(room, RequestKind.CORRECTION_CONFIRM, RequestTarget.roomRecord(room));
+    request.startWaiting(DELIVERED, RENOTIFY);
+    request.renotifyReached(DELIVERED.plus(RENOTIFY), UNCONFIRMED);
+    Instant added = DELIVERED.plus(RENOTIFY).plusSeconds(3_600);
+
+    request.recount(added, RENOTIFY, UNCONFIRMED);
+
+    assertThat(request.getUnconfirmedDueAt()).isEqualTo(added.plus(RENOTIFY).plus(UNCONFIRMED));
+    assertThat(request.getStatus()).isEqualTo(RequestStatus.WAITING);
+  }
+
+  @Test
+  void 재통지가_닿은_제안을_바꿔도_미확인_기한을_바꾼_시각부터_다시_정한다() {
+    UUID room = room();
+    ResponseRequest proposal = save(room, RequestKind.PROPOSAL, RequestTarget.roomRecord(room));
+    proposal.startWaiting(DELIVERED, RENOTIFY);
+    proposal.renotifyReached(DELIVERED.plus(RENOTIFY), UNCONFIRMED);
+    Instant changed = DELIVERED.plus(RENOTIFY).plusSeconds(60);
+
+    proposal.rewait(changed, RENOTIFY, UNCONFIRMED);
+
+    assertThat(proposal.getUnconfirmedDueAt()).isEqualTo(changed.plus(RENOTIFY).plus(UNCONFIRMED));
+  }
+
   @Test
   void 끝난_요청에_늦게_온_전달은_버린다() {
     UUID room = room();
@@ -260,19 +372,20 @@ class ResponseRequestTransitionTest extends SchemaTestSupport {
     UUID room = room();
     ResponseRequest request = save(room, RequestKind.CORRECTION_CONFIRM, repairCase(room));
 
-    request.recount(CLOSED_AT, RENOTIFY);
+    request.recount(CLOSED_AT, RENOTIFY, UNCONFIRMED);
     assertThat(request.hasDeadline()).isFalse();
 
     request.startWaiting(DELIVERED, RENOTIFY);
     Instant added = DELIVERED.plusSeconds(3600);
-    request.recount(added, RENOTIFY);
+    request.recount(added, RENOTIFY, UNCONFIRMED);
 
     assertThat(request.getFirstNotifiedAt()).isEqualTo(DELIVERED);
     assertThat(request.getRenotifyDueAt()).isEqualTo(added.plus(RENOTIFY));
   }
 
   @Test
-  void 재통지_뒤_다시_세기는_타이머에서_정하기_전이라_거절한다() {
+  void 재통지가_닿은_기다림의_제안_바꾸기는_미확인_기한을_다시_정한다() {
+    // 이전에는 d3 전이라 거절했다. 03 1-4 "재통지 뒤면 미확인 72시간을 다시 정함"(decisions 2026-11-28 재통지 작업자)
     UUID room = room();
     ResponseRequest proposal = save(room, RequestKind.PROPOSAL, repairCase(room));
     jdbc.update(
@@ -284,8 +397,10 @@ class ResponseRequestTransitionTest extends SchemaTestSupport {
     entityManager.clear();
 
     ResponseRequest renotified = requests.findById(proposal.getId()).orElseThrow();
-    assertThatThrownBy(() -> renotified.rewait(DELIVERED, RENOTIFY))
-        .isInstanceOf(IllegalStateException.class);
+    renotified.rewait(DELIVERED, RENOTIFY, UNCONFIRMED);
+
+    assertThat(renotified.getUnconfirmedDueAt())
+        .isEqualTo(DELIVERED.plus(RENOTIFY).plus(UNCONFIRMED));
     assertThat(renotified.getStatus()).isEqualTo(RequestStatus.WAITING);
   }
 
@@ -296,7 +411,7 @@ class ResponseRequestTransitionTest extends SchemaTestSupport {
     proposal.startWaiting(DELIVERED, RENOTIFY);
     Instant changed = DELIVERED.plusSeconds(60);
 
-    proposal.rewait(changed, RENOTIFY);
+    proposal.rewait(changed, RENOTIFY, UNCONFIRMED);
     entityManager.flush();
 
     assertThat(proposal.getRenotifyDueAt()).isEqualTo(changed.plus(RENOTIFY));
