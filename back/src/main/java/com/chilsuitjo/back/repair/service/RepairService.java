@@ -21,6 +21,9 @@ import com.chilsuitjo.back.global.common.dto.RespondRequest;
 import com.chilsuitjo.back.global.common.dto.SupplementRequest;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
+import com.chilsuitjo.back.payment.dto.PaymentCreateRequest;
+import com.chilsuitjo.back.payment.dto.PaymentRecordResult;
+import com.chilsuitjo.back.payment.service.PaymentService;
 import com.chilsuitjo.back.proposal.dto.AgendaRef;
 import com.chilsuitjo.back.proposal.dto.ProposalCommand;
 import com.chilsuitjo.back.proposal.dto.ProposalRequest;
@@ -70,6 +73,7 @@ public class RepairService {
   private final RoomGateReader gates;
   private final ProgressNoteRepository notes;
   private final RepairQueryService queries;
+  private final PaymentService payments;
 
   /**
    * 하자 등록(06 REP-1). pipeline 전에 사진이 없으면 {@code PHOTO_REQUIRED}(REP-1d), 제목·설명에 주민등록번호 형태가 있으면
@@ -233,6 +237,18 @@ public class RepairService {
         idempotencyKey,
         new AgendaRef(AgendaKind.REPAIR_BURDEN, repairCaseId),
         new ProposalCommand(request.lines(), request.isNoCost(), false, request.reason()));
+  }
+
+  /**
+   * 지불 기록(06 MONEY-1). 이 호실의 수리 건인지와 볼 수 있는 건인지 확인한 뒤({@code RepairQueryService.requireVisible}) 지불
+   * 창구에 넘긴다(decisions 2026-11-16 "부르는 쪽이 먼저 확인"). 없는 수리 건·당사자가 아님·공유를 그만둔 뒤 상대가 등록해 보이지 않는 건은
+   * {@code NOT_FOUND}다(상세와 같음, ROOM-2a). 돈은 수리 진행과 따로라 수리 상태는 보지 않는다. 이 확인은 잠그기 전이다. 그사이 공유를 그만둔
+   * 사람은 pipeline이 {@code SHARING_STOPPED}로 막는다.
+   */
+  public PaymentRecordResult recordPayment(
+      UUID repairCaseId, UUID memberId, String idempotencyKey, PaymentCreateRequest request) {
+    return payments.record(
+        queries.requireVisible(repairCaseId, memberId), idempotencyKey, repairCaseId, request);
   }
 
   /** 수리 시작(06 REP-4a). 시작 전이 아니면 {@code INVALID_STATE}. */

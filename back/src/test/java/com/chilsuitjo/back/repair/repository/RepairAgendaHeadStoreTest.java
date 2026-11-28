@@ -6,7 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.chilsuitjo.back.TestcontainersConfiguration;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
-import com.chilsuitjo.back.payment.service.FakePaymentService;
+import com.chilsuitjo.back.payment.service.PaymentFixtures;
 import com.chilsuitjo.back.proposal.dto.AgendaRef;
 import com.chilsuitjo.back.proposal.rule.AgendaKind;
 import com.chilsuitjo.back.proposal.rule.AgendaState;
@@ -35,7 +35,7 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>제안 ID 칸은 V1 복합 FK({@code fk_repair_case_current_proposal}·{@code
  * fk_repair_case_agreed_proposal})가 있어 실제 {@code proposal} 행을 넣고 쓴다. 테스트는 끝나면 되돌린다.
  */
-@Import(TestcontainersConfiguration.class)
+@Import({TestcontainersConfiguration.class, PaymentFixtures.class})
 @SpringBootTest(
     properties =
         "spring.datasource.hikari.connection-init-sql=SET search_path TO state, record, log, public")
@@ -44,7 +44,7 @@ import org.springframework.transaction.annotation.Transactional;
 class RepairAgendaHeadStoreTest {
 
   @Autowired private RepairAgendaHeadStore store;
-  @Autowired private FakePaymentService paymentService;
+  @Autowired private PaymentFixtures payments;
   @Autowired private JdbcTemplate jdbc;
   @PersistenceContext private EntityManager entityManager;
 
@@ -63,7 +63,7 @@ class RepairAgendaHeadStoreTest {
   void 막_등록한_수리_건은_head가_비어_있고_기준_금액은_payment에서_읽는다() {
     UUID room = room();
     UUID repair = repair(room);
-    paymentService.seedConfirmedTotal(room, repair, 82_000);
+    payments.insertConfirmed(room, repair, 82_000);
 
     AgendaState state = store.load(room, repair);
 
@@ -202,7 +202,7 @@ class RepairAgendaHeadStoreTest {
     UUID room = room();
     UUID repair = repair(room);
     UUID agreed = proposal(room, repair);
-    paymentService.seedConfirmedTotal(room, repair, 50_000);
+    payments.insertConfirmed(room, repair, 50_000);
     AgendaState next = next(store.load(room, repair), AgendaStatus.AGREED, null, agreed);
 
     store.save(next);

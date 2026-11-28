@@ -148,6 +148,28 @@ public class RepairQueryService {
   }
 
   /**
+   * 이 회원이 볼 수 있는 수리 건인지 확인하고 그 호실의 권한을 돌려준다. 없는 수리 건, 그 호실 당사자가 아님, 공유를 그만둔 뒤 상대가 등록해 보이지 않는 건은
+   * {@code NOT_FOUND}다(상세와 같은 판단, ROOM-2a). 수리 건에 딸린 다른 도메인 기록(지불)을 만들기 전에 부른다. 잠그지 않고 읽는다.
+   */
+  @Transactional(readOnly = true)
+  public RoomAccess requireVisible(UUID repairCaseId, UUID memberId) {
+    UUID roomRecordId =
+        cases
+            .findRoomRecordIdById(repairCaseId)
+            .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
+    RoomAccess me = access.require(roomRecordId, memberId);
+    RepairCase row =
+        cases
+            .findByIdAndRoomRecordId(repairCaseId, roomRecordId)
+            .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND));
+    RepairState state = store.current(row);
+    if (state.hiddenFromCounterpartKnown() && me.side() != state.registeredBy()) {
+      throw new BusinessException(ErrorCode.NOT_FOUND);
+    }
+    return me;
+  }
+
+  /**
    * 수리 건 상세(06 4-6, S-12). 없는 ID, 그 호실 당사자가 아님, 상대가 볼 수 없는 기록(공유를 그만둔 뒤 등록, 03 불변식 18)은 모두 {@code
    * NOT_FOUND}다(있는지도 알 수 없게, ROOM-2a).
    *

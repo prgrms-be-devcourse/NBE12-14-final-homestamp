@@ -12,6 +12,7 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import jakarta.persistence.OptimisticLockException;
 import java.time.Duration;
+import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -168,7 +169,18 @@ class GlobalExceptionHandlerTest {
         .andExpect(status().isTooManyRequests())
         .andExpect(header().doesNotExist("Retry-After"))
         .andExpect(jsonPath("$.photoIndex").doesNotExist())
+        .andExpect(jsonPath("$.duplicateOf").doesNotExist())
         .andExpect(jsonPath("$.code").value("DAILY_LIMIT"));
+  }
+
+  @Test
+  void 중복_지불이면_기존_기록_ID와_비슷한_기록인지를_응답에_넣는다() throws Exception {
+    mvc.perform(post("/시험/중복"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("DUPLICATE_PAYMENT"))
+        .andExpect(jsonPath("$.duplicateOf").value(시험용_컨트롤러.DUPLICATE_ID.toString()))
+        .andExpect(jsonPath("$.similar").value(true))
+        .andExpect(jsonPath("$.photoIndex").doesNotExist());
   }
 
   @Test
@@ -200,6 +212,8 @@ class GlobalExceptionHandlerTest {
 
   @RestController
   static class 시험용_컨트롤러 {
+    static final UUID DUPLICATE_ID = UUID.fromString("0193a000-0000-7000-8000-000000000001");
+
     record 요청(String 값) {}
 
     @PostMapping("/시험")
@@ -241,6 +255,11 @@ class GlobalExceptionHandlerTest {
     @PostMapping("/시험/사진")
     String 사진() {
       throw new BusinessException(ErrorCode.PHOTO_CHECK_FAILED, 0);
+    }
+
+    @PostMapping("/시험/중복")
+    String 중복() {
+      throw BusinessException.duplicatePayment(DUPLICATE_ID, true);
     }
 
     @PostMapping("/시험/버전-spring")

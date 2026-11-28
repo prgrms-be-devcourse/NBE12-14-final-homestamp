@@ -18,7 +18,7 @@ import com.chilsuitjo.back.notification.dto.RequestTarget;
 import com.chilsuitjo.back.notification.rule.RequestKind;
 import com.chilsuitjo.back.notification.rule.RequestStatus;
 import com.chilsuitjo.back.notification.service.FakeWaitService;
-import com.chilsuitjo.back.payment.service.FakePaymentService;
+import com.chilsuitjo.back.payment.service.PaymentFixtures;
 import com.chilsuitjo.back.proposal.dto.AgendaRef;
 import com.chilsuitjo.back.proposal.dto.MoneyLine;
 import com.chilsuitjo.back.proposal.dto.ProposalCommand;
@@ -48,7 +48,7 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>응답 요청은 지금 가짜({@link FakeWaitService})라 DB가 아니라 가짜의 상태로 확인한다. 테스트는 끝나면 되돌린다.
  */
-@Import(TestcontainersConfiguration.class)
+@Import({TestcontainersConfiguration.class, PaymentFixtures.class})
 @SpringBootTest(
     properties =
         "spring.datasource.hikari.connection-init-sql=SET search_path TO state, record, log, public")
@@ -57,7 +57,7 @@ import org.springframework.transaction.annotation.Transactional;
 class ProposalStateStoreTest {
 
   @Autowired private ProposalStateStore store;
-  @Autowired private FakePaymentService paymentService;
+  @Autowired private PaymentFixtures payments;
   @Autowired private FakeWaitService waits;
   @Autowired private JdbcTemplate jdbc;
   @PersistenceContext private EntityManager entityManager;
@@ -76,7 +76,7 @@ class ProposalStateStoreTest {
     line(room, proposal, "LANDLORD", 60_000);
     line(room, proposal, "TENANT", 22_000);
     head(repair, "PENDING", proposal, null);
-    paymentService.seedConfirmedTotal(room, repair, 82_000);
+    payments.insertConfirmed(room, repair, 82_000);
 
     ProposalState state = store.load(agree(room, proposal, PartySide.TENANT));
 
@@ -241,7 +241,7 @@ class ProposalStateStoreTest {
     UUID repair = repair(room);
     UUID agreed = proposal(room, repair, PartySide.LANDLORD, false);
     head(repair, "AGREED", null, agreed);
-    paymentService.seedConfirmedTotal(room, repair, 82_000);
+    payments.insertConfirmed(room, repair, 82_000);
     AgendaRef agenda = new AgendaRef(AgendaKind.REPAIR_BURDEN, repair);
     ProposalCommand cmd =
         new ProposalCommand(

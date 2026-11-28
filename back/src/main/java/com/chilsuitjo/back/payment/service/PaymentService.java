@@ -1,11 +1,13 @@
 package com.chilsuitjo.back.payment.service;
 
+import com.chilsuitjo.back.global.common.dto.AnswerResult;
+import com.chilsuitjo.back.global.common.dto.RespondRequest;
 import com.chilsuitjo.back.payment.dto.PaymentCreateRequest;
 import com.chilsuitjo.back.payment.dto.PaymentRecordResult;
 import com.chilsuitjo.back.room.dto.RoomAccess;
 import java.util.UUID;
 
-/** 다른 도메인이 지불을 부르는 창구(#111). 지금은 {@link FakePaymentService}가 구현한다. */
+/** 다른 도메인이 지불을 부르는 창구(#111). {@link JpaPaymentService}가 구현한다. */
 public interface PaymentService {
 
   /**
@@ -22,7 +24,7 @@ public interface PaymentService {
    * @return 지불 ID와 다시 온 요청인지
    * @throws com.chilsuitjo.back.global.error.BusinessException {@code VALIDATION_FAILED}(키가 비었거나
    *     {@code #}가 들었거나 64자 초과), {@code IDEMPOTENCY_KEY_REUSED}(같은 키를 다른 호실에), {@code
-   *     DUPLICATE_PAYMENT}(같은 지불이 이미 있음, MONEY-1a·1c. 진짜 구현부터)
+   *     DUPLICATE_PAYMENT}(같은 지불이 이미 있음, MONEY-1a·1c)
    */
   PaymentRecordResult record(
       RoomAccess access, String idempotencyKey, UUID repairCaseId, PaymentCreateRequest req);
@@ -51,4 +53,19 @@ public interface PaymentService {
    * @return 기준 금액. 확인된 지불이 없거나 다른 호실의 수리 건이면 0
    */
   long confirmedTotal(UUID roomRecordId, UUID repairCaseId);
+
+  /**
+   * 지불 금액 응답(MONEY-2, 06 {@code POST /api/payments/{id}/respond}). 기록한 측의 상대가 지금 판에 맞아요·보류·이견을 남긴다.
+   * 맞아요면 지금 판이 같이 확인한 판이 되어 기준 금액({@link #confirmedTotal})에 들어가고 {@code PaymentAmountConfirmed}가
+   * 난다. 보류·이견은 원래 기록 옆에 나란히 남고 기준 금액에 들어가지 않는다(MONEY-2a). 어느 답이든 금액 확인 요청은 닫힌다.
+   *
+   * <p>같은 키로 다시 오면 처음 응답을 저장해 두지 않으므로 지불의 지금 응답을 같은 모양으로 돌려준다(06 4-0).
+   *
+   * @throws com.chilsuitjo.back.global.error.BusinessException {@code VALIDATION_FAILED}(답 없음),
+   *     {@code RESIDENT_ID_BLOCKED}(사유), {@code NOT_FOUND}(없는 지불·당사자가 아님·보이지 않는 지불), {@code
+   *     NOT_COUNTERPART_SIDE}(내가 남긴 지불), {@code VERSION_CONFLICT}(본 판이 지금 판이 아님), {@code
+   *     ACK_FINAL}, {@code INVALID_STATE}(보류·이견에서 맞아요가 아닌 답), {@code REASON_REQUIRED}
+   */
+  AnswerResult respond(
+      UUID paymentId, UUID memberId, String idempotencyKey, RespondRequest request);
 }
