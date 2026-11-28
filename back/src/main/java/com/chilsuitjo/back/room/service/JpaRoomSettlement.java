@@ -1,10 +1,10 @@
 package com.chilsuitjo.back.room.service;
 
-import com.chilsuitjo.back.action.service.ActionRequestContext;
 import com.chilsuitjo.back.global.error.BusinessException;
 import com.chilsuitjo.back.global.error.ErrorCode;
 import com.chilsuitjo.back.room.repository.RoomRecordRepository;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
@@ -18,15 +18,12 @@ import org.springframework.stereotype.Service;
 class JpaRoomSettlement implements RoomSettlement {
 
   private final RoomRecordRepository rooms;
-  private final ActionRequestContext requestContext;
   private final Duration keepAfter;
 
   JpaRoomSettlement(
       RoomRecordRepository rooms,
-      ActionRequestContext requestContext,
       @Value("${app.retention.after-settled:365d}") Duration keepAfter) {
     this.rooms = Objects.requireNonNull(rooms, "rooms");
-    this.requestContext = Objects.requireNonNull(requestContext, "requestContext");
     if (keepAfter.isNegative() || keepAfter.isZero()) {
       throw new IllegalArgumentException("app.retention.after-settled는 0보다 커야 해요");
     }
@@ -34,10 +31,10 @@ class JpaRoomSettlement implements RoomSettlement {
   }
 
   @Override
-  public void settle(UUID roomRecordId) {
+  public void settle(UUID roomRecordId, Instant at) {
     rooms
         .findById(roomRecordId)
         .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND))
-        .settle(requestContext.at(), keepAfter);
+        .settle(Objects.requireNonNull(at, "at"), keepAfter);
   }
 }

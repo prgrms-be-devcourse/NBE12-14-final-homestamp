@@ -8,8 +8,12 @@ import com.chilsuitjo.back.global.error.ErrorCode;
 import org.springframework.stereotype.Component;
 
 /**
- * 호실 기록 상태 전이(03 A). 호실 기록 만들기({@code CREATE_ROOM})와 거주 종료(06 ROOM-9)를 받는다. 정산 완료 같은 다른 호실 행동은 그
- * 기능을 만들 때 더한다.
+ * 호실 기록 상태 전이(03 A). 호실 기록 만들기({@code CREATE_ROOM})와 거주 종료(06 ROOM-9)를 받는다.
+ *
+ * <p>정산 완료(SETTLED)는 여기서 다루지 않는다. 정산 행동({@code CONFIRM_FINISH}·{@code FINISH_ALONE}·{@code
+ * AUTOCLOSE})의 결과라 {@code SettlementTransitions}가 판단하고 {@code RoomSettlement.settle}이 행에
+ * 쓴다(decisions 2026-11-28). 그래서 이 함수로 호실 행동 기록만 접으면 정산 완료 호실도 거주 종료로 나오고, 정산 완료 여부는 행의 상태(또는 정산 행동
+ * 기록)로 본다.
  *
  * <p>거주 종료(03 A "이사함 기록", 3장 권한 표):
  *

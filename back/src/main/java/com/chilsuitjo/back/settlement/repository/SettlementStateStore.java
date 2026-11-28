@@ -163,7 +163,7 @@ public class SettlementStateStore {
    * 내용. 닫힌 요청에는 재통지가 나가지 않는다.
    */
   private void settle(UUID roomRecordId) {
-    roomSettlement.settle(roomRecordId);
+    roomSettlement.settle(roomRecordId, requestContext.at());
     waits.closeAll(roomRecordId, ClosedReason.SETTLED, EnumSet.allOf(RequestKind.class));
     corrections.closeAllInRoom(roomRecordId, ClosedReason.SETTLED);
   }
