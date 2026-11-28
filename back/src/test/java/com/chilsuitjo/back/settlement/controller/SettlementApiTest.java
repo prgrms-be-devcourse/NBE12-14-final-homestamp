@@ -99,7 +99,7 @@ class SettlementApiTest {
         .andExpect(jsonPath("$.depositStatus").value("NOT_ENTERED"))
         .andExpect(jsonPath("$.snapshotNo").value(1))
         .andExpect(jsonPath("$.unansweredForMe").value(0))
-        .andExpect(jsonPath("$.availableActions").isEmpty());
+        .andExpect(jsonPath("$.availableActions[0]").value("transfers"));
   }
 
   @Test
